@@ -89,6 +89,11 @@ async def quick_generate_questions(
     types: Optional[str] = Form(default="mcq,short_answer", description="Comma-separated question types: mcq, short_answer, long_answer"),
     difficulty: str = Form(default="medium", description="Difficulty level: easy, medium, hard"),
     bloom_levels: Optional[str] = Form(default=None, description="Comma-separated Bloom levels: remember, understand, apply, analyze, evaluate, create"),
+    marks_mcq: Optional[int] = Form(default=1, ge=1, le=100, description="Marks for MCQ questions"),
+    marks_short: Optional[int] = Form(default=2, ge=1, le=100, description="Marks for short answer questions"),
+    marks_long: Optional[int] = Form(default=5, ge=1, le=100, description="Marks for long answer/essay questions"),
+    subject_id: Optional[str] = Form(default=None, description="Subject ID to link questions to"),
+    topic_id: Optional[str] = Form(default=None, description="Topic/Chapter ID to link questions to"),
     current_user: User = Depends(rate_limit(requests=50, window_seconds=86400)),  # 50/day for quick generate
     db: AsyncSession = Depends(get_db),
 ):
@@ -195,6 +200,18 @@ async def quick_generate_questions(
             # Step 2: Generate questions
             logger.info(f"Quick generate: Starting question generation, count={count}, types={type_list}")
             generation_started = False
+            
+            # Build marks by type dictionary
+            marks_by_type = {
+                "mcq": marks_mcq,
+                "short_answer": marks_short,
+                "long_answer": marks_long,
+            }
+            
+            # Parse subject_id and topic_id
+            parsed_subject_id = uuid.UUID(subject_id) if subject_id else None
+            parsed_topic_id = uuid.UUID(topic_id) if topic_id else None
+            
             try:
                 async for progress in question_service.quick_generate(
                     user_id=current_user.id,
@@ -204,6 +221,9 @@ async def quick_generate_questions(
                     types=type_list,
                     difficulty=difficulty,
                     bloom_levels=bloom_list,
+                    marks_by_type=marks_by_type,
+                    subject_id=parsed_subject_id,
+                    topic_id=parsed_topic_id,
                 ):
                     generation_started = True
                     # Adjust progress to account for document processing phase
@@ -648,6 +668,108 @@ async def update_co_mapping(
         )
     
     question.course_outcome_mapping = mapping
+    await db.commit()
+    await db.refresh(question)
+    
+    return QuestionResponse.model_validate(question)
+
+
+@router.put("/{question_id}", response_model=QuestionResponse)
+async def update_question(
+    question_id: uuid.UUID,
+    update_data: dict,  # Using dict to accept partial updates
+    current_user: User = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+):
+    """
+    Update a question's editable fields including marks, subject, topic, etc.
+    
+    Updateable fields:
+    - marks: int (1-100)
+    - difficulty_level: easy/medium/hard
+    - bloom_taxonomy_level: remember/understand/apply/analyze/evaluate/create
+    - subject_id: UUID - link to a subject
+    - topic_id: UUID - link to a specific chapter/topic
+    - learning_outcome_id: string (e.g., LO1, LO2)
+    - course_outcome_mapping: dict (e.g., {"CO1": 2, "CO3": 1})
+    - question_text: string
+    - correct_answer: string
+    - options: list of strings (for MCQ)
+    """
+    from sqlalchemy import or_
+    from app.models.question import Question
+    from app.models.document import Document
+    from app.models.subject import Subject, Topic
+    
+    # Find the question with ownership check
+    result = await db.execute(
+        select(Question)
+        .outerjoin(Document, Question.document_id == Document.id)
+        .outerjoin(Subject, Question.subject_id == Subject.id)
+        .where(
+            Question.id == question_id,
+            or_(
+                Document.user_id == current_user.id,
+                Subject.user_id == current_user.id,
+                # Also allow if no document/subject (orphaned questions)
+                Question.document_id.is_(None) & Question.subject_id.is_(None),
+            )
+        )
+    )
+    question = result.scalar_one_or_none()
+    
+    if not question:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="Question not found",
+        )
+    
+    # Validate subject_id if provided
+    if 'subject_id' in update_data and update_data['subject_id']:
+        subject_result = await db.execute(
+            select(Subject).where(
+                Subject.id == update_data['subject_id'],
+                Subject.user_id == current_user.id
+            )
+        )
+        if not subject_result.scalar_one_or_none():
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail="Subject not found or doesn't belong to you",
+            )
+    
+    # Validate topic_id if provided
+    if 'topic_id' in update_data and update_data['topic_id']:
+        topic_result = await db.execute(
+            select(Topic)
+            .join(Subject, Topic.subject_id == Subject.id)
+            .where(
+                Topic.id == update_data['topic_id'],
+                Subject.user_id == current_user.id
+            )
+        )
+        topic = topic_result.scalar_one_or_none()
+        if not topic:
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail="Topic not found or doesn't belong to you",
+            )
+        # If topic is provided but subject isn't, auto-set the subject
+        if 'subject_id' not in update_data or not update_data['subject_id']:
+            update_data['subject_id'] = topic.subject_id
+    
+    # Allowed fields to update
+    allowed_fields = {
+        'marks', 'difficulty_level', 'bloom_taxonomy_level', 
+        'subject_id', 'topic_id', 'learning_outcome_id',
+        'course_outcome_mapping', 'question_text', 'correct_answer', 'options'
+    }
+    
+    # Apply updates
+    for field, value in update_data.items():
+        if field in allowed_fields:
+            setattr(question, field, value)
+    
     await db.commit()
     await db.refresh(question)
     

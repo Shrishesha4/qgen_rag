@@ -1,4 +1,4 @@
-import React, { useState, useRef } from 'react';
+import React, { useState, useRef, useEffect } from 'react';
 import {
   View,
   Text,
@@ -10,6 +10,7 @@ import {
   Alert,
   ActivityIndicator,
   Animated,
+  Modal,
 } from 'react-native';
 import { LinearGradient } from 'expo-linear-gradient';
 import * as DocumentPicker from 'expo-document-picker';
@@ -20,6 +21,7 @@ import { NativeButton } from '@/components/ui/native-button';
 import { Colors, Spacing, BorderRadius, FontSizes, Shadows } from '@/constants/theme';
 import { useColorScheme } from '@/hooks/use-color-scheme';
 import { questionsService, QuickGenerateProgress, Question } from '@/services/questions';
+import { subjectsService, Subject, Topic } from '@/services/subjects';
 import { useToast } from '@/components/toast';
 
 type QuestionType = 'mcq' | 'short_answer' | 'long_answer';
@@ -38,12 +40,69 @@ export default function QuickGenerateScreen() {
   const [selectedTypes, setSelectedTypes] = useState<QuestionType[]>(['mcq', 'short_answer']);
   const [difficulty, setDifficulty] = useState<Difficulty>('medium');
   
+  // Marks per question type
+  const [marksMcq, setMarksMcq] = useState(1);
+  const [marksShort, setMarksShort] = useState(2);
+  const [marksLong, setMarksLong] = useState(5);
+  
+  // Subject/Topic linking
+  const [subjects, setSubjects] = useState<Subject[]>([]);
+  const [topics, setTopics] = useState<Topic[]>([]);
+  const [selectedSubjectId, setSelectedSubjectId] = useState<string | null>(null);
+  const [selectedTopicId, setSelectedTopicId] = useState<string | null>(null);
+  const [showSubjectPicker, setShowSubjectPicker] = useState(false);
+  const [showTopicPicker, setShowTopicPicker] = useState(false);
+  const [loadingSubjects, setLoadingSubjects] = useState(false);
+  const [loadingTopics, setLoadingTopics] = useState(false);
+  
   // Generation state
   const [isGenerating, setIsGenerating] = useState(false);
   const [progress, setProgress] = useState<QuickGenerateProgress | null>(null);
   const [generatedQuestions, setGeneratedQuestions] = useState<Question[]>([]);
   const cancelRef = useRef<(() => void) | null>(null);
   const progressAnim = useRef(new Animated.Value(0)).current;
+
+  // Load subjects on mount
+  useEffect(() => {
+    loadSubjects();
+  }, []);
+
+  // Load topics when subject changes
+  useEffect(() => {
+    if (selectedSubjectId) {
+      loadTopics(selectedSubjectId);
+    } else {
+      setTopics([]);
+      setSelectedTopicId(null);
+    }
+  }, [selectedSubjectId]);
+
+  const loadSubjects = async () => {
+    setLoadingSubjects(true);
+    try {
+      const response = await subjectsService.listSubjects(1, 100);
+      setSubjects(response.subjects);
+    } catch (error) {
+      console.error('Failed to load subjects:', error);
+    } finally {
+      setLoadingSubjects(false);
+    }
+  };
+
+  const loadTopics = async (subjectId: string) => {
+    setLoadingTopics(true);
+    try {
+      const response = await subjectsService.listTopics(subjectId, 1, 100);
+      setTopics(response.topics);
+    } catch (error) {
+      console.error('Failed to load topics:', error);
+    } finally {
+      setLoadingTopics(false);
+    }
+  };
+
+  const getSelectedSubject = () => subjects.find(s => s.id === selectedSubjectId);
+  const getSelectedTopic = () => topics.find(t => t.id === selectedTopicId);
 
   const handlePickDocument = async () => {
     try {
@@ -90,6 +149,11 @@ export default function QuickGenerateScreen() {
         count,
         types: selectedTypes,
         difficulty,
+        marks_mcq: selectedTypes.includes('mcq') ? marksMcq : undefined,
+        marks_short: selectedTypes.includes('short_answer') ? marksShort : undefined,
+        marks_long: selectedTypes.includes('long_answer') ? marksLong : undefined,
+        subject_id: selectedSubjectId || undefined,
+        topic_id: selectedTopicId || undefined,
       },
       (progressUpdate) => {
         console.log('[QuickGenerate UI] Progress update:', progressUpdate.status, progressUpdate.progress);
@@ -295,7 +359,290 @@ export default function QuickGenerateScreen() {
             </TouchableOpacity>
           ))}
         </View>
+
+        {/* Marks per Question Type */}
+        <Text style={[styles.optionLabel, { color: colors.textSecondary, marginTop: Spacing.lg }]}>
+          Marks per Question Type
+        </Text>
+        <View style={styles.marksContainer}>
+          {selectedTypes.includes('mcq') && (
+            <View style={styles.marksInputRow}>
+              <Text style={[styles.marksLabel, { color: colors.text }]}>MCQ</Text>
+              <View style={styles.marksInputWrapper}>
+                <TouchableOpacity
+                  style={[styles.marksButton, { backgroundColor: colors.border }]}
+                  onPress={() => setMarksMcq(Math.max(1, marksMcq - 1))}
+                  disabled={isGenerating}
+                >
+                  <IconSymbol name="minus" size={14} color={colors.text} />
+                </TouchableOpacity>
+                <TextInput
+                  style={[styles.marksInput, { backgroundColor: isDark ? 'rgba(255,255,255,0.08)' : 'rgba(0,0,0,0.04)', color: colors.text, borderColor: colors.border }]}
+                  value={marksMcq.toString()}
+                  onChangeText={(v) => setMarksMcq(parseInt(v) || 1)}
+                  keyboardType="numeric"
+                  editable={!isGenerating}
+                />
+                <TouchableOpacity
+                  style={[styles.marksButton, { backgroundColor: colors.border }]}
+                  onPress={() => setMarksMcq(marksMcq + 1)}
+                  disabled={isGenerating}
+                >
+                  <IconSymbol name="plus" size={14} color={colors.text} />
+                </TouchableOpacity>
+              </View>
+            </View>
+          )}
+          {selectedTypes.includes('short_answer') && (
+            <View style={styles.marksInputRow}>
+              <Text style={[styles.marksLabel, { color: colors.text }]}>Short Answer</Text>
+              <View style={styles.marksInputWrapper}>
+                <TouchableOpacity
+                  style={[styles.marksButton, { backgroundColor: colors.border }]}
+                  onPress={() => setMarksShort(Math.max(1, marksShort - 1))}
+                  disabled={isGenerating}
+                >
+                  <IconSymbol name="minus" size={14} color={colors.text} />
+                </TouchableOpacity>
+                <TextInput
+                  style={[styles.marksInput, { backgroundColor: isDark ? 'rgba(255,255,255,0.08)' : 'rgba(0,0,0,0.04)', color: colors.text, borderColor: colors.border }]}
+                  value={marksShort.toString()}
+                  onChangeText={(v) => setMarksShort(parseInt(v) || 1)}
+                  keyboardType="numeric"
+                  editable={!isGenerating}
+                />
+                <TouchableOpacity
+                  style={[styles.marksButton, { backgroundColor: colors.border }]}
+                  onPress={() => setMarksShort(marksShort + 1)}
+                  disabled={isGenerating}
+                >
+                  <IconSymbol name="plus" size={14} color={colors.text} />
+                </TouchableOpacity>
+              </View>
+            </View>
+          )}
+          {selectedTypes.includes('long_answer') && (
+            <View style={styles.marksInputRow}>
+              <Text style={[styles.marksLabel, { color: colors.text }]}>Essay</Text>
+              <View style={styles.marksInputWrapper}>
+                <TouchableOpacity
+                  style={[styles.marksButton, { backgroundColor: colors.border }]}
+                  onPress={() => setMarksLong(Math.max(1, marksLong - 1))}
+                  disabled={isGenerating}
+                >
+                  <IconSymbol name="minus" size={14} color={colors.text} />
+                </TouchableOpacity>
+                <TextInput
+                  style={[styles.marksInput, { backgroundColor: isDark ? 'rgba(255,255,255,0.08)' : 'rgba(0,0,0,0.04)', color: colors.text, borderColor: colors.border }]}
+                  value={marksLong.toString()}
+                  onChangeText={(v) => setMarksLong(parseInt(v) || 1)}
+                  keyboardType="numeric"
+                  editable={!isGenerating}
+                />
+                <TouchableOpacity
+                  style={[styles.marksButton, { backgroundColor: colors.border }]}
+                  onPress={() => setMarksLong(marksLong + 1)}
+                  disabled={isGenerating}
+                >
+                  <IconSymbol name="plus" size={14} color={colors.text} />
+                </TouchableOpacity>
+              </View>
+            </View>
+          )}
+        </View>
       </GlassCard>
+
+      {/* Subject/Topic Linking Section */}
+      <GlassCard style={styles.section}>
+        <Text style={[styles.sectionTitle, { color: colors.text }]}>Link to Subject (Optional)</Text>
+        <Text style={[styles.helperText, { color: colors.textTertiary, marginBottom: Spacing.md }]}>
+          Associate generated questions with a subject and optionally a specific chapter
+        </Text>
+        
+        {/* Subject Picker */}
+        <Text style={[styles.optionLabel, { color: colors.textSecondary }]}>Subject</Text>
+        <TouchableOpacity
+          style={[
+            styles.pickerButton,
+            { 
+              backgroundColor: isDark ? 'rgba(255,255,255,0.08)' : 'rgba(0,0,0,0.04)',
+              borderColor: colors.border,
+            }
+          ]}
+          onPress={() => setShowSubjectPicker(true)}
+          disabled={isGenerating || loadingSubjects}
+        >
+          {loadingSubjects ? (
+            <ActivityIndicator size="small" color={colors.primary} />
+          ) : (
+            <>
+              <IconSymbol name="book.fill" size={18} color={selectedSubjectId ? colors.primary : colors.textSecondary} />
+              <Text style={[styles.pickerText, { color: selectedSubjectId ? colors.text : colors.textTertiary }]}>
+                {getSelectedSubject()?.name || 'Select a subject (optional)'}
+              </Text>
+              <IconSymbol name="chevron.down" size={14} color={colors.textSecondary} />
+            </>
+          )}
+        </TouchableOpacity>
+        {selectedSubjectId && (
+          <TouchableOpacity
+            style={styles.clearButton}
+            onPress={() => {
+              setSelectedSubjectId(null);
+              setSelectedTopicId(null);
+            }}
+          >
+            <Text style={[styles.clearButtonText, { color: colors.error }]}>Clear subject</Text>
+          </TouchableOpacity>
+        )}
+
+        {/* Topic Picker - Only show if subject is selected */}
+        {selectedSubjectId && (
+          <>
+            <Text style={[styles.optionLabel, { color: colors.textSecondary, marginTop: Spacing.lg }]}>Chapter/Topic</Text>
+            <TouchableOpacity
+              style={[
+                styles.pickerButton,
+                { 
+                  backgroundColor: isDark ? 'rgba(255,255,255,0.08)' : 'rgba(0,0,0,0.04)',
+                  borderColor: colors.border,
+                }
+              ]}
+              onPress={() => setShowTopicPicker(true)}
+              disabled={isGenerating || loadingTopics}
+            >
+              {loadingTopics ? (
+                <ActivityIndicator size="small" color={colors.primary} />
+              ) : (
+                <>
+                  <IconSymbol name="doc.text.fill" size={18} color={selectedTopicId ? colors.primary : colors.textSecondary} />
+                  <Text style={[styles.pickerText, { color: selectedTopicId ? colors.text : colors.textTertiary }]}>
+                    {getSelectedTopic()?.name || 'Select a chapter (optional)'}
+                  </Text>
+                  <IconSymbol name="chevron.down" size={14} color={colors.textSecondary} />
+                </>
+              )}
+            </TouchableOpacity>
+            {selectedTopicId && (
+              <TouchableOpacity
+                style={styles.clearButton}
+                onPress={() => setSelectedTopicId(null)}
+              >
+                <Text style={[styles.clearButtonText, { color: colors.error }]}>Clear chapter</Text>
+              </TouchableOpacity>
+            )}
+          </>
+        )}
+      </GlassCard>
+
+      {/* Subject Picker Modal */}
+      <Modal
+        visible={showSubjectPicker}
+        transparent
+        animationType="slide"
+        onRequestClose={() => setShowSubjectPicker(false)}
+      >
+        <View style={styles.modalOverlay}>
+          <View style={[styles.modalContent, { backgroundColor: colors.card }]}>
+            <View style={styles.modalHeader}>
+              <Text style={[styles.modalTitle, { color: colors.text }]}>Select Subject</Text>
+              <TouchableOpacity onPress={() => setShowSubjectPicker(false)}>
+                <IconSymbol name="xmark.circle.fill" size={28} color={colors.textSecondary} />
+              </TouchableOpacity>
+            </View>
+            <ScrollView style={styles.modalList}>
+              {subjects.length === 0 ? (
+                <View style={styles.emptyList}>
+                  <Text style={[styles.emptyListText, { color: colors.textSecondary }]}>
+                    No subjects available. Create a subject first.
+                  </Text>
+                </View>
+              ) : (
+                subjects.map((subject) => (
+                  <TouchableOpacity
+                    key={subject.id}
+                    style={[
+                      styles.modalItem,
+                      { borderBottomColor: colors.border },
+                      selectedSubjectId === subject.id && { backgroundColor: colors.primary + '15' }
+                    ]}
+                    onPress={() => {
+                      setSelectedSubjectId(subject.id);
+                      setSelectedTopicId(null);
+                      setShowSubjectPicker(false);
+                    }}
+                  >
+                    <View style={styles.modalItemContent}>
+                      <Text style={[styles.modalItemTitle, { color: colors.text }]}>{subject.name}</Text>
+                      <Text style={[styles.modalItemSubtitle, { color: colors.textSecondary }]}>
+                        {subject.code} • {subject.total_topics} chapters
+                      </Text>
+                    </View>
+                    {selectedSubjectId === subject.id && (
+                      <IconSymbol name="checkmark.circle.fill" size={22} color={colors.primary} />
+                    )}
+                  </TouchableOpacity>
+                ))
+              )}
+            </ScrollView>
+          </View>
+        </View>
+      </Modal>
+
+      {/* Topic Picker Modal */}
+      <Modal
+        visible={showTopicPicker}
+        transparent
+        animationType="slide"
+        onRequestClose={() => setShowTopicPicker(false)}
+      >
+        <View style={styles.modalOverlay}>
+          <View style={[styles.modalContent, { backgroundColor: colors.card }]}>
+            <View style={styles.modalHeader}>
+              <Text style={[styles.modalTitle, { color: colors.text }]}>Select Chapter</Text>
+              <TouchableOpacity onPress={() => setShowTopicPicker(false)}>
+                <IconSymbol name="xmark.circle.fill" size={28} color={colors.textSecondary} />
+              </TouchableOpacity>
+            </View>
+            <ScrollView style={styles.modalList}>
+              {topics.length === 0 ? (
+                <View style={styles.emptyList}>
+                  <Text style={[styles.emptyListText, { color: colors.textSecondary }]}>
+                    No chapters available for this subject.
+                  </Text>
+                </View>
+              ) : (
+                topics.map((topic) => (
+                  <TouchableOpacity
+                    key={topic.id}
+                    style={[
+                      styles.modalItem,
+                      { borderBottomColor: colors.border },
+                      selectedTopicId === topic.id && { backgroundColor: colors.primary + '15' }
+                    ]}
+                    onPress={() => {
+                      setSelectedTopicId(topic.id);
+                      setShowTopicPicker(false);
+                    }}
+                  >
+                    <View style={styles.modalItemContent}>
+                      <Text style={[styles.modalItemTitle, { color: colors.text }]}>{topic.name}</Text>
+                      {topic.description && (
+                        <Text style={[styles.modalItemSubtitle, { color: colors.textSecondary }]} numberOfLines={1}>
+                          {topic.description}
+                        </Text>
+                      )}
+                    </View>
+                    {selectedTopicId === topic.id && (
+                      <IconSymbol name="checkmark.circle.fill" size={22} color={colors.primary} />
+                    )}
+                  </TouchableOpacity>
+                ))
+              )}
+            </ScrollView>
+          </View>
+        </View>
+      </Modal>
 
       {/* Progress Section */}
       {isGenerating && progress && (
@@ -579,6 +926,110 @@ const styles = StyleSheet.create({
   difficultyButtonText: {
     fontSize: FontSizes.sm,
     fontWeight: '600',
+  },
+  marksContainer: {
+    gap: Spacing.sm,
+  },
+  marksInputRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+  },
+  marksLabel: {
+    fontSize: FontSizes.sm,
+    fontWeight: '500',
+    flex: 1,
+  },
+  marksInputWrapper: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: Spacing.xs,
+  },
+  marksButton: {
+    width: 32,
+    height: 32,
+    borderRadius: BorderRadius.sm,
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  marksInput: {
+    width: 50,
+    height: 36,
+    borderWidth: 1,
+    borderRadius: BorderRadius.sm,
+    textAlign: 'center',
+    fontSize: FontSizes.md,
+    fontWeight: '600',
+  },
+  pickerButton: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    padding: Spacing.md,
+    borderRadius: BorderRadius.md,
+    borderWidth: 1,
+    gap: Spacing.sm,
+  },
+  pickerText: {
+    flex: 1,
+    fontSize: FontSizes.md,
+  },
+  clearButton: {
+    marginTop: Spacing.xs,
+    paddingVertical: Spacing.xs,
+  },
+  clearButtonText: {
+    fontSize: FontSizes.sm,
+  },
+  modalOverlay: {
+    flex: 1,
+    backgroundColor: 'rgba(0, 0, 0, 0.5)',
+    justifyContent: 'flex-end',
+  },
+  modalContent: {
+    borderTopLeftRadius: BorderRadius.xl,
+    borderTopRightRadius: BorderRadius.xl,
+    maxHeight: '70%',
+    paddingBottom: 34,
+  },
+  modalHeader: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    padding: Spacing.lg,
+    borderBottomWidth: 1,
+    borderBottomColor: 'rgba(0, 0, 0, 0.1)',
+  },
+  modalTitle: {
+    fontSize: FontSizes.lg,
+    fontWeight: '600',
+  },
+  modalList: {
+    paddingHorizontal: Spacing.lg,
+  },
+  modalItem: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    paddingVertical: Spacing.md,
+    borderBottomWidth: 1,
+  },
+  modalItemContent: {
+    flex: 1,
+  },
+  modalItemTitle: {
+    fontSize: FontSizes.md,
+    fontWeight: '500',
+  },
+  modalItemSubtitle: {
+    fontSize: FontSizes.sm,
+    marginTop: 2,
+  },
+  emptyList: {
+    padding: Spacing.xl,
+    alignItems: 'center',
+  },
+  emptyListText: {
+    fontSize: FontSizes.sm,
+    textAlign: 'center',
   },
   progressContainer: {
     marginTop: Spacing.sm,

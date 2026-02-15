@@ -9,6 +9,8 @@ export interface Question {
   id: string;
   document_id: string;
   session_id: string | null;
+  subject_id: string | null;
+  topic_id: string | null;
   question_text: string;
   question_type: 'mcq' | 'short_answer' | 'long_answer';
   marks: number | null;
@@ -68,6 +70,24 @@ export interface QuickGenerateRequest {
   types?: ('mcq' | 'short_answer' | 'long_answer')[];
   difficulty?: 'easy' | 'medium' | 'hard';
   bloom_levels?: ('remember' | 'understand' | 'apply' | 'analyze' | 'evaluate' | 'create')[];
+  marks_mcq?: number;
+  marks_short?: number;
+  marks_long?: number;
+  subject_id?: string;
+  topic_id?: string;
+}
+
+export interface QuestionUpdateRequest {
+  marks?: number;
+  difficulty_level?: 'easy' | 'medium' | 'hard';
+  bloom_taxonomy_level?: 'remember' | 'understand' | 'apply' | 'analyze' | 'evaluate' | 'create';
+  subject_id?: string;
+  topic_id?: string;
+  learning_outcome_id?: string;
+  course_outcome_mapping?: Record<string, number>;
+  question_text?: string;
+  correct_answer?: string;
+  options?: string[];
 }
 
 export interface GenerationSession {
@@ -238,6 +258,14 @@ export const questionsService = {
   },
 
   /**
+   * Update a question's editable fields
+   */
+  async updateQuestion(questionId: string, data: QuestionUpdateRequest): Promise<Question> {
+    const response = await apiClient.put<Question>(`/questions/${questionId}`, data);
+    return response.data;
+  },
+
+  /**
    * List generation sessions
    */
   async listSessions(
@@ -310,6 +338,11 @@ export const questionsService = {
         if (request.types) formData.append('types', request.types.join(','));
         if (request.difficulty) formData.append('difficulty', request.difficulty);
         if (request.bloom_levels) formData.append('bloom_levels', request.bloom_levels.join(','));
+        if (request.marks_mcq) formData.append('marks_mcq', request.marks_mcq.toString());
+        if (request.marks_short) formData.append('marks_short', request.marks_short.toString());
+        if (request.marks_long) formData.append('marks_long', request.marks_long.toString());
+        if (request.subject_id) formData.append('subject_id', request.subject_id);
+        if (request.topic_id) formData.append('topic_id', request.topic_id);
 
         const accessToken = await tokenStorage.getAccessToken();
         const baseUrl = apiClient.defaults.baseURL || '';

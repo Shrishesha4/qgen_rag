@@ -106,6 +106,22 @@ class QuestionRatingRequest(BaseModel):
     difficulty_rating: Optional[Literal["too_easy", "just_right", "too_hard"]] = None
 
 
+class QuestionUpdateRequest(BaseModel):
+    """Schema for updating a question's editable fields."""
+    marks: Optional[int] = Field(default=None, ge=1, le=100, description="Marks for this question")
+    difficulty_level: Optional[Literal["easy", "medium", "hard"]] = None
+    bloom_taxonomy_level: Optional[Literal[
+        "remember", "understand", "apply", "analyze", "evaluate", "create"
+    ]] = None
+    subject_id: Optional[uuid.UUID] = Field(default=None, description="Link to a subject")
+    topic_id: Optional[uuid.UUID] = Field(default=None, description="Link to a specific topic/chapter")
+    learning_outcome_id: Optional[str] = Field(default=None, description="Link to a learning outcome (e.g., LO1)")
+    course_outcome_mapping: Optional[dict] = Field(default=None, description="Course outcome mapping")
+    question_text: Optional[str] = Field(default=None, min_length=5, description="Updated question text")
+    correct_answer: Optional[str] = Field(default=None, description="Updated correct answer")
+    options: Optional[List[str]] = Field(default=None, description="Updated MCQ options")
+
+
 class GenerationProgress(BaseModel):
     """Schema for generation progress SSE event."""
     status: Literal["processing", "generating", "validating", "complete", "error"]

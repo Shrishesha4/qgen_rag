@@ -9,6 +9,8 @@ import {
   Alert,
   ActivityIndicator,
   Platform,
+  TextInput,
+  Modal,
 } from 'react-native';
 import { LinearGradient } from 'expo-linear-gradient';
 import { IconSymbol } from '@/components/ui/icon-symbol';
@@ -17,6 +19,8 @@ import { NativeButton } from '@/components/ui/native-button';
 import { Colors, Spacing, BorderRadius, FontSizes } from '@/constants/theme';
 import { useColorScheme } from '@/hooks/use-color-scheme';
 import { vettingService, PendingQuestion, VettingStats, CourseOutcomeMapping } from '@/services/vetting';
+import { questionsService } from '@/services/questions';
+import { subjectsService, Subject, Topic } from '@/services/subjects';
 import { useToast } from '@/components/toast';
 
 const CO_LEVELS = [
@@ -30,6 +34,7 @@ const COURSE_OUTCOMES = ['CO1', 'CO2', 'CO3', 'CO4', 'CO5'];
 export default function VettingScreen() {
   const colorScheme = useColorScheme();
   const colors = Colors[colorScheme ?? 'light'];
+  const isDark = colorScheme === 'dark';
   const { showError, showSuccess } = useToast();
   
   const [questions, setQuestions] = useState<PendingQuestion[]>([]);
@@ -38,6 +43,20 @@ export default function VettingScreen() {
   const [isRefreshing, setIsRefreshing] = useState(false);
   const [expandedQuestion, setExpandedQuestion] = useState<string | null>(null);
   const [coMappings, setCoMappings] = useState<Record<string, CourseOutcomeMapping>>({});
+  
+  // Edit state for marks and subject/topic
+  const [editMarks, setEditMarks] = useState<Record<string, number>>({});
+  const [editDifficulty, setEditDifficulty] = useState<Record<string, string>>({});
+  const [editSubjectId, setEditSubjectId] = useState<Record<string, string | null>>({});
+  const [editTopicId, setEditTopicId] = useState<Record<string, string | null>>({});
+  
+  // Subject/Topic picker state
+  const [subjects, setSubjects] = useState<Subject[]>([]);
+  const [topics, setTopics] = useState<Record<string, Topic[]>>({});
+  const [loadingSubjects, setLoadingSubjects] = useState(false);
+  const [showSubjectPicker, setShowSubjectPicker] = useState<string | null>(null);
+  const [showTopicPicker, setShowTopicPicker] = useState<string | null>(null);
+  const [savingQuestion, setSavingQuestion] = useState<string | null>(null);
 
   const loadData = useCallback(async () => {
     try {
@@ -48,12 +67,25 @@ export default function VettingScreen() {
       setQuestions(questionsResponse.questions);
       setStats(statsResponse);
       
-      // Initialize CO mappings
+      // Initialize CO mappings and edit state
       const initialMappings: Record<string, CourseOutcomeMapping> = {};
+      const initialMarks: Record<string, number> = {};
+      const initialDifficulty: Record<string, string> = {};
+      const initialSubjectId: Record<string, string | null> = {};
+      const initialTopicId: Record<string, string | null> = {};
+      
       questionsResponse.questions.forEach((q) => {
         initialMappings[q.id] = q.course_outcome_mapping || {};
+        initialMarks[q.id] = q.marks || 1;
+        initialDifficulty[q.id] = q.difficulty_level || 'medium';
+        initialSubjectId[q.id] = q.subject_id || null;
+        initialTopicId[q.id] = q.topic_id || null;
       });
       setCoMappings(initialMappings);
+      setEditMarks(initialMarks);
+      setEditDifficulty(initialDifficulty);
+      setEditSubjectId(initialSubjectId);
+      setEditTopicId(initialTopicId);
     } catch (error) {
       console.error('Failed to load data:', error);
     } finally {
@@ -62,13 +94,65 @@ export default function VettingScreen() {
     }
   }, []);
 
+  const loadSubjects = useCallback(async () => {
+    if (subjects.length > 0) return;
+    setLoadingSubjects(true);
+    try {
+      const response = await subjectsService.listSubjects(1, 100);
+      setSubjects(response.subjects);
+    } catch (error) {
+      console.error('Failed to load subjects:', error);
+    } finally {
+      setLoadingSubjects(false);
+    }
+  }, [subjects.length]);
+
+  const loadTopicsForSubject = useCallback(async (subjectId: string) => {
+    if (topics[subjectId]) return;
+    try {
+      const response = await subjectsService.listTopics(subjectId, 1, 100);
+      setTopics(prev => ({ ...prev, [subjectId]: response.topics }));
+    } catch (error) {
+      console.error('Failed to load topics:', error);
+    }
+  }, [topics]);
+
   useEffect(() => {
     loadData();
+    loadSubjects();
   }, []);
 
   const handleRefresh = () => {
     setIsRefreshing(true);
     loadData();
+  };
+
+  const handleSaveQuestionEdits = async (questionId: string) => {
+    setSavingQuestion(questionId);
+    try {
+      await questionsService.updateQuestion(questionId, {
+        marks: editMarks[questionId],
+        difficulty_level: editDifficulty[questionId],
+        subject_id: editSubjectId[questionId] || undefined,
+        topic_id: editTopicId[questionId] || undefined,
+        course_outcome_mapping: coMappings[questionId],
+      });
+      showSuccess('Question updated successfully');
+    } catch (error) {
+      showError(error, 'Failed to save changes');
+    } finally {
+      setSavingQuestion(null);
+    }
+  };
+
+  const getSubjectName = (subjectId: string | null) => {
+    if (!subjectId) return null;
+    return subjects.find(s => s.id === subjectId)?.name || null;
+  };
+
+  const getTopicName = (subjectId: string | null, topicId: string | null) => {
+    if (!subjectId || !topicId) return null;
+    return topics[subjectId]?.find(t => t.id === topicId)?.name || null;
   };
 
   const handleApprove = async (questionId: string) => {
@@ -223,12 +307,117 @@ export default function VettingScreen() {
           </View>
         )}
 
-        {/* Expanded Content - CO Mapping */}
+        {/* Expanded Content - Edit Section */}
         {isExpanded && (
           <View style={styles.expandedContent}>
+            {/* Marks & Difficulty Section */}
+            <LinearGradient
+              colors={['#4A90D9', '#357ABD'] as const}
+              style={styles.coHeader}
+            >
+              <IconSymbol name="slider.horizontal.3" size={16} color="#FFFFFF" />
+              <Text style={styles.coHeaderText}>Marks & Difficulty</Text>
+            </LinearGradient>
+            
+            <View style={styles.editRow}>
+              <Text style={[styles.editLabel, { color: colors.text }]}>Marks</Text>
+              <View style={styles.marksInputWrapper}>
+                <TouchableOpacity
+                  style={[styles.marksButton, { backgroundColor: colors.border }]}
+                  onPress={() => setEditMarks(prev => ({ ...prev, [question.id]: Math.max(1, (prev[question.id] || 1) - 1) }))}
+                >
+                  <IconSymbol name="minus" size={14} color={colors.text} />
+                </TouchableOpacity>
+                <TextInput
+                  style={[styles.marksInput, { backgroundColor: isDark ? 'rgba(255,255,255,0.08)' : 'rgba(0,0,0,0.04)', color: colors.text, borderColor: colors.border }]}
+                  value={(editMarks[question.id] || 1).toString()}
+                  onChangeText={(v) => setEditMarks(prev => ({ ...prev, [question.id]: parseInt(v) || 1 }))}
+                  keyboardType="numeric"
+                />
+                <TouchableOpacity
+                  style={[styles.marksButton, { backgroundColor: colors.border }]}
+                  onPress={() => setEditMarks(prev => ({ ...prev, [question.id]: (prev[question.id] || 1) + 1 }))}
+                >
+                  <IconSymbol name="plus" size={14} color={colors.text} />
+                </TouchableOpacity>
+              </View>
+            </View>
+            
+            <View style={[styles.editRow, { marginTop: Spacing.md }]}>
+              <Text style={[styles.editLabel, { color: colors.text }]}>Difficulty</Text>
+              <View style={styles.difficultyButtons}>
+                {[
+                  { value: 'easy', label: 'Easy', color: '#34C759' },
+                  { value: 'medium', label: 'Medium', color: '#FF9500' },
+                  { value: 'hard', label: 'Hard', color: '#FF3B30' },
+                ].map(({ value, label, color }) => (
+                  <TouchableOpacity
+                    key={value}
+                    style={[
+                      styles.difficultyButton,
+                      { borderColor: color },
+                      editDifficulty[question.id] === value && { backgroundColor: color },
+                    ]}
+                    onPress={() => setEditDifficulty(prev => ({ ...prev, [question.id]: value }))}
+                  >
+                    <Text style={[
+                      styles.difficultyButtonText,
+                      { color: editDifficulty[question.id] === value ? '#FFFFFF' : color },
+                    ]}>
+                      {label}
+                    </Text>
+                  </TouchableOpacity>
+                ))}
+              </View>
+            </View>
+
+            {/* Subject/Topic Linking */}
+            <LinearGradient
+              colors={['#34C759', '#30B350'] as const}
+              style={[styles.coHeader, { marginTop: Spacing.lg }]}
+            >
+              <IconSymbol name="link" size={16} color="#FFFFFF" />
+              <Text style={styles.coHeaderText}>Subject & Chapter</Text>
+            </LinearGradient>
+
+            <View style={styles.editRow}>
+              <Text style={[styles.editLabel, { color: colors.text }]}>Subject</Text>
+              <TouchableOpacity
+                style={[styles.pickerButton, { backgroundColor: isDark ? 'rgba(255,255,255,0.08)' : 'rgba(0,0,0,0.04)', borderColor: colors.border }]}
+                onPress={() => {
+                  loadSubjects();
+                  setShowSubjectPicker(question.id);
+                }}
+              >
+                <Text style={[styles.pickerText, { color: editSubjectId[question.id] ? colors.text : colors.textTertiary }]} numberOfLines={1}>
+                  {getSubjectName(editSubjectId[question.id]) || 'Select subject'}
+                </Text>
+                <IconSymbol name="chevron.down" size={14} color={colors.textSecondary} />
+              </TouchableOpacity>
+            </View>
+
+            {editSubjectId[question.id] && (
+              <View style={[styles.editRow, { marginTop: Spacing.sm }]}>
+                <Text style={[styles.editLabel, { color: colors.text }]}>Chapter</Text>
+                <TouchableOpacity
+                  style={[styles.pickerButton, { backgroundColor: isDark ? 'rgba(255,255,255,0.08)' : 'rgba(0,0,0,0.04)', borderColor: colors.border }]}
+                  onPress={() => {
+                    loadTopicsForSubject(editSubjectId[question.id]!);
+                    setShowTopicPicker(question.id);
+                  }}
+                >
+                  <Text style={[styles.pickerText, { color: editTopicId[question.id] ? colors.text : colors.textTertiary }]} numberOfLines={1}>
+                    {getTopicName(editSubjectId[question.id], editTopicId[question.id]) || 'Select chapter (optional)'}
+                  </Text>
+                  <IconSymbol name="chevron.down" size={14} color={colors.textSecondary} />
+                </TouchableOpacity>
+              </View>
+            )}
+
+            {/* CO Mapping Section */}
             <LinearGradient
               colors={['#5856D6', '#4A4ADE'] as const}
-              style={styles.coHeader}
+              style={[styles.coHeader, { marginTop: Spacing.lg }]}
             >
               <IconSymbol name="list.number" size={16} color="#FFFFFF" />
               <Text style={styles.coHeaderText}>Course Outcome Mapping</Text>
@@ -263,10 +452,18 @@ export default function VettingScreen() {
             </View>
             
             <TouchableOpacity
-              style={[styles.saveCoButton, { backgroundColor: colors.secondary }]}
-              onPress={() => saveCoMapping(question.id)}
+              style={[styles.saveAllButton, { backgroundColor: colors.primary }]}
+              onPress={() => handleSaveQuestionEdits(question.id)}
+              disabled={savingQuestion === question.id}
             >
-              <Text style={styles.saveCoButtonText}>Save CO Mapping</Text>
+              {savingQuestion === question.id ? (
+                <ActivityIndicator size="small" color="#FFFFFF" />
+              ) : (
+                <>
+                  <IconSymbol name="checkmark.circle.fill" size={18} color="#FFFFFF" />
+                  <Text style={styles.saveAllButtonText}>Save All Changes</Text>
+                </>
+              )}
             </TouchableOpacity>
           </View>
         )}
@@ -348,6 +545,155 @@ export default function VettingScreen() {
           )}
         </View>
       </ScrollView>
+
+      {/* Subject Picker Modal */}
+      <Modal
+        visible={showSubjectPicker !== null}
+        transparent
+        animationType="slide"
+        onRequestClose={() => setShowSubjectPicker(null)}
+      >
+        <View style={styles.modalOverlay}>
+          <View style={[styles.modalContent, { backgroundColor: colors.card }]}>
+            <View style={styles.modalHeader}>
+              <Text style={[styles.modalTitle, { color: colors.text }]}>Select Subject</Text>
+              <TouchableOpacity onPress={() => setShowSubjectPicker(null)}>
+                <IconSymbol name="xmark.circle.fill" size={28} color={colors.textSecondary} />
+              </TouchableOpacity>
+            </View>
+            <ScrollView style={styles.modalList}>
+              {loadingSubjects ? (
+                <View style={styles.emptyList}>
+                  <ActivityIndicator size="small" color={colors.primary} />
+                </View>
+              ) : subjects.length === 0 ? (
+                <View style={styles.emptyList}>
+                  <Text style={[styles.emptyListText, { color: colors.textSecondary }]}>
+                    No subjects available.
+                  </Text>
+                </View>
+              ) : (
+                <>
+                  <TouchableOpacity
+                    style={[styles.modalItem, { borderBottomColor: colors.border }]}
+                    onPress={() => {
+                      if (showSubjectPicker) {
+                        setEditSubjectId(prev => ({ ...prev, [showSubjectPicker]: null }));
+                        setEditTopicId(prev => ({ ...prev, [showSubjectPicker]: null }));
+                      }
+                      setShowSubjectPicker(null);
+                    }}
+                  >
+                    <View style={styles.modalItemContent}>
+                      <Text style={[styles.modalItemTitle, { color: colors.textSecondary }]}>None (Clear selection)</Text>
+                    </View>
+                  </TouchableOpacity>
+                  {subjects.map((subject) => (
+                    <TouchableOpacity
+                      key={subject.id}
+                      style={[
+                        styles.modalItem,
+                        { borderBottomColor: colors.border },
+                        showSubjectPicker && editSubjectId[showSubjectPicker] === subject.id && { backgroundColor: colors.primary + '15' }
+                      ]}
+                      onPress={() => {
+                        if (showSubjectPicker) {
+                          setEditSubjectId(prev => ({ ...prev, [showSubjectPicker]: subject.id }));
+                          setEditTopicId(prev => ({ ...prev, [showSubjectPicker]: null }));
+                          loadTopicsForSubject(subject.id);
+                        }
+                        setShowSubjectPicker(null);
+                      }}
+                    >
+                      <View style={styles.modalItemContent}>
+                        <Text style={[styles.modalItemTitle, { color: colors.text }]}>{subject.name}</Text>
+                        <Text style={[styles.modalItemSubtitle, { color: colors.textSecondary }]}>
+                          {subject.code} • {subject.total_topics} chapters
+                        </Text>
+                      </View>
+                      {showSubjectPicker && editSubjectId[showSubjectPicker] === subject.id && (
+                        <IconSymbol name="checkmark.circle.fill" size={22} color={colors.primary} />
+                      )}
+                    </TouchableOpacity>
+                  ))}
+                </>
+              )}
+            </ScrollView>
+          </View>
+        </View>
+      </Modal>
+
+      {/* Topic Picker Modal */}
+      <Modal
+        visible={showTopicPicker !== null}
+        transparent
+        animationType="slide"
+        onRequestClose={() => setShowTopicPicker(null)}
+      >
+        <View style={styles.modalOverlay}>
+          <View style={[styles.modalContent, { backgroundColor: colors.card }]}>
+            <View style={styles.modalHeader}>
+              <Text style={[styles.modalTitle, { color: colors.text }]}>Select Chapter</Text>
+              <TouchableOpacity onPress={() => setShowTopicPicker(null)}>
+                <IconSymbol name="xmark.circle.fill" size={28} color={colors.textSecondary} />
+              </TouchableOpacity>
+            </View>
+            <ScrollView style={styles.modalList}>
+              {showTopicPicker && editSubjectId[showTopicPicker] ? (
+                <>
+                  <TouchableOpacity
+                    style={[styles.modalItem, { borderBottomColor: colors.border }]}
+                    onPress={() => {
+                      if (showTopicPicker) {
+                        setEditTopicId(prev => ({ ...prev, [showTopicPicker]: null }));
+                      }
+                      setShowTopicPicker(null);
+                    }}
+                  >
+                    <View style={styles.modalItemContent}>
+                      <Text style={[styles.modalItemTitle, { color: colors.textSecondary }]}>None (Link to subject only)</Text>
+                    </View>
+                  </TouchableOpacity>
+                  {(topics[editSubjectId[showTopicPicker]!] || []).map((topic) => (
+                    <TouchableOpacity
+                      key={topic.id}
+                      style={[
+                        styles.modalItem,
+                        { borderBottomColor: colors.border },
+                        showTopicPicker && editTopicId[showTopicPicker] === topic.id && { backgroundColor: colors.primary + '15' }
+                      ]}
+                      onPress={() => {
+                        if (showTopicPicker) {
+                          setEditTopicId(prev => ({ ...prev, [showTopicPicker]: topic.id }));
+                        }
+                        setShowTopicPicker(null);
+                      }}
+                    >
+                      <View style={styles.modalItemContent}>
+                        <Text style={[styles.modalItemTitle, { color: colors.text }]}>{topic.name}</Text>
+                        {topic.description && (
+                          <Text style={[styles.modalItemSubtitle, { color: colors.textSecondary }]} numberOfLines={1}>
+                            {topic.description}
+                          </Text>
+                        )}
+                      </View>
+                      {showTopicPicker && editTopicId[showTopicPicker] === topic.id && (
+                        <IconSymbol name="checkmark.circle.fill" size={22} color={colors.primary} />
+                      )}
+                    </TouchableOpacity>
+                  ))}
+                </>
+              ) : (
+                <View style={styles.emptyList}>
+                  <Text style={[styles.emptyListText, { color: colors.textSecondary }]}>
+                    No chapters available.
+                  </Text>
+                </View>
+              )}
+            </ScrollView>
+          </View>
+        </View>
+      </Modal>
     </View>
   );
 }
@@ -569,5 +915,135 @@ const styles = StyleSheet.create({
   emptyDescription: {
     fontSize: FontSizes.sm,
     marginTop: Spacing.xs,
+  },
+  // Marks and difficulty editing styles
+  editRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    marginBottom: Spacing.sm,
+  },
+  editLabel: {
+    fontSize: FontSizes.sm,
+    fontWeight: '500',
+    flex: 0.4,
+  },
+  marksInputWrapper: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: Spacing.xs,
+    flex: 0.6,
+    justifyContent: 'flex-end',
+  },
+  marksButton: {
+    width: 32,
+    height: 32,
+    borderRadius: BorderRadius.sm,
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  marksInput: {
+    width: 50,
+    height: 36,
+    borderWidth: 1,
+    borderRadius: BorderRadius.sm,
+    textAlign: 'center',
+    fontSize: FontSizes.md,
+    fontWeight: '600',
+  },
+  difficultyButtons: {
+    flexDirection: 'row',
+    gap: Spacing.xs,
+    flex: 0.6,
+    justifyContent: 'flex-end',
+  },
+  difficultyButton: {
+    paddingVertical: Spacing.xs,
+    paddingHorizontal: Spacing.sm,
+    borderRadius: BorderRadius.sm,
+    borderWidth: 2,
+  },
+  difficultyButtonText: {
+    fontSize: FontSizes.xs,
+    fontWeight: '600',
+  },
+  pickerButton: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    padding: Spacing.sm,
+    borderRadius: BorderRadius.sm,
+    borderWidth: 1,
+    flex: 0.6,
+    gap: Spacing.xs,
+  },
+  pickerText: {
+    flex: 1,
+    fontSize: FontSizes.sm,
+  },
+  saveAllButton: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'center',
+    padding: Spacing.md,
+    borderRadius: BorderRadius.sm,
+    marginTop: Spacing.md,
+    gap: Spacing.sm,
+  },
+  saveAllButtonText: {
+    fontSize: FontSizes.sm,
+    fontWeight: '600',
+    color: '#FFFFFF',
+  },
+  // Modal styles
+  modalOverlay: {
+    flex: 1,
+    backgroundColor: 'rgba(0, 0, 0, 0.5)',
+    justifyContent: 'flex-end',
+  },
+  modalContent: {
+    borderTopLeftRadius: BorderRadius.xl,
+    borderTopRightRadius: BorderRadius.xl,
+    maxHeight: '70%',
+    paddingBottom: 34,
+  },
+  modalHeader: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    padding: Spacing.lg,
+    borderBottomWidth: 1,
+    borderBottomColor: 'rgba(0, 0, 0, 0.1)',
+  },
+  modalTitle: {
+    fontSize: FontSizes.lg,
+    fontWeight: '600',
+  },
+  modalList: {
+    paddingHorizontal: Spacing.lg,
+  },
+  modalItem: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    paddingVertical: Spacing.md,
+    borderBottomWidth: 1,
+  },
+  modalItemContent: {
+    flex: 1,
+  },
+  modalItemTitle: {
+    fontSize: FontSizes.md,
+    fontWeight: '500',
+  },
+  modalItemSubtitle: {
+    fontSize: FontSizes.sm,
+    marginTop: 2,
+  },
+  emptyList: {
+    padding: Spacing.xl,
+    alignItems: 'center',
+  },
+  emptyListText: {
+    fontSize: FontSizes.sm,
+    textAlign: 'center',
   },
 });

@@ -858,6 +858,8 @@ Output valid JSON only."""
         difficulty: str,
         chunk_ids: List[uuid.UUID],
         chunks: Optional[List[DocumentChunk]] = None,
+        subject_id: Optional[uuid.UUID] = None,
+        topic_id: Optional[uuid.UUID] = None,
     ) -> tuple[Question, QuestionResponse]:
         """
         Save generated question to database after validation.
@@ -897,6 +899,8 @@ Output valid JSON only."""
         question = Question(
             document_id=document_id,
             session_id=session_id,
+            subject_id=subject_id,
+            topic_id=topic_id,
             question_text=question_data["question_text"],
             question_embedding=question_embedding,
             question_type=question_type,
@@ -1162,6 +1166,9 @@ Output valid JSON only."""
         difficulty: str = "medium",
         bloom_levels: Optional[List[str]] = None,
         use_query_expansion: bool = False,
+        marks_by_type: Optional[dict] = None,
+        subject_id: Optional[uuid.UUID] = None,
+        topic_id: Optional[uuid.UUID] = None,
     ) -> AsyncGenerator[QuickGenerateProgress, None]:
         """
         Generate questions from an already-processed document with minimal configuration.
@@ -1175,9 +1182,16 @@ Output valid JSON only."""
             types: Question types to generate
             difficulty: Difficulty level
             bloom_levels: Target Bloom's taxonomy levels
+            marks_by_type: Dict mapping question type to marks (e.g., {"mcq": 1, "short_answer": 2, "long_answer": 5})
+            subject_id: Subject ID to link questions to
+            topic_id: Topic/Chapter ID to link questions to
         """
         if types is None:
             types = ["mcq", "short_answer"]
+        
+        # Default marks by type if not provided
+        if marks_by_type is None:
+            marks_by_type = {"mcq": 1, "short_answer": 2, "long_answer": 5}
 
         # 1. Acquire generation lock
         lock_acquired = await self.redis_service.acquire_generation_lock(
@@ -1323,15 +1337,20 @@ Output valid JSON only."""
 
                         # Save question to database (includes validation)
                         try:
+                            # Get marks for this question type
+                            type_marks = marks_by_type.get(q_type, 1)
+                            
                             question, question_response = await self._save_question(
                                 document_id=document_id,
                                 session_id=session_id,
                                 question_data=question_data,
                                 question_type=q_type,
-                                marks=None,
+                                marks=type_marks,
                                 difficulty=difficulty,
                                 chunk_ids=[c.id for c in selected_chunks],
                                 chunks=selected_chunks,
+                                subject_id=subject_id,
+                                topic_id=topic_id,
                             )
                             
                             questions_generated += 1
