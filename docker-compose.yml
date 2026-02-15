@@ -1,0 +1,243 @@
+version: '3.8'
+
+# =============================================================================
+# QuestionGeneration AI - Docker Compose Configuration
+# =============================================================================
+# A stateful RAG-based question generation system for educators
+#
+# Services:
+#   - db: PostgreSQL 16 with pgvector for vector similarity search
+#   - redis: Redis 7 for caching, sessions, and rate limiting
+#   - api: FastAPI backend with ML models
+#
+# Usage:
+#   Development:  docker-compose up -d
+#   Production:   docker-compose -f docker-compose.yml -f docker-compose.prod.yml up -d
+#   Logs:         docker-compose logs -f api
+#   Rebuild:      docker-compose up -d --build
+# =============================================================================
+
+services:
+  # ===========================================================================
+  # Database Service - PostgreSQL with pgvector
+  # ===========================================================================
+  # Stores all application data including vector embeddings for semantic search
+  # Uses pgvector extension for efficient similarity queries
+  db:
+    image: pgvector/pgvector:pg16
+    container_name: qgen_db
+    restart: unless-stopped
+    environment:
+      POSTGRES_USER: ${POSTGRES_USER:-qgen_user}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-qgen_password}
+      POSTGRES_DB: ${POSTGRES_DB:-qgen_db}
+      # Performance tuning for vector workloads
+      POSTGRES_INITDB_ARGS: "--encoding=UTF8 --locale=C"
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+      - ./backend/init_db.sql:/docker-entrypoint-initdb.d/init.sql:ro
+    ports:
+      - "${POSTGRES_PORT:-5432}:5432"
+    networks:
+      - qgen_net
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER:-qgen_user} -d ${POSTGRES_DB:-qgen_db}"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+      start_period: 10s
+    # Resource limits (adjust based on your system)
+    deploy:
+      resources:
+        limits:
+          memory: 2G
+        reservations:
+          memory: 512M
+
+  # ===========================================================================
+  # Cache & Session Store - Redis
+  # ===========================================================================
+  # Handles:
+  #   - JWT token blacklisting
+  #   - Rate limiting counters
+  #   - Embedding cache (L2 persistent cache)
+  #   - Generation locks
+  #   - Session management
+  redis:
+    image: redis:7-alpine
+    container_name: qgen_redis
+    restart: unless-stopped
+    command: >
+      redis-server
+      --appendonly yes
+      --maxmemory 512mb
+      --maxmemory-policy allkeys-lru
+      --save 60 1000
+    volumes:
+      - redis_data:/data
+    ports:
+      - "${REDIS_PORT:-6379}:6379"
+    networks:
+      - qgen_net
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+      start_period: 5s
+    deploy:
+      resources:
+        limits:
+          memory: 512M
+        reservations:
+          memory: 128M
+
+  # ===========================================================================
+  # Ollama LLM Service (Optional - Docker version)
+  # ===========================================================================
+  # Uncomment this section if you prefer running Ollama in Docker
+  # NOTE: For GPU acceleration, local installation is recommended
+  #
+  # ollama:
+  #   image: ollama/ollama:latest
+  #   container_name: qgen_ollama
+  #   restart: unless-stopped
+  #   volumes:
+  #     - ollama_data:/root/.ollama
+  #   ports:
+  #     - "11434:11434"
+  #   networks:
+  #     - qgen_net
+  #   # For NVIDIA GPU support, uncomment:
+  #   # deploy:
+  #   #   resources:
+  #   #     reservations:
+  #   #       devices:
+  #   #         - driver: nvidia
+  #   #           count: 1
+  #   #           capabilities: [gpu]
+
+  # ===========================================================================
+  # Backend API - FastAPI
+  # ===========================================================================
+  # Main application server with:
+  #   - RAG-based question generation
+  #   - Hybrid search (BM25 + vector)
+  #   - Cross-encoder reranking
+  #   - JWT authentication
+  #   - SSE streaming for real-time updates
+  api:
+    build:
+      context: ./backend
+      dockerfile: Dockerfile
+      args:
+        - PYTHON_VERSION=3.11
+    container_name: qgen_api
+    restart: unless-stopped
+    command: >
+      uvicorn app.main:app
+      --host 0.0.0.0
+      --port 8000
+      --reload
+      --log-level ${LOG_LEVEL:-info}
+    # Enable host.docker.internal for accessing local Ollama
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
+    volumes:
+      # Mount source code for hot-reload in development
+      - ./backend:/app
+      # Persistent storage for uploaded documents
+      - upload_data:/app/uploads
+      # Cache for ML models (sentence-transformers, cross-encoder)
+      - model_cache:/root/.cache
+    environment:
+      # Database
+      - DATABASE_URL=postgresql+asyncpg://${POSTGRES_USER:-qgen_user}:${POSTGRES_PASSWORD:-qgen_password}@db:5432/${POSTGRES_DB:-qgen_db}
+      
+      # Redis
+      - REDIS_URL=redis://redis:6379/0
+      
+      # Ollama LLM
+      # Use host.docker.internal for local Ollama, or 'ollama:11434' for Docker Ollama
+      - OLLAMA_BASE_URL=${OLLAMA_BASE_URL:-http://host.docker.internal:11434}
+      - OLLAMA_MODEL=${OLLAMA_MODEL:-llama3.2:3b-instruct-q4_K_M}
+      
+      # Security
+      - SECRET_KEY=${SECRET_KEY:-your-super-secret-key-change-in-production}
+      - ACCESS_TOKEN_EXPIRE_MINUTES=${ACCESS_TOKEN_EXPIRE_MINUTES:-60}
+      - REFRESH_TOKEN_EXPIRE_DAYS=${REFRESH_TOKEN_EXPIRE_DAYS:-30}
+      
+      # File Upload
+      - UPLOAD_DIR=/app/uploads
+      - MAX_UPLOAD_SIZE_MB=${MAX_UPLOAD_SIZE_MB:-50}
+      
+      # Embedding Model
+      - EMBEDDING_MODEL=${EMBEDDING_MODEL:-all-MiniLM-L6-v2}
+      - EMBEDDING_DIMENSION=${EMBEDDING_DIMENSION:-384}
+      - EMBEDDING_REDIS_CACHE=${EMBEDDING_REDIS_CACHE:-true}
+      - EMBEDDING_CACHE_TTL=${EMBEDDING_CACHE_TTL:-604800}
+      
+      # Reranker
+      - RERANKER_MODEL=${RERANKER_MODEL:-cross-encoder/ms-marco-MiniLM-L-6-v2}
+      - RERANKER_ENABLED=${RERANKER_ENABLED:-true}
+      
+      # Question Generation
+      - MAX_QUESTIONS_PER_REQUEST=${MAX_QUESTIONS_PER_REQUEST:-50}
+      - CHUNK_SIZE=${CHUNK_SIZE:-1000}
+      - CHUNK_OVERLAP=${CHUNK_OVERLAP:-200}
+      
+      # Logging & Monitoring
+      - LOG_LEVEL=${LOG_LEVEL:-INFO}
+      - LOG_JSON=${LOG_JSON:-false}
+      - ENABLE_METRICS=${ENABLE_METRICS:-true}
+      
+      # Rate Limiting
+      - RATE_LIMIT_REQUESTS=${RATE_LIMIT_REQUESTS:-100}
+      - RATE_LIMIT_WINDOW_SECONDS=${RATE_LIMIT_WINDOW_SECONDS:-3600}
+    ports:
+      - "${API_PORT:-8000}:8000"
+    depends_on:
+      db:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+    networks:
+      - qgen_net
+    deploy:
+      resources:
+        limits:
+          memory: 4G
+        reservations:
+          memory: 1G
+
+# =============================================================================
+# Volumes
+# =============================================================================
+volumes:
+  # PostgreSQL data persistence
+  postgres_data:
+    name: qgen_postgres_data
+  
+  # Redis data persistence (AOF + RDB)
+  redis_data:
+    name: qgen_redis_data
+  
+  # Uploaded documents storage
+  upload_data:
+    name: qgen_upload_data
+  
+  # ML model cache (sentence-transformers, cross-encoder)
+  model_cache:
+    name: qgen_model_cache
+  
+  # Uncomment if using Docker Ollama
+  # ollama_data:
+  #   name: qgen_ollama_data
+
+# =============================================================================
+# Networks
+# =============================================================================
+networks:
+  qgen_net:
+    name: qgen_network
+    driver: bridge
