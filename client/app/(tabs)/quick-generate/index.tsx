@@ -11,6 +11,7 @@ import {
   ActivityIndicator,
   Animated,
   Modal,
+  RefreshControl,
 } from 'react-native';
 import { LinearGradient } from 'expo-linear-gradient';
 import * as DocumentPicker from 'expo-document-picker';
@@ -54,6 +55,7 @@ export default function QuickGenerateScreen() {
   const [showTopicPicker, setShowTopicPicker] = useState(false);
   const [loadingSubjects, setLoadingSubjects] = useState(false);
   const [loadingTopics, setLoadingTopics] = useState(false);
+  const [isRefreshing, setIsRefreshing] = useState(false);
   
   // Generation state
   const [isGenerating, setIsGenerating] = useState(false);
@@ -86,6 +88,7 @@ export default function QuickGenerateScreen() {
       console.error('Failed to load subjects:', error);
     } finally {
       setLoadingSubjects(false);
+      setIsRefreshing(false);
     }
   };
 
@@ -103,6 +106,11 @@ export default function QuickGenerateScreen() {
 
   const getSelectedSubject = () => subjects.find(s => s.id === selectedSubjectId);
   const getSelectedTopic = () => topics.find(t => t.id === selectedTopicId);
+
+  const handleRefresh = () => {
+    setIsRefreshing(true);
+    loadSubjects();
+  };
 
   const handlePickDocument = async () => {
     try {
@@ -199,6 +207,14 @@ export default function QuickGenerateScreen() {
       style={[styles.container, { backgroundColor: colors.background }]}
       contentContainerStyle={styles.contentContainer}
       showsVerticalScrollIndicator={false}
+      refreshControl={
+        <RefreshControl
+          refreshing={isRefreshing}
+          onRefresh={handleRefresh}
+          tintColor={colors.primary}
+          colors={[colors.primary]}
+        />
+      }
     >
       {/* Header */}
       <LinearGradient
