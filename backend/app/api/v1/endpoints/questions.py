@@ -727,6 +727,7 @@ async def get_analytics_by_subject(
     from app.models.question import Question
     from app.models.document import Document
     from app.models.subject import Subject
+    from sqlalchemy import case
     
     result = await db.execute(
         select(
@@ -734,9 +735,9 @@ async def get_analytics_by_subject(
             Subject.name,
             Subject.code,
             func.count(Question.id).label("total_questions"),
-            func.sum(func.case((Question.vetting_status == "approved", 1), else_=0)).label("approved"),
-            func.sum(func.case((Question.vetting_status == "rejected", 1), else_=0)).label("rejected"),
-            func.sum(func.case((Question.vetting_status == "pending", 1), else_=0)).label("pending"),
+            func.sum(case((Question.vetting_status == "approved", 1), else_=0)).label("approved"),
+            func.sum(case((Question.vetting_status == "rejected", 1), else_=0)).label("rejected"),
+            func.sum(case((Question.vetting_status == "pending", 1), else_=0)).label("pending"),
         )
         .outerjoin(Question, Question.subject_id == Subject.id)
         .where(Subject.user_id == current_user.id)

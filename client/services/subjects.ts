@@ -205,6 +205,46 @@ export const subjectsService = {
 
     return response.data;
   },
+
+  /**
+   * Upload a syllabus PDF and use AI to automatically extract chapters
+   * Creates topics for each identified chapter
+   */
+  async extractChaptersFromSyllabus(
+    subjectId: string,
+    uri: string,
+    filename: string,
+    mimeType: string
+  ): Promise<{
+    message: string;
+    chapters_created: number;
+    topics: Topic[];
+  }> {
+    const formData = new FormData();
+    
+    formData.append('file', {
+      uri,
+      name: filename,
+      type: mimeType,
+    } as unknown as Blob);
+
+    const response = await apiClient.post<{
+      message: string;
+      chapters_created: number;
+      topics: Topic[];
+    }>(
+      `/subjects/${subjectId}/extract-chapters`,
+      formData,
+      {
+        headers: {
+          'Content-Type': 'multipart/form-data',
+        },
+        timeout: 180000, // 3 minutes for AI processing
+      }
+    );
+
+    return response.data;
+  },
 };
 
 export default subjectsService;

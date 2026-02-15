@@ -325,7 +325,7 @@ export default function GenerateScreen() {
       >
         {/* Header Info Card */}
         <LinearGradient
-          colors={['#8B5CF6', '#7C3AED'] as const}
+          colors={['#4A90D9', '#357ABD'] as const}
           style={styles.infoCard}
         >
           <IconSymbol name="sparkles" size={24} color="#FFFFFF" />
@@ -603,7 +603,7 @@ export default function GenerateScreen() {
       >
         <View style={[styles.modalContainer, { backgroundColor: colors.background }]}>
           <LinearGradient
-            colors={['#8B5CF6', '#7C3AED'] as const}
+            colors={['#4A90D9', '#357ABD'] as const}
             style={styles.modalHeader}
           >
             <TouchableOpacity onPress={handleCancelGeneration}>
@@ -913,7 +913,7 @@ const styles = StyleSheet.create({
     flexDirection: 'row',
     justifyContent: 'space-between',
     alignItems: 'center',
-    paddingTop: 60,
+    paddingTop: 20,
     paddingBottom: Spacing.lg,
     paddingHorizontal: Spacing.lg,
   },
@@ -923,7 +923,7 @@ const styles = StyleSheet.create({
     color: '#FFFFFF',
   },
   modalCancel: {
-    fontSize: FontSizes.md,
+    fontSize: FontSizes.lg,
     color: '#FFFFFF',
   },
   modalContent: {

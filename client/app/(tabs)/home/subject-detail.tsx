@@ -48,6 +48,10 @@ export default function SubjectDetailScreen() {
   const [isUploadingDoc, setIsUploadingDoc] = useState(false);
   const [uploadStatus, setUploadStatus] = useState('');
   const [syllabusContent, setSyllabusContent] = useState('');
+  
+  // New state for syllabus chapter extraction
+  const [isExtractingChapters, setIsExtractingChapters] = useState(false);
+  const [extractionStatus, setExtractionStatus] = useState('');
 
   const loadData = useCallback(async () => {
     if (!id) return;
@@ -198,6 +202,60 @@ export default function SubjectDetailScreen() {
     }
   };
 
+  // Handle syllabus PDF upload with AI chapter extraction
+  const handleExtractChaptersFromSyllabus = async () => {
+    if (!id) return;
+    
+    setIsExtractingChapters(true);
+    setExtractionStatus('Selecting file...');
+    
+    try {
+      // Pick a document
+      const result = await DocumentPicker.getDocumentAsync({
+        type: ['application/pdf', 'text/plain', 'application/vnd.openxmlformats-officedocument.wordprocessingml.document'],
+        copyToCacheDirectory: true,
+      });
+
+      if (result.canceled || !result.assets || result.assets.length === 0) {
+        setIsExtractingChapters(false);
+        setExtractionStatus('');
+        return;
+      }
+
+      const file = result.assets[0];
+      const fileSizeMB = file.size ? (file.size / (1024 * 1024)).toFixed(1) : '?';
+      
+      setExtractionStatus(`Uploading ${file.name} (${fileSizeMB}MB)...`);
+      
+      // Small delay to ensure UI updates
+      await new Promise(resolve => setTimeout(resolve, 100));
+      
+      setExtractionStatus('AI is analyzing syllabus...');
+      
+      // Another delay to show the analyzing message
+      await new Promise(resolve => setTimeout(resolve, 200));
+      
+      setExtractionStatus('Extracting chapters with AI (this may take a minute)...');
+      
+      // Call the API to extract chapters
+      const response = await subjectsService.extractChaptersFromSyllabus(
+        id,
+        file.uri,
+        file.name,
+        file.mimeType || 'application/pdf'
+      );
+      
+      setExtractionStatus('Complete!');
+      showSuccess(`Successfully added ${response.chapters_created} chapters from syllabus`);
+      loadData();
+    } catch (error: unknown) {
+      showError(error, 'Extraction Failed');
+    } finally {
+      setIsExtractingChapters(false);
+      setExtractionStatus('');
+    }
+  };
+
   const getTopicColor = (index: number) => {
     const colorPalette = ['#007AFF', '#5856D6', '#34C759', '#FF9500', '#FF3B30', '#AF52DE'];
     return colorPalette[index % colorPalette.length];
@@ -293,14 +351,37 @@ export default function SubjectDetailScreen() {
               <Text style={[styles.sectionTitle, { color: colors.textSecondary }]}>
                 CHAPTERS ({topics.length})
               </Text>
-              <TouchableOpacity
-                style={[styles.addButton, { backgroundColor: colors.primary + '15' }]}
-                onPress={() => setShowAddTopicModal(true)}
-              >
-                <IconSymbol name="plus" size={16} color={colors.primary} />
-                <Text style={[styles.addButtonText, { color: colors.primary }]}>Add</Text>
-              </TouchableOpacity>
+              <View style={styles.sectionActions}>
+                <TouchableOpacity
+                  style={[styles.addButton, { backgroundColor: '#34C759' + '20' }]}
+                  onPress={handleExtractChaptersFromSyllabus}
+                  disabled={isExtractingChapters}
+                >
+                  <IconSymbol name="doc.text.magnifyingglass" size={14} color="#34C759" />
+                  <Text style={[styles.addButtonText, { color: '#34C759' }]}>Import Syllabus</Text>
+                </TouchableOpacity>
+                <TouchableOpacity
+                  style={[styles.addButton, { backgroundColor: colors.primary + '15' }]}
+                  onPress={() => setShowAddTopicModal(true)}
+                >
+                  <IconSymbol name="plus" size={16} color={colors.primary} />
+                  <Text style={[styles.addButtonText, { color: colors.primary }]}>Add</Text>
+                </TouchableOpacity>
+              </View>
             </View>
+
+            {/* AI Extraction Progress */}
+            {isExtractingChapters && (
+              <View style={[styles.extractionProgress, { backgroundColor: colors.card }]}>
+                <ActivityIndicator size="small" color="#34C759" />
+                <Text style={[styles.extractionText, { color: colors.text }]}>
+                  {extractionStatus || 'Processing...'}
+                </Text>
+                <Text style={[styles.extractionHint, { color: colors.textSecondary }]}>
+                  AI is reading your syllabus and identifying chapters...
+                </Text>
+              </View>
+            )}
 
             {topics.length === 0 ? (
               <View style={[styles.emptyCard, { backgroundColor: colors.card }]}>
@@ -656,6 +737,10 @@ const styles = StyleSheet.create({
     alignItems: 'center',
     marginBottom: Spacing.sm,
   },
+  sectionActions: {
+    flexDirection: 'row',
+    gap: Spacing.xs,
+  },
   sectionTitle: {
     fontSize: FontSizes.xs,
     fontWeight: '600',
@@ -672,6 +757,22 @@ const styles = StyleSheet.create({
   addButtonText: {
     fontSize: FontSizes.sm,
     fontWeight: '600',
+  },
+  extractionProgress: {
+    borderRadius: BorderRadius.lg,
+    padding: Spacing.lg,
+    marginBottom: Spacing.md,
+    alignItems: 'center',
+    gap: Spacing.sm,
+  },
+  extractionText: {
+    fontSize: FontSizes.md,
+    fontWeight: '600',
+    textAlign: 'center',
+  },
+  extractionHint: {
+    fontSize: FontSizes.sm,
+    textAlign: 'center',
   },
   emptyCard: {
     borderRadius: BorderRadius.lg,

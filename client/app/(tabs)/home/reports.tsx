@@ -16,11 +16,14 @@ import { NativeButton } from '@/components/ui/native-button';
 import { Colors, Spacing, BorderRadius, FontSizes } from '@/constants/theme';
 import { useColorScheme } from '@/hooks/use-color-scheme';
 import { subjectsService, Subject } from '@/services/subjects';
-import { questionsService } from '@/services/questions';
+import { vettingService, VettingStats, SubjectAnalytics, AnalyticsByLO, AnalyticsByBloom } from '@/services/vetting';
 
 interface AnalyticsData {
   total_questions: number;
-  by_subject: Array<{ subject_id: string; subject_name: string; count: number }>;
+  subjects_count: number;
+  unique_los: number;
+  unique_blooms: number;
+  by_subject: SubjectAnalytics[];
   by_learning_outcome: Array<{ learning_outcome: string; count: number }>;
   by_bloom: Array<{ bloom_level: string; count: number }>;
 }
@@ -32,9 +35,10 @@ const BLOOM_COLORS: Record<string, string> = {
   analyze: '#FF9500',
   evaluate: '#FF3B30',
   create: '#AF52DE',
+  unspecified: '#8E8E93',
 };
 
-const LO_COLORS = ['#007AFF', '#5856D6', '#FF9500', '#34C759', '#FF3B30'];
+const LO_COLORS = ['#007AFF', '#5856D6', '#FF9500', '#34C759', '#FF3B30', '#AF52DE', '#FF2D55', '#00C7BE'];
 
 export default function ReportsScreen() {
   const colorScheme = useColorScheme();
@@ -43,6 +47,7 @@ export default function ReportsScreen() {
   const [subjects, setSubjects] = useState<Subject[]>([]);
   const [selectedSubject, setSelectedSubject] = useState<string | null>(null);
   const [analytics, setAnalytics] = useState<AnalyticsData | null>(null);
+  const [vettingStats, setVettingStats] = useState<VettingStats | null>(null);
   const [isLoading, setIsLoading] = useState(true);
   const [isRefreshing, setIsRefreshing] = useState(false);
   const [expandedSections, setExpandedSections] = useState<Record<string, boolean>>({
@@ -54,49 +59,61 @@ export default function ReportsScreen() {
 
   const loadData = useCallback(async () => {
     try {
-      const subjectsResponse = await subjectsService.listSubjects(1, 100);
-      setSubjects(subjectsResponse.subjects);
+      // Fetch all data from API in parallel
+      const [subjectsResponse, vettingStatsResponse, subjectAnalytics, loAnalytics, bloomAnalytics] = await Promise.all([
+        subjectsService.listSubjects(1, 100),
+        vettingService.getVettingStats(selectedSubject || undefined),
+        vettingService.getAnalyticsBySubject(),
+        vettingService.getAnalyticsByLO(selectedSubject || undefined),
+        vettingService.getAnalyticsByBloom(selectedSubject || undefined),
+      ]);
       
-      // Mock analytics data - in production, fetch from API
-      const mockAnalytics: AnalyticsData = {
-        total_questions: 156,
-        by_subject: subjectsResponse.subjects.slice(0, 5).map((s, i) => ({
-          subject_id: s.id,
-          subject_name: s.name,
-          count: Math.floor(Math.random() * 50) + 10,
-        })),
-        by_learning_outcome: [
-          { learning_outcome: 'LO1', count: 35 },
-          { learning_outcome: 'LO2', count: 42 },
-          { learning_outcome: 'LO3', count: 28 },
-          { learning_outcome: 'LO4', count: 31 },
-          { learning_outcome: 'LO5', count: 20 },
-        ],
-        by_bloom: [
-          { bloom_level: 'remember', count: 25 },
-          { bloom_level: 'understand', count: 38 },
-          { bloom_level: 'apply', count: 45 },
-          { bloom_level: 'analyze', count: 28 },
-          { bloom_level: 'evaluate', count: 15 },
-          { bloom_level: 'create', count: 5 },
-        ],
+      setSubjects(subjectsResponse.subjects);
+      setVettingStats(vettingStatsResponse);
+      
+      // Transform LO data
+      const loData = Object.entries(loAnalytics.learning_outcomes || {}).map(([lo, count]) => ({
+        learning_outcome: lo,
+        count: count,
+      }));
+      
+      // Transform Bloom data  
+      const bloomData = Object.entries(bloomAnalytics.bloom_levels || {}).map(([level, count]) => ({
+        bloom_level: level,
+        count: count,
+      }));
+      
+      const analyticsData: AnalyticsData = {
+        total_questions: vettingStatsResponse.total_generated,
+        subjects_count: subjectsResponse.subjects.length,
+        unique_los: loData.length,
+        unique_blooms: bloomData.filter(b => b.bloom_level !== 'unspecified').length,
+        by_subject: subjectAnalytics.subjects,
+        by_learning_outcome: loData,
+        by_bloom: bloomData,
       };
-      setAnalytics(mockAnalytics);
+      
+      setAnalytics(analyticsData);
     } catch (error) {
       console.error('Failed to load data:', error);
     } finally {
       setIsLoading(false);
       setIsRefreshing(false);
     }
-  }, []);
+  }, [selectedSubject]);
 
   useEffect(() => {
     loadData();
-  }, []);
+  }, [loadData]);
 
   const handleRefresh = () => {
     setIsRefreshing(true);
     loadData();
+  };
+  
+  const handleSubjectChange = (subjectId: string | null) => {
+    setSelectedSubject(subjectId);
+    setIsLoading(true);
   };
 
   const toggleSection = (section: string) => {
@@ -192,7 +209,7 @@ export default function ReportsScreen() {
               styles.filterChip,
               { backgroundColor: !selectedSubject ? colors.primary : colors.card },
             ]}
-            onPress={() => setSelectedSubject(null)}
+            onPress={() => handleSubjectChange(null)}
           >
             <Text style={[
               styles.filterChipText,
@@ -208,7 +225,7 @@ export default function ReportsScreen() {
                 styles.filterChip,
                 { backgroundColor: selectedSubject === subject.id ? colors.primary : colors.card },
               ]}
-              onPress={() => setSelectedSubject(subject.id)}
+              onPress={() => handleSubjectChange(subject.id)}
             >
               <Text style={[
                 styles.filterChipText,
@@ -237,7 +254,7 @@ export default function ReportsScreen() {
             </View>
             <View style={[styles.overviewCard, { backgroundColor: colors.success + '10' }]}>
               <Text style={[styles.overviewValue, { color: colors.success }]}>
-                {subjects.length}
+                {analytics?.subjects_count || 0}
               </Text>
               <Text style={[styles.overviewLabel, { color: colors.textSecondary }]}>
                 Subjects
@@ -245,7 +262,7 @@ export default function ReportsScreen() {
             </View>
             <View style={[styles.overviewCard, { backgroundColor: colors.warning + '10' }]}>
               <Text style={[styles.overviewValue, { color: colors.warning }]}>
-                5
+                {analytics?.unique_los || 0}
               </Text>
               <Text style={[styles.overviewLabel, { color: colors.textSecondary }]}>
                 Learning Outcomes
@@ -253,7 +270,7 @@ export default function ReportsScreen() {
             </View>
             <View style={[styles.overviewCard, { backgroundColor: colors.secondary + '10' }]}>
               <Text style={[styles.overviewValue, { color: colors.secondary }]}>
-                6
+                {analytics?.unique_blooms || 0}
               </Text>
               <Text style={[styles.overviewLabel, { color: colors.textSecondary }]}>
                 Bloom Levels
@@ -315,28 +332,33 @@ export default function ReportsScreen() {
         )}
 
         {/* Syllabus Coverage */}
-        {renderCollapsibleSection(
-          'Syllabus Coverage',
-          'doc.text.fill',
+        {vettingStats && renderCollapsibleSection(
+          'Vetting Overview',
+          'checkmark.shield.fill',
           'syllabus',
           ['#34C759', '#28A745'],
           <View style={styles.syllabusContent}>
             <View style={styles.coverageHeader}>
               <Text style={[styles.coverageLabel, { color: colors.textSecondary }]}>
-                Overall Coverage
+                Approval Rate
               </Text>
-              <Text style={[styles.coverageValue, { color: colors.success }]}>78%</Text>
+              <Text style={[styles.coverageValue, { color: colors.success }]}>{vettingStats.approval_rate.toFixed(0)}%</Text>
             </View>
-            {renderProgressBar(78, 100, colors.success)}
+            {renderProgressBar(vettingStats.approval_rate, 100, colors.success)}
             
-            <View style={styles.coverageGaps}>
-              <Text style={[styles.gapsTitle, { color: colors.text }]}>Coverage Gaps</Text>
-              {['Unit 3: Advanced Topics', 'Unit 5: Case Studies'].map((gap, index) => (
-                <View key={index} style={styles.gapItem}>
-                  <IconSymbol name="exclamationmark.triangle.fill" size={14} color={colors.warning} />
-                  <Text style={[styles.gapText, { color: colors.textSecondary }]}>{gap}</Text>
-                </View>
-              ))}
+            <View style={styles.vettingStatsGrid}>
+              <View style={styles.vettingStatItem}>
+                <Text style={[styles.vettingStatValue, { color: colors.success }]}>{vettingStats.total_approved}</Text>
+                <Text style={[styles.vettingStatLabel, { color: colors.textSecondary }]}>Approved</Text>
+              </View>
+              <View style={styles.vettingStatItem}>
+                <Text style={[styles.vettingStatValue, { color: colors.warning }]}>{vettingStats.pending_review}</Text>
+                <Text style={[styles.vettingStatLabel, { color: colors.textSecondary }]}>Pending</Text>
+              </View>
+              <View style={styles.vettingStatItem}>
+                <Text style={[styles.vettingStatValue, { color: colors.error }]}>{vettingStats.total_rejected}</Text>
+                <Text style={[styles.vettingStatLabel, { color: colors.textSecondary }]}>Rejected</Text>
+              </View>
             </View>
           </View>
         )}
@@ -502,6 +524,25 @@ const styles = StyleSheet.create({
   coverageValue: {
     fontSize: FontSizes.lg,
     fontWeight: '700',
+  },
+  vettingStatsGrid: {
+    flexDirection: 'row',
+    justifyContent: 'space-around',
+    marginTop: Spacing.md,
+    paddingTop: Spacing.md,
+    borderTopWidth: 1,
+    borderTopColor: '#E5E5EA',
+  },
+  vettingStatItem: {
+    alignItems: 'center',
+  },
+  vettingStatValue: {
+    fontSize: FontSizes.xl,
+    fontWeight: '700',
+  },
+  vettingStatLabel: {
+    fontSize: FontSizes.xs,
+    marginTop: Spacing.xs,
   },
   coverageGaps: {
     marginTop: Spacing.md,

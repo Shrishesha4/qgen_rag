@@ -202,7 +202,7 @@ export default function SubjectsScreen() {
         onRequestClose={() => setShowAddModal(false)}
       >
         <View style={[styles.modalContainer, { backgroundColor: colors.background }]}>
-          <View style={[styles.modalHeader, { backgroundColor: colors.primary }]}>
+          <View style={[styles.modalHeader, { backgroundColor: '#4A90D9' }]}>
             <TouchableOpacity onPress={() => setShowAddModal(false)}>
               <Text style={styles.modalCancel}>Cancel</Text>
             </TouchableOpacity>
@@ -375,21 +375,21 @@ const styles = StyleSheet.create({
     flexDirection: 'row',
     justifyContent: 'space-between',
     alignItems: 'center',
-    paddingTop: 60,
+    paddingTop: 20,
     paddingBottom: Spacing.lg,
     paddingHorizontal: Spacing.lg,
   },
   modalTitle: {
-    fontSize: FontSizes.lg,
+    fontSize: FontSizes.xl,
     fontWeight: '600',
     color: '#FFFFFF',
   },
   modalCancel: {
-    fontSize: FontSizes.md,
+    fontSize: FontSizes.lg,
     color: '#FFFFFF',
   },
   modalSave: {
-    fontSize: FontSizes.md,
+    fontSize: FontSizes.lg,
     fontWeight: '600',
     color: '#FFFFFF',
   },

@@ -138,7 +138,7 @@ export default function QuickGenerateScreen() {
     >
       {/* Header */}
       <LinearGradient
-        colors={colors.gradientPurple as [string, string]}
+        colors={['#4A90D9', '#357ABD'] as [string, string]}
         start={{ x: 0, y: 0 }}
         end={{ x: 1, y: 1 }}
         style={styles.header}
@@ -418,7 +418,7 @@ export default function QuickGenerateScreen() {
         activeOpacity={0.8}
       >
         <LinearGradient
-          colors={isGenerating ? ['#FF3B30', '#FF453A'] : (colors.gradientPurple as [string, string])}
+          colors={isGenerating ? ['#FF3B30', '#FF453A'] : ['#4A90D9', '#357ABD'] as [string, string]}
           start={{ x: 0, y: 0 }}
           end={{ x: 1, y: 0 }}
           style={styles.generateButtonGradient}

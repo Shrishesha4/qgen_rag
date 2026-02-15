@@ -3,7 +3,9 @@ Subject and Topic API endpoints.
 """
 
 import os
-from typing import Optional
+import io
+import logging
+from typing import Optional, List
 import uuid
 
 from fastapi import APIRouter, Depends, HTTPException, status, Query, UploadFile, File
@@ -27,8 +29,9 @@ from app.schemas.subject import (
     TopicListResponse,
 )
 from app.api.v1.deps import get_current_user
+from app.services.llm_service import LLMService
 
-
+logger = logging.getLogger(__name__)
 router = APIRouter()
 
 
@@ -470,7 +473,6 @@ async def upload_topic_syllabus(
 
 async def _extract_text_from_file(content: bytes, extension: str) -> str:
     """Extract text from file content based on file type."""
-    import io
     
     if extension == ".pdf":
         import fitz  # PyMuPDF
@@ -493,3 +495,225 @@ async def _extract_text_from_file(content: bytes, extension: str) -> str:
         return "\n\n".join(text_parts)
     
     return ""
+
+
+async def _extract_chapters_with_llm(text_content: str, subject_name: str, subject_code: str) -> List[dict]:
+    """
+    Use LLM to intelligently extract chapters/topics from syllabus text.
+    Returns a list of dicts with 'name', 'description', and optionally 'syllabus_content'.
+    """
+    llm_service = LLMService()
+    
+    # Truncate text if too long (LLMs have context limits)
+    max_chars = 15000
+    truncated_text = text_content[:max_chars] if len(text_content) > max_chars else text_content
+    
+    system_prompt = """You are an expert curriculum analyzer. Your task is to extract chapters/topics/units from a syllabus document.
+
+For each chapter you identify:
+1. Extract the chapter/topic/unit name
+2. Extract or summarize a brief description
+3. Include the relevant syllabus content for that chapter
+
+Return your response as a valid JSON array of objects with the following structure:
+[
+  {
+    "name": "Chapter 1: Introduction to Subject",
+    "description": "Brief overview of the chapter content",
+    "syllabus_content": "Detailed syllabus content for this chapter"
+  }
+]
+
+Guidelines:
+- Extract ALL chapters/units/modules mentioned in the syllabus
+- Maintain the original order from the syllabus
+- Include chapter numbers if present (e.g., "Chapter 1:", "Unit 1:", "Module 1:")
+- Keep the syllabus_content detailed and accurate
+- If no clear chapter divisions exist, group related topics logically
+- Return ONLY the JSON array, no other text"""
+
+    prompt = f"""Analyze the following syllabus for the subject "{subject_name}" (Code: {subject_code}) and extract all chapters/topics/units:
+
+SYLLABUS CONTENT:
+{truncated_text}
+
+Extract all chapters with their names, descriptions, and content. Return as a JSON array."""
+
+    try:
+        result = await llm_service.generate_json(
+            prompt=prompt,
+            system_prompt=system_prompt,
+            temperature=0.2,  # Low temperature for more deterministic extraction
+        )
+        
+        # Handle both array and object with 'chapters' key
+        if isinstance(result, list):
+            chapters = result
+        elif isinstance(result, dict) and 'chapters' in result:
+            chapters = result['chapters']
+        else:
+            # Try to find an array in the result
+            for key, value in result.items():
+                if isinstance(value, list):
+                    chapters = value
+                    break
+            else:
+                chapters = []
+        
+        # Validate and clean chapters
+        validated_chapters = []
+        for chapter in chapters:
+            if isinstance(chapter, dict) and 'name' in chapter:
+                validated_chapters.append({
+                    'name': str(chapter.get('name', 'Untitled Chapter'))[:255],
+                    'description': str(chapter.get('description', ''))[:1000] if chapter.get('description') else None,
+                    'syllabus_content': str(chapter.get('syllabus_content', '')) if chapter.get('syllabus_content') else None,
+                })
+        
+        return validated_chapters
+        
+    except Exception as e:
+        logger.error(f"LLM chapter extraction failed: {e}")
+        raise
+
+
+@router.post("/{subject_id}/extract-chapters")
+async def extract_chapters_from_syllabus(
+    subject_id: uuid.UUID,
+    file: UploadFile = File(...),
+    current_user: User = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+):
+    """
+    Upload a syllabus PDF/DOCX/TXT and use AI to automatically extract and create chapters.
+    
+    This endpoint:
+    1. Extracts text from the uploaded document
+    2. Uses LLM to identify chapters/topics from the syllabus
+    3. Creates Topic entries for each identified chapter
+    4. Returns the list of created topics
+    """
+    # Verify subject ownership
+    result = await db.execute(
+        select(Subject).where(
+            Subject.id == subject_id,
+            Subject.user_id == current_user.id,
+        )
+    )
+    subject = result.scalar_one_or_none()
+    if not subject:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="Subject not found",
+        )
+    
+    # Validate file extension
+    filename = file.filename or "document"
+    ext = os.path.splitext(filename)[1].lower()
+    
+    allowed_extensions = [".pdf", ".txt", ".docx"]
+    if ext not in allowed_extensions:
+        raise HTTPException(
+            status_code=status.HTTP_415_UNSUPPORTED_MEDIA_TYPE,
+            detail=f"Unsupported file type. Allowed: {', '.join(allowed_extensions)}",
+        )
+    
+    # Read file content
+    content = await file.read()
+    
+    # Validate file size (15MB limit for syllabus)
+    max_size_mb = 15
+    if len(content) > max_size_mb * 1024 * 1024:
+        raise HTTPException(
+            status_code=status.HTTP_413_REQUEST_ENTITY_TOO_LARGE,
+            detail=f"File too large. Maximum size: {max_size_mb}MB",
+        )
+    
+    # Extract text from document
+    try:
+        text_content = await _extract_text_from_file(content, ext)
+    except Exception as e:
+        raise HTTPException(
+            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+            detail=f"Failed to extract text from file: {str(e)}",
+        )
+    
+    if not text_content.strip():
+        raise HTTPException(
+            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+            detail="No text content could be extracted from the file",
+        )
+    
+    # Use LLM to extract chapters
+    try:
+        chapters = await _extract_chapters_with_llm(
+            text_content=text_content,
+            subject_name=subject.name,
+            subject_code=subject.code,
+        )
+    except Exception as e:
+        logger.error(f"LLM extraction error: {e}")
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail=f"AI failed to extract chapters: {str(e)}",
+        )
+    
+    if not chapters:
+        raise HTTPException(
+            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+            detail="No chapters could be identified in the document. Please ensure the file contains a valid syllabus structure.",
+        )
+    
+    # Get current max order_index for existing topics
+    existing_topics_result = await db.execute(
+        select(func.max(Topic.order_index)).where(Topic.subject_id == subject_id)
+    )
+    max_order = existing_topics_result.scalar_one() or -1
+    
+    # Create topics for each extracted chapter
+    created_topics = []
+    for idx, chapter in enumerate(chapters):
+        topic = Topic(
+            subject_id=subject_id,
+            name=chapter['name'],
+            description=chapter.get('description'),
+            order_index=max_order + 1 + idx,
+            has_syllabus=bool(chapter.get('syllabus_content')),
+            syllabus_content=chapter.get('syllabus_content'),
+        )
+        db.add(topic)
+        created_topics.append(topic)
+    
+    # Update subject stats
+    subject.total_topics += len(created_topics)
+    
+    # Recalculate syllabus coverage
+    total_topics_result = await db.execute(
+        select(func.count()).where(Topic.subject_id == subject_id)
+    )
+    # Add the new topics we just created (they haven't been committed yet)
+    total_topics = total_topics_result.scalar_one() + len(created_topics)
+    
+    topics_with_syllabus_count = sum(1 for t in created_topics if t.has_syllabus)
+    existing_with_syllabus_result = await db.execute(
+        select(func.count()).where(
+            Topic.subject_id == subject_id,
+            Topic.has_syllabus == True,
+        )
+    )
+    total_with_syllabus = existing_with_syllabus_result.scalar_one() + topics_with_syllabus_count
+    
+    if total_topics > 0:
+        subject.syllabus_coverage = int((total_with_syllabus / total_topics) * 100)
+    
+    await db.commit()
+    
+    # Refresh topics to get their IDs
+    for topic in created_topics:
+        await db.refresh(topic)
+    
+    return {
+        "message": f"Successfully extracted {len(created_topics)} chapters from syllabus",
+        "chapters_created": len(created_topics),
+        "topics": [TopicResponse.model_validate(t) for t in created_topics],
+    }

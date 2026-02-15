@@ -127,12 +127,6 @@ export default function ProfileScreen() {
           color: '#FF3B30',
           onPress: () => setActiveModal('notifications'),
         },
-        { 
-          icon: 'paintbrush.fill', 
-          label: 'Appearance', 
-          color: '#AF52DE',
-          onPress: () => setActiveModal('appearance'),
-        },
       ],
     },
     {
@@ -324,82 +318,132 @@ export default function ProfileScreen() {
           </View>
         );
         
-      case 'appearance':
-        return (
-          <View style={styles.modalContent}>
-            <Text style={[styles.modalTitle, { color: colors.text }]}>Appearance</Text>
-            <Text style={[styles.modalSubtitle, { color: colors.textSecondary }]}>
-              Theme follows your system settings
-            </Text>
-            <View style={styles.themeOptions}>
-              <TouchableOpacity style={[styles.themeOption, { 
-                backgroundColor: '#F5F5F5',
-                borderColor: !isDark ? colors.primary : colors.border,
-                borderWidth: !isDark ? 2 : 1,
-              }]}>
-                <IconSymbol name="sun.max.fill" size={32} color="#FF9500" />
-                <Text style={[styles.themeLabel, { color: '#000000' }]}>Light</Text>
-                {!isDark && <IconSymbol name="checkmark.circle.fill" size={20} color={colors.primary} style={styles.themeCheck} />}
-              </TouchableOpacity>
-              <TouchableOpacity style={[styles.themeOption, { 
-                backgroundColor: '#1C1C1E',
-                borderColor: isDark ? colors.primary : 'transparent',
-                borderWidth: isDark ? 2 : 1,
-              }]}>
-                <IconSymbol name="moon.fill" size={32} color="#AF52DE" />
-                <Text style={[styles.themeLabel, { color: '#FFFFFF' }]}>Dark</Text>
-                {isDark && <IconSymbol name="checkmark.circle.fill" size={20} color={colors.primary} style={styles.themeCheck} />}
-              </TouchableOpacity>
-            </View>
-            <Text style={[styles.modalNote, { color: colors.textTertiary }]}>
-              To change theme, go to your device Settings {'>'} Display & Brightness
-            </Text>
-            <TouchableOpacity 
-              style={[styles.modalButtonFull, { backgroundColor: colors.primary }]}
-              onPress={() => setActiveModal(null)}
-            >
-              <Text style={[styles.modalButtonText, { color: '#FFFFFF' }]}>Done</Text>
-            </TouchableOpacity>
-          </View>
-        );
-        
       case 'help':
         return (
           <View style={styles.modalContent}>
             <Text style={[styles.modalTitle, { color: colors.text }]}>Help Center</Text>
             <ScrollView style={styles.helpContent}>
               <TouchableOpacity style={[styles.helpItem, { borderColor: colors.border }]}>
-                <IconSymbol name="doc.text.fill" size={24} color={colors.primary} />
+                <IconSymbol name="book.fill" size={24} color={colors.primary} />
                 <View style={styles.helpItemContent}>
-                  <Text style={[styles.helpItemTitle, { color: colors.text }]}>Getting Started</Text>
-                  <Text style={[styles.helpItemDesc, { color: colors.textSecondary }]}>Learn how to generate questions</Text>
+                  <Text style={[styles.helpItemTitle, { color: colors.text }]}>1. Create Subjects</Text>
+                  <Text style={[styles.helpItemDesc, { color: colors.textSecondary }]}>Start by creating subjects and organizing them with topics and syllabus content</Text>
                 </View>
-                <IconSymbol name="chevron.right" size={16} color={colors.textTertiary} />
+              </TouchableOpacity>
+              <TouchableOpacity style={[styles.helpItem, { borderColor: colors.border }]}>
+                <IconSymbol name="doc.badge.gearshape.fill" size={24} color="#4A90D9" />
+                <View style={styles.helpItemContent}>
+                  <Text style={[styles.helpItemTitle, { color: colors.text }]}>2. Create Rubrics</Text>
+                  <Text style={[styles.helpItemDesc, { color: colors.textSecondary }]}>Define exam rubrics with question types, distribution, and learning outcome mapping</Text>
+                </View>
+              </TouchableOpacity>
+              <TouchableOpacity style={[styles.helpItem, { borderColor: colors.border }]}>
+                <IconSymbol name="sparkles" size={24} color="#AF52DE" />
+                <View style={styles.helpItemContent}>
+                  <Text style={[styles.helpItemTitle, { color: colors.text }]}>3. Generate Questions</Text>
+                  <Text style={[styles.helpItemDesc, { color: colors.textSecondary }]}>Use Rubric Generator or Quick Generate to create AI-powered questions automatically</Text>
+                </View>
               </TouchableOpacity>
               <TouchableOpacity style={[styles.helpItem, { borderColor: colors.border }]}>
                 <IconSymbol name="checkmark.shield.fill" size={24} color="#34C759" />
                 <View style={styles.helpItemContent}>
-                  <Text style={[styles.helpItemTitle, { color: colors.text }]}>Vetting Process</Text>
-                  <Text style={[styles.helpItemDesc, { color: colors.textSecondary }]}>How to review and approve questions</Text>
+                  <Text style={[styles.helpItemTitle, { color: colors.text }]}>4. Vet Questions</Text>
+                  <Text style={[styles.helpItemDesc, { color: colors.textSecondary }]}>Review pending questions, approve quality ones, and map to course outcomes</Text>
                 </View>
-                <IconSymbol name="chevron.right" size={16} color={colors.textTertiary} />
               </TouchableOpacity>
               <TouchableOpacity style={[styles.helpItem, { borderColor: colors.border }]}>
-                <IconSymbol name="folder.fill" size={24} color="#FF9500" />
+                <IconSymbol name="chart.bar.fill" size={24} color="#FF9500" />
                 <View style={styles.helpItemContent}>
-                  <Text style={[styles.helpItemTitle, { color: colors.text }]}>Managing Subjects</Text>
-                  <Text style={[styles.helpItemDesc, { color: colors.textSecondary }]}>Organize your content by subject</Text>
+                  <Text style={[styles.helpItemTitle, { color: colors.text }]}>5. View Reports</Text>
+                  <Text style={[styles.helpItemDesc, { color: colors.textSecondary }]}>Analyze question distribution by subject, learning outcomes, and Bloom's taxonomy</Text>
                 </View>
-                <IconSymbol name="chevron.right" size={16} color={colors.textTertiary} />
               </TouchableOpacity>
-              <TouchableOpacity style={[styles.helpItem, { borderColor: colors.border }]}>
-                <IconSymbol name="envelope.fill" size={24} color="#AF52DE" />
-                <View style={styles.helpItemContent}>
-                  <Text style={[styles.helpItemTitle, { color: colors.text }]}>Contact Support</Text>
-                  <Text style={[styles.helpItemDesc, { color: colors.textSecondary }]}>support@questiongen.ai</Text>
+              <View style={[styles.helpDivider, { backgroundColor: colors.border }]} />
+              <Text style={[styles.helpSectionTitle, { color: colors.text }]}>What is Bloom's Taxonomy?</Text>
+              <View style={[styles.bloomSection, { backgroundColor: colors.card, borderColor: colors.border }]}>
+                <Text style={[styles.bloomDescription, { color: colors.text }]}>
+                  Bloom's Taxonomy is a framework for categorizing learning objectives and cognitive skills into six levels of increasing complexity:
+                </Text>
+                <View style={styles.bloomLevels}>
+                  <View style={styles.bloomLevel}>
+                    <View style={[styles.bloomLevelBadge, { backgroundColor: '#007AFF' }]}>
+                      <Text style={styles.bloomLevelNumber}>1</Text>
+                    </View>
+                    <View style={styles.bloomLevelContent}>
+                      <Text style={[styles.bloomLevelTitle, { color: colors.text }]}>Remember</Text>
+                      <Text style={[styles.bloomLevelDesc, { color: colors.textSecondary }]}>Recall facts and basic concepts</Text>
+                    </View>
+                  </View>
+                  <View style={styles.bloomLevel}>
+                    <View style={[styles.bloomLevelBadge, { backgroundColor: '#5856D6' }]}>
+                      <Text style={styles.bloomLevelNumber}>2</Text>
+                    </View>
+                    <View style={styles.bloomLevelContent}>
+                      <Text style={[styles.bloomLevelTitle, { color: colors.text }]}>Understand</Text>
+                      <Text style={[styles.bloomLevelDesc, { color: colors.textSecondary }]}>Explain ideas or concepts</Text>
+                    </View>
+                  </View>
+                  <View style={styles.bloomLevel}>
+                    <View style={[styles.bloomLevelBadge, { backgroundColor: '#34C759' }]}>
+                      <Text style={styles.bloomLevelNumber}>3</Text>
+                    </View>
+                    <View style={styles.bloomLevelContent}>
+                      <Text style={[styles.bloomLevelTitle, { color: colors.text }]}>Apply</Text>
+                      <Text style={[styles.bloomLevelDesc, { color: colors.textSecondary }]}>Use information in new situations</Text>
+                    </View>
+                  </View>
+                  <View style={styles.bloomLevel}>
+                    <View style={[styles.bloomLevelBadge, { backgroundColor: '#FF9500' }]}>
+                      <Text style={styles.bloomLevelNumber}>4</Text>
+                    </View>
+                    <View style={styles.bloomLevelContent}>
+                      <Text style={[styles.bloomLevelTitle, { color: colors.text }]}>Analyze</Text>
+                      <Text style={[styles.bloomLevelDesc, { color: colors.textSecondary }]}>Draw connections among concepts</Text>
+                    </View>
+                  </View>
+                  <View style={styles.bloomLevel}>
+                    <View style={[styles.bloomLevelBadge, { backgroundColor: '#FF3B30' }]}>
+                      <Text style={styles.bloomLevelNumber}>5</Text>
+                    </View>
+                    <View style={styles.bloomLevelContent}>
+                      <Text style={[styles.bloomLevelTitle, { color: colors.text }]}>Evaluate</Text>
+                      <Text style={[styles.bloomLevelDesc, { color: colors.textSecondary }]}>Justify a decision or choice</Text>
+                    </View>
+                  </View>
+                  <View style={styles.bloomLevel}>
+                    <View style={[styles.bloomLevelBadge, { backgroundColor: '#AF52DE' }]}>
+                      <Text style={styles.bloomLevelNumber}>6</Text>
+                    </View>
+                    <View style={styles.bloomLevelContent}>
+                      <Text style={[styles.bloomLevelTitle, { color: colors.text }]}>Create</Text>
+                      <Text style={[styles.bloomLevelDesc, { color: colors.textSecondary }]}>Produce new or original work</Text>
+                    </View>
+                  </View>
                 </View>
-                <IconSymbol name="chevron.right" size={16} color={colors.textTertiary} />
-              </TouchableOpacity>
+                <Text style={[styles.bloomBenefit, { color: colors.textSecondary }]}>
+                  QuestionGen uses Bloom's Taxonomy to generate questions at different cognitive levels, ensuring comprehensive assessment of student learning.
+                </Text>
+              </View>
+              <View style={[styles.helpDivider, { backgroundColor: colors.border }]} />
+              <Text style={[styles.helpSectionTitle, { color: colors.text }]}>Key Features</Text>
+              <View style={styles.featuresList}>
+                <View style={styles.featureItemHelp}>
+                  <IconSymbol name="star.fill" size={16} color={colors.warning} />
+                  <Text style={[styles.featureItemText, { color: colors.text }]}>Multiple question types: MCQ, Short Answer, Essay</Text>
+                </View>
+                <View style={styles.featureItemHelp}>
+                  <IconSymbol name="star.fill" size={16} color={colors.warning} />
+                  <Text style={[styles.featureItemText, { color: colors.text }]}>Bloom's Taxonomy support for cognitive levels</Text>
+                </View>
+                <View style={styles.featureItemHelp}>
+                  <IconSymbol name="star.fill" size={16} color={colors.warning} />
+                  <Text style={[styles.featureItemText, { color: colors.text }]}>Learning outcome mapping and tracking</Text>
+                </View>
+                <View style={styles.featureItemHelp}>
+                  <IconSymbol name="star.fill" size={16} color={colors.warning} />
+                  <Text style={[styles.featureItemText, { color: colors.text }]}>Real-time analytics and coverage reports</Text>
+                </View>
+              </View>
             </ScrollView>
             <TouchableOpacity 
               style={[styles.modalButtonFull, { backgroundColor: colors.primary }]}
@@ -450,7 +494,7 @@ export default function ProfileScreen() {
               </View>
             </View>
             <Text style={[styles.copyright, { color: colors.textTertiary }]}>
-              © 2025 QuestionGen AI. All rights reserved.
+              © {new Date().getFullYear()} QuestionGen AI. All rights reserved.
             </Text>
             <TouchableOpacity 
               style={[styles.modalButtonFull, { backgroundColor: colors.primary }]}
@@ -796,25 +840,96 @@ const styles = StyleSheet.create({
   
   // Help Items
   helpContent: {
-    maxHeight: 300,
+    maxHeight: 500,
   },
   helpItem: {
     flexDirection: 'row',
-    alignItems: 'center',
+    alignItems: 'flex-start',
     paddingVertical: Spacing.md,
     borderBottomWidth: 1,
+    gap: Spacing.md,
   },
   helpItemContent: {
     flex: 1,
-    marginLeft: Spacing.md,
   },
   helpItemTitle: {
     fontSize: FontSizes.md,
-    fontWeight: '500',
+    fontWeight: '600',
   },
   helpItemDesc: {
+    fontSize: FontSizes.sm,
+    marginTop: Spacing.xs,
+    lineHeight: 18,
+  },
+  helpDivider: {
+    height: 1,
+    marginVertical: Spacing.lg,
+  },
+  helpSectionTitle: {
+    fontSize: FontSizes.md,
+    fontWeight: '700',
+    marginBottom: Spacing.md,
+  },
+  featuresList: {
+    gap: Spacing.sm,
+  },
+  featureItemHelp: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: Spacing.sm,
+  },
+  featureItemText: {
+    fontSize: FontSizes.sm,
+    flex: 1,
+    lineHeight: 18,
+  },
+  bloomSection: {
+    padding: Spacing.lg,
+    borderRadius: BorderRadius.md,
+    borderWidth: 1,
+    marginBottom: Spacing.md,
+  },
+  bloomDescription: {
+    fontSize: FontSizes.sm,
+    lineHeight: 20,
+    marginBottom: Spacing.md,
+  },
+  bloomLevels: {
+    gap: Spacing.sm,
+    marginBottom: Spacing.md,
+  },
+  bloomLevel: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: Spacing.sm,
+  },
+  bloomLevelBadge: {
+    width: 32,
+    height: 32,
+    borderRadius: 16,
+    justifyContent: 'center',
+    alignItems: 'center',
+  },
+  bloomLevelNumber: {
+    color: '#FFFFFF',
+    fontSize: FontSizes.sm,
+    fontWeight: '700',
+  },
+  bloomLevelContent: {
+    flex: 1,
+  },
+  bloomLevelTitle: {
+    fontSize: FontSizes.sm,
+    fontWeight: '600',
+  },
+  bloomLevelDesc: {
     fontSize: FontSizes.xs,
     marginTop: 2,
+  },
+  bloomBenefit: {
+    fontSize: FontSizes.xs,
+    fontStyle: 'italic',
+    lineHeight: 16,
   },
   
   // About

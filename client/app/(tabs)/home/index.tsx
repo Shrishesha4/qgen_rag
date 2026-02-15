@@ -164,7 +164,7 @@ export default function HomeScreen() {
           </GlassCard>
         </View>
         
-        <View style={styles.statCardWrapper}>
+        {/* <View style={styles.statCardWrapper}>
           <GlassCard style={styles.statCard}>
             <LinearGradient
               colors={colors.gradientGreen as [string, string]}
@@ -175,7 +175,7 @@ export default function HomeScreen() {
             <Text style={[styles.statValue, { color: colors.text }]}>{stats.approvalRate.toFixed(0)}%</Text>
             <Text style={[styles.statLabel, { color: colors.textSecondary }]}>Accuracy</Text>
           </GlassCard>
-        </View>
+        </View> */}
       </View>
 
             {/* Navigation Section */}
@@ -291,7 +291,7 @@ const styles = StyleSheet.create({
   },
   // Header
   header: {
-    paddingTop: Spacing.xl,
+    paddingTop: Platform.OS === 'ios' ? Spacing.xxxl + 20 : Spacing.xl,
     paddingBottom: Spacing.lg,
     paddingHorizontal: Spacing.lg,
   },

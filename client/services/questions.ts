@@ -191,13 +191,15 @@ export const questionsService = {
     limit: number = 20,
     questionType?: string,
     difficulty?: string,
-    documentId?: string
+    documentId?: string,
+    subjectId?: string
   ): Promise<{ questions: Question[]; pagination: { page: number; limit: number; total: number; total_pages: number } }> {
     const params = new URLSearchParams({
       page: page.toString(),
       limit: limit.toString(),
     });
     if (documentId) params.append('document_id', documentId);
+    if (subjectId) params.append('subject_id', subjectId);
     if (questionType) params.append('question_type', questionType);
     if (difficulty) params.append('difficulty', difficulty);
 

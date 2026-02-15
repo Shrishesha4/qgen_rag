@@ -6,19 +6,17 @@ import {
   FlatList,
   TouchableOpacity,
   RefreshControl,
-  Alert,
   ActivityIndicator,
   Modal,
   ScrollView,
-  Platform,
 } from 'react-native';
 import { LinearGradient } from 'expo-linear-gradient';
+import { Stack, useLocalSearchParams } from 'expo-router';
 import { IconSymbol } from '@/components/ui/icon-symbol';
-import { GlassCard } from '@/components/ui/glass-card';
-import { NativeButton } from '@/components/ui/native-button';
 import { Colors, Spacing, BorderRadius, FontSizes } from '@/constants/theme';
 import { useColorScheme } from '@/hooks/use-color-scheme';
 import { questionsService, Question } from '@/services/questions';
+import { subjectsService } from '@/services/subjects';
 import { useToast } from '@/components/toast';
 
 const FILTER_OPTIONS = [
@@ -26,14 +24,26 @@ const FILTER_OPTIONS = [
   { label: 'MCQ', value: 'mcq' },
   { label: 'Short Answer', value: 'short_answer' },
   { label: 'Long Answer', value: 'long_answer' },
+  { label: 'Essay', value: 'essay' },
 ];
+
+const BLOOM_COLORS: Record<string, string> = {
+  remember: '#ef4444',
+  understand: '#f97316',
+  apply: '#eab308',
+  analyze: '#22c55e',
+  evaluate: '#3b82f6',
+  create: '#8b5cf6',
+};
 
 export default function QuestionsScreen() {
   const colorScheme = useColorScheme();
   const colors = Colors[colorScheme ?? 'light'];
   const { showError, showSuccess } = useToast();
+  const { subjectId } = useLocalSearchParams<{ subjectId?: string }>();
   
   const [questions, setQuestions] = useState<Question[]>([]);
+  const [subject, setSubject] = useState<any>(null);
   const [isLoading, setIsLoading] = useState(true);
   const [isRefreshing, setIsRefreshing] = useState(false);
   const [filterType, setFilterType] = useState('');
@@ -48,7 +58,8 @@ export default function QuestionsScreen() {
         20,
         filterType || undefined,
         undefined,
-        undefined
+        undefined,
+        subjectId
       );
       
       if (append) {
@@ -57,20 +68,31 @@ export default function QuestionsScreen() {
         setQuestions(response.questions);
       }
       
-      setHasMore(response.questions.length === 20);
+      setHasMore(response.pagination.page < response.pagination.total_pages);
     } catch (error) {
-      showError(error, 'Failed to Load');
+      showError(error, 'Failed to Load Questions');
     } finally {
       setIsLoading(false);
       setIsRefreshing(false);
     }
-  }, [filterType]);
+  }, [filterType, subjectId]);
+
+  const loadSubject = useCallback(async () => {
+    if (!subjectId) return;
+    try {
+      const data = await subjectsService.getSubject(subjectId);
+      setSubject(data);
+    } catch (error) {
+      console.error('Failed to load subject:', error);
+    }
+  }, [subjectId]);
 
   useEffect(() => {
+    loadSubject();
     setIsLoading(true);
     setPage(1);
     loadQuestions(1);
-  }, [filterType, loadQuestions]);
+  }, [filterType, loadQuestions, loadSubject]);
 
   const handleRefresh = () => {
     setIsRefreshing(true);
@@ -90,11 +112,12 @@ export default function QuestionsScreen() {
     try {
       await questionsService.rateQuestion(questionId, rating);
       setQuestions((prev) =>
-        prev.map((q) => (q.id === questionId ? { ...q, quality_rating: rating } : q))
+        prev.map((q) => (q.id === questionId ? { ...q, user_rating: rating } : q))
       );
       if (selectedQuestion?.id === questionId) {
-        setSelectedQuestion((prev) => prev ? { ...prev, quality_rating: rating } : null);
+        setSelectedQuestion((prev) => prev ? { ...prev, user_rating: rating } : null);
       }
+      showSuccess('Question rated');
     } catch (error) {
       showError(error, 'Rating Failed');
     }
@@ -111,18 +134,19 @@ export default function QuestionsScreen() {
     }
   };
 
-  const renderStars = (rating: number | null, questionId: string) => {
+  const renderStars = (rating: number | null, questionId: string, readonly: boolean = false) => {
     return (
       <View style={styles.starsContainer}>
         {[1, 2, 3, 4, 5].map((star) => (
           <TouchableOpacity
             key={star}
-            onPress={() => handleRate(questionId, star)}
+            onPress={() => !readonly && handleRate(questionId, star)}
+            disabled={readonly}
           >
             <IconSymbol
               name={star <= (rating || 0) ? 'star.fill' : 'star'}
-              size={20}
-              color={star <= (rating || 0) ? '#f59e0b' : '#d1d5db'}
+              size={16}
+              color={star <= (rating || 0) ? '#f59e0b' : colors.border}
             />
           </TouchableOpacity>
         ))}
@@ -130,25 +154,50 @@ export default function QuestionsScreen() {
     );
   };
 
+  const getBloomColor = (level: string | null): string => {
+    if (!level) return colors.primary;
+    return BLOOM_COLORS[level.toLowerCase()] || colors.primary;
+  };
+
   const renderQuestion = ({ item }: { item: Question }) => (
     <TouchableOpacity
-      style={styles.questionCard}
+      style={[styles.questionCard, { backgroundColor: colors.card }]}
       onPress={() => setSelectedQuestion(item)}
+      activeOpacity={0.7}
     >
       <View style={styles.questionHeader}>
-        <View style={styles.typeBadge}>
-          <Text style={styles.typeText}>{item.question_type.replace('_', ' ').toUpperCase()}</Text>
+        <View style={styles.badgesContainer}>
+          <View style={[styles.badge, { backgroundColor: colors.primary + '20' }]}>
+            <Text style={[styles.badgeText, { color: colors.primary }]}>
+              {item.question_type.replace('_', ' ')}
+            </Text>
+          </View>
+          {item.difficulty_level && (
+            <View style={[styles.badge, { backgroundColor: '#f59e0b20' }]}>
+              <Text style={[styles.badgeText, { color: '#f59e0b' }]}>
+                {item.difficulty_level}
+              </Text>
+            </View>
+          )}
+          {item.bloom_taxonomy_level && (
+            <View style={[styles.badge, { backgroundColor: getBloomColor(item.bloom_taxonomy_level) + '20' }]}>
+              <Text style={[styles.badgeText, { color: getBloomColor(item.bloom_taxonomy_level) }]}>
+                {item.bloom_taxonomy_level}
+              </Text>
+            </View>
+          )}
         </View>
-        <View style={styles.difficultyBadge}>
-          <Text style={styles.difficultyText}>{(item.difficulty_level || 'medium').toUpperCase()}</Text>
-        </View>
+        <Text style={[styles.marksText, { color: colors.textSecondary }]}>
+          {item.marks || '0'} marks
+        </Text>
       </View>
-      <Text style={styles.questionText} numberOfLines={2}>
+      
+      <Text style={[styles.questionText, { color: colors.text }]} numberOfLines={3}>
         {item.question_text}
       </Text>
+      
       <View style={styles.questionFooter}>
-        {renderStars(item.user_rating, item.id)}
-        <Text style={styles.marksText}>{item.marks || 0} marks</Text>
+        {renderStars(item.user_rating, item.id, true)}
       </View>
     </TouchableOpacity>
   );
@@ -163,85 +212,110 @@ export default function QuestionsScreen() {
         presentationStyle="pageSheet"
         onRequestClose={() => setSelectedQuestion(null)}
       >
-        <View style={styles.modalContainer}>
-          <View style={styles.modalHeader}>
+        <View style={[styles.modalContainer, { backgroundColor: colors.background }]}>
+          <View style={[styles.modalHeader, { backgroundColor: colors.card, borderBottomColor: colors.border }]}>
             <TouchableOpacity onPress={() => setSelectedQuestion(null)}>
-              <IconSymbol name="xmark" size={24} color="#374151" />
+              <IconSymbol name="xmark" size={24} color={colors.text} />
             </TouchableOpacity>
-            <Text style={styles.modalTitle}>Question Details</Text>
+            <Text style={[styles.modalTitle, { color: colors.text }]}>Question Details</Text>
             <TouchableOpacity onPress={() => handleArchive(selectedQuestion.id)}>
               <IconSymbol name="archivebox" size={24} color="#ef4444" />
             </TouchableOpacity>
           </View>
           
           <ScrollView style={styles.modalContent}>
-            <View style={styles.detailSection}>
-              <View style={styles.badgeRow}>
-                <View style={styles.typeBadge}>
-                  <Text style={styles.typeText}>
-                    {selectedQuestion.question_type.replace('_', ' ').toUpperCase()}
+            {/* Question Type Badges */}
+            <View style={styles.badgeSection}>
+              <View style={styles.badgesContainer}>
+                <View style={[styles.badge, { backgroundColor: colors.primary + '20' }]}>
+                  <Text style={[styles.badgeText, { color: colors.primary }]}>
+                    {selectedQuestion.question_type.replace('_', ' ')}
                   </Text>
                 </View>
-                <View style={styles.difficultyBadge}>
-                  <Text style={styles.difficultyText}>
-                    {(selectedQuestion.difficulty_level || 'medium').toUpperCase()}
-                  </Text>
-                </View>
+                {selectedQuestion.difficulty_level && (
+                  <View style={[styles.badge, { backgroundColor: '#f59e0b20' }]}>
+                    <Text style={[styles.badgeText, { color: '#f59e0b' }]}>
+                      {selectedQuestion.difficulty_level}
+                    </Text>
+                  </View>
+                )}
                 {selectedQuestion.bloom_taxonomy_level && (
-                  <View style={[styles.difficultyBadge, { backgroundColor: '#8b5cf620' }]}>
-                    <Text style={[styles.difficultyText, { color: '#8b5cf6' }]}>
-                      {selectedQuestion.bloom_taxonomy_level.toUpperCase()}
+                  <View style={[styles.badge, { backgroundColor: getBloomColor(selectedQuestion.bloom_taxonomy_level) + '20' }]}>
+                    <Text style={[styles.badgeText, { color: getBloomColor(selectedQuestion.bloom_taxonomy_level) }]}>
+                      {selectedQuestion.bloom_taxonomy_level}
                     </Text>
                   </View>
                 )}
               </View>
             </View>
 
-            <View style={styles.detailSection}>
-              <Text style={styles.sectionLabel}>Question</Text>
-              <Text style={styles.questionDetailText}>{selectedQuestion.question_text}</Text>
+            {/* Question Text */}
+            <View style={[styles.section, { backgroundColor: colors.card }]}>
+              <Text style={[styles.sectionLabel, { color: colors.textSecondary }]}>Question</Text>
+              <Text style={[styles.questionDetailText, { color: colors.text }]}>
+                {selectedQuestion.question_text}
+              </Text>
             </View>
 
+            {/* Options (for MCQ) */}
             {selectedQuestion.question_type === 'mcq' && selectedQuestion.options && (
-              <View style={styles.detailSection}>
-                <Text style={styles.sectionLabel}>Options</Text>
+              <View style={[styles.section, { backgroundColor: colors.card }]}>
+                <Text style={[styles.sectionLabel, { color: colors.textSecondary }]}>Options</Text>
                 {selectedQuestion.options.map((option, index) => (
                   <View
                     key={index}
                     style={[
                       styles.optionRow,
-                      option === selectedQuestion.correct_answer && styles.correctOption,
+                      option === selectedQuestion.correct_answer && [styles.correctOption, { borderColor: '#34C759' }],
+                      { backgroundColor: option === selectedQuestion.correct_answer ? '#34C75920' : colors.background },
                     ]}
                   >
-                    <Text style={styles.optionLetter}>
-                      {String.fromCharCode(65 + index)}.
+                    <Text style={[styles.optionLetter, { color: colors.textSecondary }]}>
+                      {String.fromCharCode(65 + index)}
                     </Text>
-                    <Text style={styles.optionText}>{option}</Text>
+                    <Text style={[styles.optionText, { color: colors.text }]}>{option}</Text>
                     {option === selectedQuestion.correct_answer && (
-                      <IconSymbol name="checkmark.circle.fill" size={20} color="#10b981" />
+                      <IconSymbol name="checkmark.circle.fill" size={20} color="#34C759" />
                     )}
                   </View>
                 ))}
               </View>
             )}
 
-            <View style={styles.detailSection}>
-              <Text style={styles.sectionLabel}>
+            {/* Answer/Solution */}
+            <View style={[styles.section, { backgroundColor: colors.card }]}>
+              <Text style={[styles.sectionLabel, { color: colors.textSecondary }]}>
                 {selectedQuestion.question_type === 'mcq' ? 'Correct Answer' : 'Model Answer'}
               </Text>
-              <Text style={styles.answerText}>{selectedQuestion.correct_answer}</Text>
+              <Text style={[styles.answerText, { color: colors.text }]}>
+                {selectedQuestion.correct_answer}
+              </Text>
             </View>
 
-            <View style={styles.detailSection}>
-              <Text style={styles.sectionLabel}>Rate this Question</Text>
+            {/* Rating */}
+            <View style={[styles.section, { backgroundColor: colors.card }]}>
+              <Text style={[styles.sectionLabel, { color: colors.textSecondary }]}>Rate Quality</Text>
               {renderStars(selectedQuestion.user_rating, selectedQuestion.id)}
             </View>
 
-            <View style={styles.metaInfo}>
-              <Text style={styles.metaText}>Marks: {selectedQuestion.marks}</Text>
-              <Text style={styles.metaText}>
-                Created: {new Date(selectedQuestion.generated_at).toLocaleDateString()}
-              </Text>
+            {/* Metadata */}
+            <View style={[styles.metaSection, { backgroundColor: colors.card, borderTopColor: colors.border }]}>
+              <View style={styles.metaRow}>
+                <IconSymbol name="target" size={16} color={colors.primary} />
+                <View style={{ flex: 1, marginLeft: Spacing.sm }}>
+                  <Text style={[styles.metaLabel, { color: colors.textSecondary }]}>Marks</Text>
+                  <Text style={[styles.metaValue, { color: colors.text }]}>{selectedQuestion.marks || 0}</Text>
+                </View>
+              </View>
+              <View style={styles.metaRow}>
+                <IconSymbol name="calendar" size={16} color={colors.primary} />
+                <View style={{ flex: 1, marginLeft: Spacing.sm }}>
+                  <Text style={[styles.metaLabel, { color: colors.textSecondary }]}>Created</Text>
+                  <Text style={[styles.metaValue, { color: colors.text }]}>
+                    {new Date(selectedQuestion.generated_at).toLocaleDateString()}
+                  </Text>
+                </View>
+              </View>
             </View>
           </ScrollView>
         </View>
@@ -251,298 +325,333 @@ export default function QuestionsScreen() {
 
   if (isLoading && questions.length === 0) {
     return (
-      <View style={styles.centerContainer}>
-        <ActivityIndicator size="large" color="#2563eb" />
+      <View style={[styles.centerContainer, { backgroundColor: colors.background }]}>
+        <ActivityIndicator size="large" color={colors.primary} />
       </View>
     );
   }
 
   return (
-    <View style={styles.container}>
-      <View style={styles.header}>
-        <Text style={styles.headerTitle}>Questions</Text>
-        <Text style={styles.headerSubtitle}>{questions.length} total</Text>
-      </View>
-
-      <View style={styles.filterContainer}>
-        <ScrollView horizontal showsHorizontalScrollIndicator={false}>
-          {FILTER_OPTIONS.map((option) => (
-            <TouchableOpacity
-              key={option.value}
-              style={[
-                styles.filterChip,
-                filterType === option.value && styles.filterChipActive,
-              ]}
-              onPress={() => setFilterType(option.value)}
-            >
-              <Text
-                style={[
-                  styles.filterChipText,
-                  filterType === option.value && styles.filterChipTextActive,
-                ]}
-              >
-                {option.label}
-              </Text>
-            </TouchableOpacity>
-          ))}
-        </ScrollView>
-      </View>
-
-      <FlatList
-        data={questions}
-        renderItem={renderQuestion}
-        keyExtractor={(item) => item.id}
-        contentContainerStyle={styles.listContent}
-        refreshControl={
-          <RefreshControl refreshing={isRefreshing} onRefresh={handleRefresh} />
-        }
-        onEndReached={handleLoadMore}
-        onEndReachedThreshold={0.5}
-        ListEmptyComponent={
-          <View style={styles.emptyContainer}>
-            <IconSymbol name="list.bullet" size={64} color="#9ca3af" />
-            <Text style={styles.emptyTitle}>No Questions Yet</Text>
-            <Text style={styles.emptyText}>
-              Generate questions from your documents to see them here.
-            </Text>
-          </View>
-        }
-        ListFooterComponent={
-          hasMore && questions.length > 0 ? (
-            <ActivityIndicator style={styles.loadingMore} color="#2563eb" />
-          ) : null
-        }
+    <>
+      <Stack.Screen
+        options={{
+          title: subject?.code || 'Questions',
+          headerBackTitle: 'Subjects',
+        }}
       />
+      <View style={[styles.container, { backgroundColor: colors.background }]}>
+        {/* Header with Gradient */}
+        <LinearGradient
+          colors={['#4A90D9', '#357ABD'] as const}
+          style={styles.headerCard}
+        >
+          <View>
+            <Text style={styles.headerTitle}>Questions</Text>
+            <Text style={styles.headerSubtitle}>
+              {questions.length} question{questions.length !== 1 ? 's' : ''} generated
+            </Text>
+            {subject && (
+              <Text style={styles.headerSubject}>
+                {subject.code} • {subject.name}
+              </Text>
+            )}
+          </View>
+        </LinearGradient>
 
-      {renderQuestionDetail()}
-    </View>
+        {/* Filter Chips */}
+        <View style={[styles.filterContainer, { backgroundColor: colors.card }]}>
+          <ScrollView horizontal showsHorizontalScrollIndicator={false} contentContainerStyle={styles.filterContent}>
+            {FILTER_OPTIONS.map((option) => (
+              <TouchableOpacity
+                key={option.value}
+                style={[
+                  styles.filterChip,
+                  filterType === option.value && [
+                    styles.filterChipActive,
+                    { backgroundColor: colors.primary },
+                  ],
+                  filterType !== option.value && { backgroundColor: colors.background },
+                ]}
+                onPress={() => setFilterType(option.value)}
+              >
+                <Text
+                  style={[
+                    styles.filterChipText,
+                    filterType === option.value && styles.filterChipTextActive,
+                    filterType !== option.value && { color: colors.textSecondary },
+                  ]}
+                >
+                  {option.label}
+                </Text>
+              </TouchableOpacity>
+            ))}
+          </ScrollView>
+        </View>
+
+        {/* Questions List */}
+        <FlatList
+          data={questions}
+          renderItem={renderQuestion}
+          keyExtractor={(item) => item.id}
+          contentContainerStyle={styles.listContent}
+          refreshControl={
+            <RefreshControl
+              refreshing={isRefreshing}
+              onRefresh={handleRefresh}
+              tintColor={colors.primary}
+            />
+          }
+          onEndReached={handleLoadMore}
+          onEndReachedThreshold={0.5}
+          ListEmptyComponent={
+            <View style={styles.emptyContainer}>
+              <IconSymbol name="questionmark.circle" size={64} color={colors.textTertiary} />
+              <Text style={[styles.emptyTitle, { color: colors.text }]}>No Questions Yet</Text>
+              <Text style={[styles.emptyText, { color: colors.textSecondary }]}>
+                {filterType
+                  ? 'No questions match your filter'
+                  : 'Generate questions from your documents to see them here.'}
+              </Text>
+            </View>
+          }
+          ListFooterComponent={
+            hasMore && questions.length > 0 ? (
+              <ActivityIndicator style={styles.loadingMore} color={colors.primary} />
+            ) : null
+          }
+        />
+
+        {renderQuestionDetail()}
+      </View>
+    </>
   );
 }
 
 const styles = StyleSheet.create({
   container: {
     flex: 1,
-    backgroundColor: '#f5f5f5',
   },
   centerContainer: {
     flex: 1,
     justifyContent: 'center',
     alignItems: 'center',
   },
-  header: {
-    paddingHorizontal: 16,
-    paddingVertical: 12,
-    backgroundColor: '#fff',
-    borderBottomWidth: 1,
-    borderBottomColor: '#e5e7eb',
+  headerCard: {
+    paddingHorizontal: Spacing.lg,
+    paddingVertical: Spacing.xl,
+    paddingBottom: Spacing.lg,
   },
   headerTitle: {
-    fontSize: 20,
-    fontWeight: '600',
-    color: '#111827',
+    fontSize: FontSizes.xxl,
+    fontWeight: '700',
+    color: '#FFFFFF',
   },
   headerSubtitle: {
-    fontSize: 14,
-    color: '#6b7280',
-    marginTop: 2,
+    fontSize: FontSizes.sm,
+    color: 'rgba(255,255,255,0.9)',
+    marginTop: Spacing.xs,
+  },
+  headerSubject: {
+    fontSize: FontSizes.xs,
+    color: 'rgba(255,255,255,0.8)',
+    marginTop: Spacing.xs,
+    letterSpacing: 0.5,
   },
   filterContainer: {
-    backgroundColor: '#fff',
-    paddingVertical: 12,
-    paddingHorizontal: 16,
-    borderBottomWidth: 1,
-    borderBottomColor: '#e5e7eb',
+    paddingVertical: Spacing.md,
+    paddingHorizontal: Spacing.md,
+  },
+  filterContent: {
+    paddingHorizontal: Spacing.xs,
+    gap: Spacing.sm,
   },
   filterChip: {
-    paddingHorizontal: 16,
-    paddingVertical: 8,
-    borderRadius: 20,
-    backgroundColor: '#f3f4f6',
-    marginRight: 8,
+    paddingHorizontal: Spacing.md,
+    paddingVertical: Spacing.sm,
+    borderRadius: BorderRadius.full,
+    borderWidth: 1,
+    borderColor: 'transparent',
   },
   filterChipActive: {
-    backgroundColor: '#2563eb',
+    borderWidth: 0,
   },
   filterChipText: {
-    fontSize: 14,
-    color: '#4b5563',
-  },
-  filterChipTextActive: {
-    color: '#fff',
+    fontSize: FontSizes.sm,
     fontWeight: '500',
   },
+  filterChipTextActive: {
+    color: '#FFFFFF',
+    fontWeight: '600',
+  },
   listContent: {
-    padding: 16,
+    paddingHorizontal: Spacing.md,
+    paddingVertical: Spacing.md,
+    paddingBottom: Spacing.xxl,
   },
   questionCard: {
-    backgroundColor: '#fff',
-    borderRadius: 12,
-    padding: 16,
-    marginBottom: 12,
+    borderRadius: BorderRadius.lg,
+    padding: Spacing.md,
+    marginBottom: Spacing.md,
     shadowColor: '#000',
     shadowOffset: { width: 0, height: 1 },
-    shadowOpacity: 0.05,
-    shadowRadius: 4,
+    shadowOpacity: 0.08,
+    shadowRadius: 3,
     elevation: 2,
   },
   questionHeader: {
     flexDirection: 'row',
-    gap: 8,
-    marginBottom: 8,
+    justifyContent: 'space-between',
+    alignItems: 'flex-start',
+    marginBottom: Spacing.md,
   },
-  typeBadge: {
-    backgroundColor: '#2563eb20',
-    paddingHorizontal: 8,
-    paddingVertical: 4,
-    borderRadius: 4,
+  badgesContainer: {
+    flexDirection: 'row',
+    flexWrap: 'wrap',
+    gap: Spacing.xs,
+    flex: 1,
   },
-  typeText: {
-    fontSize: 10,
+  badge: {
+    paddingHorizontal: Spacing.sm,
+    paddingVertical: Spacing.xs,
+    borderRadius: BorderRadius.sm,
+  },
+  badgeText: {
+    fontSize: FontSizes.xs,
     fontWeight: '600',
-    color: '#2563eb',
+    textTransform: 'capitalize',
   },
-  difficultyBadge: {
-    backgroundColor: '#f59e0b20',
-    paddingHorizontal: 8,
-    paddingVertical: 4,
-    borderRadius: 4,
-  },
-  difficultyText: {
-    fontSize: 10,
+  marksText: {
+    fontSize: FontSizes.xs,
     fontWeight: '600',
-    color: '#f59e0b',
+    marginLeft: Spacing.sm,
   },
   questionText: {
-    fontSize: 14,
-    color: '#374151',
-    lineHeight: 20,
-    marginBottom: 12,
+    fontSize: FontSizes.md,
+    lineHeight: 22,
+    marginBottom: Spacing.md,
   },
   questionFooter: {
     flexDirection: 'row',
-    justifyContent: 'space-between',
     alignItems: 'center',
   },
   starsContainer: {
     flexDirection: 'row',
-    gap: 4,
-  },
-  marksText: {
-    fontSize: 12,
-    color: '#6b7280',
+    gap: Spacing.xs,
   },
   emptyContainer: {
     alignItems: 'center',
-    paddingTop: 60,
-    paddingHorizontal: 32,
+    paddingVertical: Spacing.xxl + Spacing.xl,
+    paddingHorizontal: Spacing.xl,
   },
   emptyTitle: {
-    fontSize: 20,
+    fontSize: FontSizes.lg,
     fontWeight: '600',
-    color: '#374151',
-    marginTop: 16,
-    marginBottom: 8,
+    marginTop: Spacing.md,
+    marginBottom: Spacing.sm,
   },
   emptyText: {
-    fontSize: 14,
-    color: '#6b7280',
+    fontSize: FontSizes.sm,
     textAlign: 'center',
+    lineHeight: 20,
   },
   loadingMore: {
-    paddingVertical: 16,
+    paddingVertical: Spacing.xl,
   },
   modalContainer: {
     flex: 1,
-    backgroundColor: '#fff',
   },
   modalHeader: {
     flexDirection: 'row',
     justifyContent: 'space-between',
     alignItems: 'center',
-    paddingHorizontal: 16,
-    paddingVertical: 16,
+    paddingHorizontal: Spacing.md,
+    paddingVertical: Spacing.md,
     borderBottomWidth: 1,
-    borderBottomColor: '#e5e7eb',
   },
   modalTitle: {
-    fontSize: 18,
+    fontSize: FontSizes.lg,
     fontWeight: '600',
-    color: '#111827',
+    flex: 1,
+    textAlign: 'center',
   },
   modalContent: {
     flex: 1,
-    padding: 16,
+    paddingVertical: Spacing.md,
   },
-  detailSection: {
-    marginBottom: 20,
+  badgeSection: {
+    paddingHorizontal: Spacing.md,
+    paddingBottom: Spacing.md,
   },
-  badgeRow: {
-    flexDirection: 'row',
-    flexWrap: 'wrap',
-    gap: 8,
+  section: {
+    marginHorizontal: Spacing.md,
+    marginBottom: Spacing.md,
+    borderRadius: BorderRadius.lg,
+    padding: Spacing.md,
   },
   sectionLabel: {
-    fontSize: 12,
+    fontSize: FontSizes.xs,
     fontWeight: '600',
-    color: '#6b7280',
-    marginBottom: 8,
+    letterSpacing: 0.5,
+    marginBottom: Spacing.sm,
     textTransform: 'uppercase',
   },
   questionDetailText: {
-    fontSize: 16,
-    color: '#111827',
+    fontSize: FontSizes.md,
     lineHeight: 24,
   },
   optionRow: {
     flexDirection: 'row',
     alignItems: 'center',
-    backgroundColor: '#f9fafb',
-    padding: 12,
-    borderRadius: 8,
-    marginBottom: 8,
-    gap: 8,
+    padding: Spacing.md,
+    borderRadius: BorderRadius.md,
+    marginBottom: Spacing.sm,
+    gap: Spacing.sm,
+    borderWidth: 1,
+    borderColor: 'transparent',
   },
   correctOption: {
-    backgroundColor: '#10b98120',
-    borderWidth: 1,
-    borderColor: '#10b981',
+    borderWidth: 1.5,
   },
   optionLetter: {
-    fontSize: 14,
+    fontSize: FontSizes.md,
     fontWeight: '600',
-    color: '#6b7280',
+    width: 24,
   },
   optionText: {
-    fontSize: 14,
-    color: '#374151',
+    fontSize: FontSizes.sm,
     flex: 1,
-  },
-  answerText: {
-    fontSize: 14,
-    color: '#374151',
-    backgroundColor: '#f0fdf4',
-    padding: 12,
-    borderRadius: 8,
-    borderLeftWidth: 4,
-    borderLeftColor: '#10b981',
-  },
-  explanationText: {
-    fontSize: 14,
-    color: '#4b5563',
-    backgroundColor: '#f9fafb',
-    padding: 12,
-    borderRadius: 8,
     lineHeight: 20,
   },
-  metaInfo: {
-    flexDirection: 'row',
-    justifyContent: 'space-between',
-    paddingTop: 16,
-    borderTopWidth: 1,
-    borderTopColor: '#e5e7eb',
+  answerText: {
+    fontSize: FontSizes.md,
+    lineHeight: 22,
+    paddingHorizontal: Spacing.md,
+    paddingVertical: Spacing.md,
+    borderRadius: BorderRadius.md,
+    borderLeftWidth: 4,
+    borderLeftColor: '#34C759',
   },
-  metaText: {
-    fontSize: 12,
-    color: '#9ca3af',
+  metaSection: {
+    marginHorizontal: Spacing.md,
+    marginBottom: Spacing.xl,
+    borderRadius: BorderRadius.lg,
+    padding: Spacing.md,
+    borderTopWidth: 1,
+    gap: Spacing.md,
+  },
+  metaRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+  },
+  metaLabel: {
+    fontSize: FontSizes.xs,
+    fontWeight: '600',
+    letterSpacing: 0.5,
+    textTransform: 'uppercase',
+  },
+  metaValue: {
+    fontSize: FontSizes.sm,
+    fontWeight: '500',
+    marginTop: Spacing.xs,
   },
 });
