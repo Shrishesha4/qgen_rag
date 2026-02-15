@@ -12,6 +12,7 @@ import {
   TextInput,
   Animated,
   Platform,
+  SafeAreaView,
 } from 'react-native';
 import { LinearGradient } from 'expo-linear-gradient';
 import Slider from '@react-native-community/slider';
@@ -89,22 +90,25 @@ export default function GenerateScreen() {
         rubricsService.listRubrics(1, 50),
         subjectsService.listSubjects(1, 100),
       ]);
+      console.log('[Generate] Loaded subjects:', subjectsResponse.subjects.length);
       setRubrics(rubricsResponse.rubrics);
       setSubjects(subjectsResponse.subjects);
       if (subjectsResponse.subjects.length > 0 && !selectedSubject) {
         setSelectedSubject(subjectsResponse.subjects[0]);
+        console.log('[Generate] Auto-selected first subject:', subjectsResponse.subjects[0].name);
       }
     } catch (error) {
       console.error('Failed to load data:', error);
+      showError(error, 'Failed to Load Data');
     } finally {
       setIsLoading(false);
       setIsRefreshing(false);
     }
-  }, [selectedSubject]);
+  }, [selectedSubject, showError]);
 
   useEffect(() => {
     loadData();
-  }, []);
+  }, [loadData]);
 
   const handleRefresh = () => {
     setIsRefreshing(true);
@@ -269,6 +273,16 @@ export default function GenerateScreen() {
     });
   };
 
+  const updateMarksEach = (type: string, marks: number) => {
+    setQuestionDistribution((prev) => {
+      const existing = prev[type] || { count: 0, marks_each: 1 };
+      return {
+        ...prev,
+        [type]: { ...existing, marks_each: Math.max(1, Math.round(marks)) },
+      };
+    });
+  };
+
   const updateLoPercentage = (loId: string, percentage: number) => {
     setLoDistribution((prev) => ({
       ...prev,
@@ -408,7 +422,10 @@ export default function GenerateScreen() {
               </Text>
               <TouchableOpacity
                 style={[styles.selectContainer, { borderColor: colors.border }]}
-                onPress={() => setShowSubjectPicker(true)}
+                onPress={() => {
+                  console.log('[Generate] Opening subject picker. Subjects count:', subjects.length);
+                  setShowSubjectPicker(true);
+                }}
               >
                 <Text style={[styles.selectText, { color: selectedSubject ? colors.text : colors.textTertiary }]}>
                   {selectedSubject ? `${selectedSubject.name} (${selectedSubject.code})` : 'Select a subject'}
@@ -496,6 +513,31 @@ export default function GenerateScreen() {
                         maximumTrackTintColor={colors.border}
                       />
                       <Text style={[styles.sliderValue, { color: type.color }]}>{dist.count}</Text>
+                    </View>
+                    <View style={styles.sliderRow}>
+                      <Text style={[styles.sliderLabel, { color: colors.textSecondary }]}>Marks</Text>
+                      <TouchableOpacity 
+                        style={[styles.marksButton, { backgroundColor: colors.card, borderColor: colors.border }]}
+                        onPress={() => updateMarksEach(type.value, dist.marks_each - 1)}
+                      >
+                        <Text style={[styles.marksButtonText, { color: type.color }]}>−</Text>
+                      </TouchableOpacity>
+                      <TextInput
+                        style={[styles.marksInput, { backgroundColor: colors.background, color: colors.text, borderColor: colors.border }]}
+                        value={String(dist.marks_each)}
+                        onChangeText={(text) => {
+                          const num = parseInt(text) || 1;
+                          updateMarksEach(type.value, num);
+                        }}
+                        keyboardType="number-pad"
+                      />
+                      <TouchableOpacity 
+                        style={[styles.marksButton, { backgroundColor: colors.card, borderColor: colors.border }]}
+                        onPress={() => updateMarksEach(type.value, dist.marks_each + 1)}
+                      >
+                        <Text style={[styles.marksButtonText, { color: type.color }]}>+</Text>
+                      </TouchableOpacity>
+                      <Text style={[styles.sliderValue, { color: type.color }]}>{dist.marks_each}</Text>
                     </View>
                   </View>
                 );
@@ -730,18 +772,30 @@ export default function GenerateScreen() {
       <Modal
         visible={showSubjectPicker}
         animationType="slide"
-        presentationStyle="pageSheet"
+        transparent={false}
         onRequestClose={() => setShowSubjectPicker(false)}
       >
-        <View style={[styles.modalContainer, { backgroundColor: colors.background }]}>
+        <SafeAreaView style={[styles.modalContainer, { backgroundColor: colors.background }]}>
           <View style={[styles.pickerHeader, { backgroundColor: colors.card, borderBottomColor: colors.border }]}>
-            <TouchableOpacity onPress={() => setShowSubjectPicker(false)}>
+            <TouchableOpacity 
+              onPress={() => {
+                console.log('[Generate] Cancel tapped');
+                setShowSubjectPicker(false);
+              }}
+              hitSlop={{ top: 10, bottom: 10, left: 10, right: 10 }}
+            >
               <Text style={[styles.pickerCancel, { color: colors.primary }]}>Cancel</Text>
             </TouchableOpacity>
             <Text style={[styles.pickerTitle, { color: colors.text }]}>Select Subject</Text>
             <View style={{ width: 50 }} />
           </View>
-          <ScrollView style={styles.pickerContent}>
+          <ScrollView 
+            style={styles.pickerContent}
+            contentContainerStyle={{ paddingBottom: 50 }}
+          >
+            <Text style={{ padding: 16, color: colors.textSecondary, fontSize: 14 }}>
+              Tap a subject to select it ({subjects.length} available)
+            </Text>
             {subjects.length === 0 ? (
               <View style={styles.emptySubjectsContainer}>
                 <IconSymbol name="book.closed" size={48} color={colors.textTertiary} />
@@ -756,12 +810,14 @@ export default function GenerateScreen() {
               subjects.map((subject) => (
                 <TouchableOpacity
                   key={subject.id}
+                  activeOpacity={0.7}
                   style={[
                     styles.subjectOption,
-                    { borderBottomColor: colors.border },
-                    selectedSubject?.id === subject.id && { backgroundColor: colors.primary + '10' },
+                    { backgroundColor: colors.card, borderBottomColor: colors.border },
+                    selectedSubject?.id === subject.id && { backgroundColor: colors.primary + '15' },
                   ]}
                   onPress={() => {
+                    console.log('[Generate] Subject onPress triggered:', subject.name);
                     setSelectedSubject(subject);
                     setShowSubjectPicker(false);
                   }}
@@ -784,7 +840,7 @@ export default function GenerateScreen() {
               ))
             )}
           </ScrollView>
-        </View>
+        </SafeAreaView>
       </Modal>
     </View>
   );
@@ -1044,6 +1100,28 @@ const styles = StyleSheet.create({
     width: 40,
     textAlign: 'right',
   },
+  marksButton: {
+    width: 36,
+    height: 36,
+    borderRadius: BorderRadius.sm,
+    justifyContent: 'center',
+    alignItems: 'center',
+    borderWidth: 1,
+    marginHorizontal: Spacing.xs,
+  },
+  marksButtonText: {
+    fontSize: 20,
+    fontWeight: '600',
+  },
+  marksInput: {
+    width: 50,
+    height: 36,
+    borderRadius: BorderRadius.sm,
+    borderWidth: 1,
+    textAlign: 'center',
+    fontSize: FontSizes.md,
+    fontWeight: '600',
+  },
   loRow: {
     marginBottom: Spacing.lg,
   },
@@ -1228,7 +1306,7 @@ const styles = StyleSheet.create({
     flexDirection: 'row',
     justifyContent: 'space-between',
     alignItems: 'center',
-    paddingTop: 60,
+    paddingTop: Spacing.md,
     paddingBottom: Spacing.md,
     paddingHorizontal: Spacing.lg,
     borderBottomWidth: 1,
@@ -1260,9 +1338,10 @@ const styles = StyleSheet.create({
   subjectOption: {
     flexDirection: 'row',
     alignItems: 'center',
-    paddingVertical: Spacing.md,
+    paddingVertical: Spacing.lg,
     paddingHorizontal: Spacing.lg,
     borderBottomWidth: 1,
+    minHeight: 80,
   },
   subjectOptionIcon: {
     width: 40,

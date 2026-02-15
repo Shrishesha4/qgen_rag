@@ -1013,6 +1013,7 @@ Output valid JSON only."""
         limit: int = 20,
         question_type: Optional[str] = None,
         difficulty: Optional[str] = None,
+        show_archived: bool = False,
     ) -> tuple[List[Question], Dict[str, Any]]:
         """Get questions with pagination and flexible filtering."""
         # Build base query - support both document-based and rubric-based questions
@@ -1022,13 +1023,19 @@ Output valid JSON only."""
             .outerjoin(Document, Question.document_id == Document.id)
             .outerjoin(Subject, Question.subject_id == Subject.id)
             .where(
-                Question.is_archived == False,
                 or_(
                     Document.user_id == user_id,  # Document-based questions
                     Subject.user_id == user_id,   # Rubric-based questions
                 )
             )
         )
+        
+        # Filter archived questions unless explicitly requested
+        if not show_archived:
+            query = query.where(Question.is_archived == False)
+        else:
+            # If show_archived is True, only show archived questions
+            query = query.where(Question.is_archived == True)
 
         # Apply optional filters
         if document_id:
@@ -1118,6 +1125,34 @@ Output valid JSON only."""
             return False
 
         question.is_archived = True
+        await self.db.commit()
+        return True
+    
+    async def unarchive_question(
+        self,
+        question_id: uuid.UUID,
+        user_id: uuid.UUID,
+    ) -> bool:
+        """Unarchive a question (restore it)."""
+        from sqlalchemy import or_
+        # Get question and verify ownership through document or subject
+        result = await self.db.execute(
+            select(Question)
+            .outerjoin(Document, Question.document_id == Document.id)
+            .outerjoin(Subject, Question.subject_id == Subject.id)
+            .where(
+                Question.id == question_id,
+                or_(
+                    Document.user_id == user_id,
+                    Subject.user_id == user_id,
+                ),
+            )
+        )
+        question = result.scalar_one_or_none()
+        if not question:
+            return False
+        
+        question.is_archived = False
         await self.db.commit()
         return True
 

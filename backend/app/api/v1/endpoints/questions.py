@@ -278,12 +278,14 @@ async def list_questions(
     limit: int = Query(20, ge=1, le=100),
     question_type: Optional[str] = Query(None, description="Filter by question type"),
     difficulty: Optional[str] = Query(None, description="Filter by difficulty"),
+    show_archived: bool = Query(False, description="Show only archived questions when true"),
     current_user: User = Depends(get_current_user),
     db: AsyncSession = Depends(get_db),
 ):
     """
     List questions with pagination and filtering.
     Can filter by document, subject, topic, or vetting status.
+    Set show_archived=true to view archived questions only.
     """
     question_service = QuestionGenerationService(db)
     
@@ -298,6 +300,7 @@ async def list_questions(
             limit=limit,
             question_type=question_type,
             difficulty=difficulty,
+            show_archived=show_archived,
         )
         
         return QuestionListResponse(
@@ -402,6 +405,32 @@ async def archive_question(
         )
     
     return {"message": "Question archived successfully"}
+
+
+@router.post("/{question_id}/unarchive")
+async def unarchive_question(
+    question_id: uuid.UUID,
+    current_user: User = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+):
+    """
+    Unarchive a question (restore it).
+    Restores an archived question to make it visible again.
+    """
+    question_service = QuestionGenerationService(db)
+    
+    success = await question_service.unarchive_question(
+        question_id=question_id,
+        user_id=current_user.id,
+    )
+    
+    if not success:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="Archived question not found",
+        )
+    
+    return {"message": "Question unarchived successfully"}
 
 
 @router.get("/sessions/list")

@@ -230,12 +230,12 @@ export default function SubjectDetailScreen() {
       // Small delay to ensure UI updates
       await new Promise(resolve => setTimeout(resolve, 100));
       
-      setExtractionStatus('AI is analyzing syllabus...');
+      setExtractionStatus('Analyzing syllabus...');
       
       // Another delay to show the analyzing message
       await new Promise(resolve => setTimeout(resolve, 200));
       
-      setExtractionStatus('Extracting chapters with AI (this may take a minute)...');
+      setExtractionStatus('Extracting chapters...');
       
       // Call the API to extract chapters
       const response = await subjectsService.extractChaptersFromSyllabus(

@@ -50,6 +50,7 @@ export default function QuestionsScreen() {
   const [selectedQuestion, setSelectedQuestion] = useState<Question | null>(null);
   const [page, setPage] = useState(1);
   const [hasMore, setHasMore] = useState(true);
+  const [showArchived, setShowArchived] = useState(false);
 
   const loadQuestions = useCallback(async (pageNum: number, append: boolean = false) => {
     try {
@@ -59,7 +60,8 @@ export default function QuestionsScreen() {
         filterType || undefined,
         undefined,
         undefined,
-        subjectId
+        subjectId,
+        showArchived
       );
       
       if (append) {
@@ -92,7 +94,7 @@ export default function QuestionsScreen() {
     setIsLoading(true);
     setPage(1);
     loadQuestions(1);
-  }, [filterType, loadQuestions, loadSubject]);
+  }, [filterType, showArchived, loadQuestions, loadSubject]);
 
   const handleRefresh = () => {
     setIsRefreshing(true);
@@ -131,6 +133,17 @@ export default function QuestionsScreen() {
       showSuccess('Question archived');
     } catch (error) {
       showError(error, 'Archive Failed');
+    }
+  };
+
+  const handleUnarchive = async (questionId: string) => {
+    try {
+      await questionsService.unarchiveQuestion(questionId);
+      setQuestions((prev) => prev.filter((q) => q.id !== questionId));
+      setSelectedQuestion(null);
+      showSuccess('Question restored');
+    } catch (error) {
+      showError(error, 'Restore Failed');
     }
   };
 
@@ -218,9 +231,15 @@ export default function QuestionsScreen() {
               <IconSymbol name="xmark" size={24} color={colors.text} />
             </TouchableOpacity>
             <Text style={[styles.modalTitle, { color: colors.text }]}>Question Details</Text>
-            <TouchableOpacity onPress={() => handleArchive(selectedQuestion.id)}>
-              <IconSymbol name="archivebox" size={24} color="#ef4444" />
-            </TouchableOpacity>
+            {showArchived ? (
+              <TouchableOpacity onPress={() => handleUnarchive(selectedQuestion.id)}>
+                <IconSymbol name="arrow.uturn.backward" size={24} color="#10b981" />
+              </TouchableOpacity>
+            ) : (
+              <TouchableOpacity onPress={() => handleArchive(selectedQuestion.id)}>
+                <IconSymbol name="archivebox" size={24} color="#ef4444" />
+              </TouchableOpacity>
+            )}
           </View>
           
           <ScrollView style={styles.modalContent}>
@@ -385,6 +404,34 @@ export default function QuestionsScreen() {
                 </Text>
               </TouchableOpacity>
             ))}
+            {/* Archived Toggle */}
+            <TouchableOpacity
+              style={[
+                styles.filterChip,
+                showArchived && [
+                  styles.filterChipActive,
+                  { backgroundColor: '#ef4444' },
+                ],
+                !showArchived && { backgroundColor: colors.background },
+              ]}
+              onPress={() => setShowArchived(!showArchived)}
+            >
+              <IconSymbol 
+                name={showArchived ? "archivebox.fill" : "archivebox"} 
+                size={14} 
+                color={showArchived ? '#FFFFFF' : colors.textSecondary} 
+              />
+              <Text
+                style={[
+                  styles.filterChipText,
+                  showArchived && styles.filterChipTextActive,
+                  !showArchived && { color: colors.textSecondary },
+                  { marginLeft: 4 }
+                ]}
+              >
+                Archived
+              </Text>
+            </TouchableOpacity>
           </ScrollView>
         </View>
 
@@ -466,6 +513,8 @@ const styles = StyleSheet.create({
     gap: Spacing.sm,
   },
   filterChip: {
+    flexDirection: 'row',
+    alignItems: 'center',
     paddingHorizontal: Spacing.md,
     paddingVertical: Spacing.sm,
     borderRadius: BorderRadius.full,

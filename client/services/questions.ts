@@ -212,7 +212,8 @@ export const questionsService = {
     questionType?: string,
     difficulty?: string,
     documentId?: string,
-    subjectId?: string
+    subjectId?: string,
+    showArchived: boolean = false,
   ): Promise<{ questions: Question[]; pagination: { page: number; limit: number; total: number; total_pages: number } }> {
     const params = new URLSearchParams({
       page: page.toString(),
@@ -222,6 +223,7 @@ export const questionsService = {
     if (subjectId) params.append('subject_id', subjectId);
     if (questionType) params.append('question_type', questionType);
     if (difficulty) params.append('difficulty', difficulty);
+    if (showArchived) params.append('show_archived', 'true');
 
     const response = await apiClient.get(`/questions?${params}`);
     return response.data;
@@ -255,6 +257,13 @@ export const questionsService = {
    */
   async archiveQuestion(questionId: string): Promise<void> {
     await apiClient.delete(`/questions/${questionId}`);
+  },
+
+  /**
+   * Unarchive a question (restore it)
+   */
+  async unarchiveQuestion(questionId: string): Promise<void> {
+    await apiClient.post(`/questions/${questionId}/unarchive`);
   },
 
   /**
