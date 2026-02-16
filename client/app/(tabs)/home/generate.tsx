@@ -13,6 +13,7 @@ import {
   Animated,
   Platform,
   SafeAreaView,
+  FlatList,
 } from 'react-native';
 import { LinearGradient } from 'expo-linear-gradient';
 import Slider from '@react-native-community/slider';
@@ -104,7 +105,7 @@ export default function GenerateScreen() {
       setIsLoading(false);
       setIsRefreshing(false);
     }
-  }, [selectedSubject, showError]);
+  }, [showError]);
 
   useEffect(() => {
     loadData();
@@ -406,6 +407,69 @@ export default function GenerateScreen() {
           </LinearGradient>
 
           <ScrollView style={styles.modalContent}>
+            {/* Subject Picker Inline View */}
+            {showSubjectPicker ? (
+              <View style={[styles.inlinePickerContainer, { backgroundColor: colors.background }]}>
+                <View style={[styles.inlinePickerHeader, { backgroundColor: colors.card, borderBottomColor: colors.border }]}>
+                  <TouchableOpacity onPress={() => setShowSubjectPicker(false)}>
+                    <IconSymbol name="chevron.left" size={24} color={colors.primary} />
+                  </TouchableOpacity>
+                  <Text style={[styles.inlinePickerTitle, { color: colors.text }]}>Select Subject</Text>
+                  <View style={{ width: 24 }} />
+                </View>
+                <ScrollView style={styles.inlinePickerList}>
+                  {subjects.length === 0 ? (
+                    <View style={styles.emptySubjectsList}>
+                      <IconSymbol name="book.closed" size={48} color={colors.textTertiary} />
+                      <Text style={[styles.emptySubjectsText, { color: colors.textSecondary }]}>
+                        No subjects available
+                      </Text>
+                      <Text style={[styles.emptySubjectsHint, { color: colors.textTertiary }]}>
+                        Create a subject first in the Subjects tab
+                      </Text>
+                    </View>
+                  ) : (
+                    subjects.map((subject) => {
+                      const isSelected = selectedSubject?.id === subject.id;
+                      return (
+                        <TouchableOpacity
+                          key={subject.id}
+                          activeOpacity={0.6}
+                          style={[
+                            styles.inlinePickerItem,
+                            { backgroundColor: colors.card, borderBottomColor: colors.border },
+                            isSelected && { backgroundColor: colors.primary + '15' }
+                          ]}
+                          onPress={() => {
+                            console.log('[Generate] Subject selected:', subject.name);
+                            setSelectedSubject(subject);
+                            setShowSubjectPicker(false);
+                          }}
+                        >
+                          <View style={styles.inlinePickerItemContent}>
+                            <View style={[styles.inlinePickerItemIcon, { backgroundColor: colors.primary + '20' }]}>
+                              <IconSymbol name="book.fill" size={20} color={colors.primary} />
+                            </View>
+                            <View style={styles.inlinePickerItemText}>
+                              <Text style={[styles.inlinePickerItemTitle, { color: colors.text }]}>
+                                {subject.name}
+                              </Text>
+                              <Text style={[styles.inlinePickerItemSubtitle, { color: colors.textSecondary }]}>
+                                {subject.code}
+                              </Text>
+                            </View>
+                          </View>
+                          {isSelected && (
+                            <IconSymbol name="checkmark.circle.fill" size={22} color={colors.primary} />
+                          )}
+                        </TouchableOpacity>
+                      );
+                    })
+                  )}
+                </ScrollView>
+              </View>
+            ) : (
+              <>
             {/* Basic Info */}
             <View style={[styles.formSection, { backgroundColor: colors.card }]}>
               <Text style={[styles.formLabel, { color: colors.textSecondary }]}>RUBRIC NAME</Text>
@@ -632,6 +696,8 @@ export default function GenerateScreen() {
             </TouchableOpacity>
             
             <View style={{ height: 50 }} />
+              </>
+            )}
           </ScrollView>
         </View>
       </Modal>
@@ -766,81 +832,6 @@ export default function GenerateScreen() {
             <View style={{ height: 50 }} />
           </ScrollView>
         </View>
-      </Modal>
-
-      {/* Subject Picker Modal */}
-      <Modal
-        visible={showSubjectPicker}
-        animationType="slide"
-        transparent={false}
-        onRequestClose={() => setShowSubjectPicker(false)}
-      >
-        <SafeAreaView style={[styles.modalContainer, { backgroundColor: colors.background }]}>
-          <View style={[styles.pickerHeader, { backgroundColor: colors.card, borderBottomColor: colors.border }]}>
-            <TouchableOpacity 
-              onPress={() => {
-                console.log('[Generate] Cancel tapped');
-                setShowSubjectPicker(false);
-              }}
-              hitSlop={{ top: 10, bottom: 10, left: 10, right: 10 }}
-            >
-              <Text style={[styles.pickerCancel, { color: colors.primary }]}>Cancel</Text>
-            </TouchableOpacity>
-            <Text style={[styles.pickerTitle, { color: colors.text }]}>Select Subject</Text>
-            <View style={{ width: 50 }} />
-          </View>
-          <ScrollView 
-            style={styles.pickerContent}
-            contentContainerStyle={{ paddingBottom: 50 }}
-          >
-            <Text style={{ padding: 16, color: colors.textSecondary, fontSize: 14 }}>
-              Tap a subject to select it ({subjects.length} available)
-            </Text>
-            {subjects.length === 0 ? (
-              <View style={styles.emptySubjectsContainer}>
-                <IconSymbol name="book.closed" size={48} color={colors.textTertiary} />
-                <Text style={[styles.emptySubjectsText, { color: colors.textSecondary }]}>
-                  No subjects found
-                </Text>
-                <Text style={[styles.emptySubjectsHint, { color: colors.textTertiary }]}>
-                  Create a subject first in the Subjects tab
-                </Text>
-              </View>
-            ) : (
-              subjects.map((subject) => (
-                <TouchableOpacity
-                  key={subject.id}
-                  activeOpacity={0.7}
-                  style={[
-                    styles.subjectOption,
-                    { backgroundColor: colors.card, borderBottomColor: colors.border },
-                    selectedSubject?.id === subject.id && { backgroundColor: colors.primary + '15' },
-                  ]}
-                  onPress={() => {
-                    console.log('[Generate] Subject onPress triggered:', subject.name);
-                    setSelectedSubject(subject);
-                    setShowSubjectPicker(false);
-                  }}
-                >
-                  <View style={[styles.subjectOptionIcon, { backgroundColor: colors.secondary + '20' }]}>
-                    <IconSymbol name="book.fill" size={20} color={colors.secondary} />
-                  </View>
-                  <View style={styles.subjectOptionInfo}>
-                    <Text style={[styles.subjectOptionName, { color: colors.text }]}>
-                      {subject.name}
-                    </Text>
-                    <Text style={[styles.subjectOptionCode, { color: colors.textSecondary }]}>
-                      {subject.code}
-                    </Text>
-                  </View>
-                  {selectedSubject?.id === subject.id && (
-                    <IconSymbol name="checkmark.circle.fill" size={24} color={colors.primary} />
-                  )}
-                </TouchableOpacity>
-              ))
-            )}
-          </ScrollView>
-        </SafeAreaView>
       </Modal>
     </View>
   );
@@ -1301,65 +1292,70 @@ const styles = StyleSheet.create({
     fontSize: FontSizes.sm,
     marginTop: Spacing.md,
   },
-  // Subject Picker Modal Styles
-  pickerHeader: {
+  // Inline Subject Picker Styles
+  inlinePickerContainer: {
+    flex: 1,
+    minHeight: '100%',
+  },
+  inlinePickerHeader: {
     flexDirection: 'row',
     justifyContent: 'space-between',
     alignItems: 'center',
-    paddingTop: Spacing.md,
-    paddingBottom: Spacing.md,
-    paddingHorizontal: Spacing.lg,
+    padding: Spacing.lg,
     borderBottomWidth: 1,
   },
-  pickerTitle: {
+  inlinePickerTitle: {
     fontSize: FontSizes.lg,
     fontWeight: '600',
   },
-  pickerCancel: {
-    fontSize: FontSizes.md,
-    fontWeight: '500',
-  },
-  pickerContent: {
+  inlinePickerList: {
     flex: 1,
   },
-  emptySubjectsContainer: {
+  emptySubjectsList: {
+    padding: Spacing.xl,
     alignItems: 'center',
-    paddingVertical: Spacing.xl * 2,
+    marginTop: Spacing.xl,
   },
   emptySubjectsText: {
     fontSize: FontSizes.md,
-    fontWeight: '600',
+    textAlign: 'center',
     marginTop: Spacing.md,
+    fontWeight: '600',
   },
   emptySubjectsHint: {
     fontSize: FontSizes.sm,
+    textAlign: 'center',
     marginTop: Spacing.xs,
   },
-  subjectOption: {
+  inlinePickerItem: {
     flexDirection: 'row',
     alignItems: 'center',
-    paddingVertical: Spacing.lg,
-    paddingHorizontal: Spacing.lg,
+    justifyContent: 'space-between',
+    padding: Spacing.lg,
     borderBottomWidth: 1,
-    minHeight: 80,
   },
-  subjectOptionIcon: {
-    width: 40,
-    height: 40,
+  inlinePickerItemContent: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    flex: 1,
+  },
+  inlinePickerItemIcon: {
+    width: 44,
+    height: 44,
     borderRadius: BorderRadius.sm,
     justifyContent: 'center',
     alignItems: 'center',
     marginRight: Spacing.md,
   },
-  subjectOptionInfo: {
+  inlinePickerItemText: {
     flex: 1,
   },
-  subjectOptionName: {
+  inlinePickerItemTitle: {
     fontSize: FontSizes.md,
     fontWeight: '600',
+    marginBottom: 2,
   },
-  subjectOptionCode: {
+  inlinePickerItemSubtitle: {
     fontSize: FontSizes.sm,
-    marginTop: 2,
   },
 });
