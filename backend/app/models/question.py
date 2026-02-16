@@ -46,6 +46,7 @@ class Question(Base):
     # Answer for MCQs
     correct_answer: Mapped[Optional[str]] = mapped_column(Text)
     options: Mapped[Optional[List[str]]] = mapped_column(ARRAY(Text))
+    explanation: Mapped[Optional[str]] = mapped_column(Text)  # Explanation for the answer
     
     # Context
     source_chunk_ids: Mapped[Optional[List[uuid.UUID]]] = mapped_column(ARRAY(UUID(as_uuid=True)))
