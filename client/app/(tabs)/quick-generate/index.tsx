@@ -292,8 +292,8 @@ export default function QuickGenerateScreen() {
         <View style={styles.typesContainer}>
           {[
             { type: 'mcq' as QuestionType, label: 'MCQ', icon: 'list.bullet' },
-            { type: 'short_answer' as QuestionType, label: 'Short', icon: 'text.alignleft' },
-            { type: 'long_answer' as QuestionType, label: 'Essay', icon: 'doc.text' },
+            { type: 'short_answer' as QuestionType, label: 'Short Answer', icon: 'text.alignleft' },
+            { type: 'long_answer' as QuestionType, label: 'Long Answer', icon: 'doc.text' },
           ].map(({ type, label, icon }) => (
             <TouchableOpacity
               key={type}
@@ -439,7 +439,7 @@ export default function QuickGenerateScreen() {
           )}
           {selectedTypes.includes('long_answer') && (
             <View style={styles.marksInputRow}>
-              <Text style={[styles.marksLabel, { color: colors.text }]}>Essay</Text>
+              <Text style={[styles.marksLabel, { color: colors.text }]}>Long Answer</Text>
               <View style={styles.marksInputWrapper}>
                 <TouchableOpacity
                   style={[styles.marksButton, { backgroundColor: colors.border }]}

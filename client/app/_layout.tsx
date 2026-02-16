@@ -11,7 +11,7 @@ import { View, ActivityIndicator } from 'react-native';
 import { ToastProvider } from '@/components/toast';
 
 export const unstable_settings = {
-  anchor: '(tabs)',
+  initialRouteName: '(tabs)',
 };
 
 function AuthGuard({ children }: { children: React.ReactNode }) {
@@ -33,7 +33,7 @@ function AuthGuard({ children }: { children: React.ReactNode }) {
       router.replace('/(auth)/login');
     } else if (isAuthenticated && inAuthGroup) {
       // Redirect to home
-      router.replace('/(tabs)');
+      router.replace('/(tabs)/home');
     }
   }, [isAuthenticated, isLoading, segments]);
 

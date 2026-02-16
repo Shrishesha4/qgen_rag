@@ -66,7 +66,21 @@ export default function TabLayout() {
           marginBottom: 4,
         },
         tabBarButton: HapticTab,
+      }}
+      screenListeners={{
+        tabPress: (e) => {
+          // Prevent index tab from being tapped
+          if (e.target?.split('-')[0] === 'index') {
+            e.preventDefault();
+          }
+        },
       }}>
+      <Tabs.Screen
+        name="index"
+        options={{
+          href: null, // Hide from tab bar
+        }}
+      />
       <Tabs.Screen
         name="home"
         options={{

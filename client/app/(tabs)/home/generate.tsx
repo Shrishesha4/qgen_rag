@@ -37,8 +37,8 @@ const EXAM_TYPES = [
 
 const QUESTION_TYPES = [
   { value: 'mcq', label: 'MCQ', icon: 'list.bullet', color: '#007AFF' },
-  { value: 'short_notes', label: 'Short Notes', icon: 'pencil', color: '#34C759' },
-  { value: 'essay', label: 'Essay', icon: 'doc.richtext', color: '#FF9500' },
+  { value: 'short_notes', label: 'Short Answer', icon: 'pencil', color: '#34C759' },
+  { value: 'essay', label: 'Long Answer', icon: 'doc.richtext', color: '#FF9500' },
 ];
 
 const DEFAULT_LOS = [

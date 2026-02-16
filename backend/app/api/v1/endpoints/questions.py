@@ -1323,7 +1323,7 @@ Output format (JSON):
 }"""
     else:
         return """You are an expert educator creating examination questions.
-Generate an essay/long-answer question requiring a detailed response.
+Generate an long-answer question requiring a detailed response.
 
 Guidelines:
 - The question should require analysis, evaluation, or synthesis

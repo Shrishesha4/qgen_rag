@@ -18,6 +18,9 @@ import { Colors, Spacing, BorderRadius, FontSizes } from '@/constants/theme';
 import { useColorScheme } from '@/hooks/use-color-scheme';
 import { useAuthStore } from '@/stores/authStore';
 import { useToast } from '@/components/toast';
+import { questionsService } from '@/services/questions';
+import { subjectsService } from '@/services/subjects';
+import { vettingService } from '@/services/vetting';
 
 type ModalType = 'editProfile' | 'changePassword' | 'notifications' | 'appearance' | 'help' | 'about' | null;
 
@@ -32,19 +35,24 @@ export default function ProfileScreen() {
   const [activeModal, setActiveModal] = useState<ModalType>(null);
   
   useEffect(() => {
-    // Hide tab bar on this screen
+    // Hide tab bar and header title on this screen
     navigation.getParent()?.setOptions({
       tabBarStyle: { display: 'none' },
+      headerShown: false,
     });
     
+    // Load statistics
+    loadStatistics();
+    
     return () => {
-      // Show tab bar again when leaving
+      // Show tab bar and header again when leaving
       navigation.getParent()?.setOptions({
         tabBarStyle: { 
           backgroundColor: colors.card,
           borderTopColor: colors.border,
           height: 60,
         },
+        headerShown: true,
       });
     };
   }, [navigation, colors]);
@@ -63,6 +71,45 @@ export default function ProfileScreen() {
   const [emailNotifications, setEmailNotifications] = useState(true);
   const [questionGenerated, setQuestionGenerated] = useState(true);
   const [vettingReminders, setVettingReminders] = useState(false);
+  
+  // Statistics State
+  const [totalQuestions, setTotalQuestions] = useState(0);
+  const [approvedQuestions, setApprovedQuestions] = useState(0);
+  const [totalSubjects, setTotalSubjects] = useState(0);
+  const [isLoadingStats, setIsLoadingStats] = useState(true);
+
+  const loadStatistics = async () => {
+    try {
+      setIsLoadingStats(true);
+      
+      // Fetch vetting stats and subjects
+      const [vettingStatsResponse, subjectsResponse] = await Promise.all([
+        vettingService.getVettingStats().catch(() => ({ total_generated: 0, total_approved: 0 })),
+        subjectsService.listSubjects(1, 100),
+      ]);
+      
+      const vettingStats = vettingStatsResponse || { total_generated: 0, total_approved: 0 };
+      const subjects = subjectsResponse?.subjects || [];
+      
+      setTotalQuestions(vettingStats.total_generated);
+      setApprovedQuestions(vettingStats.total_approved);
+      setTotalSubjects(subjects.length);
+      
+      console.log('[Profile] Statistics loaded:', {
+        totalQuestions: vettingStats.total_generated,
+        approvedQuestions: vettingStats.total_approved,
+        totalSubjects: subjects.length,
+      });
+    } catch (error) {
+      console.error('[Profile] Failed to load statistics:', error);
+      // Set default values on error
+      setTotalQuestions(0);
+      setApprovedQuestions(0);
+      setTotalSubjects(0);
+    } finally {
+      setIsLoadingStats(false);
+    }
+  };
 
   const handleLogout = () => {
     Alert.alert(
@@ -429,7 +476,7 @@ export default function ProfileScreen() {
               <View style={styles.featuresList}>
                 <View style={styles.featureItemHelp}>
                   <IconSymbol name="star.fill" size={16} color={colors.warning} />
-                  <Text style={[styles.featureItemText, { color: colors.text }]}>Multiple question types: MCQ, Short Answer, Essay</Text>
+                  <Text style={[styles.featureItemText, { color: colors.text }]}>Multiple question types: MCQ, Short Answer, Long Answer</Text>
                 </View>
                 <View style={styles.featureItemHelp}>
                   <IconSymbol name="star.fill" size={16} color={colors.warning} />
@@ -529,17 +576,17 @@ export default function ProfileScreen() {
         </Text>
         <View style={styles.statsRow}>
           <View style={styles.statItem}>
-            <Text style={[styles.statValue, { color: colors.primary }]}>0</Text>
+            <Text style={[styles.statValue, { color: colors.primary }]}>{totalQuestions}</Text>
             <Text style={[styles.statLabel, { color: colors.textSecondary }]}>Questions</Text>
           </View>
           <View style={[styles.statDivider, { backgroundColor: colors.border }]} />
           <View style={styles.statItem}>
-            <Text style={[styles.statValue, { color: colors.success }]}>0</Text>
+            <Text style={[styles.statValue, { color: colors.success }]}>{approvedQuestions}</Text>
             <Text style={[styles.statLabel, { color: colors.textSecondary }]}>Approved</Text>
           </View>
           <View style={[styles.statDivider, { backgroundColor: colors.border }]} />
           <View style={styles.statItem}>
-            <Text style={[styles.statValue, { color: '#FF9500' }]}>0</Text>
+            <Text style={[styles.statValue, { color: '#FF9500' }]}>{totalSubjects}</Text>
             <Text style={[styles.statLabel, { color: colors.textSecondary }]}>Subjects</Text>
           </View>
         </View>
@@ -552,7 +599,7 @@ export default function ProfileScreen() {
             {section.title}
           </Text>
           <GlassCard style={styles.menuCard}>
-            {section.items.map((item, itemIndex) => (
+            {section.items.map((item: any, itemIndex: number) => (
               <TouchableOpacity
                 key={itemIndex}
                 style={[
