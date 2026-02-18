@@ -619,6 +619,8 @@ async def vet_question(
     from app.models.question import Question
     from app.models.document import Document
     from app.models.subject import Subject
+    from app.schemas.question import QuestionResponse as QR
+    from app.services.question_service import QuestionGenerationService
     
     # Support both document-based and rubric-based questions
     result = await db.execute(
@@ -657,6 +659,43 @@ async def vet_question(
     
     await db.commit()
     await db.refresh(question)
+    
+    if vetting_data.status == "rejected":
+        replacement = None
+        qsvc = QuestionGenerationService(db)
+        if question.document_id:
+            q_type = question.question_type or "mcq"
+            marks_map = {"mcq": 1, "short_answer": 2, "long_answer": 5}
+            if question.marks and q_type in marks_map:
+                marks_map[q_type] = question.marks
+            context = (question.question_text or "")[:500] if question.question_text else "Replacement question"
+            async for progress in qsvc.quick_generate(
+                user_id=current_user.id,
+                document_id=question.document_id,
+                context=context,
+                count=1,
+                types=[q_type],
+                difficulty=question.difficulty_level or "medium",
+                marks_by_type=marks_map,
+                subject_id=question.subject_id,
+                topic_id=question.topic_id,
+            ):
+                if getattr(progress, "question", None):
+                    replacement = progress.question
+                    print(f"DEBUG: Found replacement question: {replacement.id}")
+            if replacement:
+                print(f"DEBUG: Returning replacement question: {replacement.id}")
+                return QR.model_validate(replacement)
+            else:
+                print(f"DEBUG: No replacement generated, checking for pending questions")
+        pending, _ = await qsvc.get_questions(
+            user_id=current_user.id,
+            vetting_status="pending",
+            page=1,
+            limit=1,
+        )
+        if pending:
+            return QuestionResponse.model_validate(pending[0])
     
     return QuestionResponse.model_validate(question)
 

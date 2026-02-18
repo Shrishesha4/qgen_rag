@@ -1390,6 +1390,7 @@ Output valid JSON only."""
                             
                             questions_generated += 1
                             generated_embeddings.append(question.question_embedding)
+                            logger.info(f"Successfully saved question {question.id} with vetting_status: {question.vetting_status}")
 
                             # Calculate progress
                             total_attempted = questions_generated + questions_failed

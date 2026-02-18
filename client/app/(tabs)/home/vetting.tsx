@@ -43,6 +43,7 @@ export default function VettingScreen() {
   const [isRefreshing, setIsRefreshing] = useState(false);
   const [expandedQuestion, setExpandedQuestion] = useState<string | null>(null);
   const [coMappings, setCoMappings] = useState<Record<string, CourseOutcomeMapping>>({});
+  const [replacedQuestionId, setReplacedQuestionId] = useState<string | null>(null);
   
   // Edit state for marks and subject/topic
   const [editMarks, setEditMarks] = useState<Record<string, number>>({});
@@ -107,6 +108,15 @@ export default function VettingScreen() {
     }
   }, [subjects.length]);
 
+  const refreshStatsOnly = useCallback(async () => {
+    try {
+      const statsResponse = await vettingService.getVettingStats();
+      setStats(statsResponse);
+    } catch (error) {
+      console.error('Failed to refresh stats:', error);
+    }
+  }, []);
+
   const loadTopicsForSubject = useCallback(async (subjectId: string) => {
     if (topics[subjectId]) return;
     try {
@@ -132,7 +142,7 @@ export default function VettingScreen() {
     try {
       await questionsService.updateQuestion(questionId, {
         marks: editMarks[questionId],
-        difficulty_level: editDifficulty[questionId],
+        difficulty_level: editDifficulty[questionId] as 'easy' | 'medium' | 'hard' | undefined,
         subject_id: editSubjectId[questionId] || undefined,
         topic_id: editTopicId[questionId] || undefined,
         course_outcome_mapping: coMappings[questionId],
@@ -177,10 +187,57 @@ export default function VettingScreen() {
           style: 'destructive',
           onPress: async () => {
             try {
-              await vettingService.vetQuestion(questionId, 'rejected', 'Rejected by reviewer');
-              setQuestions((prev) => prev.filter((q) => q.id !== questionId));
-              showSuccess('Question rejected');
-              loadData();
+              const replacement = await vettingService.vetQuestion(questionId, 'rejected', 'Rejected by reviewer');
+              console.log('Replacement question received:', replacement);
+              console.log('Replacement ID:', replacement?.id);
+              console.log('Original question ID:', questionId);
+              console.log('Is different ID?', replacement?.id !== questionId);
+              
+              if (replacement && replacement.id && replacement.id !== questionId) {
+                console.log('Replacing question with new one');
+                setQuestions((prev) =>
+                  prev.map((q) => (q.id === questionId ? (replacement as PendingQuestion) : q))
+                );
+                setExpandedQuestion((prev) => (prev === questionId ? replacement.id : prev));
+                setCoMappings((prev) => {
+                  const next = { ...prev };
+                  delete next[questionId];
+                  next[replacement.id] = (replacement as any).course_outcome_mapping || {};
+                  return next;
+                });
+                setEditMarks((prev) => {
+                  const next = { ...prev };
+                  delete next[questionId];
+                  next[replacement.id] = replacement.marks || 1;
+                  return next;
+                });
+                setEditDifficulty((prev) => {
+                  const next = { ...prev };
+                  delete next[questionId];
+                  next[replacement.id] = (replacement.difficulty_level || 'medium') as any;
+                  return next;
+                });
+                setEditSubjectId((prev) => {
+                  const next = { ...prev };
+                  delete next[questionId];
+                  next[replacement.id] = replacement.subject_id || null;
+                  return next;
+                });
+                setEditTopicId((prev) => {
+                  const next = { ...prev };
+                  delete next[questionId];
+                  next[replacement.id] = replacement.topic_id || null;
+                  return next;
+                });
+                setReplacedQuestionId(replacement.id);
+                setTimeout(() => setReplacedQuestionId(null), 1200);
+                showSuccess('Question rejected and replaced');
+                refreshStatsOnly();
+              } else {
+                setQuestions((prev) => prev.filter((q) => q.id !== questionId));
+                showSuccess('Question rejected');
+                loadData();
+              }
             } catch (error) {
               showError(error, 'Rejection Failed');
             }
@@ -245,7 +302,21 @@ export default function VettingScreen() {
     const mapping = coMappings[question.id] || {};
     
     return (
-      <View key={question.id} style={[styles.questionCard, { backgroundColor: colors.card }]}>
+      <View
+        key={question.id}
+        style={[
+          styles.questionCard,
+          { backgroundColor: colors.card },
+          replacedQuestionId === question.id && {
+            borderWidth: 2,
+            borderColor: colors.primary,
+            shadowColor: colors.primary,
+            shadowOpacity: 0.3,
+            shadowRadius: 8,
+            shadowOffset: { width: 0, height: 2 },
+          },
+        ]}
+      >
         {/* Question Header */}
         <TouchableOpacity
           style={styles.questionHeader}
@@ -256,6 +327,11 @@ export default function VettingScreen() {
               {question.question_type.toUpperCase()}
             </Text>
           </View>
+          {replacedQuestionId === question.id && (
+            <View style={[styles.typeBadge, { backgroundColor: '#34C75920', marginLeft: Spacing.xs }]}>
+              <Text style={[styles.typeBadgeText, { color: '#34C759' }]}>NEW</Text>
+            </View>
+          )}
           <View style={styles.questionMeta}>
             <Text style={[styles.difficultyText, { color: colors.textSecondary }]}>
               {question.difficulty_level || 'N/A'} • {question.marks || 0} marks
