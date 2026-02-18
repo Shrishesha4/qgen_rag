@@ -12,25 +12,80 @@ import Animated, {
   withTiming,
 } from 'react-native-reanimated';
 
-type IconMapping = Record<SymbolViewProps['name'], ComponentProps<typeof MaterialIcons>['name']>;
-type IconSymbolName = keyof typeof MAPPING;
+type IconMapping = Record<string, string>;
 type SymbolAnimationEffect = 'bounce' | 'pulse' | 'variableColor' | undefined;
 
 /**
- * Add your SF Symbols to Material Icons mappings here.
- * - see Material Icons in the [Icons Directory](https://icons.expo.fyi).
- * - see SF Symbols in the [SF Symbols](https://developer.apple.com/sf-symbols/) app.
+ * Mapping from SF Symbol names (used across the app) to Material Icons names for Android/web.
+ * - Extend this map when new SF Symbols are used.
+ * - If a mapping is missing we fall back to `help-outline` and log a warning so missing icons are easy to find.
  */
-const MAPPING = {
+const MAPPING: IconMapping = {
+  // existing mappings
   'house.fill': 'home',
   'paperplane.fill': 'send',
   'chevron.left.forwardslash.chevron.right': 'code',
   'chevron.right': 'chevron-right',
+  'chevron.left': 'chevron-left',
+  'chevron.down': 'expand-more',
   'books.vertical.fill': 'library-books',
+
+  // common app icons
   'sparkles': 'auto-awesome',
+  'magnifyingglass': 'search',
+  'questionmark.circle': 'help-outline',
+  'questionmark.circle.fill': 'help-outline',
+  'xmark': 'close',
+  'xmark.circle.fill': 'remove-circle',
+  'plus': 'add',
+  'plus.circle.fill': 'add-circle',
+  'minus': 'remove',
+  'person.circle.fill': 'account-circle',
+  'person.fill': 'person',
+
+  // document / book related
+  'book': 'book',
+  'book.fill': 'book',
+  'book.closed': 'book',
+  'doc.fill': 'description',
+  'doc.text': 'description',
+  'doc.text.fill': 'description',
+  'doc.text.magnifyingglass': 'search',
+  'doc.badge.plus': 'post-add',
+  'doc.badge.gearshape.fill': 'settings',
+  'text.alignleft': 'format-align-left',
+
+  // state / badges
+  'checkmark.circle.fill': 'check-circle',
+  'checkmark.circle': 'check-circle',
   'checkmark.shield.fill': 'verified-user',
+  'checkmark': 'check',
+  'star.fill': 'star',
+
+  // layout / lists
+  'list.bullet': 'format-list-bulleted',
+  'list.number': 'format-list-numbered',
+  'archivebox': 'archive',
+
+  // misc
   'chart.bar.fill': 'bar-chart',
-} as IconMapping;
+  'chart.bar': 'bar-chart',
+  'clock.fill': 'schedule',
+  'calendar': 'calendar-today',
+  'slider.horizontal.3': 'tune',
+  'link': 'link',
+  'pencil': 'edit',
+  'arrow.uturn.backward': 'undo',
+  'target': 'adjust',
+  'square.and.arrow.up': 'share',
+  'square.grid.2x2.fill': 'grid-view',
+  'chevron.up': 'expand-less',
+  'brain': 'psychology',
+  'doc.richtext': 'description',
+  'rectangle.portrait.and.arrow.right.fill': 'logout',
+  'exclamationmark.triangle': 'warning',
+  'exclamationmark.triangle.fill': 'warning',
+};
 
 /**
  * An icon component that uses native SF Symbols on iOS, and Material Icons on Android and web.
@@ -46,7 +101,7 @@ export function IconSymbol({
   weight,
   animationEffect,
 }: {
-  name: IconSymbolName;
+  name: SymbolViewProps['name'];
   size?: number;
   color: string | OpaqueColorValue;
   style?: StyleProp<TextStyle>;
@@ -55,6 +110,14 @@ export function IconSymbol({
 }) {
   const scale = useSharedValue(1);
   const opacity = useSharedValue(1);
+
+  const mappedName = MAPPING[name] ?? 'help-outline';
+  if (!MAPPING[name]) {
+    if (typeof __DEV__ !== 'undefined' && __DEV__) {
+      // eslint-disable-next-line no-console
+      console.warn(`[IconSymbol] missing mapping for "${name}" — falling back to "${mappedName}"`);
+    }
+  }
 
   useEffect(() => {
     if (animationEffect === 'bounce') {
@@ -81,7 +144,7 @@ export function IconSymbol({
 
   return (
     <Animated.View style={animatedStyle}>
-      <MaterialIcons color={color} size={size} name={MAPPING[name]} style={style} />
+      <MaterialIcons color={color} size={size} name={mappedName as any} style={style} />
     </Animated.View>
   );
 }
