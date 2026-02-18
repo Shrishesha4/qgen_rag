@@ -343,7 +343,7 @@ export default function ReportsScreen() {
             </View>
             {renderProgressBar(vettingStats.approval_rate, 100, colors.success)}
             
-            <View style={styles.vettingStatsGrid}>
+            <View style={[styles.vettingStatsGrid, { borderTopColor: colors.border }]}> 
               <View style={styles.vettingStatItem}>
                 <Text style={[styles.vettingStatValue, { color: colors.success }]}>{vettingStats.total_approved}</Text>
                 <Text style={[styles.vettingStatLabel, { color: colors.textSecondary }]}>Approved</Text>
@@ -426,9 +426,16 @@ const styles = StyleSheet.create({
   sectionHeader: {
     flexDirection: 'row',
     alignItems: 'center',
-    padding: Spacing.md,
+    paddingVertical: Spacing.sm,
+    paddingHorizontal: Spacing.md,
     borderRadius: BorderRadius.md,
     gap: Spacing.sm,
+    zIndex: 3,
+    elevation: 3, // Android
+    shadowColor: '#000',
+    shadowOpacity: 0.06,
+    shadowRadius: 8,
+    shadowOffset: { width: 0, height: 3 },
   },
   sectionTitle: {
     flex: 1,
@@ -438,22 +445,26 @@ const styles = StyleSheet.create({
   },
   sectionContent: {
     padding: Spacing.lg,
+    borderTopLeftRadius: BorderRadius.md,
+    borderTopRightRadius: BorderRadius.md,
     borderBottomLeftRadius: BorderRadius.md,
     borderBottomRightRadius: BorderRadius.md,
-    marginTop: -BorderRadius.md,
-    paddingTop: Spacing.lg + BorderRadius.md,
+    marginTop: Spacing.sm,
+    paddingTop: Spacing.md,
+    zIndex: 1,
+    overflow: 'hidden',
   },
   overviewGrid: {
     flexDirection: 'row',
     flexWrap: 'wrap',
-    gap: Spacing.md,
+    justifyContent: 'space-between',
   },
   overviewCard: {
-    flex: 1,
-    minWidth: '45%',
+    flexBasis: '48%',
     padding: Spacing.md,
     borderRadius: BorderRadius.sm,
     alignItems: 'center',
+    marginBottom: Spacing.md,
   },
   overviewValue: {
     fontSize: FontSizes.xxl,
@@ -464,15 +475,16 @@ const styles = StyleSheet.create({
     marginTop: Spacing.xs,
   },
   analysisContent: {
-    gap: Spacing.md,
+    marginBottom: Spacing.md,
   },
   analysisRow: {
     flexDirection: 'row',
     alignItems: 'center',
     gap: Spacing.sm,
+    paddingVertical: Spacing.sm,
   },
   analysisLabelContainer: {
-    width: 50,
+    width: 120,
   },
   loBadge: {
     paddingHorizontal: Spacing.sm,
@@ -502,7 +514,7 @@ const styles = StyleSheet.create({
     borderRadius: 4,
   },
   analysisCount: {
-    width: 35,
+    width: 40,
     fontSize: FontSizes.sm,
     fontWeight: '700',
     textAlign: 'right',
@@ -528,7 +540,6 @@ const styles = StyleSheet.create({
     marginTop: Spacing.md,
     paddingTop: Spacing.md,
     borderTopWidth: 1,
-    borderTopColor: '#E5E5EA',
   },
   vettingStatItem: {
     alignItems: 'center',
@@ -545,7 +556,6 @@ const styles = StyleSheet.create({
     marginTop: Spacing.md,
     paddingTop: Spacing.md,
     borderTopWidth: 1,
-    borderTopColor: '#E5E5EA',
   },
   gapsTitle: {
     fontSize: FontSizes.sm,

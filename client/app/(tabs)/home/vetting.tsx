@@ -232,9 +232,19 @@ export default function VettingScreen() {
               
               if (replacement && replacement.id && replacement.id !== questionId) {
                 console.log('Replacing question with new one');
-                setQuestions((prev) =>
-                  prev.map((q) => (q.id === questionId ? (replacement as PendingQuestion) : q))
-                );
+                // Filter out both the original question AND any existing question with the replacement ID
+                // to prevent duplicate key errors (replacement might already be in the pending list)
+                setQuestions((prev) => {
+                  const filtered = prev.filter((q) => q.id !== questionId && q.id !== replacement.id);
+                  // Find the index where the original was to insert replacement at same position
+                  const originalIndex = prev.findIndex((q) => q.id === questionId);
+                  if (originalIndex >= 0 && originalIndex < filtered.length) {
+                    filtered.splice(originalIndex, 0, replacement as PendingQuestion);
+                  } else {
+                    filtered.push(replacement as PendingQuestion);
+                  }
+                  return filtered;
+                });
                 setExpandedQuestion((prev) => (prev === questionId ? replacement.id : prev));
                 setCoMappings((prev) => {
                   const next = { ...prev };
@@ -264,6 +274,23 @@ export default function VettingScreen() {
                   const next = { ...prev };
                   delete next[questionId];
                   next[replacement.id] = replacement.topic_id || null;
+                  return next;
+                });
+                setAnswerDraft((prev) => {
+                  const next = { ...prev };
+                  delete next[questionId];
+                  next[replacement.id] = replacement.correct_answer || null;
+                  return next;
+                });
+                setAnswerEditMode((prev) => {
+                  const next = { ...prev };
+                  delete next[questionId];
+                  next[replacement.id] = false;
+                  return next;
+                });
+                setRegenerating((prev) => {
+                  const next = { ...prev };
+                  delete next[questionId];
                   return next;
                 });
                 setReplacedQuestionId(replacement.id);

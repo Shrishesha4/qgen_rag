@@ -683,7 +683,12 @@ async def vet_question(
     if vetting_data.status == "rejected":
         replacement = None
         qsvc = QuestionGenerationService(db)
+        
+        from loguru import logger
+        logger.info(f"Question rejected: {question_id}, document_id={question.document_id}, subject_id={question.subject_id}")
+        
         if question.document_id:
+            # Document-based question: regenerate using quick_generate
             q_type = question.question_type or "mcq"
             marks_map = {"mcq": 1, "short_answer": 2, "long_answer": 5}
             if question.marks and q_type in marks_map:
@@ -701,6 +706,8 @@ async def vet_question(
                 if bloom_candidates:
                     bloom_to_use = bloom_candidates
 
+            logger.info(f"Regenerating via quick_generate for document_id={question.document_id}")
+            
             # Generate replacements but accept only those that keep the same type and are sufficiently different
             async for progress in qsvc.quick_generate(
                 user_id=current_user.id,
@@ -718,34 +725,162 @@ async def vet_question(
                     candidate = progress.question
                     # keep same type
                     if (candidate.question_type or q_type) != q_type:
-                        print(f"DEBUG: Skipping replacement with different type: {candidate.id} ({candidate.question_type})")
+                        logger.info(f"Skipping replacement with different type: {candidate.id} ({candidate.question_type})")
                         continue
                     # ensure text differs
                     if candidate.question_text and question.question_text and candidate.question_text.strip() == question.question_text.strip():
-                        print(f"DEBUG: Skipping replacement with identical text: {candidate.id}")
+                        logger.info(f"Skipping replacement with identical text: {candidate.id}")
                         continue
                     # prefer different topic if available
                     if candidate.topic_id and question.topic_id and candidate.topic_id == question.topic_id:
-                        print(f"DEBUG: Skipping replacement in same topic: {candidate.id}")
+                        logger.info(f"Skipping replacement in same topic: {candidate.id}")
                         continue
 
                     replacement = candidate
-                    print(f"DEBUG: Found acceptable replacement question: {replacement.id}")
+                    logger.info(f"Found acceptable replacement question: {replacement.id}")
                     break
 
             if replacement:
-                print(f"DEBUG: Returning replacement question: {replacement.id}")
+                logger.info(f"Returning replacement question: {replacement.id}")
                 return QR.model_validate(replacement)
             else:
-                print(f"DEBUG: No replacement generated, checking for pending questions")
-        pending, _ = await qsvc.get_questions(
-            user_id=current_user.id,
-            vetting_status="pending",
-            page=1,
-            limit=1,
-        )
-        if pending:
-            return QuestionResponse.model_validate(pending[0])
+                logger.info(f"No replacement generated from quick_generate")
+        
+        elif question.subject_id:
+            # Rubric-based question: regenerate using rubric-style generation from syllabus
+            from app.models.subject import Subject, Topic
+            from app.services.llm_service import LLMService
+            from app.services.embedding_service import EmbeddingService
+            import random
+            import re
+            
+            logger.info(f"Regenerating rubric-based question for subject_id={question.subject_id}")
+            
+            q_type = question.question_type or "mcq"
+            marks = question.marks or 2
+            
+            # Get topics with syllabus content from the same subject
+            result = await db.execute(
+                select(Topic)
+                .where(
+                    Topic.subject_id == question.subject_id,
+                    Topic.has_syllabus == True,
+                )
+                .order_by(Topic.order_index)
+            )
+            topics = result.scalars().all()
+            
+            if topics:
+                # Prepare chunks from topics (excluding the rejected question's topic if possible)
+                all_chunks = []
+                for t in topics:
+                    if t.syllabus_content:
+                        # Skip the same topic if there are other options
+                        if question.topic_id and t.id == question.topic_id and len(topics) > 1:
+                            continue
+                        
+                        content = t.syllabus_content
+                        paragraphs = re.split(r'\n\n+', content)
+                        chunk_size = 1500
+                        current_chunk = ""
+                        
+                        for para in paragraphs:
+                            if len(current_chunk) + len(para) < chunk_size:
+                                current_chunk += "\n\n" + para if current_chunk else para
+                            else:
+                                if current_chunk:
+                                    all_chunks.append({
+                                        "topic_id": str(t.id),
+                                        "topic_name": t.name,
+                                        "content": current_chunk.strip(),
+                                    })
+                                current_chunk = para
+                        
+                        if current_chunk:
+                            all_chunks.append({
+                                "topic_id": str(t.id),
+                                "topic_name": t.name,
+                                "content": current_chunk.strip(),
+                            })
+                
+                if all_chunks:
+                    # Select a random chunk
+                    selected_chunk = random.choice(all_chunks)
+                    
+                    llm_service = LLMService()
+                    embedding_service = EmbeddingService()
+                    
+                    # Build prompt for regeneration
+                    system_prompt = _get_rubric_system_prompt(q_type)
+                    
+                    prompt = f"""Context from "{selected_chunk['topic_name']}":
+{selected_chunk['content']}
+
+Generate a {q_type.replace('_', ' ')} question based on this content.
+- Marks: {marks}
+- The question must start with an interrogative word (What, Which, How, Why, etc.) or a valid imperative (Find, Calculate, Explain, etc.)
+- The question should directly test understanding of the material
+- IMPORTANT: Generate a DIFFERENT question from: "{question.question_text[:100]}..."
+
+Output valid JSON only."""
+
+                    logger.info(f"Generating replacement question via LLM for topic: {selected_chunk['topic_name']}")
+                    
+                    try:
+                        response = await llm_service.generate_json(
+                            prompt=prompt,
+                            system_prompt=system_prompt,
+                            temperature=0.8,  # Higher for more variety
+                        )
+                        
+                        if response and "question_text" in response:
+                            question_text = response["question_text"]
+                            
+                            # Basic validation
+                            if len(question_text) >= 15 and question_text.strip() != question.question_text.strip():
+                                # Create embedding
+                                question_embedding = await embedding_service.get_embedding(question_text)
+                                
+                                # Create new question
+                                new_question = Question(
+                                    subject_id=question.subject_id,
+                                    topic_id=uuid.UUID(selected_chunk["topic_id"]),
+                                    question_text=question_text,
+                                    question_embedding=question_embedding,
+                                    question_type=q_type,
+                                    marks=marks,
+                                    difficulty_level=question.difficulty_level or "medium",
+                                    bloom_taxonomy_level=response.get("bloom_level", "understand"),
+                                    correct_answer=response.get("correct_answer") or response.get("expected_answer"),
+                                    options=response.get("options"),
+                                    explanation=response.get("explanation"),
+                                    topic_tags=response.get("topic_tags", [selected_chunk["topic_name"]]),
+                                    generation_confidence=0.75,
+                                    vetting_status="pending",
+                                    generation_metadata={
+                                        "regenerated_from": str(question_id),
+                                        "topic_name": selected_chunk["topic_name"],
+                                    },
+                                )
+                                db.add(new_question)
+                                await db.commit()
+                                await db.refresh(new_question)
+                                
+                                replacement = new_question
+                                logger.info(f"Created replacement question: {replacement.id}")
+                    except Exception as e:
+                        logger.error(f"Error generating replacement: {e}")
+                        await db.rollback()
+            
+            if replacement:
+                logger.info(f"Returning rubric-based replacement: {replacement.id}")
+                return QR.model_validate(replacement)
+            else:
+                logger.info(f"No replacement generated for rubric-based question")
+        
+        # No replacement was generated - return the rejected question itself
+        # (frontend will remove it from the list, no fake replacement)
+        logger.info(f"Returning original rejected question (no replacement available)")
     
     return QuestionResponse.model_validate(question)
 
