@@ -11,7 +11,7 @@ This service implements:
 
 import json
 from datetime import datetime, timezone
-from typing import Optional, List, AsyncGenerator, Dict, Any
+from typing import Optional, List, AsyncGenerator, Dict, Any, Tuple
 import uuid
 import asyncio
 
@@ -33,6 +33,7 @@ from app.services.llm_service import LLMService
 from app.services.redis_service import RedisService
 from app.services.document_service import DocumentService
 from app.services.reranker_service import RerankerService
+from app.services.novelty_service import NoveltyService, NoveltyResult
 from app.core.config import settings
 
 
@@ -112,7 +113,7 @@ BLOOM_TAXONOMY_VERBS = {
 
 
 class QuestionGenerationService:
-    """Service for RAG-based question generation with deduplication."""
+    """Service for RAG-based question generation with deduplication and novelty validation."""
 
     def __init__(
         self,
@@ -122,12 +123,14 @@ class QuestionGenerationService:
         redis_service: Optional[RedisService] = None,
         document_service: Optional[DocumentService] = None,
         reranker_service: Optional[RerankerService] = None,
+        novelty_service: Optional[NoveltyService] = None,
     ):
         self.db = db
         self.embedding_service = embedding_service or EmbeddingService()
         self.llm_service = llm_service or LLMService()
         self.redis_service = redis_service or RedisService()
         self.document_service = document_service or DocumentService(db, self.embedding_service)
+        self.novelty_service = novelty_service or NoveltyService(db, self.embedding_service)
         # Only initialize reranker if enabled
         if settings.RERANKER_ENABLED:
             self.reranker_service = reranker_service or RerankerService()
@@ -984,6 +987,397 @@ Output valid JSON only."""
         
         return normalized
 
+    async def _generate_with_novelty_validation(
+        self,
+        user_id: uuid.UUID,
+        document_id: uuid.UUID,
+        chunks: List[DocumentChunk],
+        question_type: str,
+        difficulty: str,
+        marks: Optional[int],
+        bloom_levels: Optional[List[str]],
+        context: str,
+        session_id: uuid.UUID,
+        subject_id: Optional[uuid.UUID] = None,
+        topic_id: Optional[uuid.UUID] = None,
+        generated_embeddings: Optional[List[List[float]]] = None,
+    ) -> Tuple[Optional[Question], Optional[QuestionResponse], List[float]]:
+        """
+        Generate a question with novelty validation and intelligent regeneration.
+        
+        Returns:
+            Tuple of (Question ORM object, QuestionResponse, question embedding)
+            Returns (None, None, []) if generation fails after all attempts.
+        """
+        import logging
+        logger = logging.getLogger(__name__)
+        
+        generated_embeddings = generated_embeddings or []
+        
+        # Get user's novelty settings
+        novelty_settings = await self.novelty_service.get_user_novelty_settings(user_id)
+        novelty_threshold = novelty_settings["novelty_threshold"]
+        max_attempts = novelty_settings["max_regeneration_attempts"]
+        
+        used_chunk_ids: List[uuid.UUID] = []
+        used_reference = False
+        current_chunks = chunks
+        
+        for attempt in range(1, max_attempts + 1):
+            logger.info(f"Generation attempt {attempt}/{max_attempts} for {question_type}")
+            
+            # Determine if we should use reference materials
+            use_reference = await self.novelty_service.should_use_reference(attempt, max_attempts)
+            
+            # Build diversity instructions for regeneration attempts
+            diversity_instructions = ""
+            if attempt > 1:
+                diversity_instructions = self._build_diversity_prompt(attempt, use_reference)
+            
+            # Generate question
+            question_data = await self._generate_single_question_with_diversity(
+                chunks=current_chunks,
+                question_type=question_type,
+                difficulty=difficulty,
+                marks=marks,
+                bloom_levels=bloom_levels,
+                context=context,
+                diversity_instructions=diversity_instructions,
+                use_reference=use_reference,
+                user_id=user_id,
+                subject_id=subject_id,
+            )
+            
+            if not question_data:
+                logger.warning(f"Attempt {attempt}: Question generation returned None")
+                continue
+            
+            # Check for within-session duplicates first (fast check)
+            question_text = question_data.get("question_text", "")
+            if not question_text or len(question_text) < 15:
+                continue
+            
+            question_embedding = await self.embedding_service.get_embedding(question_text)
+            
+            if generated_embeddings:
+                similarities = self.embedding_service.compute_similarity_batch(
+                    question_embedding, generated_embeddings
+                )
+                if any(s > 0.85 for s in similarities):
+                    logger.info(f"Attempt {attempt}: Within-session duplicate detected")
+                    continue
+            
+            # Compute novelty score against all sources
+            novelty_result = await self.novelty_service.compute_novelty(
+                question_text=question_text,
+                question_embedding=question_embedding,
+                user_id=user_id,
+                subject_id=subject_id,
+            )
+            
+            logger.info(
+                f"Attempt {attempt}: Novelty score = {novelty_result.novelty_score:.2f}, "
+                f"threshold = {novelty_threshold}, source = {novelty_result.similarity_source}"
+            )
+            
+            # Check if novelty threshold is met
+            if novelty_result.novelty_score >= novelty_threshold:
+                # Save the question with novelty metadata
+                try:
+                    question, question_response = await self._save_question_with_novelty(
+                        document_id=document_id,
+                        session_id=session_id,
+                        question_data=question_data,
+                        question_type=question_type,
+                        marks=marks,
+                        difficulty=difficulty,
+                        chunk_ids=[c.id for c in current_chunks],
+                        chunks=current_chunks,
+                        subject_id=subject_id,
+                        topic_id=topic_id,
+                        novelty_result=novelty_result,
+                        attempt_count=attempt,
+                        used_reference=used_reference or use_reference,
+                    )
+                    
+                    logger.info(f"Question accepted with novelty score {novelty_result.novelty_score:.2f}")
+                    return question, question_response, question_embedding
+                    
+                except Exception as e:
+                    logger.error(f"Failed to save question: {e}")
+                    await self.db.rollback()
+                    continue
+            
+            # Novelty threshold not met - prepare for regeneration
+            logger.info(f"Attempt {attempt}: Novelty threshold not met, preparing for regeneration")
+            
+            # Track used chunks to avoid reusing them
+            used_chunk_ids.extend([c.id for c in current_chunks])
+            
+            # Get alternative chunks for next attempt
+            if use_reference and subject_id:
+                # Get reference chunks for inspiration
+                used_reference = True
+                reference_chunks = await self.document_service.get_reference_chunks(
+                    user_id=user_id,
+                    subject_id=subject_id,
+                    query_embedding=question_embedding,
+                    top_k=2,
+                )
+                
+                # Combine primary and reference chunks
+                primary_alternatives = await self.document_service.get_primary_chunks_excluding_used(
+                    document_id=document_id,
+                    used_chunk_ids=used_chunk_ids,
+                    query_embedding=question_embedding,
+                    top_k=2,
+                )
+                
+                current_chunks = primary_alternatives + reference_chunks
+            else:
+                # Get alternative primary chunks
+                current_chunks = await self.document_service.get_primary_chunks_excluding_used(
+                    document_id=document_id,
+                    used_chunk_ids=used_chunk_ids,
+                    query_embedding=question_embedding,
+                    top_k=3,
+                )
+            
+            # If no more chunks available, fall back to original
+            if not current_chunks:
+                current_chunks = chunks
+        
+        # All attempts exhausted - log discarded question
+        logger.warning(f"Question discarded after {max_attempts} attempts - novelty threshold not met")
+        
+        return None, None, []
+
+    def _build_diversity_prompt(self, attempt: int, use_reference: bool) -> str:
+        """Build diversity instructions for regeneration attempts."""
+        instructions = [
+            "\n\nDIVERSITY REQUIREMENTS (this is a regeneration attempt):",
+            "- Generate a SEMANTICALLY DIFFERENT question from previous attempts",
+        ]
+        
+        if attempt == 2:
+            instructions.extend([
+                "- Use different phrasing and sentence structure",
+                "- Focus on a different aspect of the same concept",
+            ])
+        elif attempt >= 3:
+            instructions.extend([
+                "- Approach the topic from a completely different angle",
+                "- Use a different context or scenario",
+                "- Consider alternative applications or examples",
+            ])
+        
+        if use_reference:
+            instructions.extend([
+                "\nREFERENCE MATERIAL USAGE:",
+                "- Use reference content ONLY for conceptual inspiration",
+                "- Do NOT copy or closely paraphrase reference questions",
+                "- Create an ORIGINAL question that tests similar concepts differently",
+            ])
+        
+        return "\n".join(instructions)
+
+    async def _generate_single_question_with_diversity(
+        self,
+        chunks: List[DocumentChunk],
+        question_type: str,
+        difficulty: str,
+        marks: Optional[int],
+        bloom_levels: Optional[List[str]],
+        context: str = "",
+        diversity_instructions: str = "",
+        use_reference: bool = False,
+        user_id: Optional[uuid.UUID] = None,
+        subject_id: Optional[uuid.UUID] = None,
+    ) -> Optional[Dict[str, Any]]:
+        """Generate a single question with optional diversity instructions."""
+        import logging
+        logger = logging.getLogger(__name__)
+        
+        # Build context from chunks
+        doc_content = "\n\n---\n\n".join([c.chunk_text for c in chunks])
+        
+        # Select system prompt based on type
+        if question_type == "mcq":
+            system_prompt = SYSTEM_PROMPT_MCQ
+        elif question_type == "short_answer":
+            system_prompt = SYSTEM_PROMPT_SHORT
+        else:
+            system_prompt = SYSTEM_PROMPT_LONG
+        
+        # Select Bloom's level
+        bloom_level = None
+        if bloom_levels:
+            import random
+            bloom_level = random.choice(bloom_levels)
+        else:
+            bloom_defaults = {
+                "mcq": "understand",
+                "short_answer": "apply",
+                "long_answer": "analyze",
+            }
+            bloom_level = bloom_defaults.get(question_type, "understand")
+        
+        # Build enhanced prompt
+        prompt = f"""Topic/Context: {context}
+
+Content from the document:
+{doc_content}
+
+Generate a {question_type.replace('_', ' ')} question with the following requirements:
+- The question should be relevant to the topic: "{context}"
+- Difficulty: {difficulty}
+- Bloom's Taxonomy Level: {bloom_level}
+- Marks: {marks or 'appropriate for the question type'}
+- The question must be directly answerable from the provided content
+- Ensure the question is clear, specific, and tests understanding of the material
+{diversity_instructions}
+
+Output valid JSON only."""
+
+        try:
+            response = await self._generate_with_retry(
+                prompt=prompt,
+                system_prompt=system_prompt,
+                question_type=question_type,
+            )
+            
+            if not response:
+                return None
+            
+            # Normalize response keys
+            if "question" in response and "question_text" not in response:
+                response["question_text"] = response.pop("question")
+            if "text" in response and "question_text" not in response:
+                response["question_text"] = response.pop("text")
+            
+            if "question_text" not in response:
+                return None
+            
+            response["bloom_taxonomy_level"] = bloom_level
+            return response
+            
+        except Exception as e:
+            logger.exception(f"Failed to generate question: {e}")
+            return None
+
+    async def _save_question_with_novelty(
+        self,
+        document_id: uuid.UUID,
+        session_id: uuid.UUID,
+        question_data: Dict[str, Any],
+        question_type: str,
+        marks: Optional[int],
+        difficulty: str,
+        chunk_ids: List[uuid.UUID],
+        chunks: List[DocumentChunk],
+        novelty_result: NoveltyResult,
+        attempt_count: int,
+        used_reference: bool,
+        subject_id: Optional[uuid.UUID] = None,
+        topic_id: Optional[uuid.UUID] = None,
+    ) -> tuple[Question, QuestionResponse]:
+        """Save a question with novelty metadata."""
+        import logging
+        logger = logging.getLogger(__name__)
+        
+        # Validate question quality if chunks provided
+        confidence_score = 0.8
+        if chunks:
+            is_valid, reason, confidence_score = await self._validate_question_quality(
+                question_data, question_type, chunks
+            )
+            if not is_valid:
+                logger.warning(f"Question validation failed: {reason}")
+                raise ValueError(f"Question validation failed: {reason}")
+        
+        # Generate embedding for the question
+        question_embedding = await self.embedding_service.get_embedding(
+            question_data["question_text"]
+        )
+        
+        # Normalize options
+        raw_options = question_data.get("options")
+        normalized_options = None
+        if raw_options:
+            normalized_options = self._normalize_options(raw_options)
+        
+        # Normalize correct answer
+        correct_answer = question_data.get("correct_answer") or question_data.get("expected_answer") or question_data.get("answer")
+        if isinstance(correct_answer, dict):
+            correct_answer = correct_answer.get("option") or correct_answer.get("value") or str(correct_answer)
+        
+        question = Question(
+            document_id=document_id,
+            session_id=session_id,
+            subject_id=subject_id,
+            topic_id=topic_id,
+            question_text=question_data["question_text"],
+            question_embedding=question_embedding,
+            question_type=question_type,
+            marks=marks,
+            difficulty_level=difficulty,
+            bloom_taxonomy_level=question_data.get("bloom_taxonomy_level"),
+            correct_answer=str(correct_answer) if correct_answer else None,
+            options=normalized_options,
+            explanation=question_data.get("explanation"),
+            topic_tags=question_data.get("topic_tags"),
+            source_chunk_ids=chunk_ids,
+            generation_confidence=confidence_score,
+            # Novelty metadata
+            novelty_score=novelty_result.novelty_score,
+            max_similarity=novelty_result.max_similarity,
+            similarity_source=novelty_result.similarity_source,
+            generation_attempt_count=attempt_count,
+            used_reference_materials=used_reference,
+            novelty_metadata=novelty_result.similarity_breakdown,
+            generation_status="accepted",
+            generation_metadata={
+                "raw_response": question_data,
+            },
+        )
+        
+        self.db.add(question)
+        await self.db.commit()
+        await self.db.refresh(question)
+        
+        # Convert to response
+        question_response = QuestionResponse(
+            id=question.id,
+            document_id=question.document_id,
+            subject_id=question.subject_id,
+            topic_id=question.topic_id,
+            session_id=question.session_id,
+            question_text=question.question_text,
+            question_type=question.question_type,
+            marks=question.marks,
+            difficulty_level=question.difficulty_level,
+            bloom_taxonomy_level=question.bloom_taxonomy_level,
+            options=question.options,
+            correct_answer=question.correct_answer,
+            explanation=question.explanation,
+            topic_tags=question.topic_tags,
+            source_chunk_ids=question.source_chunk_ids,
+            course_outcome_mapping=question.course_outcome_mapping,
+            learning_outcome_id=question.learning_outcome_id,
+            vetting_status=question.vetting_status,
+            vetted_at=question.vetted_at,
+            vetting_notes=question.vetting_notes,
+            answerability_score=question.answerability_score,
+            specificity_score=question.specificity_score,
+            generation_confidence=question.generation_confidence,
+            generated_at=question.generated_at,
+            times_shown=question.times_shown,
+            user_rating=question.user_rating,
+            is_archived=question.is_archived,
+        )
+        
+        return question, question_response
+
     def _distribute_types(
         self,
         total_count: int,
@@ -1667,3 +2061,243 @@ Output valid JSON only."""
         # All retries exhausted - log and return None instead of raising
         logger.error(f"All {max_retries} attempts failed for {question_type}: {last_error}")
         return None
+
+    async def quick_generate_with_novelty(
+        self,
+        user_id: uuid.UUID,
+        document_id: uuid.UUID,
+        context: str,
+        count: int = 5,
+        types: Optional[List[str]] = None,
+        difficulty: str = "medium",
+        bloom_levels: Optional[List[str]] = None,
+        marks_by_type: Optional[dict] = None,
+        subject_id: Optional[uuid.UUID] = None,
+        topic_id: Optional[uuid.UUID] = None,
+    ) -> AsyncGenerator[QuickGenerateProgress, None]:
+        """
+        Generate questions with full novelty validation pipeline.
+        
+        This method:
+        1. Computes novelty score for each generated question
+        2. Enforces user's novelty threshold
+        3. Uses intelligent regeneration with alternative chunks
+        4. Falls back to reference materials when needed
+        5. Only returns questions that meet novelty threshold
+        
+        Args:
+            user_id: User ID
+            document_id: Document ID
+            context: Context/title provided by user
+            count: Number of questions to generate
+            types: Question types to generate
+            difficulty: Difficulty level
+            bloom_levels: Target Bloom's taxonomy levels
+            marks_by_type: Dict mapping question type to marks
+            subject_id: Subject ID to link questions to
+            topic_id: Topic/Chapter ID to link questions to
+        """
+        import logging
+        logger = logging.getLogger(__name__)
+        
+        if types is None:
+            types = ["mcq", "short_answer"]
+        
+        if marks_by_type is None:
+            marks_by_type = {"mcq": 1, "short_answer": 2, "long_answer": 5}
+
+        # Acquire generation lock
+        lock_acquired = await self.redis_service.acquire_generation_lock(
+            str(user_id), str(document_id)
+        )
+        if not lock_acquired:
+            yield QuickGenerateProgress(
+                status="error",
+                progress=0,
+                message="Another generation is in progress",
+            )
+            return
+
+        try:
+            logger.info(f"quick_generate_with_novelty: Starting for user {user_id}, context: {context}")
+            
+            # Get user's novelty settings
+            novelty_settings = await self.novelty_service.get_user_novelty_settings(user_id)
+            novelty_threshold = novelty_settings["novelty_threshold"]
+            max_attempts = novelty_settings["max_regeneration_attempts"]
+            
+            logger.info(f"Novelty threshold: {novelty_threshold}, max attempts: {max_attempts}")
+            
+            yield QuickGenerateProgress(
+                status="generating",
+                progress=5,
+                message=f"Preparing content (novelty threshold: {novelty_threshold:.0%})...",
+                document_id=document_id,
+            )
+
+            # Get document chunks
+            chunks = await self._get_chunks(document_id)
+            if not chunks:
+                yield QuickGenerateProgress(
+                    status="error",
+                    progress=5,
+                    message="No document content found for generation",
+                    document_id=document_id,
+                )
+                return
+
+            yield QuickGenerateProgress(
+                status="generating",
+                progress=10,
+                message=f"Generating {count} unique questions from {len(chunks)} content sections...",
+                total_questions=count,
+                document_id=document_id,
+            )
+
+            # Create session for tracking
+            session = GenerationSession(
+                document_id=document_id,
+                user_id=user_id,
+                requested_count=count,
+                requested_types=types,
+                requested_difficulty=difficulty,
+                focus_topics=[context],
+                status="in_progress",
+                generation_config={
+                    "mode": "quick_generate_with_novelty",
+                    "context": context,
+                    "bloom_levels": bloom_levels,
+                    "novelty_threshold": novelty_threshold,
+                    "max_regeneration_attempts": max_attempts,
+                },
+            )
+            self.db.add(session)
+            await self.db.commit()
+            await self.db.refresh(session)
+            session_id = session.id
+
+            # Generate questions with novelty validation
+            questions_generated = 0
+            questions_failed = 0
+            questions_discarded = 0  # Questions that failed novelty threshold
+            generated_embeddings: List[List[float]] = []
+            
+            # Distribute question types
+            type_distribution = self._distribute_types(count, types)
+            
+            for q_type, type_count in type_distribution.items():
+                for i in range(type_count):
+                    logger.info(f"Generating question {i+1}/{type_count} of type {q_type}")
+                    
+                    try:
+                        # Select relevant chunks
+                        context_embedding = await self.embedding_service.get_embedding(context)
+                        candidates = await self.document_service.hybrid_search(
+                            document_id=document_id,
+                            query=context,
+                            query_embedding=context_embedding,
+                            top_k=6,
+                            alpha=0.6,
+                        )
+                        
+                        if self.reranker_service and len(candidates) > 3:
+                            selected_chunks = self.reranker_service.rerank(
+                                query=context,
+                                chunks=candidates,
+                                top_k=3,
+                            )
+                        else:
+                            selected_chunks = candidates[:3]
+                        
+                        if not selected_chunks:
+                            import random
+                            selected_chunks = random.sample(chunks, min(3, len(chunks)))
+                        
+                        # Generate with novelty validation
+                        type_marks = marks_by_type.get(q_type, 1)
+                        
+                        question, question_response, embedding = await self._generate_with_novelty_validation(
+                            user_id=user_id,
+                            document_id=document_id,
+                            chunks=selected_chunks,
+                            question_type=q_type,
+                            difficulty=difficulty,
+                            marks=type_marks,
+                            bloom_levels=bloom_levels,
+                            context=context,
+                            session_id=session_id,
+                            subject_id=subject_id,
+                            topic_id=topic_id,
+                            generated_embeddings=generated_embeddings,
+                        )
+                        
+                        if question and question_response:
+                            questions_generated += 1
+                            generated_embeddings.append(embedding)
+                            
+                            # Calculate progress
+                            total_attempted = questions_generated + questions_failed + questions_discarded
+                            progress = 10 + int((total_attempted / count) * 85)
+                            
+                            yield QuickGenerateProgress(
+                                status="generating",
+                                progress=min(progress, 95),
+                                current_question=questions_generated,
+                                total_questions=count,
+                                question=question_response,
+                                message=f"Generated question {questions_generated}/{count} (novelty: {question.novelty_score:.0%})",
+                                document_id=document_id,
+                            )
+                        else:
+                            questions_discarded += 1
+                            logger.warning(f"Question discarded after novelty validation")
+                            
+                    except Exception as e:
+                        logger.exception(f"Exception during question generation: {e}")
+                        questions_failed += 1
+                        await self.db.rollback()
+
+            # Complete session
+            session_result = await self.db.execute(
+                select(GenerationSession).where(GenerationSession.id == session_id)
+            )
+            session = session_result.scalar_one_or_none()
+            
+            if session:
+                session.questions_generated = questions_generated
+                session.questions_failed = questions_failed + questions_discarded
+                session.questions_duplicate = questions_discarded
+                session.status = "completed"
+                session.completed_at = datetime.now(timezone.utc)
+                if session.started_at:
+                    session.total_duration_seconds = (
+                        session.completed_at - session.started_at
+                    ).total_seconds()
+                
+                await self.db.commit()
+
+            yield QuickGenerateProgress(
+                status="complete",
+                progress=100,
+                current_question=questions_generated,
+                total_questions=count,
+                message=f"Generated {questions_generated} unique questions" + 
+                       (f" ({questions_discarded} below novelty threshold)" if questions_discarded > 0 else ""),
+                document_id=document_id,
+            )
+
+        except Exception as e:
+            await self.db.rollback()
+            logger.exception(f"Error in quick_generate_with_novelty: {e}")
+            
+            yield QuickGenerateProgress(
+                status="error",
+                progress=0,
+                message=f"Generation failed: {str(e)}",
+                document_id=document_id,
+            )
+
+        finally:
+            await self.redis_service.release_generation_lock(
+                str(user_id), str(document_id)
+            )

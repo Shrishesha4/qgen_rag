@@ -35,6 +35,8 @@ class DocumentService:
         filename: str,
         file_content: bytes,
         mime_type: str,
+        index_type: str = "primary",
+        subject_id: Optional[uuid.UUID] = None,
     ) -> Document:
         """Upload and process a document."""
         # Calculate file hash
@@ -71,6 +73,8 @@ class DocumentService:
             mime_type=mime_type,
             storage_path=str(storage_path),
             processing_status="pending",
+            index_type=index_type,
+            subject_id=subject_id,
         )
         self.db.add(document)
         await self.db.commit()
@@ -80,6 +84,31 @@ class DocumentService:
         asyncio.create_task(self._process_document(document.id))
 
         return document
+
+    async def upload_reference_document(
+        self,
+        user_id: uuid.UUID,
+        filename: str,
+        file_content: bytes,
+        mime_type: str,
+        subject_id: uuid.UUID,
+        index_type: str,  # reference_book or template_paper
+    ) -> Document:
+        """
+        Upload a reference document (book or template paper).
+        These are stored in a separate index for novelty comparison.
+        """
+        if index_type not in ("reference_book", "template_paper"):
+            raise ValueError("index_type must be 'reference_book' or 'template_paper'")
+        
+        return await self.upload_document(
+            user_id=user_id,
+            filename=filename,
+            file_content=file_content,
+            mime_type=mime_type,
+            index_type=index_type,
+            subject_id=subject_id,
+        )
 
     async def upload_and_process_document(
         self,
@@ -562,3 +591,122 @@ class DocumentService:
         )
         
         return [chunk for chunk, _ in ranked[:top_k]]
+
+    async def get_reference_documents(
+        self,
+        user_id: uuid.UUID,
+        subject_id: Optional[uuid.UUID] = None,
+        index_type: Optional[str] = None,
+    ) -> List[Document]:
+        """
+        Get reference documents (books and template papers) for a user.
+        Optionally filter by subject and type.
+        """
+        query = select(Document).where(
+            Document.user_id == user_id,
+            Document.index_type.in_(["reference_book", "template_paper"]),
+            Document.processing_status == "completed",
+        )
+        
+        if subject_id:
+            query = query.where(Document.subject_id == subject_id)
+        
+        if index_type:
+            query = query.where(Document.index_type == index_type)
+        
+        result = await self.db.execute(query)
+        return result.scalars().all()
+
+    async def get_reference_chunks(
+        self,
+        user_id: uuid.UUID,
+        subject_id: Optional[uuid.UUID] = None,
+        index_type: Optional[str] = None,
+        query_embedding: Optional[List[float]] = None,
+        top_k: int = 10,
+    ) -> List[DocumentChunk]:
+        """
+        Get chunks from reference documents.
+        If query_embedding is provided, returns the most relevant chunks.
+        Otherwise returns all chunks.
+        """
+        # Get reference documents
+        docs = await self.get_reference_documents(user_id, subject_id, index_type)
+        
+        if not docs:
+            return []
+        
+        doc_ids = [doc.id for doc in docs]
+        
+        # Get all chunks
+        result = await self.db.execute(
+            select(DocumentChunk)
+            .where(DocumentChunk.document_id.in_(doc_ids))
+            .order_by(DocumentChunk.chunk_index)
+        )
+        chunks = result.scalars().all()
+        
+        if not chunks:
+            return []
+        
+        # If no query embedding, return all chunks
+        if query_embedding is None:
+            return chunks
+        
+        # Score and rank by similarity
+        scored_chunks = []
+        for chunk in chunks:
+            if chunk.chunk_embedding is not None and len(chunk.chunk_embedding) > 0:
+                similarity = self.embedding_service.compute_similarity(
+                    query_embedding, chunk.chunk_embedding
+                )
+                scored_chunks.append((chunk, similarity))
+        
+        # Sort by similarity
+        scored_chunks.sort(key=lambda x: x[1], reverse=True)
+        
+        return [c for c, _ in scored_chunks[:top_k]]
+
+    async def get_primary_chunks_excluding_used(
+        self,
+        document_id: uuid.UUID,
+        used_chunk_ids: List[uuid.UUID],
+        query_embedding: Optional[List[float]] = None,
+        top_k: int = 5,
+    ) -> List[DocumentChunk]:
+        """
+        Get primary document chunks excluding already-used ones.
+        Useful for intelligent regeneration with alternative chunks.
+        """
+        # Get all chunks for the document
+        result = await self.db.execute(
+            select(DocumentChunk)
+            .where(
+                DocumentChunk.document_id == document_id,
+                ~DocumentChunk.id.in_(used_chunk_ids) if used_chunk_ids else True,
+            )
+            .order_by(DocumentChunk.chunk_index)
+        )
+        chunks = result.scalars().all()
+        
+        if not chunks:
+            return []
+        
+        # If no query embedding, return random selection
+        if query_embedding is None:
+            import random
+            return random.sample(chunks, min(top_k, len(chunks)))
+        
+        # Score and rank by similarity
+        scored_chunks = []
+        for chunk in chunks:
+            if chunk.chunk_embedding is not None and len(chunk.chunk_embedding) > 0:
+                similarity = self.embedding_service.compute_similarity(
+                    query_embedding, chunk.chunk_embedding
+                )
+                scored_chunks.append((chunk, similarity))
+        
+        # Sort by similarity
+        scored_chunks.sort(key=lambda x: x[1], reverse=True)
+        
+        return [c for c, _ in scored_chunks[:top_k]]

@@ -25,6 +25,9 @@ class Document(Base):
     user_id: Mapped[uuid.UUID] = mapped_column(
         UUID(as_uuid=True), ForeignKey("users.id", ondelete="CASCADE"), nullable=False
     )
+    subject_id: Mapped[Optional[uuid.UUID]] = mapped_column(
+        UUID(as_uuid=True), ForeignKey("subjects.id", ondelete="SET NULL"), nullable=True
+    )
     
     # File info
     filename: Mapped[str] = mapped_column(String(255), nullable=False)
@@ -32,6 +35,12 @@ class Document(Base):
     file_size_bytes: Mapped[int] = mapped_column(BigInteger, nullable=False)
     mime_type: Mapped[Optional[str]] = mapped_column(String(100))
     storage_path: Mapped[str] = mapped_column(String(500), nullable=False)
+    
+    # Document Index Type for novelty system
+    # primary: teaching documents (default)
+    # reference_book: reference books for inspiration
+    # template_paper: template papers/past questions
+    index_type: Mapped[str] = mapped_column(String(50), default="primary")  # primary, reference_book, template_paper
     
     # Processing status
     processing_status: Mapped[str] = mapped_column(String(20), default="pending")

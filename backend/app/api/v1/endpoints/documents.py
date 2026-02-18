@@ -3,10 +3,10 @@ Document management API endpoints.
 """
 
 import os
-from typing import Optional
+from typing import Optional, Literal
 import uuid
 
-from fastapi import APIRouter, Depends, HTTPException, status, UploadFile, File, Query
+from fastapi import APIRouter, Depends, HTTPException, status, UploadFile, File, Query, Form
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.database import get_db
@@ -232,4 +232,117 @@ async def get_document_status(
         "total_chunks": document.total_chunks,
         "total_tokens": document.total_tokens,
         "processed_at": document.processed_at,
+    }
+
+
+# ============== Reference Document Management ==============
+
+@router.post("/reference/upload", response_model=DocumentUploadResponse, status_code=status.HTTP_201_CREATED)
+async def upload_reference_document(
+    file: UploadFile = File(..., description="Reference book or template paper PDF"),
+    subject_id: str = Form(..., description="Subject ID to associate the document with"),
+    index_type: Literal["reference_book", "template_paper"] = Form(..., description="Type of reference material"),
+    current_user: User = Depends(rate_limit(requests=20, window_seconds=3600)),
+    db: AsyncSession = Depends(get_db),
+):
+    """
+    Upload a reference document (book or template paper) for novelty comparison.
+    
+    Reference documents are indexed separately from teaching materials and are used
+    for novelty validation and intelligent regeneration of questions.
+    
+    - reference_book: Used for conceptual inspiration when regenerating questions
+    - template_paper: Used for detecting similarity with existing exam questions
+    """
+    # Validate file extension
+    filename = file.filename or "document.pdf"
+    ext = os.path.splitext(filename)[1].lower()
+    
+    if ext not in settings.ALLOWED_EXTENSIONS:
+        raise HTTPException(
+            status_code=status.HTTP_415_UNSUPPORTED_MEDIA_TYPE,
+            detail=f"Unsupported file type. Allowed: {', '.join(settings.ALLOWED_EXTENSIONS)}",
+        )
+    
+    # Read file content
+    content = await file.read()
+    
+    # Validate file size
+    if len(content) > settings.MAX_UPLOAD_SIZE_MB * 1024 * 1024:
+        raise HTTPException(
+            status_code=status.HTTP_413_REQUEST_ENTITY_TOO_LARGE,
+            detail=f"File too large. Maximum size: {settings.MAX_UPLOAD_SIZE_MB}MB",
+        )
+    
+    # Validate subject_id
+    try:
+        parsed_subject_id = uuid.UUID(subject_id)
+    except ValueError:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="Invalid subject_id format",
+        )
+    
+    # Determine mime type
+    mime_type = MIME_TYPE_MAPPING.get(ext, "application/octet-stream")
+    
+    # Upload reference document
+    document_service = DocumentService(db)
+    
+    try:
+        document = await document_service.upload_reference_document(
+            user_id=current_user.id,
+            filename=filename,
+            file_content=content,
+            mime_type=mime_type,
+            subject_id=parsed_subject_id,
+            index_type=index_type,
+        )
+        
+        return DocumentUploadResponse(
+            document_id=document.id,
+            filename=document.filename,
+            status=document.processing_status,
+            message=f"{index_type.replace('_', ' ').title()} uploaded successfully. Processing started.",
+        )
+    
+    except ValueError as e:
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail=str(e),
+        )
+
+
+@router.get("/reference/list")
+async def list_reference_documents(
+    subject_id: Optional[uuid.UUID] = Query(None, description="Filter by subject"),
+    index_type: Optional[str] = Query(None, description="Filter by type: reference_book, template_paper"),
+    current_user: User = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+):
+    """
+    List reference documents (books and template papers) for the current user.
+    """
+    document_service = DocumentService(db)
+    
+    documents = await document_service.get_reference_documents(
+        user_id=current_user.id,
+        subject_id=subject_id,
+        index_type=index_type,
+    )
+    
+    return {
+        "documents": [
+            {
+                "id": str(doc.id),
+                "filename": doc.filename,
+                "index_type": doc.index_type,
+                "subject_id": str(doc.subject_id) if doc.subject_id else None,
+                "processing_status": doc.processing_status,
+                "total_chunks": doc.total_chunks,
+                "upload_timestamp": doc.upload_timestamp.isoformat() if doc.upload_timestamp else None,
+            }
+            for doc in documents
+        ],
+        "total": len(documents),
     }

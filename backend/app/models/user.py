@@ -4,7 +4,7 @@ User database model.
 
 from datetime import datetime
 from typing import Optional
-from sqlalchemy import String, Boolean, Integer, DateTime, Text, func
+from sqlalchemy import String, Boolean, Integer, DateTime, Text, Float, func
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 from sqlalchemy.dialects.postgresql import UUID, JSONB
 import uuid
@@ -52,6 +52,14 @@ class User(Base):
     
     # Preferences
     preferences: Mapped[Optional[dict]] = mapped_column(JSONB, default={})
+    
+    # Novelty Configuration
+    novelty_threshold: Mapped[float] = mapped_column(Float, default=0.3)  # 0.0 to 1.0
+    max_regeneration_attempts: Mapped[int] = mapped_column(Integer, default=3)
+    
+    # Subject-level Reference Materials (stored per subject)
+    # Format: {"subject_id": {"reference_books": [...], "template_papers": [...]}}
+    subject_reference_materials: Mapped[Optional[dict]] = mapped_column(JSONB, default={})
     
     # Relationships
     documents = relationship("Document", back_populates="user", cascade="all, delete-orphan")

@@ -58,6 +58,9 @@ class UserUpdate(BaseModel):
     timezone: Optional[str] = Field(None, max_length=50)
     language: Optional[str] = Field(None, max_length=10)
     preferences: Optional[dict] = None
+    # Novelty settings
+    novelty_threshold: Optional[float] = Field(None, ge=0.0, le=1.0)
+    max_regeneration_attempts: Optional[int] = Field(None, ge=1, le=10)
 
 
 class UserResponse(BaseModel):
@@ -73,6 +76,10 @@ class UserResponse(BaseModel):
     created_at: datetime
     last_login_at: Optional[datetime]
     preferences: Optional[dict]
+    # Novelty settings
+    novelty_threshold: float
+    max_regeneration_attempts: int
+    subject_reference_materials: Optional[dict]
 
     model_config = {"from_attributes": True}
 

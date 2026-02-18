@@ -94,6 +94,7 @@ async def quick_generate_questions(
     marks_long: Optional[int] = Form(default=5, ge=1, le=100, description="Marks for long answer/essay questions"),
     subject_id: Optional[str] = Form(default=None, description="Subject ID to link questions to"),
     topic_id: Optional[str] = Form(default=None, description="Topic/Chapter ID to link questions to"),
+    enforce_novelty: bool = Form(default=True, description="Enable novelty validation (uses user's novelty threshold)"),
     current_user: User = Depends(rate_limit(requests=50, window_seconds=86400)),  # 50/day for quick generate
     db: AsyncSession = Depends(get_db),
 ):
@@ -198,7 +199,7 @@ async def quick_generate_questions(
             yield f"data: {QuickGenerateProgress(status='processing', progress=20, message=f'Document processed: {doc_chunks} sections extracted', document_id=doc_id).model_dump_json()}\n\n"
             
             # Step 2: Generate questions
-            logger.info(f"Quick generate: Starting question generation, count={count}, types={type_list}")
+            logger.info(f"Quick generate: Starting question generation, count={count}, types={type_list}, enforce_novelty={enforce_novelty}")
             generation_started = False
             
             # Build marks by type dictionary
@@ -213,18 +214,37 @@ async def quick_generate_questions(
             parsed_topic_id = uuid.UUID(topic_id) if topic_id else None
             
             try:
-                async for progress in question_service.quick_generate(
-                    user_id=current_user.id,
-                    document_id=doc_id,
-                    context=context,
-                    count=count,
-                    types=type_list,
-                    difficulty=difficulty,
-                    bloom_levels=bloom_list,
-                    marks_by_type=marks_by_type,
-                    subject_id=parsed_subject_id,
-                    topic_id=parsed_topic_id,
-                ):
+                # Choose generation method based on novelty enforcement
+                if enforce_novelty:
+                    # Use novelty-validated generation
+                    generator = question_service.quick_generate_with_novelty(
+                        user_id=current_user.id,
+                        document_id=doc_id,
+                        context=context,
+                        count=count,
+                        types=type_list,
+                        difficulty=difficulty,
+                        bloom_levels=bloom_list,
+                        marks_by_type=marks_by_type,
+                        subject_id=parsed_subject_id,
+                        topic_id=parsed_topic_id,
+                    )
+                else:
+                    # Use standard generation without novelty validation
+                    generator = question_service.quick_generate(
+                        user_id=current_user.id,
+                        document_id=doc_id,
+                        context=context,
+                        count=count,
+                        types=type_list,
+                        difficulty=difficulty,
+                        bloom_levels=bloom_list,
+                        marks_by_type=marks_by_type,
+                        subject_id=parsed_subject_id,
+                        topic_id=parsed_topic_id,
+                    )
+                
+                async for progress in generator:
                     generation_started = True
                     # Adjust progress to account for document processing phase
                     if progress.status == "generating":
@@ -1406,3 +1426,134 @@ Output format (JSON):
     "topic_tags": ["topic1"],
     "bloom_level": "analyze"
 }"""
+
+
+# ============== Novelty Settings Endpoints ==============
+
+class NoveltySettingsResponse(BaseModel):
+    """Schema for novelty settings response."""
+    novelty_threshold: float
+    max_regeneration_attempts: int
+
+
+class NoveltySettingsUpdate(BaseModel):
+    """Schema for updating novelty settings."""
+    novelty_threshold: Optional[float] = None
+    max_regeneration_attempts: Optional[int] = None
+
+
+@router.get("/novelty/settings", response_model=NoveltySettingsResponse)
+async def get_novelty_settings(
+    current_user: User = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+):
+    """
+    Get the current user's novelty validation settings.
+    
+    - novelty_threshold: Minimum novelty score (0.0 - 1.0) required for a question.
+      Higher values mean questions must be more unique.
+    - max_regeneration_attempts: Maximum times to regenerate a question before giving up.
+    """
+    from app.services.novelty_service import NoveltyService
+    
+    novelty_service = NoveltyService(db)
+    settings = await novelty_service.get_user_novelty_settings(current_user.id)
+    
+    return NoveltySettingsResponse(**settings)
+
+
+@router.put("/novelty/settings", response_model=NoveltySettingsResponse)
+async def update_novelty_settings(
+    settings_data: NoveltySettingsUpdate,
+    current_user: User = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+):
+    """
+    Update the current user's novelty validation settings.
+    
+    - novelty_threshold: Value between 0.0 and 1.0
+      - 0.0: Accept all questions (no novelty enforcement)
+      - 0.3: Default - moderate uniqueness required
+      - 0.5: High uniqueness required
+      - 0.7+: Very strict - questions must be highly unique
+    
+    - max_regeneration_attempts: Value between 1 and 10
+      - Higher values allow more regeneration attempts before giving up
+    """
+    from sqlalchemy import select
+    
+    result = await db.execute(
+        select(User).where(User.id == current_user.id)
+    )
+    user = result.scalar_one_or_none()
+    
+    if not user:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="User not found",
+        )
+    
+    if settings_data.novelty_threshold is not None:
+        if not 0.0 <= settings_data.novelty_threshold <= 1.0:
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail="novelty_threshold must be between 0.0 and 1.0",
+            )
+        user.novelty_threshold = settings_data.novelty_threshold
+    
+    if settings_data.max_regeneration_attempts is not None:
+        if not 1 <= settings_data.max_regeneration_attempts <= 10:
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail="max_regeneration_attempts must be between 1 and 10",
+            )
+        user.max_regeneration_attempts = settings_data.max_regeneration_attempts
+    
+    await db.commit()
+    await db.refresh(user)
+    
+    return NoveltySettingsResponse(
+        novelty_threshold=user.novelty_threshold,
+        max_regeneration_attempts=user.max_regeneration_attempts,
+    )
+
+
+@router.get("/novelty/reference-materials/{subject_id}")
+async def get_reference_materials_for_subject(
+    subject_id: uuid.UUID,
+    current_user: User = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+):
+    """
+    Get reference books and template papers for a subject.
+    These are used in novelty validation and intelligent regeneration.
+    """
+    from app.services.novelty_service import NoveltyService
+    
+    novelty_service = NoveltyService(db)
+    materials = await novelty_service.get_reference_documents_for_subject(
+        user_id=current_user.id,
+        subject_id=subject_id,
+    )
+    
+    return {
+        "subject_id": str(subject_id),
+        "reference_books": [
+            {
+                "id": str(doc.id),
+                "filename": doc.filename,
+                "total_chunks": doc.total_chunks,
+                "processing_status": doc.processing_status,
+            }
+            for doc in materials["reference_books"]
+        ],
+        "template_papers": [
+            {
+                "id": str(doc.id),
+                "filename": doc.filename,
+                "total_chunks": doc.total_chunks,
+                "processing_status": doc.processing_status,
+            }
+            for doc in materials["template_papers"]
+        ],
+    }

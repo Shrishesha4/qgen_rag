@@ -1,4 +1,4 @@
-vetting - question rejection regen
+√ vetting - question rejection regen
 
 upload question paper (template) -> rag -> llm -> use template as reference to generate new questions
 

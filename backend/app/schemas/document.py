@@ -3,7 +3,7 @@ Document-related Pydantic schemas.
 """
 
 from datetime import datetime
-from typing import Optional, List
+from typing import Optional, List, Literal
 from pydantic import BaseModel, Field
 import uuid
 
@@ -43,6 +43,9 @@ class DocumentResponse(BaseModel):
     processed_at: Optional[datetime]
     document_metadata: Optional[dict]
     questions_generated: Optional[int] = 0
+    # Index type for novelty system
+    index_type: str = "primary"  # primary, reference_book, template_paper
+    subject_id: Optional[uuid.UUID] = None
 
     model_config = {"from_attributes": True}
 
@@ -55,6 +58,7 @@ class DocumentListItem(BaseModel):
     upload_timestamp: datetime
     total_chunks: Optional[int]
     questions_generated: Optional[int] = 0
+    index_type: str = "primary"
 
     model_config = {"from_attributes": True}
 
@@ -79,3 +83,11 @@ class DocumentUploadResponse(BaseModel):
     filename: str
     status: str
     message: str
+
+
+class ReferenceDocumentUploadRequest(BaseModel):
+    """Schema for uploading reference documents (books/template papers)."""
+    subject_id: uuid.UUID = Field(..., description="Subject to associate the document with")
+    index_type: Literal["reference_book", "template_paper"] = Field(
+        ..., description="Type of reference material"
+    )

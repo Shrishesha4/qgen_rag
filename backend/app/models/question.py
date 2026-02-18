@@ -67,6 +67,23 @@ class Question(Base):
     specificity_score: Mapped[Optional[float]] = mapped_column(Float)
     generation_confidence: Mapped[Optional[float]] = mapped_column(Float)
     
+    # Novelty validation scores
+    novelty_score: Mapped[Optional[float]] = mapped_column(Float)  # 1 - max_similarity
+    max_similarity: Mapped[Optional[float]] = mapped_column(Float)  # Highest similarity found
+    similarity_source: Mapped[Optional[str]] = mapped_column(String(50))  # approved, pending, template, reference
+    generation_attempt_count: Mapped[int] = mapped_column(Integer, default=1)
+    used_reference_materials: Mapped[bool] = mapped_column(Boolean, default=False)
+    
+    # Novelty validation metadata (stores detailed similarity breakdown)
+    # Format: {"approved_max_sim": 0.3, "pending_max_sim": 0.2, "template_max_sim": 0.4, "reference_max_sim": 0.25}
+    novelty_metadata: Mapped[Optional[dict]] = mapped_column(JSONB)
+    
+    # Generation status for internal tracking (not exposed to UI)
+    # accepted: passed novelty threshold
+    # discarded: failed after max regeneration attempts
+    generation_status: Mapped[str] = mapped_column(String(20), default="accepted")
+    discard_reason: Mapped[Optional[str]] = mapped_column(Text)
+    
     # User interaction
     times_shown: Mapped[int] = mapped_column(Integer, default=0)
     user_rating: Mapped[Optional[int]] = mapped_column(Integer)

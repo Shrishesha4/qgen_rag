@@ -66,6 +66,7 @@ class QuestionResponse(BaseModel):
     # MCQ specific
     options: Optional[List[str]]
     correct_answer: Optional[str]
+    explanation: Optional[str] = None
     
     # Context
     topic_tags: Optional[List[str]]
