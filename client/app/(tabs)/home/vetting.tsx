@@ -31,6 +31,14 @@ const CO_LEVELS = [
 
 const COURSE_OUTCOMES = ['CO1', 'CO2', 'CO3', 'CO4', 'CO5'];
 
+const CO_DESCRIPTIONS: Record<string, string> = {
+  CO1: 'Analyze',
+  CO2: 'Knowledge',
+  CO3: 'Apply',
+  CO4: 'Evaluate',
+  CO5: 'Create',
+};
+
 export default function VettingScreen() {
   const colorScheme = useColorScheme();
   const colors = Colors[colorScheme ?? 'light'];
@@ -50,6 +58,11 @@ export default function VettingScreen() {
   const [editDifficulty, setEditDifficulty] = useState<Record<string, string>>({});
   const [editSubjectId, setEditSubjectId] = useState<Record<string, string | null>>({});
   const [editTopicId, setEditTopicId] = useState<Record<string, string | null>>({});
+
+  // Answer editing state (short/long answers and MCQ correct answer draft)
+  const [answerEditMode, setAnswerEditMode] = useState<Record<string, boolean>>({});
+  const [answerDraft, setAnswerDraft] = useState<Record<string, string | null>>({});
+  const [savingAnswer, setSavingAnswer] = useState<string | null>(null);
   
   // Subject/Topic picker state
   const [subjects, setSubjects] = useState<Subject[]>([]);
@@ -74,6 +87,8 @@ export default function VettingScreen() {
       const initialDifficulty: Record<string, string> = {};
       const initialSubjectId: Record<string, string | null> = {};
       const initialTopicId: Record<string, string | null> = {};
+      const initialAnswerDraft: Record<string, string | null> = {};
+      const initialAnswerEdit: Record<string, boolean> = {};
       
       questionsResponse.questions.forEach((q) => {
         initialMappings[q.id] = q.course_outcome_mapping || {};
@@ -81,12 +96,17 @@ export default function VettingScreen() {
         initialDifficulty[q.id] = q.difficulty_level || 'medium';
         initialSubjectId[q.id] = q.subject_id || null;
         initialTopicId[q.id] = q.topic_id || null;
+        // initialize answer draft/edit state so UI can edit expected answers and MCQ correct answer
+        (initialAnswerDraft as Record<string, string | null>)[q.id] = q.correct_answer || null;
+        (initialAnswerEdit as Record<string, boolean>)[q.id] = false;
       });
       setCoMappings(initialMappings);
       setEditMarks(initialMarks);
       setEditDifficulty(initialDifficulty);
       setEditSubjectId(initialSubjectId);
       setEditTopicId(initialTopicId);
+      setAnswerDraft(initialAnswerDraft);
+      setAnswerEditMode(initialAnswerEdit);
     } catch (error) {
       console.error('Failed to load data:', error);
     } finally {
@@ -140,13 +160,24 @@ export default function VettingScreen() {
   const handleSaveQuestionEdits = async (questionId: string) => {
     setSavingQuestion(questionId);
     try {
-      await questionsService.updateQuestion(questionId, {
+      const payload: any = {
         marks: editMarks[questionId],
         difficulty_level: editDifficulty[questionId] as 'easy' | 'medium' | 'hard' | undefined,
         subject_id: editSubjectId[questionId] || undefined,
         topic_id: editTopicId[questionId] || undefined,
         course_outcome_mapping: coMappings[questionId],
-      });
+      };
+
+      // include correct_answer (MCQ or short/long) if edited
+      if (answerDraft[questionId] !== undefined) {
+        payload.correct_answer = answerDraft[questionId] || null;
+      }
+
+      await questionsService.updateQuestion(questionId, payload);
+
+      // update local question so UI reflects change immediately
+      setQuestions((prev) => prev.map((q) => (q.id === questionId ? { ...q, correct_answer: payload.correct_answer ?? q.correct_answer, marks: payload.marks ?? q.marks, difficulty_level: payload.difficulty_level ?? q.difficulty_level, subject_id: payload.subject_id ?? q.subject_id, topic_id: payload.topic_id ?? q.topic_id } : q)));
+
       showSuccess('Question updated successfully');
     } catch (error) {
       showError(error, 'Failed to save changes');
@@ -266,6 +297,40 @@ export default function VettingScreen() {
     }
   };
 
+  // Return true when an MCQ option should be treated as the correct answer.
+  const optionMatchesCorrect = (option: string, correct: string | null | undefined, index: number) => {
+    if (!correct) return false;
+    const trimmedCorrect = correct.trim();
+    const trimmedOption = option.trim();
+
+    if (trimmedOption === trimmedCorrect) return true;
+    if (trimmedOption.startsWith(trimmedCorrect)) return true;
+
+    // handle single-letter correct answers like 'A' / 'B'
+    const letter = String.fromCharCode(65 + index); // 'A', 'B', ...
+    if (trimmedCorrect.length === 1 && trimmedCorrect.toUpperCase() === letter) return true;
+
+    // handle cases where correct is like 'A.' or 'A)'
+    if (/^[A-Za-z][\.|\)]?$/.test(trimmedCorrect) && trimmedOption.toUpperCase().startsWith(trimmedCorrect.toUpperCase())) return true;
+
+    return false;
+  };
+
+  const handleSaveAnswerEdit = async (questionId: string) => {
+    setSavingAnswer(questionId);
+    try {
+      const newAnswer: string | undefined = answerDraft[questionId] ?? undefined;
+      const updated = await questionsService.updateQuestion(questionId, { correct_answer: newAnswer });
+      setQuestions((prev) => prev.map((q) => (q.id === questionId ? { ...q, correct_answer: updated.correct_answer } : q)));
+      setAnswerEditMode((prev) => ({ ...prev, [questionId]: false }));
+      showSuccess('Answer updated');
+    } catch (err) {
+      showError(err, 'Failed to save answer');
+    } finally {
+      setSavingAnswer(null);
+    }
+  };
+
   const renderStatsCard = () => {
     if (!stats) return null;
     
@@ -349,37 +414,73 @@ export default function VettingScreen() {
           {question.question_text}
         </Text>
 
+        {/* Show expected answer preview for short/long questions */}
+        {question.question_type !== 'mcq' && question.correct_answer ? (
+          <View style={[styles.answerPreview, { backgroundColor: colors.card }]}>
+            <Text style={[styles.answerPreviewLabel, { color: colors.textSecondary }]}>Expected answer</Text>
+            <Text style={[styles.answerPreviewText, { color: colors.text }]} numberOfLines={2}>{question.correct_answer}</Text>
+          </View>
+        ) : null}
+
         {/* MCQ Options */}
         {question.question_type === 'mcq' && question.options && (
           <View style={styles.optionsContainer}>
             {(question.options as string[]).map((option: string, index: number) => {
-              const isCorrect = question.correct_answer === option;
+              const currentCorrect = answerDraft[question.id] ?? question.correct_answer;
+              const isCorrect = optionMatchesCorrect(option, currentCorrect, index);
+
               return (
-                <View
+                <TouchableOpacity
                   key={index}
-                  style={[
-                    styles.optionRow,
-                    isCorrect && { backgroundColor: colors.success + '15' },
-                  ]}
+                  activeOpacity={isExpanded ? 0.7 : 1}
+                  onPress={async () => {
+                    if (!isExpanded) return; // only allow changing when expanded
+                    const newCorrect = option;
+                    // update draft and local question so UI shows change immediately
+                    setAnswerDraft(prev => ({ ...prev, [question.id]: newCorrect }));
+                    setQuestions(prev => prev.map((q) => (q.id === question.id ? { ...q, correct_answer: newCorrect } : q)));
+
+                    // persist immediately and show feedback
+                    try {
+                      setSavingAnswer(question.id);
+                      await questionsService.updateQuestion(question.id, { correct_answer: newCorrect });
+                      showSuccess('Correct answer updated');
+                    } catch (err) {
+                      showError(err, 'Failed to update correct answer');
+                    } finally {
+                      setSavingAnswer(null);
+                    }
+                  }}
                 >
-                  <View style={[
-                    styles.optionLetter,
-                    { backgroundColor: isCorrect ? colors.success : colors.border },
-                  ]}>
-                    <Text style={[
-                      styles.optionLetterText,
-                      { color: isCorrect ? '#FFFFFF' : colors.textSecondary },
+                  <View
+                    style={[
+                      styles.optionRow,
+                      isCorrect && { backgroundColor: colors.success + '15' },
+                      isExpanded && { borderWidth: 1, borderColor: colors.border },
+                    ]}
+                  >
+                    <View style={[
+                      styles.optionLetter,
+                      { backgroundColor: isCorrect ? colors.success : colors.border },
                     ]}>
-                      {String.fromCharCode(65 + index)}
-                    </Text>
+                      <Text style={[
+                        styles.optionLetterText,
+                        { color: isCorrect ? '#FFFFFF' : colors.textSecondary },
+                      ]}>
+                        {String.fromCharCode(65 + index)}
+                      </Text>
+                    </View>
+                    <Text style={[styles.optionText, { color: isCorrect ? colors.success : colors.text }]}>{option}</Text>
+                    {isCorrect && (
+                      <IconSymbol name="checkmark.circle.fill" size={18} color={colors.success} />
+                    )}
                   </View>
-                  <Text style={[styles.optionText, { color: colors.text }]}>{option}</Text>
-                  {isCorrect && (
-                    <IconSymbol name="checkmark.circle.fill" size={18} color={colors.success} />
-                  )}
-                </View>
+                </TouchableOpacity>
               );
             })}
+            {isExpanded && (
+              <Text style={[styles.optionHint, { color: colors.textSecondary }]}>Tap an option to mark it as correct (changes saved with "Save All Changes")</Text>
+            )}
           </View>
         )}
 
@@ -502,7 +603,10 @@ export default function VettingScreen() {
             <View style={styles.coMappingGrid}>
               {COURSE_OUTCOMES.map((co) => (
                 <View key={co} style={styles.coRow}>
-                  <Text style={[styles.coLabel, { color: colors.text }]}>{co}</Text>
+                  <View style={styles.coLabelColumn}>
+                    <Text style={[styles.coLabel, { color: colors.text }]}>{co}</Text>
+                    <Text style={[styles.coDesc, { color: colors.textSecondary }]}>{CO_DESCRIPTIONS[co]}</Text>
+                  </View>
                   <View style={styles.levelButtons}>
                     {CO_LEVELS.map(({ level, label, color }) => (
                       <TouchableOpacity
@@ -526,7 +630,65 @@ export default function VettingScreen() {
                 </View>
               ))}
             </View>
-            
+
+            {/* Expected answer editor (short / long / MCQ manual override) */}
+            <LinearGradient
+              colors={['#34C759', '#30B350'] as const}
+              style={[styles.coHeader, { marginTop: Spacing.lg }]}
+            >
+              <IconSymbol name="doc.text.fill" size={16} color="#FFFFFF" />
+              <Text style={styles.coHeaderText}>Expected Answer</Text>
+            </LinearGradient>
+
+            <View style={{ marginBottom: Spacing.md }}>
+              {!answerEditMode[question.id] ? (
+                <>
+                  <View style={[styles.answerContainer, { backgroundColor: isDark ? 'rgba(255,255,255,0.02)' : 'rgba(0,0,0,0.02)', borderColor: colors.border }]}> 
+                    <Text style={[styles.answerLabel, { color: colors.textSecondary }]}>Answer</Text>
+                    <Text style={[styles.answerText, { color: colors.text }]} numberOfLines={4}>{answerDraft[question.id] ?? question.correct_answer ?? '—'}</Text>
+                    <TouchableOpacity onPress={() => setAnswerEditMode(prev => ({ ...prev, [question.id]: true }))} style={{ marginLeft: Spacing.sm }}>
+                      <Text style={{ color: colors.primary, fontWeight: '600' }}>Edit</Text>
+                    </TouchableOpacity>
+                  </View>
+                  {question.question_type === 'mcq' && (
+                    <Text style={[styles.optionHint, { color: colors.textSecondary }]}>Tap an option above to mark it as correct, or click Edit to type a manual answer.</Text>
+                  )}
+                </>
+              ) : (
+                <>
+                  <TextInput
+                    value={answerDraft[question.id] ?? ''}
+                    onChangeText={(v) => setAnswerDraft(prev => ({ ...prev, [question.id]: v }))}
+                    placeholder="Type expected/approved answer here"
+                    multiline
+                    style={[styles.answerInput, { color: colors.text, borderColor: colors.border, backgroundColor: isDark ? 'rgba(255,255,255,0.02)' : 'rgba(0,0,0,0.02)' }]}
+                  />
+                  <View style={{ flexDirection: 'row', gap: Spacing.sm, marginTop: Spacing.sm }}>
+                    <TouchableOpacity
+                      style={[styles.saveAnswerButton, { backgroundColor: colors.primary }]}
+                      onPress={() => handleSaveAnswerEdit(question.id)}
+                      disabled={savingAnswer === question.id}
+                    >
+                      {savingAnswer === question.id ? (
+                        <ActivityIndicator color="#FFFFFF" />
+                      ) : (
+                        <Text style={{ color: '#FFFFFF', fontWeight: '600' }}>Save Answer</Text>
+                      )}
+                    </TouchableOpacity>
+                    <TouchableOpacity
+                      style={[styles.saveAnswerButton, { backgroundColor: colors.border }]}
+                      onPress={() => {
+                        setAnswerEditMode(prev => ({ ...prev, [question.id]: false }));
+                        setAnswerDraft(prev => ({ ...prev, [question.id]: question.correct_answer || null }));
+                      }}
+                    >
+                      <Text style={{ color: colors.text, fontWeight: '600' }}>Cancel</Text>
+                    </TouchableOpacity>
+                  </View>
+                </>
+              )}
+            </View>
+
             <TouchableOpacity
               style={[styles.saveAllButton, { backgroundColor: colors.primary }]}
               onPress={() => handleSaveQuestionEdits(question.id)}
@@ -893,6 +1055,50 @@ const styles = StyleSheet.create({
     flex: 1,
     fontSize: FontSizes.sm,
   },
+  optionHint: {
+    fontSize: FontSizes.xs,
+    marginTop: Spacing.xs,
+  },
+  answerPreview: {
+    padding: Spacing.sm,
+    borderRadius: BorderRadius.sm,
+    marginBottom: Spacing.sm,
+  },
+  answerPreviewLabel: {
+    fontSize: FontSizes.xs,
+    fontWeight: '600',
+    marginBottom: Spacing.xs,
+  },
+  answerPreviewText: {
+    fontSize: FontSizes.sm,
+  },
+  answerContainer: {
+    marginTop: Spacing.md,
+    padding: Spacing.sm,
+    borderRadius: BorderRadius.sm,
+    borderWidth: 1,
+  },
+  answerLabel: {
+    fontSize: FontSizes.xs,
+    fontWeight: '600',
+    marginBottom: 4,
+  },
+  answerText: {
+    fontSize: FontSizes.sm,
+    lineHeight: 18,
+  },
+  answerInput: {
+    minHeight: 80,
+    padding: Spacing.sm,
+    borderRadius: BorderRadius.sm,
+    borderWidth: 1,
+    fontSize: FontSizes.sm,
+  },
+  saveAnswerButton: {
+    padding: Spacing.sm,
+    borderRadius: BorderRadius.sm,
+    alignItems: 'center',
+  },
   expandedContent: {
     marginTop: Spacing.md,
     borderTopWidth: 1,
@@ -920,10 +1126,16 @@ const styles = StyleSheet.create({
     alignItems: 'center',
     marginBottom: Spacing.sm,
   },
+  coLabelColumn: {
+    width: 96,
+  },
   coLabel: {
-    width: 50,
     fontSize: FontSizes.md,
     fontWeight: '600',
+  },
+  coDesc: {
+    fontSize: FontSizes.xs,
+    marginTop: Spacing.xs,
   },
   levelButtons: {
     flexDirection: 'row',
