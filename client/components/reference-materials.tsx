@@ -80,7 +80,8 @@ export function ReferenceMaterials({
       );
 
       showSuccess('Reference book uploaded successfully');
-      onRefresh();
+      // Wait a moment for backend to process, then refresh
+      setTimeout(() => onRefresh(), 500);
     } catch (error) {
       showError(error, 'Upload Failed');
     } finally {
@@ -125,7 +126,8 @@ export function ReferenceMaterials({
       );
 
       showSuccess('Template paper uploaded successfully');
-      onRefresh();
+      // Wait a moment for backend to process, then refresh
+      setTimeout(() => onRefresh(), 500);
     } catch (error) {
       showError(error, 'Upload Failed');
     } finally {
@@ -148,7 +150,8 @@ export function ReferenceMaterials({
             try {
               await referencesService.deleteReference(doc.id);
               showSuccess('Reference deleted');
-              onRefresh();
+              // Wait a moment for backend to process, then refresh
+              setTimeout(() => onRefresh(), 500);
             } catch (error) {
               showError(error, 'Delete Failed');
             } finally {

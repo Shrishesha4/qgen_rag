@@ -77,9 +77,9 @@ export default function HomeScreen() {
       route: '/(tabs)/home/subjects',
     },
     {
-      title: 'Rubric Generator',
-      subtitle: 'Create exam rubrics',
-      icon: 'doc.text.fill',
+      title: 'Generate',
+      subtitle: 'Questions from rubrics',
+      icon: 'sparkles',
       gradient: colors.gradientPurple as [string, string],
       route: '/(tabs)/home/generate',
     },

@@ -322,6 +322,7 @@ async def list_reference_documents(
 ):
     """
     List reference documents (books and template papers) for the current user.
+    Returns documents split by type for easier UI handling.
     """
     document_service = DocumentService(db)
     
@@ -331,18 +332,28 @@ async def list_reference_documents(
         index_type=index_type,
     )
     
+    # Convert documents to response format with all required fields
+    doc_responses = [
+        {
+            "id": str(doc.id),
+            "filename": doc.filename,
+            "file_size_bytes": doc.file_size_bytes,
+            "mime_type": doc.mime_type,
+            "index_type": doc.index_type,
+            "subject_id": str(doc.subject_id) if doc.subject_id else None,
+            "processing_status": doc.processing_status,
+            "total_chunks": doc.total_chunks,
+            "upload_timestamp": doc.upload_timestamp.isoformat() if doc.upload_timestamp else None,
+            "processed_at": doc.processed_at.isoformat() if doc.processed_at else None,
+        }
+        for doc in documents
+    ]
+    
+    # Split by index_type for the response
+    reference_books = [d for d in doc_responses if d["index_type"] == "reference_book"]
+    template_papers = [d for d in doc_responses if d["index_type"] == "template_paper"]
+    
     return {
-        "documents": [
-            {
-                "id": str(doc.id),
-                "filename": doc.filename,
-                "index_type": doc.index_type,
-                "subject_id": str(doc.subject_id) if doc.subject_id else None,
-                "processing_status": doc.processing_status,
-                "total_chunks": doc.total_chunks,
-                "upload_timestamp": doc.upload_timestamp.isoformat() if doc.upload_timestamp else None,
-            }
-            for doc in documents
-        ],
-        "total": len(documents),
+        "reference_books": reference_books,
+        "template_papers": template_papers,
     }
