@@ -16,6 +16,10 @@ export interface User {
   created_at: string;
   last_login_at: string | null;
   preferences: Record<string, unknown> | null;
+  // Novelty settings
+  novelty_threshold: number;
+  max_regeneration_attempts: number;
+  subject_reference_materials: Record<string, string[]> | null;
 }
 
 export interface LoginCredentials {
@@ -43,6 +47,8 @@ export interface UpdateProfileData {
   timezone?: string;
   language?: string;
   preferences?: Record<string, unknown>;
+  novelty_threshold?: number;
+  max_regeneration_attempts?: number;
 }
 
 export interface PasswordChangeData {

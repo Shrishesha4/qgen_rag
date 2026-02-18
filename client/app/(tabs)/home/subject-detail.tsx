@@ -26,6 +26,8 @@ import {
   TopicCreateData,
   TopicUpdateData, 
 } from '@/services/subjects';
+import { referencesService, ReferenceDocument } from '@/services/references';
+import { ReferenceMaterials } from '@/components/reference-materials';
 import * as DocumentPicker from 'expo-document-picker';
 import { useToast } from '@/components/toast';
 
@@ -52,6 +54,14 @@ export default function SubjectDetailScreen() {
   // New state for syllabus chapter extraction
   const [isExtractingChapters, setIsExtractingChapters] = useState(false);
   const [extractionStatus, setExtractionStatus] = useState('');
+  
+  // Tab state for switching between chapters and references
+  const [activeTab, setActiveTab] = useState<'chapters' | 'references'>('chapters');
+  
+  // Reference materials state
+  const [referenceBooks, setReferenceBooks] = useState<ReferenceDocument[]>([]);
+  const [templatePapers, setTemplatePapers] = useState<ReferenceDocument[]>([]);
+  const [isLoadingReferences, setIsLoadingReferences] = useState(false);
 
   const loadData = useCallback(async () => {
     if (!id) return;
@@ -71,9 +81,25 @@ export default function SubjectDetailScreen() {
     }
   }, [id]);
 
+  const loadReferences = useCallback(async () => {
+    if (!id) return;
+    setIsLoadingReferences(true);
+    try {
+      const data = await referencesService.listReferences(id);
+      setReferenceBooks(data.reference_books || []);
+      setTemplatePapers(data.template_papers || []);
+    } catch (error) {
+      console.error('Error loading references:', error);
+      // Don't show error for references, they may not exist yet
+    } finally {
+      setIsLoadingReferences(false);
+    }
+  }, [id]);
+
   useEffect(() => {
     loadData();
-  }, [loadData]);
+    loadReferences();
+  }, [loadData, loadReferences]);
 
   const handleRefresh = () => {
     setIsRefreshing(true);
@@ -345,7 +371,54 @@ export default function SubjectDetailScreen() {
             </TouchableOpacity>
           </View>
 
+          {/* Tab Selector */}
+          <View style={[styles.tabSelector, { backgroundColor: colors.card }]}>
+            <TouchableOpacity
+              style={[
+                styles.tabButton,
+                activeTab === 'chapters' && { backgroundColor: colors.primary },
+              ]}
+              onPress={() => setActiveTab('chapters')}
+            >
+              <IconSymbol 
+                name="book.fill" 
+                size={16} 
+                color={activeTab === 'chapters' ? '#FFFFFF' : colors.textSecondary} 
+              />
+              <Text
+                style={[
+                  styles.tabButtonText,
+                  { color: activeTab === 'chapters' ? '#FFFFFF' : colors.textSecondary },
+                ]}
+              >
+                Chapters
+              </Text>
+            </TouchableOpacity>
+            <TouchableOpacity
+              style={[
+                styles.tabButton,
+                activeTab === 'references' && { backgroundColor: colors.primary },
+              ]}
+              onPress={() => setActiveTab('references')}
+            >
+              <IconSymbol 
+                name="doc.text.fill" 
+                size={16} 
+                color={activeTab === 'references' ? '#FFFFFF' : colors.textSecondary} 
+              />
+              <Text
+                style={[
+                  styles.tabButtonText,
+                  { color: activeTab === 'references' ? '#FFFFFF' : colors.textSecondary },
+                ]}
+              >
+                References
+              </Text>
+            </TouchableOpacity>
+          </View>
+
           {/* Chapters Section */}
+          {activeTab === 'chapters' && (
           <View style={styles.section}>
             <View style={styles.sectionHeader}>
               <Text style={[styles.sectionTitle, { color: colors.textSecondary }]}>
@@ -432,9 +505,23 @@ export default function SubjectDetailScreen() {
               </View>
             )}
           </View>
+          )}
+
+          {/* Reference Materials Section */}
+          {activeTab === 'references' && (
+            <View style={styles.section}>
+              <ReferenceMaterials
+                subjectId={id!}
+                referenceBooks={referenceBooks}
+                templatePapers={templatePapers}
+                onRefresh={loadReferences}
+                isLoading={isLoadingReferences}
+              />
+            </View>
+          )}
 
           {/* Learning Outcomes (if any) */}
-          {subject.learning_outcomes?.outcomes && subject.learning_outcomes.outcomes.length > 0 && (
+          {activeTab === 'chapters' && subject.learning_outcomes?.outcomes && subject.learning_outcomes.outcomes.length > 0 && (
             <View style={styles.section}>
               <Text style={[styles.sectionTitle, { color: colors.textSecondary }]}>
                 LEARNING OUTCOMES
@@ -724,6 +811,26 @@ const styles = StyleSheet.create({
   },
   actionButtonText: {
     color: '#FFFFFF',
+    fontWeight: '600',
+    fontSize: FontSizes.sm,
+  },
+  tabSelector: {
+    flexDirection: 'row',
+    marginHorizontal: Spacing.md,
+    marginBottom: Spacing.md,
+    borderRadius: BorderRadius.md,
+    padding: 4,
+  },
+  tabButton: {
+    flex: 1,
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'center',
+    paddingVertical: Spacing.sm,
+    borderRadius: BorderRadius.sm,
+    gap: Spacing.xs,
+  },
+  tabButtonText: {
     fontWeight: '600',
     fontSize: FontSizes.sm,
   },

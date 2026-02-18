@@ -12,6 +12,10 @@ interface AuthState {
   isLoading: boolean;
   error: string | null;
   
+  // Novelty settings (cached from user)
+  noveltyThreshold: number;
+  maxRegenerationAttempts: number;
+  
   // Actions
   login: (email: string, password: string) => Promise<boolean>;
   register: (email: string, username: string, password: string, fullName?: string) => Promise<boolean>;
@@ -20,6 +24,8 @@ interface AuthState {
   checkAuth: () => Promise<boolean>;
   updateProfile: (data: UpdateProfileData) => Promise<void>;
   changePassword: (currentPassword: string, newPassword: string) => Promise<void>;
+  setNoveltyThreshold: (value: number) => Promise<void>;
+  setMaxRegenerationAttempts: (value: number) => Promise<void>;
   clearError: () => void;
 }
 
@@ -28,6 +34,8 @@ export const useAuthStore = create<AuthState>((set, get) => ({
   isAuthenticated: false,
   isLoading: true,
   error: null,
+  noveltyThreshold: 0.3,
+  maxRegenerationAttempts: 3,
 
   login: async (email: string, password: string): Promise<boolean> => {
     set({ isLoading: true, error: null });
@@ -37,6 +45,8 @@ export const useAuthStore = create<AuthState>((set, get) => ({
         user: response.user,
         isAuthenticated: true,
         isLoading: false,
+        noveltyThreshold: response.user.novelty_threshold ?? 0.3,
+        maxRegenerationAttempts: response.user.max_regeneration_attempts ?? 3,
       });
       return true;
     } catch (error: unknown) {
@@ -61,6 +71,8 @@ export const useAuthStore = create<AuthState>((set, get) => ({
         user: response.user,
         isAuthenticated: true,
         isLoading: false,
+        noveltyThreshold: response.user.novelty_threshold ?? 0.3,
+        maxRegenerationAttempts: response.user.max_regeneration_attempts ?? 3,
       });
       return true;
     } catch (error: unknown) {
@@ -114,6 +126,8 @@ export const useAuthStore = create<AuthState>((set, get) => ({
         user,
         isAuthenticated: true,
         isLoading: false,
+        noveltyThreshold: user.novelty_threshold ?? 0.3,
+        maxRegenerationAttempts: user.max_regeneration_attempts ?? 3,
       });
       return true;
     } catch {
@@ -131,7 +145,12 @@ export const useAuthStore = create<AuthState>((set, get) => ({
     set({ isLoading: true, error: null });
     try {
       const updatedUser = await authService.updateProfile(data);
-      set({ user: updatedUser, isLoading: false });
+      set({ 
+        user: updatedUser, 
+        isLoading: false,
+        noveltyThreshold: updatedUser.novelty_threshold ?? get().noveltyThreshold,
+        maxRegenerationAttempts: updatedUser.max_regeneration_attempts ?? get().maxRegenerationAttempts,
+      });
     } catch (error: unknown) {
       const message = error instanceof Error 
         ? error.message 
@@ -157,6 +176,32 @@ export const useAuthStore = create<AuthState>((set, get) => ({
 
   clearError: (): void => {
     set({ error: null });
+  },
+
+  setNoveltyThreshold: async (value: number): Promise<void> => {
+    const previousValue = get().noveltyThreshold;
+    // Optimistic update
+    set({ noveltyThreshold: value });
+    try {
+      await authService.updateProfile({ novelty_threshold: value });
+    } catch (error) {
+      // Revert on failure
+      set({ noveltyThreshold: previousValue });
+      throw error;
+    }
+  },
+
+  setMaxRegenerationAttempts: async (value: number): Promise<void> => {
+    const previousValue = get().maxRegenerationAttempts;
+    // Optimistic update
+    set({ maxRegenerationAttempts: value });
+    try {
+      await authService.updateProfile({ max_regeneration_attempts: value });
+    } catch (error) {
+      // Revert on failure
+      set({ maxRegenerationAttempts: previousValue });
+      throw error;
+    }
   },
 }));
 

@@ -12,3 +12,5 @@ export { rubricsService } from './rubrics';
 export type { Rubric, RubricDetail, QuestionTypeDistribution, RubricCreateData } from './rubrics';
 export { vettingService } from './vetting';
 export type { VettingRequest, VettingStats, SubjectAnalytics } from './vetting';
+export { referencesService } from './references';
+export type { ReferenceDocument, ReferenceMaterialsResponse, NoveltySettings } from './references';

@@ -10,7 +10,9 @@ import {
   TextInput,
   Switch,
   Platform,
+  ActivityIndicator,
 } from 'react-native';
+import Slider from '@react-native-community/slider';
 import { useNavigation } from '@react-navigation/native';
 import { IconSymbol } from '@/components/ui/icon-symbol';
 import { GlassCard } from '@/components/ui/glass-card';
@@ -22,13 +24,13 @@ import { questionsService } from '@/services/questions';
 import { subjectsService } from '@/services/subjects';
 import { vettingService } from '@/services/vetting';
 
-type ModalType = 'editProfile' | 'changePassword' | 'notifications' | 'appearance' | 'help' | 'about' | null;
+type ModalType = 'editProfile' | 'changePassword' | 'notifications' | 'appearance' | 'help' | 'about' | 'novelty' | null;
 
 export default function ProfileScreen() {
   const colorScheme = useColorScheme();
   const colors = Colors[colorScheme ?? 'light'];
   const isDark = colorScheme === 'dark';
-  const { user, logout } = useAuthStore();
+  const { user, logout, noveltyThreshold, maxRegenerationAttempts, setNoveltyThreshold, setMaxRegenerationAttempts } = useAuthStore();
   const navigation = useNavigation();
   const { showError, showSuccess, showWarning } = useToast();
   
@@ -76,6 +78,11 @@ export default function ProfileScreen() {
   const [approvedQuestions, setApprovedQuestions] = useState(0);
   const [totalSubjects, setTotalSubjects] = useState(0);
   const [isLoadingStats, setIsLoadingStats] = useState(true);
+  
+  // Novelty Settings State
+  const [localNoveltyThreshold, setLocalNoveltyThreshold] = useState(noveltyThreshold);
+  const [localMaxAttempts, setLocalMaxAttempts] = useState(maxRegenerationAttempts);
+  const [isSavingNovelty, setIsSavingNovelty] = useState(false);
 
   const loadStatistics = async () => {
     try {
@@ -161,6 +168,21 @@ export default function ProfileScreen() {
           label: 'Change Password', 
           color: '#FF9500',
           onPress: () => setActiveModal('changePassword'),
+        },
+      ],
+    },
+    {
+      title: 'Generation Settings',
+      items: [
+        { 
+          icon: 'sparkles', 
+          label: 'Question Novelty', 
+          color: '#AF52DE',
+          onPress: () => {
+            setLocalNoveltyThreshold(noveltyThreshold);
+            setLocalMaxAttempts(maxRegenerationAttempts);
+            setActiveModal('novelty');
+          },
         },
       ],
     },
@@ -547,6 +569,124 @@ export default function ProfileScreen() {
               onPress={() => setActiveModal(null)}
             >
               <Text style={[styles.modalButtonText, { color: '#FFFFFF' }]}>Done</Text>
+            </TouchableOpacity>
+          </View>
+        );
+        
+      case 'novelty':
+        const handleSaveNoveltySettings = async () => {
+          setIsSavingNovelty(true);
+          try {
+            await setNoveltyThreshold(localNoveltyThreshold);
+            await setMaxRegenerationAttempts(localMaxAttempts);
+            showSuccess('Novelty settings saved');
+            setActiveModal(null);
+          } catch (error) {
+            showError(error, 'Failed to Save');
+          } finally {
+            setIsSavingNovelty(false);
+          }
+        };
+
+        return (
+          <View style={styles.modalContent}>
+            <Text style={[styles.modalTitle, { color: colors.text }]}>Question Novelty Settings</Text>
+            <Text style={[styles.noveltyDescription, { color: colors.textSecondary }]}>
+              Configure how strictly the system ensures generated questions are unique and novel compared to existing questions.
+            </Text>
+            
+            {/* Novelty Threshold */}
+            <View style={[styles.noveltySection, { backgroundColor: colors.card, borderColor: colors.border }]}>
+              <View style={styles.noveltyHeader}>
+                <View>
+                  <Text style={[styles.noveltyLabel, { color: colors.text }]}>Novelty Threshold</Text>
+                  <Text style={[styles.noveltyHint, { color: colors.textSecondary }]}>
+                    Minimum uniqueness required for questions
+                  </Text>
+                </View>
+                <View style={[styles.noveltyValueBadge, { backgroundColor: colors.primary + '20' }]}>
+                  <Text style={[styles.noveltyValueText, { color: colors.primary }]}>
+                    {Math.round(localNoveltyThreshold * 100)}%
+                  </Text>
+                </View>
+              </View>
+              <Slider
+                style={styles.slider}
+                minimumValue={0}
+                maximumValue={1}
+                step={0.05}
+                value={localNoveltyThreshold}
+                onValueChange={setLocalNoveltyThreshold}
+                minimumTrackTintColor={colors.primary}
+                maximumTrackTintColor={colors.border}
+                thumbTintColor={colors.primary}
+              />
+              <View style={styles.sliderLabels}>
+                <Text style={[styles.sliderLabel, { color: colors.textTertiary }]}>0% (Any)</Text>
+                <Text style={[styles.sliderLabel, { color: colors.textTertiary }]}>100% (Unique)</Text>
+              </View>
+            </View>
+
+            {/* Max Regeneration Attempts */}
+            <View style={[styles.noveltySection, { backgroundColor: colors.card, borderColor: colors.border }]}>
+              <View style={styles.noveltyHeader}>
+                <View>
+                  <Text style={[styles.noveltyLabel, { color: colors.text }]}>Max Regeneration Attempts</Text>
+                  <Text style={[styles.noveltyHint, { color: colors.textSecondary }]}>
+                    How many times to retry if novelty is too low
+                  </Text>
+                </View>
+                <View style={[styles.noveltyValueBadge, { backgroundColor: '#FF9500' + '20' }]}>
+                  <Text style={[styles.noveltyValueText, { color: '#FF9500' }]}>
+                    {localMaxAttempts}
+                  </Text>
+                </View>
+              </View>
+              <View style={styles.attemptsRow}>
+                {[1, 2, 3, 4, 5].map((num) => (
+                  <TouchableOpacity
+                    key={num}
+                    style={[
+                      styles.attemptButton,
+                      {
+                        backgroundColor: localMaxAttempts === num ? colors.primary : colors.background,
+                        borderColor: localMaxAttempts === num ? colors.primary : colors.border,
+                      },
+                    ]}
+                    onPress={() => setLocalMaxAttempts(num)}
+                  >
+                    <Text
+                      style={[
+                        styles.attemptButtonText,
+                        { color: localMaxAttempts === num ? '#FFFFFF' : colors.text },
+                      ]}
+                    >
+                      {num}
+                    </Text>
+                  </TouchableOpacity>
+                ))}
+              </View>
+            </View>
+
+            {/* Info Card */}
+            <View style={[styles.infoCard, { backgroundColor: colors.primary + '10', borderColor: colors.primary + '30' }]}>
+              <IconSymbol name="info.circle.fill" size={20} color={colors.primary} />
+              <Text style={[styles.infoText, { color: colors.text }]}>
+                Higher thresholds ensure more unique questions but may require more regeneration attempts. 
+                Reference materials are automatically used when novelty is insufficient.
+              </Text>
+            </View>
+
+            <TouchableOpacity 
+              style={[styles.modalButtonFull, { backgroundColor: colors.primary }]}
+              onPress={handleSaveNoveltySettings}
+              disabled={isSavingNovelty}
+            >
+              {isSavingNovelty ? (
+                <ActivityIndicator size="small" color="#FFFFFF" />
+              ) : (
+                <Text style={[styles.modalButtonText, { color: '#FFFFFF' }]}>Save Settings</Text>
+              )}
             </TouchableOpacity>
           </View>
         );
@@ -1028,5 +1168,83 @@ const styles = StyleSheet.create({
     fontSize: FontSizes.xs,
     textAlign: 'center',
     marginTop: Spacing.lg,
+  },
+  
+  // Novelty Settings
+  noveltyDescription: {
+    fontSize: FontSizes.sm,
+    lineHeight: 20,
+    marginBottom: Spacing.lg,
+  },
+  noveltySection: {
+    padding: Spacing.md,
+    borderRadius: BorderRadius.md,
+    borderWidth: 1,
+    marginBottom: Spacing.md,
+  },
+  noveltyHeader: {
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    alignItems: 'center',
+    marginBottom: Spacing.md,
+  },
+  noveltyLabel: {
+    fontSize: FontSizes.md,
+    fontWeight: '600',
+  },
+  noveltyHint: {
+    fontSize: FontSizes.xs,
+    marginTop: 2,
+  },
+  noveltyValueBadge: {
+    paddingHorizontal: Spacing.md,
+    paddingVertical: Spacing.xs,
+    borderRadius: BorderRadius.md,
+    minWidth: 60,
+    alignItems: 'center',
+  },
+  noveltyValueText: {
+    fontSize: FontSizes.lg,
+    fontWeight: '700',
+  },
+  slider: {
+    width: '100%',
+    height: 40,
+  },
+  sliderLabels: {
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+  },
+  sliderLabel: {
+    fontSize: FontSizes.xs,
+  },
+  attemptsRow: {
+    flexDirection: 'row',
+    gap: Spacing.sm,
+  },
+  attemptButton: {
+    flex: 1,
+    paddingVertical: Spacing.sm,
+    borderRadius: BorderRadius.md,
+    borderWidth: 1,
+    alignItems: 'center',
+  },
+  attemptButtonText: {
+    fontSize: FontSizes.md,
+    fontWeight: '600',
+  },
+  infoCard: {
+    flexDirection: 'row',
+    alignItems: 'flex-start',
+    gap: Spacing.sm,
+    padding: Spacing.md,
+    borderRadius: BorderRadius.md,
+    borderWidth: 1,
+    marginBottom: Spacing.lg,
+  },
+  infoText: {
+    flex: 1,
+    fontSize: FontSizes.sm,
+    lineHeight: 18,
   },
 });
