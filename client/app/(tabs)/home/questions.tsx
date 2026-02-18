@@ -360,7 +360,7 @@ export default function QuestionsScreen() {
       />
       <View style={[styles.container, { backgroundColor: colors.background }]}>
         {/* Header with Gradient */}
-        <LinearGradient
+        {/* <LinearGradient
           colors={['#4A90D9', '#357ABD'] as const}
           style={styles.headerCard}
         >
@@ -375,7 +375,7 @@ export default function QuestionsScreen() {
               </Text>
             )}
           </View>
-        </LinearGradient>
+        </LinearGradient> */}
 
         {/* Filter Chips */}
         <View style={[styles.filterContainer, { backgroundColor: colors.card }]}>

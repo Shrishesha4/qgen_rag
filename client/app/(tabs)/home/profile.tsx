@@ -45,14 +45,13 @@ export default function ProfileScreen() {
     loadStatistics();
     
     return () => {
-      // Show tab bar and header again when leaving
+      // Show tab bar again when leaving (do NOT toggle parent headerShown here)
       navigation.getParent()?.setOptions({
         tabBarStyle: { 
           backgroundColor: colors.card,
           borderTopColor: colors.border,
           height: 60,
         },
-        headerShown: true,
       });
     };
   }, [navigation, colors]);

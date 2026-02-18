@@ -339,7 +339,7 @@ export default function GenerateScreen() {
         refreshControl={<RefreshControl refreshing={isRefreshing} onRefresh={handleRefresh} />}
       >
         {/* Header Info Card */}
-        <LinearGradient
+        {/* <LinearGradient
           colors={['#4A90D9', '#357ABD'] as const}
           style={styles.infoCard}
         >
@@ -350,7 +350,7 @@ export default function GenerateScreen() {
               Questions are pulled from all topics across the entire subject based on your rubric's Learning Outcome distribution.
             </Text>
           </View>
-        </LinearGradient>
+        </LinearGradient> */}
 
         {/* Create New Rubric Button */}
         <TouchableOpacity

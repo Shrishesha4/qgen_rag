@@ -8,6 +8,7 @@ import {
   RefreshControl,
   ActivityIndicator,
   Platform,
+  StatusBar,
 } from 'react-native';
 import { LinearGradient } from 'expo-linear-gradient';
 import { router } from 'expo-router';
@@ -291,7 +292,7 @@ const styles = StyleSheet.create({
   },
   // Header
   header: {
-    paddingTop: Platform.OS === 'ios' ? Spacing.xxxl + 20 : Spacing.xl,
+    paddingTop: Platform.OS === 'ios' ? Spacing.xxxl + 20 : (Spacing.xl + (StatusBar.currentHeight ?? 24)),
     paddingBottom: Spacing.lg,
     paddingHorizontal: Spacing.lg,
   },

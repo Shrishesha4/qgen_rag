@@ -85,6 +85,11 @@ const MAPPING: IconMapping = {
   'rectangle.portrait.and.arrow.right.fill': 'logout',
   'exclamationmark.triangle': 'warning',
   'exclamationmark.triangle.fill': 'warning',
+
+  // profile / settings
+  'lock.fill': 'lock',
+  'bell.fill': 'notifications',
+  'info.circle.fill': 'info',
 };
 
 /**

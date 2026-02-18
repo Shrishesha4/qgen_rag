@@ -184,7 +184,7 @@ export default function ReportsScreen() {
         refreshControl={<RefreshControl refreshing={isRefreshing} onRefresh={handleRefresh} />}
       >
         {/* Header */}
-        <LinearGradient
+        {/* <LinearGradient
           colors={['#34C759', '#28A745'] as const}
           style={styles.headerCard}
         >
@@ -195,7 +195,7 @@ export default function ReportsScreen() {
               Comprehensive analysis of question bank coverage and distribution
             </Text>
           </View>
-        </LinearGradient>
+        </LinearGradient> */}
 
         {/* Subject Filter */}
         <ScrollView

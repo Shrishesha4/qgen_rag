@@ -669,6 +669,19 @@ async def vet_question(
             if question.marks and q_type in marks_map:
                 marks_map[q_type] = question.marks
             context = (question.question_text or "")[:500] if question.question_text else "Replacement question"
+
+            # Ensure we regenerate the same question type but prefer a different question text/topic/LO
+            subject_for_gen = question.subject_id
+            topic_for_gen = None  # explicitly unset so generator can pick other chapters
+
+            bloom_levels_all = ["remember", "understand", "apply", "analyze", "evaluate", "create"]
+            bloom_to_use = None
+            if question.bloom_taxonomy_level and question.bloom_taxonomy_level in bloom_levels_all:
+                bloom_candidates = [b for b in bloom_levels_all if b != question.bloom_taxonomy_level]
+                if bloom_candidates:
+                    bloom_to_use = bloom_candidates
+
+            # Generate replacements but accept only those that keep the same type and are sufficiently different
             async for progress in qsvc.quick_generate(
                 user_id=current_user.id,
                 document_id=question.document_id,
@@ -677,12 +690,29 @@ async def vet_question(
                 types=[q_type],
                 difficulty=question.difficulty_level or "medium",
                 marks_by_type=marks_map,
-                subject_id=question.subject_id,
-                topic_id=question.topic_id,
+                subject_id=subject_for_gen,
+                topic_id=topic_for_gen,
+                bloom_levels=bloom_to_use,
             ):
                 if getattr(progress, "question", None):
-                    replacement = progress.question
-                    print(f"DEBUG: Found replacement question: {replacement.id}")
+                    candidate = progress.question
+                    # keep same type
+                    if (candidate.question_type or q_type) != q_type:
+                        print(f"DEBUG: Skipping replacement with different type: {candidate.id} ({candidate.question_type})")
+                        continue
+                    # ensure text differs
+                    if candidate.question_text and question.question_text and candidate.question_text.strip() == question.question_text.strip():
+                        print(f"DEBUG: Skipping replacement with identical text: {candidate.id}")
+                        continue
+                    # prefer different topic if available
+                    if candidate.topic_id and question.topic_id and candidate.topic_id == question.topic_id:
+                        print(f"DEBUG: Skipping replacement in same topic: {candidate.id}")
+                        continue
+
+                    replacement = candidate
+                    print(f"DEBUG: Found acceptable replacement question: {replacement.id}")
+                    break
+
             if replacement:
                 print(f"DEBUG: Returning replacement question: {replacement.id}")
                 return QR.model_validate(replacement)

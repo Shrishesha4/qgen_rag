@@ -13,6 +13,7 @@ import {
   Modal,
 } from 'react-native';
 import { LinearGradient } from 'expo-linear-gradient';
+import { BlurView } from 'expo-blur';
 import { IconSymbol } from '@/components/ui/icon-symbol';
 import { GlassCard } from '@/components/ui/glass-card';
 import { NativeButton } from '@/components/ui/native-button';
@@ -52,6 +53,7 @@ export default function VettingScreen() {
   const [expandedQuestion, setExpandedQuestion] = useState<string | null>(null);
   const [coMappings, setCoMappings] = useState<Record<string, CourseOutcomeMapping>>({});
   const [replacedQuestionId, setReplacedQuestionId] = useState<string | null>(null);
+  const [regenerating, setRegenerating] = useState<Record<string, boolean>>({});
   
   // Edit state for marks and subject/topic
   const [editMarks, setEditMarks] = useState<Record<string, number>>({});
@@ -218,7 +220,14 @@ export default function VettingScreen() {
           style: 'destructive',
           onPress: async () => {
             try {
+              // show regenerating indicator for this question while backend generates replacement
+              setRegenerating(prev => ({ ...prev, [questionId]: true }));
+
               const replacement = await vettingService.vetQuestion(questionId, 'rejected', 'Rejected by reviewer');
+
+              // clear regenerating flag
+              setRegenerating(prev => ({ ...prev, [questionId]: false }));
+
               console.log('Replacement question received:', replacement);
               console.log('Replacement ID:', replacement?.id);
               console.log('Original question ID:', questionId);
@@ -270,6 +279,8 @@ export default function VettingScreen() {
                 loadData();
               }
             } catch (error) {
+              // clear regenerating flag on error too
+              setRegenerating(prev => ({ ...prev, [questionId]: false }));
               showError(error, 'Rejection Failed');
             }
           },
@@ -382,6 +393,13 @@ export default function VettingScreen() {
           },
         ]}
       >
+        {/* centered regenerating overlay (blurs card and blocks interaction) */}
+        {regenerating[question.id] && (
+          <BlurView intensity={80} tint={isDark ? 'dark' : 'light'} style={styles.regenerationOverlay}>
+            <ActivityIndicator size="large" color={colors.primary} />
+            <Text style={[styles.regeneratingText, { color: colors.primary, marginTop: Spacing.sm, fontSize: FontSizes.lg }]}>Regenerating…</Text>
+          </BlurView>
+        )}
         {/* Question Header */}
         <TouchableOpacity
           style={styles.questionHeader}
@@ -408,6 +426,8 @@ export default function VettingScreen() {
             color={colors.textTertiary}
           />
         </TouchableOpacity>
+
+
 
         {/* Question Text */}
         <Text style={[styles.questionText, { color: colors.text }]}>
@@ -709,8 +729,9 @@ export default function VettingScreen() {
         {/* Action Buttons */}
         <View style={styles.actionButtons}>
           <TouchableOpacity
-            style={[styles.actionButton, styles.rejectButton]}
+            style={[styles.actionButton, styles.rejectButton, regenerating[question.id] && { opacity: 0.6 }]}
             onPress={() => handleReject(question.id)}
+            disabled={!!regenerating[question.id]}
           >
             <IconSymbol name="xmark" size={16} color="#FF3B30" />
             <Text style={[styles.actionButtonText, { color: '#FF3B30' }]}>Reject</Text>
@@ -749,7 +770,7 @@ export default function VettingScreen() {
         refreshControl={<RefreshControl refreshing={isRefreshing} onRefresh={handleRefresh} />}
       >
         {/* Header */}
-        <LinearGradient
+        {/* <LinearGradient
           colors={['#FF9500', '#FF7F00'] as const}
           style={styles.headerCard}
         >
@@ -760,7 +781,7 @@ export default function VettingScreen() {
               Review, approve, and map course outcomes for generated questions
             </Text>
           </View>
-        </LinearGradient>
+        </LinearGradient> */}
 
         {/* Stats */}
         {renderStatsCard()}
@@ -1170,6 +1191,22 @@ const styles = StyleSheet.create({
     borderTopWidth: 1,
     borderTopColor: '#E5E5EA',
     paddingTop: Spacing.md,
+  },
+  regenerationOverlay: {
+    position: 'absolute',
+    top: 0,
+    left: 0,
+    right: 0,
+    bottom: 0,
+    borderRadius: BorderRadius.md,
+    alignItems: 'center',
+    justifyContent: 'center',
+    zIndex: 10,
+    overflow: 'hidden',
+  },
+  regeneratingText: {
+    fontSize: FontSizes.xs,
+    fontWeight: '600',
   },
   actionButton: {
     flex: 1,
