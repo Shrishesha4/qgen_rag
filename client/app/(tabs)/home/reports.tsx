@@ -7,16 +7,13 @@ import {
   TouchableOpacity,
   RefreshControl,
   ActivityIndicator,
-  Platform,
 } from 'react-native';
 import { LinearGradient } from 'expo-linear-gradient';
 import { IconSymbol } from '@/components/ui/icon-symbol';
-import { GlassCard } from '@/components/ui/glass-card';
-import { NativeButton } from '@/components/ui/native-button';
 import { Colors, Spacing, BorderRadius, FontSizes } from '@/constants/theme';
 import { useColorScheme } from '@/hooks/use-color-scheme';
 import { subjectsService, Subject } from '@/services/subjects';
-import { vettingService, VettingStats, SubjectAnalytics, AnalyticsByLO, AnalyticsByBloom } from '@/services/vetting';
+import { vettingService, VettingStats, SubjectAnalytics } from '@/services/vetting';
 
 interface AnalyticsData {
   total_questions: number;

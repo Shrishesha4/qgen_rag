@@ -8,15 +8,12 @@ import {
   RefreshControl,
   Alert,
   ActivityIndicator,
-  Platform,
   TextInput,
   Modal,
 } from 'react-native';
 import { LinearGradient } from 'expo-linear-gradient';
 import { BlurView } from 'expo-blur';
 import { IconSymbol } from '@/components/ui/icon-symbol';
-import { GlassCard } from '@/components/ui/glass-card';
-import { NativeButton } from '@/components/ui/native-button';
 import { Colors, Spacing, BorderRadius, FontSizes } from '@/constants/theme';
 import { useColorScheme } from '@/hooks/use-color-scheme';
 import { vettingService, PendingQuestion, VettingStats, CourseOutcomeMapping } from '@/services/vetting';
@@ -499,7 +496,7 @@ export default function VettingScreen() {
               );
             })}
             {isExpanded && (
-              <Text style={[styles.optionHint, { color: colors.textSecondary }]}>Tap an option to mark it as correct (changes saved with "Save All Changes")</Text>
+              <Text style={[styles.optionHint, { color: colors.textSecondary }]}>Tap an option to mark it as correct (changes saved with &apos;Save All Changes&apos;)</Text>
             )}
           </View>
         )}

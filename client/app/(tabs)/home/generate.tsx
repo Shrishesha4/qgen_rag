@@ -11,22 +11,16 @@ import {
   Modal,
   TextInput,
   Animated,
-  Platform,
-  SafeAreaView,
-  FlatList,
 } from 'react-native';
 import { LinearGradient } from 'expo-linear-gradient';
 import Slider from '@react-native-community/slider';
 import { router } from 'expo-router';
 import { IconSymbol } from '@/components/ui/icon-symbol';
-import { GlassCard } from '@/components/ui/glass-card';
-import { NativeButton } from '@/components/ui/native-button';
 import { Colors, Spacing, BorderRadius, FontSizes } from '@/constants/theme';
 import { useColorScheme } from '@/hooks/use-color-scheme';
 import { rubricsService, Rubric, RubricCreateData, QuestionTypeDistribution, GenerationProgress } from '@/services/rubrics';
 import { subjectsService, Subject } from '@/services/subjects';
 import { useToast } from '@/components/toast';
-import { extractErrorMessage } from '@/utils/errors';
 
 const EXAM_TYPES = [
   { value: 'final_exam', label: 'Final Exam', icon: 'doc.fill' },

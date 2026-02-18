@@ -6,8 +6,6 @@ import {
   ScrollView,
   TouchableOpacity,
   TextInput,
-  Platform,
-  Alert,
   ActivityIndicator,
   Animated,
   Modal,
@@ -18,7 +16,6 @@ import * as DocumentPicker from 'expo-document-picker';
 import { router } from 'expo-router';
 import { IconSymbol } from '@/components/ui/icon-symbol';
 import { GlassCard } from '@/components/ui/glass-card';
-import { NativeButton } from '@/components/ui/native-button';
 import { Colors, Spacing, BorderRadius, FontSizes, Shadows } from '@/constants/theme';
 import { useColorScheme } from '@/hooks/use-color-scheme';
 import { questionsService, QuickGenerateProgress, Question } from '@/services/questions';

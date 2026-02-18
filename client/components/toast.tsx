@@ -12,14 +12,13 @@ import {
   StyleSheet,
   Animated,
   TouchableOpacity,
-  Platform,
   Dimensions,
 } from 'react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { IconSymbol } from '@/components/ui/icon-symbol';
 import { Colors, Spacing, BorderRadius, FontSizes } from '@/constants/theme';
 import { useColorScheme } from '@/hooks/use-color-scheme';
-import { extractErrorMessage, extractErrorDetails } from '@/utils/errors';
+import { extractErrorDetails } from '@/utils/errors';
 
 export type ToastType = 'success' | 'error' | 'warning' | 'info';
 

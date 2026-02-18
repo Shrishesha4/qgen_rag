@@ -20,7 +20,6 @@ import { Colors, Spacing, BorderRadius, FontSizes } from '@/constants/theme';
 import { useColorScheme } from '@/hooks/use-color-scheme';
 import { useAuthStore } from '@/stores/authStore';
 import { useToast } from '@/components/toast';
-import { questionsService } from '@/services/questions';
 import { subjectsService } from '@/services/subjects';
 import { vettingService } from '@/services/vetting';
 
@@ -29,7 +28,6 @@ type ModalType = 'editProfile' | 'changePassword' | 'notifications' | 'appearanc
 export default function ProfileScreen() {
   const colorScheme = useColorScheme();
   const colors = Colors[colorScheme ?? 'light'];
-  const isDark = colorScheme === 'dark';
   const { user, logout, noveltyThreshold, maxRegenerationAttempts, setNoveltyThreshold, setMaxRegenerationAttempts } = useAuthStore();
   const navigation = useNavigation();
   const { showError, showSuccess, showWarning } = useToast();
@@ -423,14 +421,14 @@ export default function ProfileScreen() {
                 <IconSymbol name="chart.bar.fill" size={24} color="#FF9500" />
                 <View style={styles.helpItemContent}>
                   <Text style={[styles.helpItemTitle, { color: colors.text }]}>5. View Reports</Text>
-                  <Text style={[styles.helpItemDesc, { color: colors.textSecondary }]}>Analyze question distribution by subject, learning outcomes, and Bloom's taxonomy</Text>
+                  <Text style={[styles.helpItemDesc, { color: colors.textSecondary }]}>Analyze question distribution by subject, learning outcomes, and Bloom&apos;s taxonomy</Text>
                 </View>
               </TouchableOpacity>
               <View style={[styles.helpDivider, { backgroundColor: colors.border }]} />
-              <Text style={[styles.helpSectionTitle, { color: colors.text }]}>What is Bloom's Taxonomy?</Text>
+              <Text style={[styles.helpSectionTitle, { color: colors.text }]}>What is Bloom&apos;s Taxonomy?</Text>
               <View style={[styles.bloomSection, { backgroundColor: colors.card, borderColor: colors.border }]}>
                 <Text style={[styles.bloomDescription, { color: colors.text }]}>
-                  Bloom's Taxonomy is a framework for categorizing learning objectives and cognitive skills into six levels of increasing complexity:
+                  Bloom&apos;s Taxonomy is a framework for categorizing learning objectives and cognitive skills into six levels of increasing complexity:
                 </Text>
                 <View style={styles.bloomLevels}>
                   <View style={styles.bloomLevel}>
@@ -489,7 +487,7 @@ export default function ProfileScreen() {
                   </View>
                 </View>
                 <Text style={[styles.bloomBenefit, { color: colors.textSecondary }]}>
-                  QuestionGen uses Bloom's Taxonomy to generate questions at different cognitive levels, ensuring comprehensive assessment of student learning.
+                  QuestionGen uses Bloom&apos;s Taxonomy to generate questions at different cognitive levels, ensuring comprehensive assessment of student learning.
                 </Text>
               </View>
               <View style={[styles.helpDivider, { backgroundColor: colors.border }]} />
@@ -501,7 +499,7 @@ export default function ProfileScreen() {
                 </View>
                 <View style={styles.featureItemHelp}>
                   <IconSymbol name="star.fill" size={16} color={colors.warning} />
-                  <Text style={[styles.featureItemText, { color: colors.text }]}>Bloom's Taxonomy support for cognitive levels</Text>
+                  <Text style={[styles.featureItemText, { color: colors.text }]}>Bloom&apos;s Taxonomy support for cognitive levels</Text>
                 </View>
                 <View style={styles.featureItemHelp}>
                   <IconSymbol name="star.fill" size={16} color={colors.warning} />
@@ -557,7 +555,7 @@ export default function ProfileScreen() {
                 </View>
                 <View style={styles.featureItem}>
                   <IconSymbol name="checkmark.circle.fill" size={16} color={colors.success} />
-                  <Text style={[styles.featureText, { color: colors.text }]}>Bloom's Taxonomy Support</Text>
+                  <Text style={[styles.featureText, { color: colors.text }]}>Bloom&apos;s Taxonomy Support</Text>
                 </View>
               </View>
             </View>

@@ -10,13 +10,10 @@ import {
   ActivityIndicator,
   TextInput,
   Modal,
-  Platform,
 } from 'react-native';
 import { router, useLocalSearchParams, Stack } from 'expo-router';
 import { LinearGradient } from 'expo-linear-gradient';
 import { IconSymbol } from '@/components/ui/icon-symbol';
-import { GlassCard } from '@/components/ui/glass-card';
-import { NativeButton } from '@/components/ui/native-button';
 import { Colors, Spacing, BorderRadius, FontSizes } from '@/constants/theme';
 import { useColorScheme } from '@/hooks/use-color-scheme';
 import { 
@@ -494,7 +491,7 @@ export default function SubjectDetailScreen() {
                         <View style={[styles.badge, { backgroundColor: colors.primary + '20' }]}>
                           <IconSymbol name="questionmark.circle" size={12} color={colors.primary} />
                           <Text style={[styles.badgeText, { color: colors.primary }]}>
-                            {topic.total_questions} Q's
+                            {topic.total_questions} Q&apos;s
                           </Text>
                         </View>
                       </View>

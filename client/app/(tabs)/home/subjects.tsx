@@ -10,14 +10,9 @@ import {
   ActivityIndicator,
   TextInput,
   Modal,
-  Platform,
 } from 'react-native';
-import { LinearGradient } from 'expo-linear-gradient';
 import { router } from 'expo-router';
 import { IconSymbol } from '@/components/ui/icon-symbol';
-import { GlassCard } from '@/components/ui/glass-card';
-import { NativeButton } from '@/components/ui/native-button';
-import { TouchableCard } from '@/components/ui/touchable-card';
 import { Colors, Spacing, BorderRadius, FontSizes } from '@/constants/theme';
 import { useColorScheme } from '@/hooks/use-color-scheme';
 import { subjectsService, Subject, SubjectCreateData } from '@/services/subjects';

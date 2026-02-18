@@ -39,7 +39,7 @@ export default function LoginScreen() {
       >
         <View style={styles.header}>
           <Text style={[styles.title, { color: colors.primary }]}>QuestionGen AI</Text>
-          <Text style={[styles.subtitle, { color: colors.textSecondary }]}>Educator's Question Generation Tool</Text>
+          <Text style={[styles.subtitle, { color: colors.textSecondary }]}>Educator&apos;s Question Generation Tool</Text>
         </View>
 
         <GlassCard style={styles.form}>
@@ -91,7 +91,7 @@ export default function LoginScreen() {
           />
 
           <View style={styles.footer}>
-            <Text style={[styles.footerText, { color: colors.textSecondary }]}>Don't have an account? </Text>
+            <Text style={[styles.footerText, { color: colors.textSecondary }]}>Don&apos;t have an account? </Text>
             <Link href="/(auth)/register" asChild>
               <TouchableOpacity>
                 <Text style={[styles.linkText, { color: colors.primary }]}>Sign Up</Text>

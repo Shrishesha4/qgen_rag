@@ -1,6 +1,5 @@
 import React from 'react';
 import { Platform, View, StyleProp, ViewStyle } from 'react-native';
-import { isLiquidGlassAvailable, isGlassEffectAPIAvailable } from 'expo-glass-effect';
 
 // SwiftUI components - only imported on iOS
 let SwiftUI: any = null;
