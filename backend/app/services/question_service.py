@@ -1505,12 +1505,18 @@ Output valid JSON only."""
         user_id: uuid.UUID,
     ) -> bool:
         """Archive a question."""
+        from sqlalchemy import or_
+        # Support both document-based and subject-based questions
         result = await self.db.execute(
             select(Question)
-            .join(Document)
+            .outerjoin(Document, Question.document_id == Document.id)
+            .outerjoin(Subject, Question.subject_id == Subject.id)
             .where(
                 Question.id == question_id,
-                Document.user_id == user_id,
+                or_(
+                    Document.user_id == user_id,
+                    Subject.user_id == user_id,
+                ),
             )
         )
         question = result.scalar_one_or_none()

@@ -522,8 +522,11 @@ async def get_question_stats(
     from app.models.question import Question, GenerationSession
     from app.models.document import Document
     
-    # Base query for user's questions
-    base_query = select(Question).join(Document).where(Document.user_id == current_user.id)
+    # Base query for user's questions (exclude archived)
+    base_query = select(Question).join(Document).where(
+        Document.user_id == current_user.id,
+        Question.is_archived == False,
+    )
     
     if document_id:
         base_query = base_query.where(Question.document_id == document_id)
@@ -538,7 +541,7 @@ async def get_question_stats(
     type_result = await db.execute(
         select(Question.question_type, func.count())
         .join(Document)
-        .where(Document.user_id == current_user.id)
+        .where(Document.user_id == current_user.id, Question.is_archived == False)
         .group_by(Question.question_type)
     )
     by_type = {row[0]: row[1] for row in type_result.all()}
@@ -547,7 +550,7 @@ async def get_question_stats(
     diff_result = await db.execute(
         select(Question.difficulty_level, func.count())
         .join(Document)
-        .where(Document.user_id == current_user.id)
+        .where(Document.user_id == current_user.id, Question.is_archived == False)
         .group_by(Question.difficulty_level)
     )
     by_difficulty = {row[0] or "unspecified": row[1] for row in diff_result.all()}
@@ -617,6 +620,7 @@ async def get_pending_questions(
         page=page,
         limit=limit,
         question_type=question_type,
+        show_archived=False,  # Never show archived in pending vetting
     )
     
     return QuestionListResponse(
@@ -1108,7 +1112,8 @@ async def get_vetting_stats(
         or_(
             Document.user_id == current_user.id,
             Subject.user_id == current_user.id,
-        )
+        ),
+        Question.is_archived == False,  # Exclude archived from stats
     ]
     if subject_id:
         base_where.append(Question.subject_id == subject_id)
@@ -1174,7 +1179,7 @@ async def get_analytics_by_subject(
             func.sum(case((Question.vetting_status == "rejected", 1), else_=0)).label("rejected"),
             func.sum(case((Question.vetting_status == "pending", 1), else_=0)).label("pending"),
         )
-        .outerjoin(Question, Question.subject_id == Subject.id)
+        .outerjoin(Question, (Question.subject_id == Subject.id) & (Question.is_archived == False))
         .where(Subject.user_id == current_user.id)
         .group_by(Subject.id, Subject.name, Subject.code)
     )
@@ -1206,7 +1211,7 @@ async def get_analytics_by_lo(
     from app.models.question import Question
     from app.models.document import Document
     
-    base_where = [Document.user_id == current_user.id]
+    base_where = [Document.user_id == current_user.id, Question.is_archived == False]
     if subject_id:
         base_where.append(Question.subject_id == subject_id)
     
@@ -1237,7 +1242,7 @@ async def get_analytics_by_bloom(
     from app.models.question import Question
     from app.models.document import Document
     
-    base_where = [Document.user_id == current_user.id]
+    base_where = [Document.user_id == current_user.id, Question.is_archived == False]
     if subject_id:
         base_where.append(Question.subject_id == subject_id)
     

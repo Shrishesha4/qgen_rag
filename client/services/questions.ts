@@ -18,6 +18,7 @@ export interface Question {
   bloom_taxonomy_level: string | null;
   options: string[] | null;
   correct_answer: string | null;
+  explanation: string | null;
   topic_tags: string[] | null;
   source_chunk_ids: string[] | null;
   answerability_score: number | null;
@@ -27,6 +28,11 @@ export interface Question {
   times_shown: number;
   user_rating: number | null;
   is_archived: boolean;
+
+  // Vetting
+  vetting_status: 'pending' | 'approved' | 'rejected';
+  vetted_at?: string | null;
+  vetting_notes?: string | null;
 
   // Assessment mappings assigned by backend
   learning_outcome_id?: string | null;
@@ -143,13 +149,13 @@ export const questionsService = {
       try {
         const accessToken = await tokenStorage.getAccessToken();
         const baseUrl = apiClient.defaults.baseURL || '';
-        
+
         // Build URL with query params for SSE GET request
         // Or use POST body - depends on backend implementation
         const url = `${baseUrl}/questions/generate-stream`;
-        
+
         console.log('[GenerateQuestions] Starting SSE connection to:', url);
-        
+
         eventSource = new EventSource(url, {
           headers: {
             'Authorization': accessToken ? `Bearer ${accessToken}` : '',
@@ -163,14 +169,14 @@ export const questionsService = {
 
         eventSource.addEventListener('message', (event) => {
           if (isClosed) return;
-          
+
           try {
             const data = event.data;
             if (data) {
               const progress = JSON.parse(data) as GenerationProgress;
               console.log('[GenerateQuestions] SSE Event:', progress.status);
               onProgress(progress);
-              
+
               if (progress.status === 'complete' || progress.status === 'error') {
                 eventSource?.close();
                 onComplete();
@@ -218,6 +224,7 @@ export const questionsService = {
     documentId?: string,
     subjectId?: string,
     showArchived: boolean = false,
+    vettingStatus?: string,
   ): Promise<{ questions: Question[]; pagination: { page: number; limit: number; total: number; total_pages: number } }> {
     const params = new URLSearchParams({
       page: page.toString(),
@@ -228,6 +235,7 @@ export const questionsService = {
     if (questionType) params.append('question_type', questionType);
     if (difficulty) params.append('difficulty', difficulty);
     if (showArchived) params.append('show_archived', 'true');
+    if (vettingStatus) params.append('vetting_status', vettingStatus);
 
     const response = await apiClient.get(`/questions?${params}`);
     return response.data;
@@ -369,21 +377,21 @@ export const questionsService = {
           // Handle incremental SSE data via onprogress
           xhr.onprogress = () => {
             if (isCancelled || !xhr) return;
-            
+
             // Get new data since last read
             const responseText = xhr.responseText || '';
             const newData = responseText.slice(processedLength);
             processedLength = responseText.length;
-            
+
             if (!newData) return;
-            
+
             // Add to buffer and process complete events
             buffer += newData;
             const events = buffer.split('\n\n');
-            
+
             // Keep incomplete event in buffer
             buffer = events.pop() || '';
-            
+
             for (const event of events) {
               if (event.startsWith('data: ')) {
                 try {
@@ -405,9 +413,9 @@ export const questionsService = {
 
           xhr.onload = () => {
             if (isCancelled || !xhr) return;
-            
+
             console.log('[QuickGenerate] Request completed, status:', xhr.status);
-            
+
             if (xhr.status === 200) {
               // Process any remaining data in buffer
               if (buffer && buffer.startsWith('data: ')) {
@@ -424,7 +432,7 @@ export const questionsService = {
                   // Ignore incomplete final event
                 }
               }
-              
+
               onComplete(lastDocumentId);
               resolve();
             } else {
