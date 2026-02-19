@@ -16,6 +16,7 @@ from sqlalchemy.orm import selectinload
 from app.core.database import get_db
 from app.core.config import settings
 from app.models.subject import Subject, Topic
+from app.models.question import Question
 from app.models.user import User
 from app.schemas.subject import (
     SubjectCreate,
@@ -125,9 +126,28 @@ async def get_subject(
             detail="Subject not found",
         )
     
+    # Compute live question counts per topic (only non-archived)
+    topic_counts_result = await db.execute(
+        select(Question.topic_id, func.count(Question.id))
+        .where(
+            Question.topic_id.isnot(None),
+            Question.is_archived == False,
+            Question.vetting_status == "approved",
+        )
+        .group_by(Question.topic_id)
+    )
+    topic_counts = dict(topic_counts_result.all())
+
+    sorted_topics = sorted(subject.topics, key=lambda x: x.order_index)
+    topic_responses = []
+    for t in sorted_topics:
+        tr = TopicResponse.model_validate(t)
+        tr.total_questions = topic_counts.get(t.id, 0)
+        topic_responses.append(tr)
+
     return SubjectDetailResponse(
         **SubjectResponse.model_validate(subject).model_dump(),
-        topics=[TopicResponse.model_validate(t) for t in sorted(subject.topics, key=lambda x: x.order_index)]
+        topics=topic_responses
     )
 
 
@@ -269,8 +289,30 @@ async def list_topics(
     result = await db.execute(query)
     topics = result.scalars().all()
     
+    # Compute live question counts per topic (only non-archived)
+    topic_ids = [t.id for t in topics]
+    if topic_ids:
+        topic_counts_result = await db.execute(
+            select(Question.topic_id, func.count(Question.id))
+            .where(
+                Question.topic_id.in_(topic_ids),
+                Question.is_archived == False,
+            Question.vetting_status == "approved",
+            )
+            .group_by(Question.topic_id)
+        )
+        topic_counts = dict(topic_counts_result.all())
+    else:
+        topic_counts = {}
+
+    topic_responses = []
+    for t in topics:
+        tr = TopicResponse.model_validate(t)
+        tr.total_questions = topic_counts.get(t.id, 0)
+        topic_responses.append(tr)
+
     return TopicListResponse(
-        topics=[TopicResponse.model_validate(t) for t in topics],
+        topics=topic_responses,
         pagination={
             "page": page,
             "limit": limit,

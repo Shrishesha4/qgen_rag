@@ -18,7 +18,7 @@ import { IconSymbol } from '@/components/ui/icon-symbol';
 import { Colors, Spacing, BorderRadius, FontSizes } from '@/constants/theme';
 import { useColorScheme } from '@/hooks/use-color-scheme';
 import { questionsService, Question, QuestionUpdateRequest } from '@/services/questions';
-import { subjectsService } from '@/services/subjects';
+import { subjectsService, Topic } from '@/services/subjects';
 import { useToast } from '@/components/toast';
 
 const FILTER_OPTIONS = [
@@ -52,6 +52,7 @@ export default function QuestionsScreen() {
 
   const [questions, setQuestions] = useState<Question[]>([]);
   const [subject, setSubject] = useState<any>(null);
+  const [topics, setTopics] = useState<Topic[]>([]);
   const [isLoading, setIsLoading] = useState(true);
   const [isRefreshing, setIsRefreshing] = useState(false);
   const [filterType, setFilterType] = useState('');
@@ -106,12 +107,23 @@ export default function QuestionsScreen() {
     }
   }, [subjectId]);
 
+  const loadTopics = useCallback(async () => {
+    if (!subjectId) return;
+    try {
+      const data = await subjectsService.listTopics(subjectId, 1, 100);
+      setTopics(data.topics || []);
+    } catch (error) {
+      console.error('Failed to load topics:', error);
+    }
+  }, [subjectId]);
+
   useEffect(() => {
     loadSubject();
+    loadTopics();
     setIsLoading(true);
     setPage(1);
     loadQuestions(1);
-  }, [filterType, showArchived, loadQuestions, loadSubject]);
+  }, [filterType, showArchived, loadQuestions, loadSubject, loadTopics]);
 
   const handleRefresh = () => {
     setIsRefreshing(true);
@@ -174,6 +186,7 @@ export default function QuestionsScreen() {
       marks: selectedQuestion.marks || undefined,
       learning_outcome_id: selectedQuestion.learning_outcome_id || undefined,
       course_outcome_mapping: selectedQuestion.course_outcome_mapping || undefined,
+      topic_id: selectedQuestion.topic_id || undefined,
     });
     setIsEditing(true);
   };
@@ -308,140 +321,202 @@ export default function QuestionsScreen() {
         onRequestClose={() => { setSelectedQuestion(null); cancelEditing(); }}
       >
         <View style={[styles.modalContainer, { backgroundColor: colors.background }]}>
-          <View style={[styles.modalHeader, { backgroundColor: colors.card, borderBottomColor: colors.border }]}>
-            <TouchableOpacity onPress={() => { setSelectedQuestion(null); cancelEditing(); }}>
-              <IconSymbol name="xmark" size={24} color={colors.text} />
-            </TouchableOpacity>
-            <Text style={[styles.modalTitle, { color: colors.text }]}>Question Details</Text>
-            <View style={styles.modalHeaderActions}>
-              {!isEditing ? (
-                <>
-                  <TouchableOpacity onPress={startEditing} style={{ marginRight: Spacing.sm }}>
-                    <IconSymbol name="pencil" size={22} color={colors.primary} />
-                  </TouchableOpacity>
-                  {showArchived ? (
-                    <TouchableOpacity onPress={() => handleUnarchive(selectedQuestion.id)}>
-                      <IconSymbol name="arrow.uturn.backward" size={22} color="#10b981" />
-                    </TouchableOpacity>
-                  ) : (
-                    <TouchableOpacity onPress={() => handleArchive(selectedQuestion.id)}>
-                      <IconSymbol name="archivebox" size={22} color="#ef4444" />
-                    </TouchableOpacity>
-                  )}
-                </>
-              ) : (
-                <>
-                  <TouchableOpacity onPress={cancelEditing} style={{ marginRight: Spacing.sm }}>
-                    <Text style={{ color: colors.textSecondary, fontWeight: '600' }}>Cancel</Text>
-                  </TouchableOpacity>
-                  <TouchableOpacity onPress={handleSaveEdit} disabled={isSaving}>
-                    {isSaving ? (
-                      <ActivityIndicator size="small" color={colors.primary} />
-                    ) : (
-                      <Text style={{ color: colors.primary, fontWeight: '700' }}>Save</Text>
-                    )}
-                  </TouchableOpacity>
-                </>
-              )}
-            </View>
+          {/* iOS-style drag indicator */}
+          <View style={styles.dragIndicatorBar}>
+            <View style={[styles.dragIndicator, { backgroundColor: colors.border }]} />
           </View>
 
-          <ScrollView style={styles.modalContent}>
-            {/* Vetting Status + Badges */}
-            <View style={styles.badgeSection}>
-              <View style={styles.badgesContainer}>
-                {/* Vetting status badge */}
-                <View style={[styles.badge, { backgroundColor: VETTING_COLORS[selectedQuestion.vetting_status] + '20' }]}>
-                  <Text style={[styles.badgeText, { color: VETTING_COLORS[selectedQuestion.vetting_status] }]}>
-                    {selectedQuestion.vetting_status}
-                  </Text>
+          {/* iOS Navigation Bar */}
+          <View style={[styles.modalNavBar, { borderBottomColor: colors.border }]}>
+            {!isEditing ? (
+              <>
+                <TouchableOpacity
+                  style={styles.navButton}
+                  onPress={() => { setSelectedQuestion(null); cancelEditing(); }}
+                  hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}
+                >
+                  <Text style={[styles.navButtonText, { color: colors.primary }]}>Close</Text>
+                </TouchableOpacity>
+                <Text style={[styles.navTitle, { color: colors.text }]} numberOfLines={1}>
+                  Question Details
+                </Text>
+                <View style={styles.navRightActions}>
+                  <TouchableOpacity
+                    style={styles.navIconButton}
+                    onPress={startEditing}
+                    hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}
+                  >
+                    <IconSymbol name="pencil" size={20} color={colors.primary} />
+                    <Text style={[styles.navIconLabel, { color: colors.primary }]}>Edit</Text>
+                  </TouchableOpacity>
+                  {showArchived ? (
+                    <TouchableOpacity
+                      style={styles.navIconButton}
+                      onPress={() => handleUnarchive(selectedQuestion.id)}
+                      hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}
+                    >
+                      <IconSymbol name="arrow.uturn.backward" size={20} color="#10b981" />
+                      <Text style={[styles.navIconLabel, { color: '#10b981' }]}>Restore</Text>
+                    </TouchableOpacity>
+                  ) : (
+                    <TouchableOpacity
+                      style={styles.navIconButton}
+                      onPress={() => handleArchive(selectedQuestion.id)}
+                      hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}
+                    >
+                      <IconSymbol name="archivebox" size={20} color="#ef4444" />
+                      <Text style={[styles.navIconLabel, { color: '#ef4444' }]}>Archive</Text>
+                    </TouchableOpacity>
+                  )}
                 </View>
-                <View style={[styles.badge, { backgroundColor: colors.primary + '20' }]}>
-                  <Text style={[styles.badgeText, { color: colors.primary }]}>
-                    {selectedQuestion.question_type.replace('_', ' ')}
-                  </Text>
-                </View>
-                {selectedQuestion.difficulty_level && (
-                  <View style={[styles.badge, { backgroundColor: '#f59e0b20' }]}>
-                    <Text style={[styles.badgeText, { color: '#f59e0b' }]}>
-                      {selectedQuestion.difficulty_level}
-                    </Text>
-                  </View>
-                )}
-                {selectedQuestion.bloom_taxonomy_level && (
-                  <View style={[styles.badge, { backgroundColor: getBloomColor(selectedQuestion.bloom_taxonomy_level) + '20' }]}>
-                    <Text style={[styles.badgeText, { color: getBloomColor(selectedQuestion.bloom_taxonomy_level) }]}>
-                      {selectedQuestion.bloom_taxonomy_level}
-                    </Text>
-                  </View>
-                )}
+              </>
+            ) : (
+              <>
+                <TouchableOpacity
+                  style={styles.navButton}
+                  onPress={cancelEditing}
+                  hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}
+                >
+                  <Text style={[styles.navButtonText, { color: colors.textSecondary }]}>Cancel</Text>
+                </TouchableOpacity>
+                <Text style={[styles.navTitle, { color: colors.text }]} numberOfLines={1}>
+                  Edit Question
+                </Text>
+                <TouchableOpacity
+                  style={[styles.navSaveButton, { backgroundColor: colors.primary, opacity: isSaving ? 0.6 : 1 }]}
+                  onPress={handleSaveEdit}
+                  disabled={isSaving}
+                  hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}
+                >
+                  {isSaving ? (
+                    <ActivityIndicator size="small" color="#FFFFFF" />
+                  ) : (
+                    <Text style={styles.navSaveButtonText}>Save</Text>
+                  )}
+                </TouchableOpacity>
+              </>
+            )}
+          </View>
+
+          <ScrollView
+            style={styles.modalScrollContent}
+            contentContainerStyle={styles.modalScrollInner}
+            showsVerticalScrollIndicator={false}
+          >
+            {/* Vetting Status + Badges Row */}
+            <View style={styles.modalBadgeRow}>
+              <View style={[styles.vettingBadge, { backgroundColor: VETTING_COLORS[selectedQuestion.vetting_status] + '18' }]}>
+                <View style={[styles.vettingDot, { backgroundColor: VETTING_COLORS[selectedQuestion.vetting_status] }]} />
+                <Text style={[styles.vettingBadgeText, { color: VETTING_COLORS[selectedQuestion.vetting_status] }]}>
+                  {selectedQuestion.vetting_status.charAt(0).toUpperCase() + selectedQuestion.vetting_status.slice(1)}
+                </Text>
               </View>
+              <View style={[styles.typeBadge, { backgroundColor: colors.primary + '15' }]}>
+                <Text style={[styles.typeBadgeText, { color: colors.primary }]}>
+                  {selectedQuestion.question_type.replace('_', ' ')}
+                </Text>
+              </View>
+              {selectedQuestion.difficulty_level && (
+                <View style={[styles.typeBadge, { backgroundColor: '#f59e0b15' }]}>
+                  <Text style={[styles.typeBadgeText, { color: '#f59e0b' }]}>
+                    {selectedQuestion.difficulty_level}
+                  </Text>
+                </View>
+              )}
+              {selectedQuestion.marks != null && (
+                <View style={[styles.typeBadge, { backgroundColor: colors.text + '08' }]}>
+                  <Text style={[styles.typeBadgeText, { color: colors.textSecondary }]}>
+                    {selectedQuestion.marks} marks
+                  </Text>
+                </View>
+              )}
             </View>
 
+            {selectedQuestion.bloom_taxonomy_level && (
+              <View style={[styles.bloomRow, { marginBottom: Spacing.lg }]}>
+                <View style={[styles.bloomBadge, { backgroundColor: getBloomColor(selectedQuestion.bloom_taxonomy_level) + '15' }]}>
+                  <Text style={[styles.bloomBadgeText, { color: getBloomColor(selectedQuestion.bloom_taxonomy_level) }]}>
+                    Bloom: {selectedQuestion.bloom_taxonomy_level}
+                  </Text>
+                </View>
+              </View>
+            )}
+
             {/* Question Text */}
-            <View style={[styles.section, { backgroundColor: colors.card }]}>
-              <Text style={[styles.sectionLabel, { color: colors.textSecondary }]}>Question</Text>
+            <View style={[styles.modalSection, { backgroundColor: colors.card }]}>
+              <Text style={[styles.modalSectionTitle, { color: colors.textSecondary }]}>QUESTION</Text>
               {isEditing ? (
                 <TextInput
-                  style={[styles.editInput, { color: colors.text, borderColor: colors.border }]}
+                  style={[styles.editInput, { color: colors.text, borderColor: colors.border, backgroundColor: colors.background }]}
                   value={editData.question_text || ''}
                   onChangeText={(text) => setEditData((prev) => ({ ...prev, question_text: text }))}
                   multiline
-                  numberOfLines={4}
+                  numberOfLines={5}
                   textAlignVertical="top"
                 />
               ) : (
-                <Text style={[styles.questionDetailText, { color: colors.text }]}>
+                <Text style={[styles.modalQuestionText, { color: colors.text }]}>
                   {selectedQuestion.question_text}
                 </Text>
               )}
             </View>
 
-            {/* Options (for MCQ) */}
+            {/* Options (MCQ) */}
             {selectedQuestion.question_type === 'mcq' && selectedQuestion.options && (
-              <View style={[styles.section, { backgroundColor: colors.card }]}>
-                <Text style={[styles.sectionLabel, { color: colors.textSecondary }]}>Options</Text>
-                {(isEditing ? (editData.options || selectedQuestion.options) : selectedQuestion.options).map((option, index) => (
-                  <View
-                    key={index}
-                    style={[
-                      styles.optionRow,
-                      !isEditing && option === selectedQuestion.correct_answer && [styles.correctOption, { borderColor: '#34C759' }],
-                      { backgroundColor: !isEditing && option === selectedQuestion.correct_answer ? '#34C75920' : colors.background },
-                    ]}
-                  >
-                    <Text style={[styles.optionLetter, { color: colors.textSecondary }]}>
-                      {String.fromCharCode(65 + index)}
-                    </Text>
-                    {isEditing ? (
-                      <TextInput
-                        style={[styles.editOptionInput, { color: colors.text, flex: 1 }]}
-                        value={option}
-                        onChangeText={(text) => {
-                          const newOptions = [...(editData.options || selectedQuestion.options || [])];
-                          newOptions[index] = text;
-                          setEditData((prev) => ({ ...prev, options: newOptions }));
-                        }}
-                      />
-                    ) : (
-                      <Text style={[styles.optionText, { color: colors.text }]}>{option}</Text>
-                    )}
-                    {!isEditing && option === selectedQuestion.correct_answer && (
-                      <IconSymbol name="checkmark.circle.fill" size={20} color="#34C759" />
-                    )}
-                  </View>
-                ))}
+              <View style={[styles.modalSection, { backgroundColor: colors.card }]}>
+                <Text style={[styles.modalSectionTitle, { color: colors.textSecondary }]}>OPTIONS</Text>
+                {(isEditing ? (editData.options || selectedQuestion.options) : selectedQuestion.options).map((option, index) => {
+                  const isCorrect = !isEditing && option === selectedQuestion.correct_answer;
+                  return (
+                    <View
+                      key={index}
+                      style={[
+                        styles.modalOptionRow,
+                        { backgroundColor: isCorrect ? '#34C75912' : colors.background },
+                        isCorrect && { borderColor: '#34C759', borderWidth: 1.5 },
+                      ]}
+                    >
+                      <View style={[
+                        styles.optionLetterCircle,
+                        { backgroundColor: isCorrect ? '#34C759' : colors.primary + '15' },
+                      ]}>
+                        <Text style={[
+                          styles.optionLetterText,
+                          { color: isCorrect ? '#FFFFFF' : colors.primary },
+                        ]}>
+                          {String.fromCharCode(65 + index)}
+                        </Text>
+                      </View>
+                      {isEditing ? (
+                        <TextInput
+                          style={[styles.editOptionInput, { color: colors.text, flex: 1 }]}
+                          value={option}
+                          onChangeText={(text) => {
+                            const newOptions = [...(editData.options || selectedQuestion.options || [])];
+                            newOptions[index] = text;
+                            setEditData((prev) => ({ ...prev, options: newOptions }));
+                          }}
+                        />
+                      ) : (
+                        <Text style={[styles.modalOptionText, { color: colors.text }]}>{option}</Text>
+                      )}
+                      {isCorrect && (
+                        <IconSymbol name="checkmark.circle.fill" size={22} color="#34C759" />
+                      )}
+                    </View>
+                  );
+                })}
               </View>
             )}
 
-            {/* Answer/Solution */}
-            <View style={[styles.section, { backgroundColor: colors.card }]}>
-              <Text style={[styles.sectionLabel, { color: colors.textSecondary }]}>
-                {selectedQuestion.question_type === 'mcq' ? 'Correct Answer' : 'Model Answer'}
+            {/* Answer / Solution */}
+            <View style={[styles.modalSection, { backgroundColor: colors.card }]}>
+              <Text style={[styles.modalSectionTitle, { color: colors.textSecondary }]}>
+                {selectedQuestion.question_type === 'mcq' ? 'CORRECT ANSWER' : 'MODEL ANSWER'}
               </Text>
               {isEditing ? (
                 <TextInput
-                  style={[styles.editInput, { color: colors.text, borderColor: colors.border }]}
+                  style={[styles.editInput, { color: colors.text, borderColor: colors.border, backgroundColor: colors.background }]}
                   value={editData.correct_answer || selectedQuestion.correct_answer || ''}
                   onChangeText={(text) => setEditData((prev) => ({ ...prev, correct_answer: text }))}
                   multiline
@@ -449,29 +524,32 @@ export default function QuestionsScreen() {
                   textAlignVertical="top"
                 />
               ) : (
-                <Text style={[styles.answerText, { color: colors.text, backgroundColor: '#34C75910' }]}>
-                  {selectedQuestion.correct_answer || 'No answer provided'}
-                </Text>
+                <View style={[styles.answerBox, { backgroundColor: '#34C75908' }]}>
+                  <View style={styles.answerAccent} />
+                  <Text style={[styles.modalAnswerText, { color: colors.text }]}>
+                    {selectedQuestion.correct_answer || 'No answer provided'}
+                  </Text>
+                </View>
               )}
             </View>
 
             {/* Explanation */}
             {selectedQuestion.explanation && !isEditing && (
-              <View style={[styles.section, { backgroundColor: colors.card }]}>
-                <Text style={[styles.sectionLabel, { color: colors.textSecondary }]}>Explanation</Text>
-                <Text style={[styles.questionDetailText, { color: colors.text }]}>
+              <View style={[styles.modalSection, { backgroundColor: colors.card }]}>
+                <Text style={[styles.modalSectionTitle, { color: colors.textSecondary }]}>EXPLANATION</Text>
+                <Text style={[styles.modalDetailText, { color: colors.text }]}>
                   {selectedQuestion.explanation}
                 </Text>
               </View>
             )}
 
             {/* CO Mapping */}
-            <View style={[styles.section, { backgroundColor: colors.card }]}>
-              <Text style={[styles.sectionLabel, { color: colors.textSecondary }]}>Course Outcome (CO)</Text>
+            <View style={[styles.modalSection, { backgroundColor: colors.card }]}>
+              <Text style={[styles.modalSectionTitle, { color: colors.textSecondary }]}>COURSE OUTCOME (CO)</Text>
               {isEditing ? (
                 <View>
                   <Text style={[styles.editHint, { color: colors.textTertiary }]}>
-                    Format: CO1, CO2, etc. Tap to toggle.
+                    Tap to toggle Course Outcomes
                   </Text>
                   <View style={styles.coChipsContainer}>
                     {['CO1', 'CO2', 'CO3', 'CO4', 'CO5'].map((co) => {
@@ -482,7 +560,10 @@ export default function QuestionsScreen() {
                           key={co}
                           style={[
                             styles.coChip,
-                            { backgroundColor: isActive ? '#8b5cf620' : colors.background, borderColor: isActive ? '#8b5cf6' : colors.border },
+                            {
+                              backgroundColor: isActive ? '#8b5cf615' : colors.background,
+                              borderColor: isActive ? '#8b5cf6' : colors.border,
+                            },
                           ]}
                           onPress={() => {
                             const newMapping = { ...(editData.course_outcome_mapping || selectedQuestion.course_outcome_mapping || {}) };
@@ -495,7 +576,7 @@ export default function QuestionsScreen() {
                           }}
                         >
                           <Text style={[styles.coChipText, { color: isActive ? '#8b5cf6' : colors.textSecondary }]}>
-                            {co}{isActive ? `: L${currentMapping[co]}` : ''}
+                            {co}{isActive ? ` · L${currentMapping[co]}` : ''}
                           </Text>
                         </TouchableOpacity>
                       );
@@ -506,9 +587,9 @@ export default function QuestionsScreen() {
                 selectedQuestion.course_outcome_mapping && Object.keys(selectedQuestion.course_outcome_mapping).length > 0 ? (
                   <View style={styles.coChipsContainer}>
                     {Object.entries(selectedQuestion.course_outcome_mapping).map(([co, level]) => (
-                      <View key={co} style={[styles.coChip, { backgroundColor: '#8b5cf620', borderColor: '#8b5cf6' }]}>
+                      <View key={co} style={[styles.coChip, { backgroundColor: '#8b5cf615', borderColor: '#8b5cf6' }]}>
                         <Text style={[styles.coChipText, { color: '#8b5cf6' }]}>
-                          {co}: Level {level}
+                          {co} · Level {level}
                         </Text>
                       </View>
                     ))}
@@ -520,32 +601,99 @@ export default function QuestionsScreen() {
             </View>
 
             {/* LO Mapping */}
-            <View style={[styles.section, { backgroundColor: colors.card }]}>
-              <Text style={[styles.sectionLabel, { color: colors.textSecondary }]}>Learning Outcome (LO)</Text>
+            <View style={[styles.modalSection, { backgroundColor: colors.card }]}>
+              <Text style={[styles.modalSectionTitle, { color: colors.textSecondary }]}>LEARNING OUTCOME (LO)</Text>
               {isEditing ? (
                 <TextInput
-                  style={[styles.editInputSmall, { color: colors.text, borderColor: colors.border }]}
+                  style={[styles.editInputSmall, { color: colors.text, borderColor: colors.border, backgroundColor: colors.background }]}
                   value={editData.learning_outcome_id || selectedQuestion.learning_outcome_id || ''}
                   onChangeText={(text) => setEditData((prev) => ({ ...prev, learning_outcome_id: text }))}
                   placeholder="e.g., LO1, LO2"
                   placeholderTextColor={colors.textTertiary}
                 />
               ) : (
-                <Text style={[
-                  selectedQuestion.learning_outcome_id ? styles.loValueText : styles.emptyField,
-                  { color: selectedQuestion.learning_outcome_id ? '#06b6d4' : colors.textTertiary }
-                ]}>
-                  {selectedQuestion.learning_outcome_id || 'Not assigned'}
-                </Text>
+                selectedQuestion.learning_outcome_id ? (
+                  <View style={[styles.loBadgeInline, { backgroundColor: '#06b6d412' }]}>
+                    <Text style={[styles.loBadgeText, { color: '#06b6d4' }]}>
+                      {selectedQuestion.learning_outcome_id}
+                    </Text>
+                  </View>
+                ) : (
+                  <Text style={[styles.emptyField, { color: colors.textTertiary }]}>Not assigned</Text>
+                )
               )}
             </View>
 
+            {/* Chapter (Topic) */}
+            {subjectId && topics.length > 0 && (
+              <View style={[styles.modalSection, { backgroundColor: colors.card }]}>
+                <Text style={[styles.modalSectionTitle, { color: colors.textSecondary }]}>CHAPTER</Text>
+                {isEditing ? (
+                  <View>
+                    <Text style={[styles.editHint, { color: colors.textTertiary }]}>Tap to assign this question to a chapter</Text>
+                    <View style={styles.chapterChipsContainer}>
+                      {topics.map((topic) => {
+                        const isSelected = (editData.topic_id || selectedQuestion.topic_id) === topic.id;
+                        return (
+                          <TouchableOpacity
+                            key={topic.id}
+                            style={[
+                              styles.chapterChip,
+                              {
+                                backgroundColor: isSelected ? '#3b82f615' : colors.background,
+                                borderColor: isSelected ? '#3b82f6' : colors.border,
+                              },
+                            ]}
+                            onPress={() => {
+                              setEditData((prev) => ({
+                                ...prev,
+                                topic_id: isSelected ? undefined : topic.id,
+                              }));
+                            }}
+                          >
+                            <IconSymbol
+                              name={isSelected ? 'checkmark.circle.fill' : 'circle'}
+                              size={16}
+                              color={isSelected ? '#3b82f6' : colors.textTertiary}
+                            />
+                            <Text
+                              style={[
+                                styles.chapterChipText,
+                                { color: isSelected ? '#3b82f6' : colors.text },
+                              ]}
+                              numberOfLines={1}
+                            >
+                              {topic.name}
+                            </Text>
+                          </TouchableOpacity>
+                        );
+                      })}
+                    </View>
+                  </View>
+                ) : (
+                  (() => {
+                    const linked = topics.find((t) => t.id === selectedQuestion.topic_id);
+                    return linked ? (
+                      <View style={[styles.chapterBadgeInline, { backgroundColor: '#3b82f612' }]}>
+                        <IconSymbol name="book.closed.fill" size={14} color="#3b82f6" />
+                        <Text style={[styles.chapterBadgeText, { color: '#3b82f6' }]}>
+                          {linked.name}
+                        </Text>
+                      </View>
+                    ) : (
+                      <Text style={[styles.emptyField, { color: colors.textTertiary }]}>Not linked to a chapter</Text>
+                    );
+                  })()
+                )}
+              </View>
+            )}
+
             {/* Marks (editable) */}
             {isEditing && (
-              <View style={[styles.section, { backgroundColor: colors.card }]}>
-                <Text style={[styles.sectionLabel, { color: colors.textSecondary }]}>Marks</Text>
+              <View style={[styles.modalSection, { backgroundColor: colors.card }]}>
+                <Text style={[styles.modalSectionTitle, { color: colors.textSecondary }]}>MARKS</Text>
                 <TextInput
-                  style={[styles.editInputSmall, { color: colors.text, borderColor: colors.border }]}
+                  style={[styles.editInputSmall, { color: colors.text, borderColor: colors.border, backgroundColor: colors.background }]}
                   value={String(editData.marks ?? selectedQuestion.marks ?? '')}
                   onChangeText={(text) => {
                     const num = parseInt(text, 10);
@@ -564,55 +712,60 @@ export default function QuestionsScreen() {
 
             {/* Rating */}
             {!isEditing && (
-              <View style={[styles.section, { backgroundColor: colors.card }]}>
-                <Text style={[styles.sectionLabel, { color: colors.textSecondary }]}>Rate Quality</Text>
-                {renderStars(selectedQuestion.user_rating, selectedQuestion.id)}
+              <View style={[styles.modalSection, { backgroundColor: colors.card }]}>
+                <Text style={[styles.modalSectionTitle, { color: colors.textSecondary }]}>RATE QUALITY</Text>
+                <View style={styles.ratingRow}>
+                  {renderStars(selectedQuestion.user_rating, selectedQuestion.id)}
+                </View>
               </View>
             )}
 
             {/* Metadata */}
             {!isEditing && (
-              <View style={[styles.metaSection, { backgroundColor: colors.card, borderTopColor: colors.border }]}>
-                <View style={styles.metaRow}>
-                  <IconSymbol name="target" size={16} color={colors.primary} />
-                  <View style={{ flex: 1, marginLeft: Spacing.sm }}>
-                    <Text style={[styles.metaLabel, { color: colors.textSecondary }]}>Marks</Text>
-                    <Text style={[styles.metaValue, { color: colors.text }]}>{selectedQuestion.marks || 0}</Text>
+              <View style={[styles.modalSection, { backgroundColor: colors.card }]}>
+                <Text style={[styles.modalSectionTitle, { color: colors.textSecondary }]}>INFO</Text>
+                <View style={styles.metaGrid}>
+                  <View style={[styles.metaCell, { borderBottomColor: colors.border }]}>
+                    <IconSymbol name="target" size={18} color={colors.primary} />
+                    <View style={styles.metaCellContent}>
+                      <Text style={[styles.metaCellLabel, { color: colors.textSecondary }]}>Marks</Text>
+                      <Text style={[styles.metaCellValue, { color: colors.text }]}>{selectedQuestion.marks || 0}</Text>
+                    </View>
                   </View>
-                </View>
-                <View style={styles.metaRow}>
-                  <IconSymbol name="calendar" size={16} color={colors.primary} />
-                  <View style={{ flex: 1, marginLeft: Spacing.sm }}>
-                    <Text style={[styles.metaLabel, { color: colors.textSecondary }]}>Created</Text>
-                    <Text style={[styles.metaValue, { color: colors.text }]}>
-                      {new Date(selectedQuestion.generated_at).toLocaleDateString()}
-                    </Text>
-                  </View>
-                </View>
-                {selectedQuestion.vetted_at && (
-                  <View style={styles.metaRow}>
-                    <IconSymbol name="checkmark.shield" size={16} color={VETTING_COLORS[selectedQuestion.vetting_status]} />
-                    <View style={{ flex: 1, marginLeft: Spacing.sm }}>
-                      <Text style={[styles.metaLabel, { color: colors.textSecondary }]}>Vetted</Text>
-                      <Text style={[styles.metaValue, { color: colors.text }]}>
-                        {new Date(selectedQuestion.vetted_at).toLocaleDateString()}
+                  <View style={[styles.metaCell, { borderBottomColor: colors.border }]}>
+                    <IconSymbol name="calendar" size={18} color={colors.primary} />
+                    <View style={styles.metaCellContent}>
+                      <Text style={[styles.metaCellLabel, { color: colors.textSecondary }]}>Created</Text>
+                      <Text style={[styles.metaCellValue, { color: colors.text }]}>
+                        {new Date(selectedQuestion.generated_at).toLocaleDateString()}
                       </Text>
                     </View>
                   </View>
-                )}
+                  {selectedQuestion.vetted_at && (
+                    <View style={[styles.metaCell, { borderBottomColor: colors.border }]}>
+                      <IconSymbol name="checkmark.shield" size={18} color={VETTING_COLORS[selectedQuestion.vetting_status]} />
+                      <View style={styles.metaCellContent}>
+                        <Text style={[styles.metaCellLabel, { color: colors.textSecondary }]}>Vetted</Text>
+                        <Text style={[styles.metaCellValue, { color: colors.text }]}>
+                          {new Date(selectedQuestion.vetted_at).toLocaleDateString()}
+                        </Text>
+                      </View>
+                    </View>
+                  )}
+                </View>
                 {selectedQuestion.vetting_notes && (
-                  <View style={styles.metaRow}>
-                    <IconSymbol name="text.bubble" size={16} color={colors.primary} />
-                    <View style={{ flex: 1, marginLeft: Spacing.sm }}>
-                      <Text style={[styles.metaLabel, { color: colors.textSecondary }]}>Vetting Notes</Text>
-                      <Text style={[styles.metaValue, { color: colors.text }]}>
-                        {selectedQuestion.vetting_notes}
-                      </Text>
-                    </View>
+                  <View style={[styles.vettingNotesBox, { backgroundColor: colors.background }]}>
+                    <Text style={[styles.vettingNotesLabel, { color: colors.textSecondary }]}>Vetting Notes</Text>
+                    <Text style={[styles.vettingNotesText, { color: colors.text }]}>
+                      {selectedQuestion.vetting_notes}
+                    </Text>
                   </View>
                 )}
               </View>
             )}
+
+            {/* Bottom spacing */}
+            <View style={{ height: 40 }} />
           </ScrollView>
         </View>
       </Modal>
@@ -867,119 +1020,268 @@ const styles = StyleSheet.create({
   modalContainer: {
     flex: 1,
   },
-  modalHeader: {
-    flexDirection: 'row',
-    justifyContent: 'space-between',
+  // iOS drag indicator
+  dragIndicatorBar: {
     alignItems: 'center',
-    paddingHorizontal: Spacing.md,
-    paddingVertical: Spacing.md,
-    borderBottomWidth: 1,
+    paddingTop: Spacing.sm,
+    paddingBottom: Spacing.xs,
   },
-  modalTitle: {
-    fontSize: FontSizes.lg,
+  dragIndicator: {
+    width: 36,
+    height: 5,
+    borderRadius: 2.5,
+  },
+  // iOS navigation bar
+  modalNavBar: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    paddingHorizontal: Spacing.md,
+    paddingVertical: Spacing.sm,
+    minHeight: 48,
+    borderBottomWidth: StyleSheet.hairlineWidth,
+  },
+  navButton: {
+    minWidth: 60,
+    minHeight: 44,
+    justifyContent: 'center',
+  },
+  navButtonText: {
+    fontSize: FontSizes.md,
+    fontWeight: '400',
+  },
+  navTitle: {
+    fontSize: FontSizes.md,
     fontWeight: '600',
     flex: 1,
     textAlign: 'center',
+    marginHorizontal: Spacing.sm,
   },
-  modalHeaderActions: {
+  navRightActions: {
     flexDirection: 'row',
     alignItems: 'center',
+    gap: Spacing.md,
+    minWidth: 60,
+    justifyContent: 'flex-end',
   },
-  modalContent: {
+  navIconButton: {
+    alignItems: 'center',
+    justifyContent: 'center',
+    minWidth: 44,
+    minHeight: 44,
+    gap: 2,
+  },
+  navIconLabel: {
+    fontSize: 10,
+    fontWeight: '600',
+  },
+  navSaveButton: {
+    paddingHorizontal: Spacing.lg,
+    paddingVertical: Spacing.sm,
+    borderRadius: BorderRadius.md,
+    minHeight: 36,
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  navSaveButtonText: {
+    color: '#FFFFFF',
+    fontSize: FontSizes.sm,
+    fontWeight: '700',
+  },
+  // Scroll content
+  modalScrollContent: {
     flex: 1,
-    paddingVertical: Spacing.md,
   },
-  badgeSection: {
+  modalScrollInner: {
+    paddingTop: Spacing.md,
+    paddingBottom: Spacing.xxl,
+  },
+  // Badge rows
+  modalBadgeRow: {
+    flexDirection: 'row',
+    flexWrap: 'wrap',
+    gap: Spacing.sm,
+    paddingHorizontal: Spacing.lg,
+    marginBottom: Spacing.sm,
+  },
+  vettingBadge: {
+    flexDirection: 'row',
+    alignItems: 'center',
     paddingHorizontal: Spacing.md,
-    paddingBottom: Spacing.md,
+    paddingVertical: 6,
+    borderRadius: BorderRadius.full,
+    gap: 6,
   },
-  section: {
-    marginHorizontal: Spacing.md,
-    marginBottom: Spacing.md,
-    borderRadius: BorderRadius.lg,
-    padding: Spacing.md,
+  vettingDot: {
+    width: 7,
+    height: 7,
+    borderRadius: 3.5,
   },
-  sectionLabel: {
+  vettingBadgeText: {
     fontSize: FontSizes.xs,
     fontWeight: '600',
-    letterSpacing: 0.5,
-    marginBottom: Spacing.sm,
-    textTransform: 'uppercase',
   },
-  questionDetailText: {
+  typeBadge: {
+    paddingHorizontal: Spacing.md,
+    paddingVertical: 6,
+    borderRadius: BorderRadius.full,
+  },
+  typeBadgeText: {
+    fontSize: FontSizes.xs,
+    fontWeight: '600',
+    textTransform: 'capitalize',
+  },
+  bloomRow: {
+    paddingHorizontal: Spacing.lg,
+  },
+  bloomBadge: {
+    alignSelf: 'flex-start',
+    paddingHorizontal: Spacing.md,
+    paddingVertical: 6,
+    borderRadius: BorderRadius.full,
+  },
+  bloomBadgeText: {
+    fontSize: FontSizes.xs,
+    fontWeight: '600',
+    textTransform: 'capitalize',
+  },
+  // Sections
+  modalSection: {
+    marginHorizontal: Spacing.md,
+    marginBottom: Spacing.md,
+    borderRadius: BorderRadius.xl,
+    padding: Spacing.lg,
+  },
+  modalSectionTitle: {
+    fontSize: 11,
+    fontWeight: '700',
+    letterSpacing: 0.8,
+    marginBottom: Spacing.md,
+  },
+  modalQuestionText: {
     fontSize: FontSizes.md,
     lineHeight: 24,
+    fontWeight: '400',
   },
-  optionRow: {
+  modalDetailText: {
+    fontSize: FontSizes.sm,
+    lineHeight: 22,
+  },
+  // Options (modal)
+  modalOptionRow: {
     flexDirection: 'row',
     alignItems: 'center',
     padding: Spacing.md,
-    borderRadius: BorderRadius.md,
+    borderRadius: BorderRadius.lg,
     marginBottom: Spacing.sm,
-    gap: Spacing.sm,
+    gap: Spacing.md,
     borderWidth: 1,
     borderColor: 'transparent',
   },
-  correctOption: {
-    borderWidth: 1.5,
+  optionLetterCircle: {
+    width: 32,
+    height: 32,
+    borderRadius: 16,
+    alignItems: 'center',
+    justifyContent: 'center',
   },
-  optionLetter: {
-    fontSize: FontSizes.md,
-    fontWeight: '600',
-    width: 24,
+  optionLetterText: {
+    fontSize: FontSizes.sm,
+    fontWeight: '700',
   },
-  optionText: {
+  modalOptionText: {
     fontSize: FontSizes.sm,
     flex: 1,
     lineHeight: 20,
   },
-  answerText: {
+  // Answer box
+  answerBox: {
+    flexDirection: 'row',
+    borderRadius: BorderRadius.lg,
+    overflow: 'hidden',
+  },
+  answerAccent: {
+    width: 4,
+    backgroundColor: '#34C759',
+  },
+  modalAnswerText: {
     fontSize: FontSizes.md,
     lineHeight: 22,
-    paddingHorizontal: Spacing.md,
-    paddingVertical: Spacing.md,
-    borderRadius: BorderRadius.md,
-    borderLeftWidth: 4,
-    borderLeftColor: '#34C759',
-  },
-  metaSection: {
-    marginHorizontal: Spacing.md,
-    marginBottom: Spacing.xl,
-    borderRadius: BorderRadius.lg,
     padding: Spacing.md,
-    borderTopWidth: 1,
-    gap: Spacing.md,
+    flex: 1,
   },
-  metaRow: {
+  // LO badge
+  loBadgeInline: {
+    alignSelf: 'flex-start',
+    paddingHorizontal: Spacing.md,
+    paddingVertical: 6,
+    borderRadius: BorderRadius.md,
+  },
+  loBadgeText: {
+    fontSize: FontSizes.sm,
+    fontWeight: '700',
+  },
+  // Rating
+  ratingRow: {
+    paddingVertical: Spacing.xs,
+  },
+  // Meta grid
+  metaGrid: {
+    gap: 0,
+  },
+  metaCell: {
     flexDirection: 'row',
     alignItems: 'center',
+    paddingVertical: Spacing.md,
+    borderBottomWidth: StyleSheet.hairlineWidth,
+    gap: Spacing.md,
   },
-  metaLabel: {
-    fontSize: FontSizes.xs,
+  metaCellContent: {
+    flex: 1,
+  },
+  metaCellLabel: {
+    fontSize: 11,
     fontWeight: '600',
     letterSpacing: 0.5,
-    textTransform: 'uppercase',
+    textTransform: 'uppercase' as const,
   },
-  metaValue: {
+  metaCellValue: {
     fontSize: FontSizes.sm,
     fontWeight: '500',
-    marginTop: Spacing.xs,
+    marginTop: 2,
+  },
+  // Vetting notes
+  vettingNotesBox: {
+    marginTop: Spacing.md,
+    borderRadius: BorderRadius.lg,
+    padding: Spacing.md,
+  },
+  vettingNotesLabel: {
+    fontSize: 11,
+    fontWeight: '600',
+    letterSpacing: 0.5,
+    textTransform: 'uppercase' as const,
+    marginBottom: Spacing.xs,
+  },
+  vettingNotesText: {
+    fontSize: FontSizes.sm,
+    lineHeight: 20,
   },
   // Edit mode styles
   editInput: {
     borderWidth: 1,
-    borderRadius: BorderRadius.md,
+    borderRadius: BorderRadius.lg,
     padding: Spacing.md,
     fontSize: FontSizes.md,
     lineHeight: 22,
-    minHeight: 80,
+    minHeight: 100,
   },
   editInputSmall: {
     borderWidth: 1,
-    borderRadius: BorderRadius.md,
+    borderRadius: BorderRadius.lg,
     padding: Spacing.md,
     fontSize: FontSizes.md,
-    height: 44,
+    height: 48,
   },
   editOptionInput: {
     fontSize: FontSizes.sm,
@@ -998,21 +1300,47 @@ const styles = StyleSheet.create({
   coChip: {
     paddingHorizontal: Spacing.md,
     paddingVertical: Spacing.sm,
-    borderRadius: BorderRadius.md,
+    borderRadius: BorderRadius.lg,
     borderWidth: 1,
   },
   coChipText: {
     fontSize: FontSizes.sm,
     fontWeight: '600',
   },
-  loValueText: {
-    fontSize: FontSizes.md,
-    fontWeight: '600',
-    paddingHorizontal: Spacing.sm,
-    paddingVertical: Spacing.xs,
+  // Chapter styles
+  chapterChipsContainer: {
+    gap: Spacing.sm,
+  },
+  chapterChip: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    paddingHorizontal: Spacing.md,
+    paddingVertical: Spacing.md,
+    borderRadius: BorderRadius.lg,
+    borderWidth: 1,
+    gap: Spacing.sm,
+  },
+  chapterChipText: {
+    fontSize: FontSizes.sm,
+    fontWeight: '500',
+    flex: 1,
+  },
+  chapterBadgeInline: {
+    flexDirection: 'row',
+    alignSelf: 'flex-start',
+    alignItems: 'center',
+    paddingHorizontal: Spacing.md,
+    paddingVertical: 6,
+    borderRadius: BorderRadius.md,
+    gap: 6,
+  },
+  chapterBadgeText: {
+    fontSize: FontSizes.sm,
+    fontWeight: '700',
   },
   emptyField: {
     fontSize: FontSizes.sm,
     fontStyle: 'italic',
   },
 });
+
