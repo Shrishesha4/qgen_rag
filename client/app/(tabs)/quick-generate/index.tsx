@@ -21,6 +21,7 @@ import { useColorScheme } from '@/hooks/use-color-scheme';
 import { questionsService, QuickGenerateProgress, Question } from '@/services/questions';
 import { subjectsService, Subject, Topic } from '@/services/subjects';
 import { useToast } from '@/components/toast';
+import { extractErrorDetails } from '@/utils/errors';
 
 type QuestionType = 'mcq' | 'short_answer' | 'long_answer';
 type Difficulty = 'easy' | 'medium' | 'hard';
@@ -82,7 +83,13 @@ export default function QuickGenerateScreen() {
       const response = await subjectsService.listSubjects(1, 100);
       setSubjects(response.subjects);
     } catch (error) {
+      const details = extractErrorDetails(error);
+      if (details.isAuthError) {
+        // Auth interceptor already redirected to login — suppress noisy log
+        return;
+      }
       console.error('Failed to load subjects:', error);
+      showError(error, 'Failed to load subjects');
     } finally {
       setLoadingSubjects(false);
       setIsRefreshing(false);

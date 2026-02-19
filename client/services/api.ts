@@ -163,8 +163,28 @@ apiClient.interceptors.response.use(
       try {
         const refreshToken = await tokenStorage.getRefreshToken();
         if (!refreshToken) {
-          console.log('[API] No refresh token available, clearing auth');
-          throw new Error('No refresh token');
+          console.log('[API] No refresh token available — clearing auth and redirecting to login');
+
+          // Clear any stored tokens and redirect to the login screen immediately
+          await tokenStorage.clearTokens();
+          const { router } = await import('expo-router');
+          router.replace('/(auth)/login');
+
+          // Build a normalized AxiosError with 401 response so UI helpers treat this as an auth error
+          const authResponse = {
+            data: { detail: 'No refresh token' },
+            status: 401,
+            statusText: 'Unauthorized',
+            headers: {},
+            config: originalRequest,
+          } as any;
+
+          const axiosAuthError = new AxiosError('No refresh token', 'AUTH_EXPIRED', originalRequest, undefined, authResponse);
+
+          // Reject any queued requests and stop the refresh flow
+          processQueue(axiosAuthError as unknown as Error, null);
+          isRefreshing = false;
+          return Promise.reject(axiosAuthError);
         }
 
         console.log('[API] Attempting token refresh...');

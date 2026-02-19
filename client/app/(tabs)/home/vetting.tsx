@@ -21,6 +21,7 @@ import { vettingService, PendingQuestion, VettingStats, CourseOutcomeMapping } f
 import { questionsService } from '@/services/questions';
 import { subjectsService, Subject, Topic } from '@/services/subjects';
 import { useToast } from '@/components/toast';
+import { extractErrorDetails } from '@/utils/errors';
 
 const CO_LEVELS = [
   { level: 1, label: 'Basic', color: '#34C759' },
@@ -190,7 +191,13 @@ export default function VettingScreen() {
       const response = await subjectsService.listSubjects(1, 100);
       setSubjects(response.subjects);
     } catch (error) {
+      const details = extractErrorDetails(error);
+      if (details.isAuthError) {
+        // Already redirected by interceptor — don't spam console
+        return;
+      }
       console.error('Failed to load subjects:', error);
+      showError(error, 'Failed to load subjects');
     } finally {
       setLoadingSubjects(false);
     }
