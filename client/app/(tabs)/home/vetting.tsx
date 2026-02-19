@@ -4,6 +4,7 @@ import {
   Text,
   StyleSheet,
   ScrollView,
+  FlatList,
   TouchableOpacity,
   RefreshControl,
   Alert,
@@ -47,6 +48,9 @@ export default function VettingScreen() {
   const [stats, setStats] = useState<VettingStats | null>(null);
   const [isLoading, setIsLoading] = useState(true);
   const [isRefreshing, setIsRefreshing] = useState(false);
+  const [isLoadingMore, setIsLoadingMore] = useState(false);
+  const [page, setPage] = useState(1);
+  const [hasMore, setHasMore] = useState(true);
   const [expandedQuestion, setExpandedQuestion] = useState<string | null>(null);
   const [coMappings, setCoMappings] = useState<Record<string, CourseOutcomeMapping>>({});
   const [replacedQuestionId, setReplacedQuestionId] = useState<string | null>(null);
@@ -71,48 +75,72 @@ export default function VettingScreen() {
   const [showTopicPicker, setShowTopicPicker] = useState<string | null>(null);
   const [savingQuestion, setSavingQuestion] = useState<string | null>(null);
 
-  const loadData = useCallback(async () => {
+  const loadPendingQuestions = useCallback(async (pageNum: number = 1, append: boolean = false) => {
     try {
+      if (pageNum === 1) {
+        setIsLoading(true);
+      }
+      if (append) {
+        setIsLoadingMore(true);
+      }
+
       const [questionsResponse, statsResponse] = await Promise.all([
-        vettingService.getPendingQuestions(1, 20),
+        vettingService.getPendingQuestions(pageNum, 20),
         vettingService.getVettingStats(),
       ]);
-      setQuestions(questionsResponse.questions);
+
+      if (append) {
+        setQuestions((prev) => [...prev, ...questionsResponse.questions]);
+      } else {
+        setQuestions(questionsResponse.questions);
+      }
+
       setStats(statsResponse);
-      
-      // Initialize CO mappings and edit state
-      const initialMappings: Record<string, CourseOutcomeMapping> = {};
-      const initialMarks: Record<string, number> = {};
-      const initialDifficulty: Record<string, string> = {};
-      const initialSubjectId: Record<string, string | null> = {};
-      const initialTopicId: Record<string, string | null> = {};
-      const initialAnswerDraft: Record<string, string | null> = {};
-      const initialAnswerEdit: Record<string, boolean> = {};
-      
+      setPage(questionsResponse.pagination.page);
+      setHasMore(questionsResponse.pagination.page < questionsResponse.pagination.total_pages);
+
+      // Ensure CO mappings and edit state exist for all newly-loaded items (merge with existing when appending)
+      const newMappings: Record<string, CourseOutcomeMapping> = {};
+      const newMarks: Record<string, number> = {};
+      const newDifficulty: Record<string, string> = {};
+      const newSubjectId: Record<string, string | null> = {};
+      const newTopicId: Record<string, string | null> = {};
+      const newAnswerDraft: Record<string, string | null> = {};
+      const newAnswerEdit: Record<string, boolean> = {};
+
       questionsResponse.questions.forEach((q) => {
-        initialMappings[q.id] = q.course_outcome_mapping || {};
-        initialMarks[q.id] = q.marks || 1;
-        initialDifficulty[q.id] = q.difficulty_level || 'medium';
-        initialSubjectId[q.id] = q.subject_id || null;
-        initialTopicId[q.id] = q.topic_id || null;
-        // initialize answer draft/edit state so UI can edit expected answers and MCQ correct answer
-        (initialAnswerDraft as Record<string, string | null>)[q.id] = q.correct_answer || null;
-        (initialAnswerEdit as Record<string, boolean>)[q.id] = false;
+        // only add defaults when the id isn't already present
+        if (!coMappings[q.id]) newMappings[q.id] = q.course_outcome_mapping || {};
+        if (!editMarks[q.id]) newMarks[q.id] = q.marks || 1;
+        if (!editDifficulty[q.id]) newDifficulty[q.id] = q.difficulty_level || 'medium';
+        if (!editSubjectId[q.id]) newSubjectId[q.id] = q.subject_id || null;
+        if (!editTopicId[q.id]) newTopicId[q.id] = q.topic_id || null;
+        if (!(q.id in answerDraft)) newAnswerDraft[q.id] = q.correct_answer || null;
+        if (!(q.id in answerEditMode)) newAnswerEdit[q.id] = false;
       });
-      setCoMappings(initialMappings);
-      setEditMarks(initialMarks);
-      setEditDifficulty(initialDifficulty);
-      setEditSubjectId(initialSubjectId);
-      setEditTopicId(initialTopicId);
-      setAnswerDraft(initialAnswerDraft);
-      setAnswerEditMode(initialAnswerEdit);
+
+      // Merge defaults into existing state
+      if (Object.keys(newMappings).length) setCoMappings((prev) => ({ ...prev, ...newMappings }));
+      if (Object.keys(newMarks).length) setEditMarks((prev) => ({ ...prev, ...newMarks }));
+      if (Object.keys(newDifficulty).length) setEditDifficulty((prev) => ({ ...prev, ...newDifficulty }));
+      if (Object.keys(newSubjectId).length) setEditSubjectId((prev) => ({ ...prev, ...newSubjectId }));
+      if (Object.keys(newTopicId).length) setEditTopicId((prev) => ({ ...prev, ...newTopicId }));
+      if (Object.keys(newAnswerDraft).length) setAnswerDraft((prev) => ({ ...prev, ...newAnswerDraft }));
+      if (Object.keys(newAnswerEdit).length) setAnswerEditMode((prev) => ({ ...prev, ...newAnswerEdit }));
     } catch (error) {
       console.error('Failed to load data:', error);
     } finally {
       setIsLoading(false);
       setIsRefreshing(false);
+      setIsLoadingMore(false);
     }
   }, []);
+
+  const loadData = useCallback(() => {
+    // initial fetch
+    loadPendingQuestions(1, false);
+    loadSubjects();
+  }, [loadPendingQuestions]);
 
   const loadSubjects = useCallback(async () => {
     if (subjects.length > 0) return;
@@ -146,14 +174,21 @@ export default function VettingScreen() {
     }
   }, [topics]);
 
+  const handleLoadMore = () => {
+    if (!hasMore || isLoadingMore || isLoading) return;
+    const next = page + 1;
+    setPage(next);
+    loadPendingQuestions(next, true);
+  };
+
   useEffect(() => {
     loadData();
-    loadSubjects();
-  }, []);
+  }, [loadData]);
 
   const handleRefresh = () => {
     setIsRefreshing(true);
-    loadData();
+    setPage(1);
+    loadPendingQuestions(1, false);
   };
 
   const handleSaveQuestionEdits = async (questionId: string) => {
@@ -789,45 +824,56 @@ export default function VettingScreen() {
 
   return (
     <View style={[styles.container, { backgroundColor: colors.background }]}>
-      <ScrollView
+      <FlatList<PendingQuestion>
+        data={questions}
+        keyExtractor={(item: PendingQuestion) => item.id}
+        renderItem={({ item }: { item: PendingQuestion }) => renderQuestionCard(item)}
         contentContainerStyle={styles.scrollContent}
-        refreshControl={<RefreshControl refreshing={isRefreshing} onRefresh={handleRefresh} />}
-      >
-        {/* Header */}
-        {/* <LinearGradient
-          colors={['#FF9500', '#FF7F00'] as const}
-          style={styles.headerCard}
-        >
-          <IconSymbol name="checkmark.shield.fill" size={28} color="#FFFFFF" />
-          <View style={styles.headerContent}>
-            <Text style={styles.headerTitle}>Question Vetting</Text>
-            <Text style={styles.headerDescription}>
-              Review, approve, and map course outcomes for generated questions
-            </Text>
-          </View>
-        </LinearGradient> */}
+        ListHeaderComponent={() => (
+          <>
+            {/* Header */}
+            {/* <LinearGradient
+              colors={['#FF9500', '#FF7F00'] as const}
+              style={styles.headerCard}
+            >
+              <IconSymbol name="checkmark.shield.fill" size={28} color="#FFFFFF" />
+              <View style={styles.headerContent}>
+                <Text style={styles.headerTitle}>Question Vetting</Text>
+                <Text style={styles.headerDescription}>
+                  Review, approve, and map course outcomes for generated questions
+                </Text>
+              </View>
+            </LinearGradient> */}
 
-        {/* Stats */}
-        {renderStatsCard()}
+            {/* Stats */}
+            {renderStatsCard()}
 
-        {/* Questions List */}
-        <View style={styles.section}>
-          <Text style={[styles.sectionTitle, { color: colors.textSecondary }]}>
-            PENDING REVIEW ({questions.length})
-          </Text>
-          {questions.length === 0 ? (
+            <View style={styles.section}>
+              <Text style={[styles.sectionTitle, { color: colors.textSecondary }]}>PENDING REVIEW ({stats?.pending ?? questions.length})</Text>
+            </View>
+          </>
+        )}
+        ListEmptyComponent={() => (
+          <View style={[styles.section, { paddingTop: 20 }]}> 
             <View style={[styles.emptyCard, { backgroundColor: colors.card }]}>
               <IconSymbol name="checkmark.circle" size={48} color={colors.success} />
               <Text style={[styles.emptyTitle, { color: colors.text }]}>All Caught Up!</Text>
-              <Text style={[styles.emptyDescription, { color: colors.textSecondary }]}>
-                No questions pending review
-              </Text>
+              <Text style={[styles.emptyDescription, { color: colors.textSecondary }]}>No questions pending review</Text>
             </View>
-          ) : (
-            questions.map(renderQuestionCard)
-          )}
-        </View>
-      </ScrollView>
+          </View>
+        )}
+        ListFooterComponent={() => (
+          isLoadingMore ? (
+            <View style={styles.loadingMore}>
+              <ActivityIndicator size="small" color={colors.primary} />
+            </View>
+          ) : null
+        )}
+        refreshing={isRefreshing}
+        onRefresh={handleRefresh}
+        onEndReached={handleLoadMore}
+        onEndReachedThreshold={0.6}
+      />
 
       {/* Subject Picker Modal */}
       <Modal
@@ -1394,5 +1440,9 @@ const styles = StyleSheet.create({
   emptyListText: {
     fontSize: FontSizes.sm,
     textAlign: 'center',
+  },
+  loadingMore: {
+    paddingVertical: Spacing.md,
+    alignItems: 'center',
   },
 });

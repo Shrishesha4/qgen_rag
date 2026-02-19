@@ -1351,7 +1351,21 @@ async def generate_from_rubric(
             questions_generated = 0
             questions_failed = 0
             generated_questions = []  # Track for duplicate detection
-            
+            generated_embeddings = []  # Track embeddings for semantic dedupe within this session
+            existing_question_embeddings = []  # Preloaded DB embeddings for subject-level dedupe
+
+            # Preload existing question embeddings for this subject to reduce false positives
+            try:
+                emb_res = await db.execute(
+                    select(Question.question_embedding).where(
+                        Question.subject_id == uuid.UUID(subject_id_str),
+                        Question.is_archived == False,
+                    ).limit(2000)
+                )
+                existing_question_embeddings = [r[0] for r in emb_res.all() if r[0]]
+            except Exception:
+                logger.warning(f"[{request_id}] Could not preload existing embeddings; continuing without DB dedupe")
+
             # Type mapping
             type_mapping = {
                 "mcq": "mcq",
@@ -1398,78 +1412,122 @@ Generate a {mapped_type.replace('_', ' ')} question based on this content.
 
 Output valid JSON only."""
 
-                        # Generate question
-                        response = await llm_service.generate_json(
-                            prompt=prompt,
-                            system_prompt=system_prompt,
-                            temperature=0.75,  # Slightly higher for variety
+                        # Attempt to generate a non-duplicate question (embedding dedupe + retries)
+                        # Defaults (can be overridden by user's novelty settings)
+                        DUP_THRESHOLD = 0.85
+                        RETRY_LIMIT = 3
+
+                        # Try to read user novelty settings (if available) to tune threshold/attempts
+                        try:
+                            from app.services.novelty_service import NoveltyService
+                            novelty_svc = NoveltyService(db)
+                            ns = await novelty_svc.get_user_novelty_settings(current_user.id)
+                            DUP_THRESHOLD = ns.get("novelty_threshold", DUP_THRESHOLD)
+                            RETRY_LIMIT = ns.get("max_regeneration_attempts", RETRY_LIMIT)
+                        except Exception:
+                            # Non-fatal; continue with defaults
+                            pass
+
+                        accepted = False
+                        response_obj = None
+
+                        for attempt in range(RETRY_LIMIT):
+                            try:
+                                resp = await llm_service.generate_json(
+                                    prompt=prompt,
+                                    system_prompt=system_prompt,
+                                    temperature=0.75 + (0.05 * attempt),
+                                )
+                            except Exception as e:
+                                resp = None
+
+                            if not resp or "question_text" not in resp:
+                                logger.warning(f"[{request_id}] LLM returned invalid response (attempt {attempt+1})")
+                                if attempt == RETRY_LIMIT - 1:
+                                    questions_failed += 1
+                                continue
+
+                            candidate_text = resp["question_text"]
+                            if len(candidate_text) < 15:
+                                logger.debug(f"[{request_id}] Generated text too short (len={len(candidate_text)})")
+                                if attempt == RETRY_LIMIT - 1:
+                                    questions_failed += 1
+                                continue
+
+                            # Compute embedding for candidate
+                            try:
+                                candidate_emb = await embedding_service.get_embedding(candidate_text)
+                            except Exception:
+                                logger.exception(f"[{request_id}] Embedding generation failed on attempt {attempt+1}")
+                                if attempt == RETRY_LIMIT - 1:
+                                    questions_failed += 1
+                                continue
+
+                            # Check against in-session generated embeddings
+                            duplicate = False
+                            if generated_embeddings:
+                                sims = embedding_service.compute_similarity_batch(candidate_emb, generated_embeddings)
+                                if any(s > DUP_THRESHOLD for s in sims):
+                                    duplicate = True
+
+                            # Check against preloaded DB embeddings for the subject
+                            if not duplicate and existing_question_embeddings:
+                                sims_db = embedding_service.compute_similarity_batch(candidate_emb, existing_question_embeddings)
+                                if any(s > DUP_THRESHOLD for s in sims_db):
+                                    duplicate = True
+
+                            if duplicate:
+                                logger.warning(f"[{request_id}] Duplicate detected (attempt {attempt+1}), retrying")
+                                if attempt == RETRY_LIMIT - 1:
+                                    questions_failed += 1
+                                continue
+
+                            # Accepted candidate
+                            question_text = candidate_text
+                            question_embedding = candidate_emb
+                            response_obj = resp
+                            accepted = True
+                            break
+
+                        if not accepted:
+                            # All attempts failed for this slot
+                            continue
+
+                        # Create question (accepted candidate)
+                        question = Question(
+                            subject_id=uuid.UUID(subject_id_str),
+                            topic_id=uuid.UUID(selected_chunk["topic_id"]),
+                            question_text=question_text,
+                            question_embedding=question_embedding,
+                            question_type=mapped_type,
+                            marks=marks,
+                            difficulty_level="medium",
+                            bloom_taxonomy_level=(response_obj.get("bloom_level") if response_obj else "understand"),
+                            correct_answer=(response_obj.get("correct_answer") or (response_obj.get("expected_answer") if response_obj else None)),
+                            options=(response_obj.get("options") if response_obj else None),
+                            explanation=(response_obj.get("explanation") if response_obj else None),
+                            topic_tags=(response_obj.get("topic_tags", [selected_chunk["topic_name"]]) if response_obj else [selected_chunk["topic_name"]]),
+                            generation_confidence=0.75,
+                            vetting_status="pending",
+                            generation_metadata={
+                                "rubric_id": str(rubric_id),
+                                "topic_name": selected_chunk["topic_name"],
+                                "lo_mappings": selected_chunk["lo_mappings"],
+                            },
                         )
-                        
-                        if response and "question_text" in response:
-                            question_text = response["question_text"]
-                            
-                            # Basic validation
-                            if len(question_text) < 15:
-                                questions_failed += 1
-                                continue
-                            
-                            # Check for duplicates (simple similarity check)
-                            is_duplicate = False
-                            for existing_q in generated_questions:
-                                # Simple word overlap check
-                                q_words = set(question_text.lower().split())
-                                e_words = set(existing_q.lower().split())
-                                overlap = len(q_words & e_words) / max(len(q_words), 1)
-                                if overlap > 0.7:
-                                    is_duplicate = True
-                                    break
-                            
-                            if is_duplicate:
-                                logger.warning(f"[{request_id}] Skipping duplicate question")
-                                questions_failed += 1
-                                continue
-                            
-                            # Create embedding
-                            question_embedding = await embedding_service.get_embedding(question_text)
-                            
-                            # Create question
-                            question = Question(
-                                subject_id=uuid.UUID(subject_id_str),
-                                topic_id=uuid.UUID(selected_chunk["topic_id"]),
-                                question_text=question_text,
-                                question_embedding=question_embedding,
-                                question_type=mapped_type,
-                                marks=marks,
-                                difficulty_level="medium",
-                                bloom_taxonomy_level=response.get("bloom_level", "understand"),
-                                correct_answer=response.get("correct_answer") or response.get("expected_answer"),
-                                options=response.get("options"),
-                                explanation=response.get("explanation"),
-                                topic_tags=response.get("topic_tags", [selected_chunk["topic_name"]]),
-                                generation_confidence=0.75,
-                                vetting_status="pending",
-                                generation_metadata={
-                                    "rubric_id": str(rubric_id),
-                                    "topic_name": selected_chunk["topic_name"],
-                                    "lo_mappings": selected_chunk["lo_mappings"],
-                                },
-                            )
-                            db.add(question)
-                            await db.commit()
-                            await db.refresh(question)
-                            
-                            # Track for duplicate detection
-                            generated_questions.append(question_text)
-                            questions_generated += 1
-                            
-                            # Calculate progress
-                            progress = 10 + int((questions_generated / max(total_questions, 1)) * 85)
-                            
-                            yield f"data: {json.dumps({'status': 'generating', 'progress': min(progress, 95), 'current_question': questions_generated, 'total_questions': total_questions, 'message': f'Generated {questions_generated}/{total_questions} questions', 'question': {'id': str(question.id), 'question_text': question.question_text[:100] + '...' if len(question.question_text) > 100 else question.question_text, 'question_type': question.question_type, 'marks': question.marks}})}\n\n"
-                        else:
-                            questions_failed += 1
-                            logger.warning(f"[{request_id}] LLM returned invalid response for {mapped_type}")
-                            
+                        db.add(question)
+                        await db.commit()
+                        await db.refresh(question)
+
+                        # Track for duplicate detection
+                        generated_questions.append(question_text)
+                        generated_embeddings.append(question_embedding)
+                        questions_generated += 1
+
+                        # Calculate progress
+                        progress = 10 + int((questions_generated / max(total_questions, 1)) * 85)
+
+                        yield f"data: {json.dumps({'status': 'generating', 'progress': min(progress, 95), 'current_question': questions_generated, 'total_questions': total_questions, 'message': f'Generated {questions_generated}/{total_questions} questions', 'question': {'id': str(question.id), 'question_text': question.question_text[:100] + '...' if len(question.question_text) > 100 else question.question_text, 'question_type': question.question_type, 'marks': question.marks}})}\n\n"
                     except Exception as e:
                         logger.error(f"[{request_id}] Error generating question: {e}")
                         questions_failed += 1
