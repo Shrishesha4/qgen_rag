@@ -135,9 +135,9 @@ class NoveltyService:
         # Compute novelty score
         novelty_score = 1.0 - max_similarity
         
-        # Get user's novelty threshold
+# Get user's novelty threshold (default to strict novelty = 1.0)
         user = await self._get_user(user_id)
-        threshold = user.novelty_threshold if user else 0.3
+        threshold = user.novelty_threshold if user else 1.0
         
         return NoveltyResult(
             novelty_score=novelty_score,
@@ -257,8 +257,8 @@ class NoveltyService:
         user = await self._get_user(user_id)
         if not user:
             return {
-                "novelty_threshold": 0.3,
-                "max_regeneration_attempts": 3,
+                "novelty_threshold": 1.0,
+                "max_regeneration_attempts": 5,
             }
         
         return {

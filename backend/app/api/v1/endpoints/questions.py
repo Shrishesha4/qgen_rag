@@ -1473,8 +1473,9 @@ Output valid JSON only."""
 
                         # Attempt to generate a non-duplicate question (embedding dedupe + retries)
                         # Defaults (can be overridden by user's novelty settings)
-                        DUP_THRESHOLD = 0.85
-                        RETRY_LIMIT = 3
+                        # Set strict novelty by default and allow maximum regeneration attempts (user schema limits to 10)
+                        DUP_THRESHOLD = 1.0
+                        RETRY_LIMIT = 5
 
                         # Try to read user novelty settings (if available) to tune threshold/attempts
                         try:
@@ -1781,12 +1782,12 @@ async def update_novelty_settings(
     
     - novelty_threshold: Value between 0.0 and 1.0
       - 0.0: Accept all questions (no novelty enforcement)
-      - 0.3: Default - moderate uniqueness required
+      - 1.0: Default - strict uniqueness required (prefer fully novel questions)
       - 0.5: High uniqueness required
       - 0.7+: Very strict - questions must be highly unique
-    
-    - max_regeneration_attempts: Value between 1 and 10
-      - Higher values allow more regeneration attempts before giving up
+
+    - max_regeneration_attempts: Value between 1 and 5
+      - Default: 5 (maximum allowed) — higher values allow more regeneration attempts before giving up
     """
     from sqlalchemy import select
     
@@ -1810,10 +1811,10 @@ async def update_novelty_settings(
         user.novelty_threshold = settings_data.novelty_threshold
     
     if settings_data.max_regeneration_attempts is not None:
-        if not 1 <= settings_data.max_regeneration_attempts <= 10:
+        if not 1 <= settings_data.max_regeneration_attempts <= 5:
             raise HTTPException(
                 status_code=status.HTTP_400_BAD_REQUEST,
-                detail="max_regeneration_attempts must be between 1 and 10",
+                detail="max_regeneration_attempts must be between 1 and 5",
             )
         user.max_regeneration_attempts = settings_data.max_regeneration_attempts
     

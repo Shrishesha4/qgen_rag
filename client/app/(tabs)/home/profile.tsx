@@ -641,7 +641,7 @@ export default function ProfileScreen() {
                 </View>
               </View>
               <View style={styles.attemptsRow}>
-                {[1, 2, 3, 4, 5].map((num) => (
+                {[1,2,3,4,5].map((num) => (
                   <TouchableOpacity
                     key={num}
                     style={[

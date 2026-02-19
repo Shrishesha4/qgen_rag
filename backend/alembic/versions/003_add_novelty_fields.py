@@ -21,13 +21,13 @@ depends_on: Union[str, Sequence[str], None] = None
 
 def upgrade() -> None:
     # User model: Add novelty settings
-    op.add_column('users', sa.Column('novelty_threshold', sa.Float(), nullable=True, default=0.3))
-    op.add_column('users', sa.Column('max_regeneration_attempts', sa.Integer(), nullable=True, default=3))
+    op.add_column('users', sa.Column('novelty_threshold', sa.Float(), nullable=True, default=1.0))
+    op.add_column('users', sa.Column('max_regeneration_attempts', sa.Integer(), nullable=True, default=5))
     op.add_column('users', sa.Column('subject_reference_materials', sa.JSON(), nullable=True))
     
     # Set default values for existing users
-    op.execute("UPDATE users SET novelty_threshold = 0.3 WHERE novelty_threshold IS NULL")
-    op.execute("UPDATE users SET max_regeneration_attempts = 3 WHERE max_regeneration_attempts IS NULL")
+    op.execute("UPDATE users SET novelty_threshold = 1.0 WHERE novelty_threshold IS NULL")
+    op.execute("UPDATE users SET max_regeneration_attempts = 5 WHERE max_regeneration_attempts IS NULL")
     
     # Document model: Add index_type and subject_id
     op.add_column('documents', sa.Column('index_type', sa.String(50), nullable=True, default='primary'))

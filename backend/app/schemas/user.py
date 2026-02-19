@@ -60,7 +60,7 @@ class UserUpdate(BaseModel):
     preferences: Optional[dict] = None
     # Novelty settings
     novelty_threshold: Optional[float] = Field(None, ge=0.0, le=1.0)
-    max_regeneration_attempts: Optional[int] = Field(None, ge=1, le=10)
+    max_regeneration_attempts: Optional[int] = Field(None, ge=1, le=5)
 
 
 class UserResponse(BaseModel):
