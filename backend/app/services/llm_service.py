@@ -113,6 +113,7 @@ class LLMService:
     def __init__(self, model: Optional[str] = None):
         self.base_url = settings.OLLAMA_BASE_URL
         self.model = model or settings.OLLAMA_MODEL
+        logger.debug(f"LLMService initialized - base_url={self.base_url}, model={self.model}")
         self._timeout = httpx.Timeout(
             connect=10.0,   # Connection timeout
             read=120.0,     # Read timeout (LLM can be slow)

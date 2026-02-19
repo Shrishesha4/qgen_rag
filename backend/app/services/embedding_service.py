@@ -18,7 +18,10 @@ from collections import OrderedDict
 from sentence_transformers import SentenceTransformer
 import numpy as np
 
+import logging
 from app.core.config import settings
+
+logger = logging.getLogger(__name__)
 
 
 class LRUCache:
@@ -370,7 +373,7 @@ class EmbeddingService:
         """
         dummy_text = "This is a warmup text for model initialization."
         _ = await self.get_embedding(dummy_text)
-        print(f"✅ Embedding model warmed up: {settings.EMBEDDING_MODEL}")
+        logger.info(f"✅ Embedding model warmed up: {settings.EMBEDDING_MODEL}")
 
 
 # Module-level function for easy import

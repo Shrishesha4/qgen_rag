@@ -203,7 +203,8 @@ class RerankerService:
         dummy_query = "What is the main topic?"
         dummy_text = "This is a warmup text for model initialization."
         _ = self._model.predict([(dummy_query, dummy_text)])
-        print(f"✅ Reranker model warmed up: {settings.RERANKER_MODEL}")
+        from app.core.logging import logger
+        logger.info(f"✅ Reranker model warmed up: {settings.RERANKER_MODEL}")
 
 
 # Module-level function for easy import

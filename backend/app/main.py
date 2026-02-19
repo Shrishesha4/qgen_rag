@@ -26,6 +26,11 @@ async def lifespan(app: FastAPI):
     """Application lifecycle management."""
     # Startup
     logger.info("🚀 Starting QuestionGeneration AI...")
+
+    # Log effective model configuration (from .env / settings)
+    logger.info(f"🔧 Ollama: base_url={settings.OLLAMA_BASE_URL} model={settings.OLLAMA_MODEL}")
+    logger.info(f"🔧 Embedding model: {settings.EMBEDDING_MODEL} (dim={settings.EMBEDDING_DIMENSION})")
+    logger.info(f"🔧 Reranker enabled={settings.RERANKER_ENABLED} model={settings.RERANKER_MODEL}")
     
     # Initialize database and create tables/indexes
     await init_db()
