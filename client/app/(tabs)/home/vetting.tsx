@@ -99,34 +99,75 @@ export default function VettingScreen() {
       setPage(questionsResponse.pagination.page);
       setHasMore(questionsResponse.pagination.page < questionsResponse.pagination.total_pages);
 
-      // Ensure CO mappings and edit state exist for all newly-loaded items (merge with existing when appending)
-      const newMappings: Record<string, CourseOutcomeMapping> = {};
-      const newMarks: Record<string, number> = {};
-      const newDifficulty: Record<string, string> = {};
-      const newSubjectId: Record<string, string | null> = {};
-      const newTopicId: Record<string, string | null> = {};
-      const newAnswerDraft: Record<string, string | null> = {};
-      const newAnswerEdit: Record<string, boolean> = {};
+      // Merge defaults into existing state using functional updates so this function
+      // doesn't depend on current edit-state values (prevents unnecessary remounts)
+      const defaultsFor = questionsResponse.questions.reduce((acc, q) => {
+        acc.coMappings[q.id] = q.course_outcome_mapping || acc.coMappings[q.id] || undefined;
+        acc.editMarks[q.id] = acc.editMarks[q.id] ?? q.marks ?? 1;
+        acc.editDifficulty[q.id] = acc.editDifficulty[q.id] ?? q.difficulty_level ?? 'medium';
+        acc.editSubjectId[q.id] = acc.editSubjectId[q.id] ?? q.subject_id ?? null;
+        acc.editTopicId[q.id] = acc.editTopicId[q.id] ?? q.topic_id ?? null;
+        acc.answerDraft[q.id] = acc.answerDraft[q.id] ?? q.correct_answer ?? null;
+        acc.answerEditMode[q.id] = acc.answerEditMode[q.id] ?? false;
+        return acc;
+      }, { coMappings: {} as Record<string, CourseOutcomeMapping | undefined>, editMarks: {} as Record<string, number>, editDifficulty: {} as Record<string, string>, editSubjectId: {} as Record<string, string | null>, editTopicId: {} as Record<string, string | null>, answerDraft: {} as Record<string, string | null>, answerEditMode: {} as Record<string, boolean> });
 
-      questionsResponse.questions.forEach((q) => {
-        // only add defaults when the id isn't already present
-        if (!coMappings[q.id]) newMappings[q.id] = q.course_outcome_mapping || {};
-        if (!editMarks[q.id]) newMarks[q.id] = q.marks || 1;
-        if (!editDifficulty[q.id]) newDifficulty[q.id] = q.difficulty_level || 'medium';
-        if (!editSubjectId[q.id]) newSubjectId[q.id] = q.subject_id || null;
-        if (!editTopicId[q.id]) newTopicId[q.id] = q.topic_id || null;
-        if (!(q.id in answerDraft)) newAnswerDraft[q.id] = q.correct_answer || null;
-        if (!(q.id in answerEditMode)) newAnswerEdit[q.id] = false;
+      // Apply functional merges (only adds missing keys)
+      setCoMappings((prev) => {
+        const toAdd: Record<string, CourseOutcomeMapping> = {};
+        for (const id of Object.keys(defaultsFor.coMappings)) {
+          if (!(id in prev) && defaultsFor.coMappings[id] !== undefined) toAdd[id] = defaultsFor.coMappings[id] as CourseOutcomeMapping;
+        }
+        return Object.keys(toAdd).length ? { ...prev, ...toAdd } : prev;
       });
 
-      // Merge defaults into existing state
-      if (Object.keys(newMappings).length) setCoMappings((prev) => ({ ...prev, ...newMappings }));
-      if (Object.keys(newMarks).length) setEditMarks((prev) => ({ ...prev, ...newMarks }));
-      if (Object.keys(newDifficulty).length) setEditDifficulty((prev) => ({ ...prev, ...newDifficulty }));
-      if (Object.keys(newSubjectId).length) setEditSubjectId((prev) => ({ ...prev, ...newSubjectId }));
-      if (Object.keys(newTopicId).length) setEditTopicId((prev) => ({ ...prev, ...newTopicId }));
-      if (Object.keys(newAnswerDraft).length) setAnswerDraft((prev) => ({ ...prev, ...newAnswerDraft }));
-      if (Object.keys(newAnswerEdit).length) setAnswerEditMode((prev) => ({ ...prev, ...newAnswerEdit }));
+      setEditMarks((prev) => {
+        const toAdd: Record<string, number> = {};
+        for (const [id, v] of Object.entries(defaultsFor.editMarks)) {
+          if (!(id in prev)) toAdd[id] = v;
+        }
+        return Object.keys(toAdd).length ? { ...prev, ...toAdd } : prev;
+      });
+
+      setEditDifficulty((prev) => {
+        const toAdd: Record<string, string> = {};
+        for (const [id, v] of Object.entries(defaultsFor.editDifficulty)) {
+          if (!(id in prev)) toAdd[id] = v;
+        }
+        return Object.keys(toAdd).length ? { ...prev, ...toAdd } : prev;
+      });
+
+      setEditSubjectId((prev) => {
+        const toAdd: Record<string, string | null> = {};
+        for (const [id, v] of Object.entries(defaultsFor.editSubjectId)) {
+          if (!(id in prev)) toAdd[id] = v;
+        }
+        return Object.keys(toAdd).length ? { ...prev, ...toAdd } : prev;
+      });
+
+      setEditTopicId((prev) => {
+        const toAdd: Record<string, string | null> = {};
+        for (const [id, v] of Object.entries(defaultsFor.editTopicId)) {
+          if (!(id in prev)) toAdd[id] = v;
+        }
+        return Object.keys(toAdd).length ? { ...prev, ...toAdd } : prev;
+      });
+
+      setAnswerDraft((prev) => {
+        const toAdd: Record<string, string | null> = {};
+        for (const [id, v] of Object.entries(defaultsFor.answerDraft)) {
+          if (!(id in prev)) toAdd[id] = v;
+        }
+        return Object.keys(toAdd).length ? { ...prev, ...toAdd } : prev;
+      });
+
+      setAnswerEditMode((prev) => {
+        const toAdd: Record<string, boolean> = {};
+        for (const [id, v] of Object.entries(defaultsFor.answerEditMode)) {
+          if (!(id in prev)) toAdd[id] = v;
+        }
+        return Object.keys(toAdd).length ? { ...prev, ...toAdd } : prev;
+      });
     } catch (error) {
       console.error('Failed to load data:', error);
     } finally {
