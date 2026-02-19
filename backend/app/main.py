@@ -17,13 +17,11 @@ from app.services.embedding_service import warmup_embedding_service
 from app.services.reranker_service import warmup_reranker_service
 
 
-# Initialize logging first
-setup_logging(log_level=settings.LOG_LEVEL, json_logs=settings.LOG_JSON)
-
-
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     """Application lifecycle management."""
+    # Configure logging here (worker process only) to avoid duplicate startup logs when using --reload
+    setup_logging(log_level=settings.LOG_LEVEL, json_logs=settings.LOG_JSON)
     # Startup
     logger.info("🚀 Starting QuestionGeneration AI...")
 
