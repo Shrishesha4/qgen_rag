@@ -1266,6 +1266,7 @@ async def get_analytics_by_bloom(
 class RubricGenerationRequest(BaseModel):
     """Schema for generating questions from a rubric."""
     rubric_id: uuid.UUID
+    topic_id: Optional[uuid.UUID] = None  # If set, restrict generation to this chapter only
 
 
 @router.post("/generate-from-rubric")
@@ -1337,14 +1338,15 @@ async def generate_from_rubric(
     subject_name = subject.name
     
     # Get topics with syllabus content
-    result = await db.execute(
-        select(Topic)
-        .where(
-            Topic.subject_id == subject.id,
-            Topic.has_syllabus == True,
-        )
-        .order_by(Topic.order_index)
+    topic_query = select(Topic).where(
+        Topic.subject_id == subject.id,
+        Topic.has_syllabus == True,
     )
+    # If a specific topic_id was requested, restrict to that chapter only
+    if request.topic_id:
+        topic_query = topic_query.where(Topic.id == request.topic_id)
+    topic_query = topic_query.order_by(Topic.order_index)
+    result = await db.execute(topic_query)
     topics = result.scalars().all()
     
     if not topics:
@@ -1366,7 +1368,9 @@ async def generate_from_rubric(
     llm_service = LLMService()
     embedding_service = EmbeddingService()
     
-    logger.info(f"[{request_id}] Rubric generation starting: {rubric_name}, {total_questions} questions")
+    logger.info(f"[{request_id}] Rubric generation starting: {rubric_name}, {total_questions} questions, topic_id={request.topic_id}, topics_found={len(topic_data)}")
+    for td in topic_data:
+        logger.info(f"[{request_id}]   -> Topic: {td['name']} ({td['id']})")
     
     async def event_generator():
         """Generate SSE events with questions."""
@@ -1427,8 +1431,9 @@ async def generate_from_rubric(
                     ).limit(2000)
                 )
                 existing_question_embeddings = [r[0] for r in emb_res.all() if r[0]]
-            except Exception:
-                logger.warning(f"[{request_id}] Could not preload existing embeddings; continuing without DB dedupe")
+                logger.info(f"[{request_id}] Preloaded {len(existing_question_embeddings)} existing embeddings for dedupe")
+            except Exception as e:
+                logger.warning(f"[{request_id}] Could not preload existing embeddings ({e}); continuing without DB dedupe")
 
             # Type mapping
             type_mapping = {

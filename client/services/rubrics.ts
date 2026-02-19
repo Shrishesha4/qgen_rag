@@ -92,47 +92,86 @@ export const rubricsService = {
   },
 
   /**
-   * Generate questions from a rubric (SSE streaming)
+   * Generate questions from a rubric (SSE streaming via fetch for real-time updates)
    */
   generateFromRubric(
     rubricId: string,
     onProgress: (progress: GenerationProgress) => void,
     onComplete: () => void,
-    onError: (error: Error) => void
+    onError: (error: Error) => void,
+    topicId?: string,
   ): () => void {
     const abortController = new AbortController();
 
     (async () => {
       try {
-        const response = await apiClient.post(
-          '/questions/generate-from-rubric',
-          { rubric_id: rubricId },
-          {
-            responseType: 'text',
-            signal: abortController.signal,
-            headers: {
-              Accept: 'text/event-stream',
-            },
-            timeout: 300000, // 5 minutes for generation
-          }
-        );
+        // Build request body
+        const body: Record<string, string> = { rubric_id: rubricId };
+        if (topicId) body.topic_id = topicId;
 
-        // Parse SSE events
-        const data = response.data as string;
-        const events = data.split('\n\n').filter(Boolean);
-        
-        for (const event of events) {
-          if (event.startsWith('data: ')) {
-            const json = event.slice(6);
-            try {
-              const progress = JSON.parse(json) as GenerationProgress;
-              onProgress(progress);
-            } catch {
-              // Skip invalid JSON
+        // Get auth token and base URL from the axios client config
+        const { tokenStorage } = await import('./api');
+        const token = await tokenStorage.getAccessToken();
+        const baseURL = apiClient.defaults.baseURL || '';
+
+        const response = await fetch(`${baseURL}/questions/generate-from-rubric`, {
+          method: 'POST',
+          headers: {
+            'Content-Type': 'application/json',
+            Accept: 'text/event-stream',
+            ...(token ? { Authorization: `Bearer ${token}` } : {}),
+          },
+          body: JSON.stringify(body),
+          signal: abortController.signal,
+        });
+
+        if (!response.ok) {
+          throw new Error(`Generation failed: ${response.status} ${response.statusText}`);
+        }
+
+        const reader = response.body?.getReader();
+        if (!reader) {
+          throw new Error('ReadableStream not supported');
+        }
+
+        const decoder = new TextDecoder();
+        let buffer = '';
+
+        while (true) {
+          const { done, value } = await reader.read();
+          if (done) break;
+
+          buffer += decoder.decode(value, { stream: true });
+
+          // Parse complete SSE events from the buffer
+          const parts = buffer.split('\n\n');
+          // Keep the last potentially incomplete part in the buffer
+          buffer = parts.pop() || '';
+
+          for (const part of parts) {
+            const trimmed = part.trim();
+            if (trimmed.startsWith('data: ')) {
+              const json = trimmed.slice(6);
+              try {
+                const progress = JSON.parse(json) as GenerationProgress;
+                onProgress(progress);
+              } catch {
+                // Skip invalid JSON
+              }
             }
           }
         }
-        
+
+        // Process any remaining data in the buffer
+        if (buffer.trim().startsWith('data: ')) {
+          try {
+            const progress = JSON.parse(buffer.trim().slice(6)) as GenerationProgress;
+            onProgress(progress);
+          } catch {
+            // Skip invalid JSON
+          }
+        }
+
         onComplete();
       } catch (error) {
         if (!abortController.signal.aborted) {

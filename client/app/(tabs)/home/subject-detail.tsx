@@ -1,4 +1,4 @@
-import React, { useState, useEffect, useCallback } from 'react';
+import React, { useState, useEffect, useCallback, useRef } from 'react';
 import {
   View,
   Text,
@@ -10,30 +10,31 @@ import {
   ActivityIndicator,
   TextInput,
   Modal,
+  Animated,
 } from 'react-native';
 import { router, useLocalSearchParams, Stack } from 'expo-router';
 import { LinearGradient } from 'expo-linear-gradient';
 import { IconSymbol } from '@/components/ui/icon-symbol';
 import { Colors, Spacing, BorderRadius, FontSizes } from '@/constants/theme';
 import { useColorScheme } from '@/hooks/use-color-scheme';
-import { 
-  subjectsService, 
-  Subject, 
+import {
+  subjectsService,
+  Subject,
   Topic,
   TopicCreateData,
-  TopicUpdateData, 
 } from '@/services/subjects';
 import { referencesService, ReferenceDocument } from '@/services/references';
 import { ReferenceMaterials } from '@/components/reference-materials';
 import * as DocumentPicker from 'expo-document-picker';
 import { useToast } from '@/components/toast';
+import { rubricsService, Rubric, RubricCreateData, GenerationProgress } from '@/services/rubrics';
 
 export default function SubjectDetailScreen() {
   const colorScheme = useColorScheme();
   const colors = Colors[colorScheme ?? 'light'];
   const { id } = useLocalSearchParams<{ id: string }>();
   const { showError, showSuccess, showWarning } = useToast();
-  
+
   const [subject, setSubject] = useState<Subject | null>(null);
   const [topics, setTopics] = useState<Topic[]>([]);
   const [isLoading, setIsLoading] = useState(true);
@@ -47,18 +48,34 @@ export default function SubjectDetailScreen() {
   const [isUploadingDoc, setIsUploadingDoc] = useState(false);
   const [uploadStatus, setUploadStatus] = useState('');
   const [syllabusContent, setSyllabusContent] = useState('');
-  
+
   // New state for syllabus chapter extraction
   const [isExtractingChapters, setIsExtractingChapters] = useState(false);
   const [extractionStatus, setExtractionStatus] = useState('');
-  
+
   // Tab state for switching between chapters and references
   const [activeTab, setActiveTab] = useState<'chapters' | 'references'>('chapters');
-  
+
   // Reference materials state
   const [referenceBooks, setReferenceBooks] = useState<ReferenceDocument[]>([]);
   const [templatePapers, setTemplatePapers] = useState<ReferenceDocument[]>([]);
   const [isLoadingReferences, setIsLoadingReferences] = useState(false);
+
+  // Chapter generation state
+  const [showGenerateModal, setShowGenerateModal] = useState(false);
+  const [generateTopic, setGenerateTopic] = useState<Topic | null>(null);
+  const [genTab, setGenTab] = useState<'quick' | 'existing'>('quick');
+  const [existingRubrics, setExistingRubrics] = useState<Rubric[]>([]);
+  const [isLoadingRubrics, setIsLoadingRubrics] = useState(false);
+  const [isGenerating, setIsGenerating] = useState(false);
+  const [genProgress, setGenProgress] = useState<GenerationProgress | null>(null);
+  const [genQuestions, setGenQuestions] = useState<Array<{ id: string; question_text: string; question_type: string; marks: number }>>([]);
+  const cancelGenRef = useRef<(() => void) | null>(null);
+  const genProgressAnim = useRef(new Animated.Value(0)).current;
+  // Quick generate form
+  const [qgMcqCount, setQgMcqCount] = useState('5');
+  const [qgShortCount, setQgShortCount] = useState('3');
+  const [qgLongCount, setQgLongCount] = useState('0');
 
   const loadData = useCallback(async () => {
     if (!id) return;
@@ -108,7 +125,7 @@ export default function SubjectDetailScreen() {
       showWarning('Please enter a topic name', 'Missing Information');
       return;
     }
-    
+
     setIsCreatingTopic(true);
     try {
       const data: TopicCreateData = {
@@ -160,9 +177,117 @@ export default function SubjectDetailScreen() {
     setShowTopicDetailModal(true);
   };
 
+  // ---- Chapter Generation ----
+  const openGenerateModal = async (topic: Topic) => {
+    setGenerateTopic(topic);
+    setGenTab('quick');
+    setGenProgress(null);
+    setGenQuestions([]);
+    setIsGenerating(false);
+    setQgMcqCount('5');
+    setQgShortCount('3');
+    setQgLongCount('0');
+    setShowGenerateModal(true);
+    // Load existing rubrics for this subject
+    setIsLoadingRubrics(true);
+    try {
+      const data = await rubricsService.listRubrics(1, 50, id);
+      setExistingRubrics(data.rubrics || []);
+    } catch { setExistingRubrics([]); }
+    setIsLoadingRubrics(false);
+  };
+
+  const closeGenerateModal = () => {
+    if (cancelGenRef.current) cancelGenRef.current();
+    setShowGenerateModal(false);
+    setIsGenerating(false);
+    setGenProgress(null);
+    setGenQuestions([]);
+    setGenerateTopic(null);
+  };
+
+  const runGeneration = (rubricId: string, isTempRubric: boolean) => {
+    setIsGenerating(true);
+    setGenQuestions([]);
+    setGenProgress(null);
+    genProgressAnim.setValue(0);
+
+    const cancel = rubricsService.generateFromRubric(
+      rubricId,
+      (progress) => {
+        setGenProgress(progress);
+        if (progress.progress) {
+          Animated.timing(genProgressAnim, {
+            toValue: progress.progress,
+            duration: 300,
+            useNativeDriver: false,
+          }).start();
+        }
+        if (progress.question) {
+          setGenQuestions((prev) => [...prev, progress.question!]);
+        }
+        if (progress.status === 'error') {
+          showError(new Error(progress.message || 'Generation failed'), 'Generation Failed');
+          setIsGenerating(false);
+        }
+      },
+      async () => {
+        setIsGenerating(false);
+        if (isTempRubric) {
+          try { await rubricsService.deleteRubric(rubricId); } catch { }
+        }
+        loadData();
+      },
+      async (error) => {
+        showError(error, 'Generation Failed');
+        setIsGenerating(false);
+        if (isTempRubric) {
+          try { await rubricsService.deleteRubric(rubricId); } catch { }
+        }
+      },
+      generateTopic?.id,
+    );
+    cancelGenRef.current = cancel;
+  };
+
+  const handleQuickGenerate = async () => {
+    if (!generateTopic || !id) return;
+    const mcq = parseInt(qgMcqCount) || 0;
+    const short = parseInt(qgShortCount) || 0;
+    const long = parseInt(qgLongCount) || 0;
+    if (mcq + short + long === 0) {
+      showWarning('Add at least one question', 'Missing Information');
+      return;
+    }
+    setIsGenerating(true);
+    try {
+      const dist: Record<string, { count: number; marks_each: number }> = {};
+      if (mcq > 0) dist.mcq = { count: mcq, marks_each: 2 };
+      if (short > 0) dist.short_notes = { count: short, marks_each: 6 };
+      if (long > 0) dist.essay = { count: long, marks_each: 10 };
+
+      const rubric = await rubricsService.createRubric({
+        subject_id: id,
+        name: `__temp_${generateTopic.name}_${Date.now()}`,
+        exam_type: 'quiz',
+        duration_minutes: 60,
+        question_type_distribution: dist,
+        learning_outcomes_distribution: { LO1: 50, LO2: 50 },
+      });
+      runGeneration(rubric.id, true);
+    } catch (error) {
+      showError(error, 'Failed to Start Generation');
+      setIsGenerating(false);
+    }
+  };
+
+  const handleUseExistingRubric = (rubric: Rubric) => {
+    runGeneration(rubric.id, false);
+  };
+
   const handleUploadSyllabus = async () => {
     if (!selectedTopic || !id) return;
-    
+
     setIsUploadingDoc(true);
     setUploadStatus('Selecting file...');
     try {
@@ -180,14 +305,14 @@ export default function SubjectDetailScreen() {
 
       const file = result.assets[0];
       const fileSizeMB = file.size ? (file.size / (1024 * 1024)).toFixed(1) : '?';
-      
+
       setUploadStatus(`Uploading ${file.name} (${fileSizeMB}MB)...`);
-      
+
       // Small delay to ensure UI updates
       await new Promise(resolve => setTimeout(resolve, 100));
-      
+
       setUploadStatus('Extracting text from document...');
-      
+
       // Upload directly to topic - this extracts text and saves to syllabus_content
       await subjectsService.uploadTopicSyllabus(
         id,
@@ -196,7 +321,7 @@ export default function SubjectDetailScreen() {
         file.name,
         file.mimeType || 'application/pdf'
       );
-      
+
       setUploadStatus('Complete!');
       showSuccess('Syllabus content extracted and saved');
       setShowTopicDetailModal(false);
@@ -211,7 +336,7 @@ export default function SubjectDetailScreen() {
 
   const handleSaveSyllabus = async () => {
     if (!selectedTopic || !id) return;
-    
+
     try {
       await subjectsService.updateTopic(id, selectedTopic.id, {
         syllabus_content: syllabusContent,
@@ -228,10 +353,10 @@ export default function SubjectDetailScreen() {
   // Handle syllabus PDF upload with AI chapter extraction
   const handleExtractChaptersFromSyllabus = async () => {
     if (!id) return;
-    
+
     setIsExtractingChapters(true);
     setExtractionStatus('Selecting file...');
-    
+
     try {
       // Pick a document
       const result = await DocumentPicker.getDocumentAsync({
@@ -247,19 +372,19 @@ export default function SubjectDetailScreen() {
 
       const file = result.assets[0];
       const fileSizeMB = file.size ? (file.size / (1024 * 1024)).toFixed(1) : '?';
-      
+
       setExtractionStatus(`Uploading ${file.name} (${fileSizeMB}MB)...`);
-      
+
       // Small delay to ensure UI updates
       await new Promise(resolve => setTimeout(resolve, 100));
-      
+
       setExtractionStatus('Analyzing syllabus...');
-      
+
       // Another delay to show the analyzing message
       await new Promise(resolve => setTimeout(resolve, 200));
-      
+
       setExtractionStatus('Extracting chapters...');
-      
+
       // Call the API to extract chapters
       const response = await subjectsService.extractChaptersFromSyllabus(
         id,
@@ -267,7 +392,7 @@ export default function SubjectDetailScreen() {
         file.name,
         file.mimeType || 'application/pdf'
       );
-      
+
       setExtractionStatus('Complete!');
       showSuccess(`Successfully added ${response.chapters_created} chapters from syllabus`);
       loadData();
@@ -309,11 +434,11 @@ export default function SubjectDetailScreen() {
 
   return (
     <>
-      <Stack.Screen 
-        options={{ 
+      <Stack.Screen
+        options={{
           title: subject.code,
           headerBackTitle: 'Subjects',
-        }} 
+        }}
       />
       <View style={[styles.container, { backgroundColor: colors.background }]}>
         <ScrollView
@@ -377,10 +502,10 @@ export default function SubjectDetailScreen() {
               ]}
               onPress={() => setActiveTab('chapters')}
             >
-              <IconSymbol 
-                name="book.fill" 
-                size={16} 
-                color={activeTab === 'chapters' ? '#FFFFFF' : colors.textSecondary} 
+              <IconSymbol
+                name="book.fill"
+                size={16}
+                color={activeTab === 'chapters' ? '#FFFFFF' : colors.textSecondary}
               />
               <Text
                 style={[
@@ -398,10 +523,10 @@ export default function SubjectDetailScreen() {
               ]}
               onPress={() => setActiveTab('references')}
             >
-              <IconSymbol 
-                name="doc.text.fill" 
-                size={16} 
-                color={activeTab === 'references' ? '#FFFFFF' : colors.textSecondary} 
+              <IconSymbol
+                name="doc.text.fill"
+                size={16}
+                color={activeTab === 'references' ? '#FFFFFF' : colors.textSecondary}
               />
               <Text
                 style={[
@@ -416,92 +541,107 @@ export default function SubjectDetailScreen() {
 
           {/* Chapters Section */}
           {activeTab === 'chapters' && (
-          <View style={styles.section}>
-            <View style={styles.sectionHeader}>
-              <Text style={[styles.sectionTitle, { color: colors.textSecondary }]}>
-                CHAPTERS ({topics.length})
-              </Text>
-              <View style={styles.sectionActions}>
-                <TouchableOpacity
-                  style={[styles.addButton, { backgroundColor: '#34C759' + '20' }]}
-                  onPress={handleExtractChaptersFromSyllabus}
-                  disabled={isExtractingChapters}
-                >
-                  <IconSymbol name="doc.text.magnifyingglass" size={14} color="#34C759" />
-                  <Text style={[styles.addButtonText, { color: '#34C759' }]}>Import Syllabus</Text>
-                </TouchableOpacity>
-                <TouchableOpacity
-                  style={[styles.addButton, { backgroundColor: colors.primary + '15' }]}
-                  onPress={() => setShowAddTopicModal(true)}
-                >
-                  <IconSymbol name="plus" size={16} color={colors.primary} />
-                  <Text style={[styles.addButtonText, { color: colors.primary }]}>Add</Text>
-                </TouchableOpacity>
-              </View>
-            </View>
-
-            {/* AI Extraction Progress */}
-            {isExtractingChapters && (
-              <View style={[styles.extractionProgress, { backgroundColor: colors.card }]}>
-                <ActivityIndicator size="small" color="#34C759" />
-                <Text style={[styles.extractionText, { color: colors.text }]}>
-                  {extractionStatus || 'Processing...'}
+            <View style={styles.section}>
+              <View style={styles.sectionHeader}>
+                <Text style={[styles.sectionTitle, { color: colors.textSecondary }]}>
+                  CHAPTERS ({topics.length})
                 </Text>
-                <Text style={[styles.extractionHint, { color: colors.textSecondary }]}>
-                  AI is reading your syllabus and identifying chapters...
-                </Text>
-              </View>
-            )}
-
-            {topics.length === 0 ? (
-              <View style={[styles.emptyCard, { backgroundColor: colors.card }]}>
-                <IconSymbol name="book.closed" size={48} color={colors.textTertiary} />
-                <Text style={[styles.emptyTitle, { color: colors.text }]}>No Chapters Yet</Text>
-                <Text style={[styles.emptyText, { color: colors.textSecondary }]}>
-                  Add chapters to organize your syllabus and enable question generation.
-                </Text>
-              </View>
-            ) : (
-              <View style={[styles.topicsList, { backgroundColor: colors.card }]}>
-                {topics.map((topic, index) => (
+                <View style={styles.sectionActions}>
                   <TouchableOpacity
-                    key={topic.id}
-                    style={[
-                      styles.topicCard,
-                      index < topics.length - 1 && { borderBottomWidth: 1, borderBottomColor: colors.border },
-                    ]}
-                    onPress={() => handleTopicPress(topic)}
-                    onLongPress={() => handleDeleteTopic(topic)}
-                    activeOpacity={0.7}
+                    style={[styles.addButton, { backgroundColor: '#34C759' + '20' }]}
+                    onPress={handleExtractChaptersFromSyllabus}
+                    disabled={isExtractingChapters}
                   >
-                    <View style={[styles.topicIndex, { backgroundColor: getTopicColor(index) + '20' }]}>
-                      <Text style={[styles.topicIndexText, { color: getTopicColor(index) }]}>
-                        {index + 1}
-                      </Text>
-                    </View>
-                    <View style={styles.topicInfo}>
-                      <Text style={[styles.topicName, { color: colors.text }]}>{topic.name}</Text>
-                      <View style={styles.topicMeta}>
-                        {topic.has_syllabus && (
-                          <View style={[styles.badge, { backgroundColor: '#34C75920' }]}>
-                            <IconSymbol name="checkmark.circle.fill" size={12} color="#34C759" />
-                            <Text style={[styles.badgeText, { color: '#34C759' }]}>Syllabus</Text>
-                          </View>
-                        )}
-                        <View style={[styles.badge, { backgroundColor: colors.primary + '20' }]}>
-                          <IconSymbol name="questionmark.circle" size={12} color={colors.primary} />
-                          <Text style={[styles.badgeText, { color: colors.primary }]}>
-                            {topic.total_questions} Q&apos;s
+                    <IconSymbol name="doc.text.magnifyingglass" size={14} color="#34C759" />
+                    <Text style={[styles.addButtonText, { color: '#34C759' }]}>Import Syllabus</Text>
+                  </TouchableOpacity>
+                  <TouchableOpacity
+                    style={[styles.addButton, { backgroundColor: colors.primary + '15' }]}
+                    onPress={() => setShowAddTopicModal(true)}
+                  >
+                    <IconSymbol name="plus" size={16} color={colors.primary} />
+                    <Text style={[styles.addButtonText, { color: colors.primary }]}>Add</Text>
+                  </TouchableOpacity>
+                </View>
+              </View>
+
+              {/* AI Extraction Progress */}
+              {isExtractingChapters && (
+                <View style={[styles.extractionProgress, { backgroundColor: colors.card }]}>
+                  <ActivityIndicator size="small" color="#34C759" />
+                  <Text style={[styles.extractionText, { color: colors.text }]}>
+                    {extractionStatus || 'Processing...'}
+                  </Text>
+                  <Text style={[styles.extractionHint, { color: colors.textSecondary }]}>
+                    AI is reading your syllabus and identifying chapters...
+                  </Text>
+                </View>
+              )}
+
+              {topics.length === 0 ? (
+                <View style={[styles.emptyCard, { backgroundColor: colors.card }]}>
+                  <IconSymbol name="book.closed" size={48} color={colors.textTertiary} />
+                  <Text style={[styles.emptyTitle, { color: colors.text }]}>No Chapters Yet</Text>
+                  <Text style={[styles.emptyText, { color: colors.textSecondary }]}>
+                    Add chapters to organize your syllabus and enable question generation.
+                  </Text>
+                </View>
+              ) : (
+                <View style={[styles.topicsList, { backgroundColor: colors.card }]}>
+                  {topics.map((topic, index) => (
+                    <View
+                      key={topic.id}
+                      style={[
+                        styles.topicCard,
+                        index < topics.length - 1 && { borderBottomWidth: 1, borderBottomColor: colors.border },
+                      ]}
+                    >
+                      {/* Left side: tappable chapter info */}
+                      <TouchableOpacity
+                        style={styles.topicCardLeft}
+                        onPress={() => handleTopicPress(topic)}
+                        onLongPress={() => handleDeleteTopic(topic)}
+                        activeOpacity={0.7}
+                      >
+                        <View style={[styles.topicIndex, { backgroundColor: getTopicColor(index) + '20' }]}>
+                          <Text style={[styles.topicIndexText, { color: getTopicColor(index) }]}>
+                            {index + 1}
                           </Text>
                         </View>
-                      </View>
+                        <View style={styles.topicInfo}>
+                          <Text style={[styles.topicName, { color: colors.text }]} numberOfLines={2}>{topic.name}</Text>
+                          <View style={styles.topicMeta}>
+                            {topic.has_syllabus && (
+                              <View style={[styles.badge, { backgroundColor: '#34C75920' }]}>
+                                <IconSymbol name="checkmark.circle.fill" size={12} color="#34C759" />
+                                <Text style={[styles.badgeText, { color: '#34C759' }]}>Syllabus</Text>
+                              </View>
+                            )}
+                            <View style={[styles.badge, { backgroundColor: colors.primary + '20' }]}>
+                              <IconSymbol name="questionmark.circle" size={12} color={colors.primary} />
+                              <Text style={[styles.badgeText, { color: colors.primary }]}>
+                                {topic.total_questions} Q&apos;s
+                              </Text>
+                            </View>
+                          </View>
+                        </View>
+                        <IconSymbol name="chevron.right" size={14} color={colors.textTertiary} />
+                      </TouchableOpacity>
+
+                      {/* Right side: generate button */}
+                      <TouchableOpacity
+                        style={[styles.topicGenerateButton, { backgroundColor: colors.primary + '12' }]}
+                        onPress={() => openGenerateModal(topic)}
+                        activeOpacity={0.7}
+                      >
+                        <IconSymbol name="sparkles" size={18} color={colors.primary} />
+                        <Text style={[styles.topicGenerateLabel, { color: colors.primary }]}>Generate</Text>
+                      </TouchableOpacity>
                     </View>
-                    <IconSymbol name="chevron.right" size={16} color={colors.textTertiary} />
-                  </TouchableOpacity>
-                ))}
-              </View>
-            )}
-          </View>
+                  ))}
+                </View>
+              )}
+            </View>
           )}
 
           {/* Reference Materials Section */}
@@ -525,8 +665,8 @@ export default function SubjectDetailScreen() {
               </Text>
               <View style={[styles.loList, { backgroundColor: colors.card }]}>
                 {subject.learning_outcomes.outcomes.map((lo, index) => (
-                  <View 
-                    key={lo.id} 
+                  <View
+                    key={lo.id}
                     style={[
                       styles.loItem,
                       index < subject.learning_outcomes!.outcomes.length - 1 && { borderBottomWidth: 1, borderBottomColor: colors.border },
@@ -624,7 +764,7 @@ export default function SubjectDetailScreen() {
                 <Text style={[styles.formLabel, { color: colors.textSecondary }]}>UPLOAD SYLLABUS/NOTES</Text>
                 <TouchableOpacity
                   style={[
-                    styles.uploadButton, 
+                    styles.uploadButton,
                     { borderColor: isUploadingDoc ? colors.textTertiary : colors.primary },
                     isUploadingDoc && { backgroundColor: colors.background }
                   ]}
@@ -699,6 +839,239 @@ export default function SubjectDetailScreen() {
                 </View>
               )}
             </ScrollView>
+          </View>
+        </Modal>
+
+        {/* Chapter Generation Modal */}
+        <Modal
+          visible={showGenerateModal}
+          animationType="slide"
+          presentationStyle="pageSheet"
+          onRequestClose={closeGenerateModal}
+        >
+          <View style={[styles.genModalContainer, { backgroundColor: colors.background }]}>
+            {/* Header */}
+            <View style={[styles.genModalHeader, { borderBottomColor: colors.border }]}>
+              <TouchableOpacity onPress={closeGenerateModal} style={{ minWidth: 60 }}>
+                <Text style={{ color: colors.primary, fontSize: FontSizes.md }}>
+                  {isGenerating ? 'Cancel' : 'Close'}
+                </Text>
+              </TouchableOpacity>
+              <Text style={[styles.genModalTitle, { color: colors.text }]} numberOfLines={1}>
+                {generateTopic?.name || 'Generate'}
+              </Text>
+              <View style={{ minWidth: 60 }} />
+            </View>
+
+            {/* Generation in progress */}
+            {isGenerating || genProgress?.status === 'complete' ? (
+              <ScrollView contentContainerStyle={{ padding: Spacing.lg, gap: Spacing.lg }}>
+                {/* Progress bar */}
+                <View style={[styles.genSection, { backgroundColor: colors.card }]}>
+                  <Text style={[styles.genSectionLabel, { color: colors.textSecondary }]}>PROGRESS</Text>
+                  <View style={[styles.genProgressBarBg, { backgroundColor: colors.border }]}>
+                    <Animated.View
+                      style={[
+                        styles.genProgressBarFill,
+                        {
+                          backgroundColor: colors.primary,
+                          width: genProgressAnim.interpolate({
+                            inputRange: [0, 100],
+                            outputRange: ['0%', '100%'],
+                          }),
+                        },
+                      ]}
+                    />
+                  </View>
+                  {genProgress && (
+                    <Text style={[styles.genProgressText, { color: colors.text }]}>
+                      {genProgress.message}
+                    </Text>
+                  )}
+                  {genProgress?.current_question && genProgress?.total_questions && (
+                    <Text style={{ color: colors.textSecondary, fontSize: FontSizes.xs, marginTop: 4 }}>
+                      {genProgress.current_question} / {genProgress.total_questions} questions
+                    </Text>
+                  )}
+                </View>
+
+                {/* Generated questions preview */}
+                {genQuestions.length > 0 && (
+                  <View style={[styles.genSection, { backgroundColor: colors.card }]}>
+                    <Text style={[styles.genSectionLabel, { color: colors.textSecondary }]}>
+                      GENERATED ({genQuestions.length})
+                    </Text>
+                    {genQuestions.slice(-5).map((q, idx) => (
+                      <View key={q.id} style={[styles.genQuestionRow, idx > 0 && { borderTopWidth: 1, borderTopColor: colors.border }]}>
+                        <View style={[styles.genQTypeBadge, { backgroundColor: colors.primary + '15' }]}>
+                          <Text style={{ color: colors.primary, fontSize: 10, fontWeight: '700' }}>
+                            {q.question_type.toUpperCase()}
+                          </Text>
+                        </View>
+                        <Text style={{ color: colors.text, fontSize: FontSizes.sm, flex: 1 }} numberOfLines={2}>
+                          {q.question_text}
+                        </Text>
+                      </View>
+                    ))}
+                  </View>
+                )}
+
+                {/* Completion */}
+                {genProgress?.status === 'complete' && (
+                  <View style={[styles.genSection, { backgroundColor: '#E8F5E9' }]}>
+                    <View style={{ alignItems: 'center', gap: Spacing.sm, paddingVertical: Spacing.md }}>
+                      <IconSymbol name="checkmark.circle.fill" size={36} color="#34C759" />
+                      <Text style={{ fontSize: FontSizes.lg, fontWeight: '700', color: '#1B5E20' }}>
+                        Generation Complete!
+                      </Text>
+                      <Text style={{ fontSize: FontSizes.sm, color: '#2E7D32' }}>
+                        {genQuestions.length} questions generated and ready for vetting.
+                      </Text>
+                      <TouchableOpacity
+                        style={[styles.genDoneButton, { backgroundColor: '#34C759' }]}
+                        onPress={() => {
+                          closeGenerateModal();
+                          router.push('/(tabs)/home/vetting');
+                        }}
+                      >
+                        <Text style={{ color: '#FFF', fontWeight: '700', fontSize: FontSizes.sm }}>View & Vet Questions</Text>
+                      </TouchableOpacity>
+                    </View>
+                  </View>
+                )}
+              </ScrollView>
+            ) : (
+              /* Tab picker: Quick Generate or Use Existing */
+              <>
+                <View style={[styles.genTabBar, { backgroundColor: colors.card }]}>
+                  <TouchableOpacity
+                    style={[styles.genTab, genTab === 'quick' && { backgroundColor: colors.primary }]}
+                    onPress={() => setGenTab('quick')}
+                  >
+                    <IconSymbol name="sparkles" size={14} color={genTab === 'quick' ? '#FFF' : colors.textSecondary} />
+                    <Text style={[styles.genTabText, { color: genTab === 'quick' ? '#FFF' : colors.textSecondary }]}>Quick Generate</Text>
+                  </TouchableOpacity>
+                  <TouchableOpacity
+                    style={[styles.genTab, genTab === 'existing' && { backgroundColor: colors.primary }]}
+                    onPress={() => setGenTab('existing')}
+                  >
+                    <IconSymbol name="doc.fill" size={14} color={genTab === 'existing' ? '#FFF' : colors.textSecondary} />
+                    <Text style={[styles.genTabText, { color: genTab === 'existing' ? '#FFF' : colors.textSecondary }]}>Use Existing Rubric</Text>
+                  </TouchableOpacity>
+                </View>
+
+                <ScrollView contentContainerStyle={{ padding: Spacing.lg, gap: Spacing.md }}>
+                  {genTab === 'quick' ? (
+                    /* Quick Generate Form */
+                    <>
+                      <View style={[styles.genSection, { backgroundColor: colors.card }]}>
+                        <Text style={[styles.genSectionLabel, { color: colors.textSecondary }]}>QUESTION COUNTS</Text>
+                        <Text style={{ color: colors.textTertiary, fontSize: FontSizes.xs, marginBottom: Spacing.md }}>
+                          A temporary rubric will be created and deleted after generation.
+                        </Text>
+
+                        {/* MCQ */}
+                        <View style={styles.genCountRow}>
+                          <View style={[styles.genCountIcon, { backgroundColor: '#007AFF20' }]}>
+                            <IconSymbol name="list.bullet" size={16} color="#007AFF" />
+                          </View>
+                          <Text style={[styles.genCountLabel, { color: colors.text }]}>MCQ</Text>
+                          <View style={styles.genCountControls}>
+                            <TouchableOpacity style={[styles.genCountBtn, { borderColor: colors.border }]} onPress={() => setQgMcqCount(String(Math.max(0, (parseInt(qgMcqCount) || 0) - 1)))}>
+                              <Text style={{ color: colors.text, fontWeight: '700' }}>−</Text>
+                            </TouchableOpacity>
+                            <TextInput style={[styles.genCountInput, { color: colors.text, borderColor: colors.border }]} value={qgMcqCount} onChangeText={setQgMcqCount} keyboardType="number-pad" />
+                            <TouchableOpacity style={[styles.genCountBtn, { borderColor: colors.border }]} onPress={() => setQgMcqCount(String((parseInt(qgMcqCount) || 0) + 1))}>
+                              <Text style={{ color: colors.text, fontWeight: '700' }}>+</Text>
+                            </TouchableOpacity>
+                          </View>
+                        </View>
+
+                        {/* Short Answer */}
+                        <View style={styles.genCountRow}>
+                          <View style={[styles.genCountIcon, { backgroundColor: '#34C75920' }]}>
+                            <IconSymbol name="pencil" size={16} color="#34C759" />
+                          </View>
+                          <Text style={[styles.genCountLabel, { color: colors.text }]}>Short Answer</Text>
+                          <View style={styles.genCountControls}>
+                            <TouchableOpacity style={[styles.genCountBtn, { borderColor: colors.border }]} onPress={() => setQgShortCount(String(Math.max(0, (parseInt(qgShortCount) || 0) - 1)))}>
+                              <Text style={{ color: colors.text, fontWeight: '700' }}>−</Text>
+                            </TouchableOpacity>
+                            <TextInput style={[styles.genCountInput, { color: colors.text, borderColor: colors.border }]} value={qgShortCount} onChangeText={setQgShortCount} keyboardType="number-pad" />
+                            <TouchableOpacity style={[styles.genCountBtn, { borderColor: colors.border }]} onPress={() => setQgShortCount(String((parseInt(qgShortCount) || 0) + 1))}>
+                              <Text style={{ color: colors.text, fontWeight: '700' }}>+</Text>
+                            </TouchableOpacity>
+                          </View>
+                        </View>
+
+                        {/* Long Answer */}
+                        <View style={styles.genCountRow}>
+                          <View style={[styles.genCountIcon, { backgroundColor: '#FF950020' }]}>
+                            <IconSymbol name="doc.richtext" size={16} color="#FF9500" />
+                          </View>
+                          <Text style={[styles.genCountLabel, { color: colors.text }]}>Long Answer</Text>
+                          <View style={styles.genCountControls}>
+                            <TouchableOpacity style={[styles.genCountBtn, { borderColor: colors.border }]} onPress={() => setQgLongCount(String(Math.max(0, (parseInt(qgLongCount) || 0) - 1)))}>
+                              <Text style={{ color: colors.text, fontWeight: '700' }}>−</Text>
+                            </TouchableOpacity>
+                            <TextInput style={[styles.genCountInput, { color: colors.text, borderColor: colors.border }]} value={qgLongCount} onChangeText={setQgLongCount} keyboardType="number-pad" />
+                            <TouchableOpacity style={[styles.genCountBtn, { borderColor: colors.border }]} onPress={() => setQgLongCount(String((parseInt(qgLongCount) || 0) + 1))}>
+                              <Text style={{ color: colors.text, fontWeight: '700' }}>+</Text>
+                            </TouchableOpacity>
+                          </View>
+                        </View>
+                      </View>
+
+                      <TouchableOpacity
+                        style={[styles.genStartButton, { backgroundColor: colors.primary }]}
+                        onPress={handleQuickGenerate}
+                      >
+                        <IconSymbol name="sparkles" size={18} color="#FFF" />
+                        <Text style={{ color: '#FFF', fontWeight: '700', fontSize: FontSizes.md }}>Generate Questions</Text>
+                      </TouchableOpacity>
+                    </>
+                  ) : (
+                    /* Existing Rubrics List */
+                    <View style={[styles.genSection, { backgroundColor: colors.card }]}>
+                      <Text style={[styles.genSectionLabel, { color: colors.textSecondary }]}>SELECT A RUBRIC</Text>
+                      {isLoadingRubrics ? (
+                        <ActivityIndicator color={colors.primary} style={{ paddingVertical: Spacing.xl }} />
+                      ) : existingRubrics.length === 0 ? (
+                        <View style={{ alignItems: 'center', paddingVertical: Spacing.xl }}>
+                          <IconSymbol name="doc" size={36} color={colors.textTertiary} />
+                          <Text style={{ color: colors.textSecondary, marginTop: Spacing.sm, fontSize: FontSizes.sm }}>
+                            No rubrics for this subject yet.
+                          </Text>
+                          <Text style={{ color: colors.textTertiary, fontSize: FontSizes.xs, marginTop: 4 }}>
+                            Use Quick Generate or create a rubric first.
+                          </Text>
+                        </View>
+                      ) : (
+                        existingRubrics.map((rubric, idx) => (
+                          <TouchableOpacity
+                            key={rubric.id}
+                            style={[styles.genRubricRow, idx > 0 && { borderTopWidth: 1, borderTopColor: colors.border }]}
+                            onPress={() => handleUseExistingRubric(rubric)}
+                            activeOpacity={0.7}
+                          >
+                            <View style={[styles.genRubricIcon, { backgroundColor: colors.primary + '15' }]}>
+                              <IconSymbol name="doc.fill" size={18} color={colors.primary} />
+                            </View>
+                            <View style={{ flex: 1 }}>
+                              <Text style={{ color: colors.text, fontWeight: '600', fontSize: FontSizes.sm }}>{rubric.name}</Text>
+                              <Text style={{ color: colors.textSecondary, fontSize: FontSizes.xs }}>
+                                {rubric.total_questions} Q · {rubric.total_marks} marks · {rubric.duration_minutes}m
+                              </Text>
+                            </View>
+                            <IconSymbol name="play.circle.fill" size={28} color={colors.primary} />
+                          </TouchableOpacity>
+                        ))
+                      )}
+                    </View>
+                  )}
+                </ScrollView>
+              </>
+            )}
           </View>
         </Modal>
       </View>
@@ -902,6 +1275,26 @@ const styles = StyleSheet.create({
     flexDirection: 'row',
     alignItems: 'center',
     padding: Spacing.md,
+    gap: Spacing.sm,
+  },
+  topicCardLeft: {
+    flex: 1,
+    flexDirection: 'row',
+    alignItems: 'center',
+  },
+  topicGenerateButton: {
+    alignItems: 'center',
+    justifyContent: 'center',
+    paddingHorizontal: Spacing.md,
+    paddingVertical: Spacing.sm,
+    borderRadius: BorderRadius.md,
+    gap: 2,
+    minWidth: 60,
+  },
+  topicGenerateLabel: {
+    fontSize: 10,
+    fontWeight: '700',
+    letterSpacing: 0.3,
   },
   topicIndex: {
     width: 36,
@@ -1075,5 +1468,147 @@ const styles = StyleSheet.create({
   topicStatLabel: {
     fontSize: FontSizes.xs,
     marginTop: 2,
+  },
+  // ---- Generation Modal Styles ----
+  genModalContainer: {
+    flex: 1,
+  },
+  genModalHeader: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    paddingHorizontal: Spacing.md,
+    paddingVertical: Spacing.md,
+    borderBottomWidth: StyleSheet.hairlineWidth,
+  },
+  genModalTitle: {
+    fontSize: FontSizes.md,
+    fontWeight: '600',
+    flex: 1,
+    textAlign: 'center',
+    marginHorizontal: Spacing.sm,
+  },
+  genTabBar: {
+    flexDirection: 'row',
+    margin: Spacing.md,
+    borderRadius: BorderRadius.lg,
+    padding: 4,
+    gap: 4,
+  },
+  genTab: {
+    flex: 1,
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'center',
+    paddingVertical: Spacing.sm,
+    borderRadius: BorderRadius.md,
+    gap: 6,
+  },
+  genTabText: {
+    fontSize: FontSizes.xs,
+    fontWeight: '600',
+  },
+  genSection: {
+    borderRadius: BorderRadius.lg,
+    padding: Spacing.lg,
+  },
+  genSectionLabel: {
+    fontSize: 11,
+    fontWeight: '700',
+    letterSpacing: 0.5,
+    textTransform: 'uppercase' as const,
+    marginBottom: Spacing.md,
+  },
+  genProgressBarBg: {
+    height: 6,
+    borderRadius: 3,
+    overflow: 'hidden',
+    marginBottom: Spacing.sm,
+  },
+  genProgressBarFill: {
+    height: '100%',
+    borderRadius: 3,
+  },
+  genProgressText: {
+    fontSize: FontSizes.sm,
+    fontWeight: '500',
+  },
+  genQuestionRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    paddingVertical: Spacing.sm,
+    gap: Spacing.sm,
+  },
+  genQTypeBadge: {
+    paddingHorizontal: 6,
+    paddingVertical: 2,
+    borderRadius: BorderRadius.sm,
+  },
+  genDoneButton: {
+    paddingHorizontal: Spacing.xl,
+    paddingVertical: Spacing.md,
+    borderRadius: BorderRadius.lg,
+    marginTop: Spacing.sm,
+  },
+  genCountRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    marginBottom: Spacing.md,
+    gap: Spacing.sm,
+  },
+  genCountIcon: {
+    width: 36,
+    height: 36,
+    borderRadius: BorderRadius.md,
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  genCountLabel: {
+    flex: 1,
+    fontSize: FontSizes.sm,
+    fontWeight: '600',
+  },
+  genCountControls: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 4,
+  },
+  genCountBtn: {
+    width: 36,
+    height: 36,
+    borderRadius: BorderRadius.md,
+    borderWidth: 1,
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  genCountInput: {
+    width: 44,
+    height: 36,
+    textAlign: 'center',
+    borderWidth: 1,
+    borderRadius: BorderRadius.md,
+    fontSize: FontSizes.md,
+    fontWeight: '600',
+  },
+  genStartButton: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'center',
+    paddingVertical: Spacing.lg,
+    borderRadius: BorderRadius.lg,
+    gap: Spacing.sm,
+  },
+  genRubricRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    paddingVertical: Spacing.md,
+    gap: Spacing.md,
+  },
+  genRubricIcon: {
+    width: 40,
+    height: 40,
+    borderRadius: BorderRadius.md,
+    alignItems: 'center',
+    justifyContent: 'center',
   },
 });
