@@ -151,11 +151,16 @@ export interface GenerationProgress {
   current_question?: number;
   total_questions?: number;
   message?: string;
+  // Question payload may include assigned LO/CO and topic/subject ids
   question?: {
     id: string;
     question_text: string;
     question_type: string;
     marks: number;
+    subject_id?: string | null;
+    topic_id?: string | null;
+    learning_outcome_id?: string | null;
+    course_outcome_mapping?: Record<string, number> | null;
   };
 }
 

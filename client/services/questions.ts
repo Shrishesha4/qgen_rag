@@ -27,6 +27,10 @@ export interface Question {
   times_shown: number;
   user_rating: number | null;
   is_archived: boolean;
+
+  // Assessment mappings assigned by backend
+  learning_outcome_id?: string | null;
+  course_outcome_mapping?: Record<string, number> | null;
 }
 
 export interface GenerationRequest {

@@ -7,6 +7,7 @@ import os
 from typing import Optional, List
 import uuid
 from datetime import datetime, timezone
+import re
 
 from fastapi import APIRouter, Depends, HTTPException, status, Query, UploadFile, File, Form
 from fastapi.responses import StreamingResponse
@@ -752,8 +753,7 @@ async def vet_question(
             from app.services.llm_service import LLMService
             from app.services.embedding_service import EmbeddingService
             import random
-            import re
-            
+
             logger.info(f"Regenerating rubric-based question for subject_id={question.subject_id}")
             
             q_type = question.question_type or "mcq"
@@ -835,13 +835,69 @@ Output valid JSON only."""
                         
                         if response and "question_text" in response:
                             question_text = response["question_text"]
-                            
+
                             # Basic validation
                             if len(question_text) >= 15 and question_text.strip() != question.question_text.strip():
                                 # Create embedding
                                 question_embedding = await embedding_service.get_embedding(question_text)
-                                
-                                # Create new question
+
+                                # --- Determine LO / CO mapping for regenerated question ---
+                                assigned_lo = None
+                                assigned_co_map = None
+
+                                # Prefer LO from LLM response if present
+                                if isinstance(response.get("learning_outcome_id"), str):
+                                    assigned_lo = response.get("learning_outcome_id")
+                                elif isinstance(response.get("learning_outcome"), str):
+                                    assigned_lo = response.get("learning_outcome")
+
+                                # Prefer topic's LO mapping (if topic has explicit mappings)
+                                topic_obj = None
+                                try:
+                                    tres = await db.execute(select(Topic).where(Topic.id == uuid.UUID(selected_chunk["topic_id"])))
+                                    topic_obj = tres.scalar_one_or_none()
+                                except Exception:
+                                    topic_obj = None
+
+                                topic_lo_map = (topic_obj.learning_outcome_mappings if topic_obj and getattr(topic_obj, "learning_outcome_mappings", None) else selected_chunk.get("lo_mappings")) or {}
+                                if not assigned_lo and topic_lo_map:
+                                    try:
+                                        assigned_lo = max((topic_lo_map or {}).items(), key=lambda kv: (kv[1] or 0))[0]
+                                    except Exception:
+                                        assigned_lo = None
+
+                                # Fallback to rubric LO distribution
+                                if not assigned_lo and lo_distribution:
+                                    items = [(k, float(v or 0)) for k, v in lo_distribution.items() if (v or 0) > 0]
+                                    if items:
+                                        total_w = sum(w for _, w in items)
+                                        if total_w > 0:
+                                            import random as _rand
+                                            pick = _rand.random() * total_w
+                                            acc = 0.0
+                                            for k, w in items:
+                                                acc += w
+                                                if pick <= acc:
+                                                    assigned_lo = k
+                                                    break
+
+                                # Derive CO mapping from subject LO mappings if available
+                                subject_lo_mappings = getattr(subject, "learning_outcome_mappings", {}) or {}
+                                if assigned_lo and subject_lo_mappings and isinstance(subject_lo_mappings.get(assigned_lo), dict):
+                                    assigned_co_map = subject_lo_mappings.get(assigned_lo)
+                                else:
+                                    cos = (subject.course_outcomes or {}).get("outcomes") if subject.course_outcomes else None
+                                    if assigned_lo and cos and isinstance(cos, list) and len(cos) > 0:
+                                        m = re.search(r"LO(\d+)", str(assigned_lo))
+                                        if m:
+                                            idx = (int(m.group(1)) - 1) % len(cos)
+                                            assigned_co_map = { f"CO{idx+1}": 1 }
+                                        else:
+                                            assigned_co_map = { cos[0]["id"] if isinstance(cos[0], dict) and "id" in cos[0] else f"CO1": 1 }
+                                    else:
+                                        assigned_co_map = {}
+
+                                # Create new question (with LO/CO mapping)
                                 new_question = Question(
                                     subject_id=question.subject_id,
                                     topic_id=uuid.UUID(selected_chunk["topic_id"]),
@@ -855,17 +911,21 @@ Output valid JSON only."""
                                     options=response.get("options"),
                                     explanation=response.get("explanation"),
                                     topic_tags=response.get("topic_tags", [selected_chunk["topic_name"]]),
+                                    learning_outcome_id=assigned_lo,
+                                    course_outcome_mapping=assigned_co_map,
                                     generation_confidence=0.75,
                                     vetting_status="pending",
                                     generation_metadata={
                                         "regenerated_from": str(question_id),
                                         "topic_name": selected_chunk["topic_name"],
+                                        "assigned_learning_outcome": assigned_lo,
+                                        "assigned_course_outcome_mapping": assigned_co_map,
                                     },
                                 )
                                 db.add(new_question)
                                 await db.commit()
                                 await db.refresh(new_question)
-                                
+
                                 replacement = new_question
                                 logger.info(f"Created replacement question: {replacement.id}")
                     except Exception as e:
@@ -1229,7 +1289,6 @@ async def generate_from_rubric(
     from app.models.question import Question
     from loguru import logger
     import random
-    import re
     import math
     
     request_id = uuid.uuid4().hex[:8]
@@ -1493,7 +1552,59 @@ Output valid JSON only."""
                             # All attempts failed for this slot
                             continue
 
-                        # Create question (accepted candidate)
+                        # --- Determine Learning Outcome (LO) and Course Outcome (CO) mapping ---
+                        assigned_lo = None
+                        assigned_co_map = None
+
+                        # 1) Prefer explicit LO returned by the LLM
+                        if response_obj and isinstance(response_obj.get("learning_outcome_id"), str):
+                            assigned_lo = response_obj.get("learning_outcome_id")
+                        elif response_obj and isinstance(response_obj.get("learning_outcome"), str):
+                            assigned_lo = response_obj.get("learning_outcome")
+
+                        # 2) If no LO from LLM, prefer topic's LO mappings (highest weight)
+                        topic_lo_map = selected_chunk.get("lo_mappings") or {}
+                        if not assigned_lo and topic_lo_map:
+                            # topic_lo_map expected to be { "LO1": weight, "LO2": weight }
+                            try:
+                                assigned_lo = max(topic_lo_map.items(), key=lambda kv: (kv[1] or 0))[0]
+                            except Exception:
+                                assigned_lo = None
+
+                        # 3) If still no LO, fall back to rubric LO distribution (weighted random)
+                        if not assigned_lo and lo_distribution:
+                            # Normalize distribution values and sample
+                            items = [(k, float(v or 0)) for k, v in lo_distribution.items() if (v or 0) > 0]
+                            if items:
+                                total_w = sum(w for _, w in items)
+                                if total_w > 0:
+                                    import random as _rand
+                                    pick = _rand.random() * total_w
+                                    acc = 0.0
+                                    for k, w in items:
+                                        acc += w
+                                        if pick <= acc:
+                                            assigned_lo = k
+                                            break
+
+                        # 4) Derive CO mapping if possible from subject mappings or sensible default
+                        subject_lo_mappings = getattr(subject, "learning_outcome_mappings", {}) or {}
+                        if assigned_lo and subject_lo_mappings and isinstance(subject_lo_mappings.get(assigned_lo), dict):
+                            assigned_co_map = subject_lo_mappings.get(assigned_lo)
+                        else:
+                            # Heuristic fallback: map LO# -> CO# if course_outcomes exist
+                            cos = (subject.course_outcomes or {}).get("outcomes") if subject.course_outcomes else None
+                            if assigned_lo and cos and isinstance(cos, list) and len(cos) > 0:
+                                m = re.search(r"LO(\d+)", str(assigned_lo))
+                                if m:
+                                    idx = (int(m.group(1)) - 1) % len(cos)
+                                    assigned_co_map = { f"CO{idx+1}": 1 }
+                                else:
+                                    assigned_co_map = { cos[0]["id"] if isinstance(cos[0], dict) and "id" in cos[0] else f"CO1": 1 }
+                            else:
+                                assigned_co_map = {}
+
+                        # Create question (accepted candidate) with LO/CO and metadata
                         question = Question(
                             subject_id=uuid.UUID(subject_id_str),
                             topic_id=uuid.UUID(selected_chunk["topic_id"]),
@@ -1507,12 +1618,16 @@ Output valid JSON only."""
                             options=(response_obj.get("options") if response_obj else None),
                             explanation=(response_obj.get("explanation") if response_obj else None),
                             topic_tags=(response_obj.get("topic_tags", [selected_chunk["topic_name"]]) if response_obj else [selected_chunk["topic_name"]]),
+                            learning_outcome_id=assigned_lo,
+                            course_outcome_mapping=assigned_co_map,
                             generation_confidence=0.75,
                             vetting_status="pending",
                             generation_metadata={
                                 "rubric_id": str(rubric_id),
                                 "topic_name": selected_chunk["topic_name"],
                                 "lo_mappings": selected_chunk["lo_mappings"],
+                                "assigned_learning_outcome": assigned_lo,
+                                "assigned_course_outcome_mapping": assigned_co_map,
                             },
                         )
                         db.add(question)

@@ -1,9 +1,13 @@
 √ vetting - question rejection regen
 
-upload question paper (template) -> rag -> llm -> use template as reference to generate new questions
+√ upload question paper (template) -> rag -> llm -> use template as reference to generate new questions
 
-novelty checking 
+√ novelty checking 
 
-reference book to be used to reference when novelty is less than a set threshold
+√ reference book to be used to reference when novelty is less than a set threshold
+
+only vetting approved questions must go to the respective subject's questions page
+
+CO/LO/Chapter/Subject Mapping is still buggy
 
 check on "raft"

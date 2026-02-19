@@ -34,8 +34,8 @@ export const useAuthStore = create<AuthState>((set, get) => ({
   isAuthenticated: false,
   isLoading: true,
   error: null,
-  noveltyThreshold: 0.3,
-  maxRegenerationAttempts: 3,
+  noveltyThreshold: 1.0,
+  maxRegenerationAttempts: 5,
 
   login: async (email: string, password: string): Promise<boolean> => {
     set({ isLoading: true, error: null });
@@ -45,8 +45,8 @@ export const useAuthStore = create<AuthState>((set, get) => ({
         user: response.user,
         isAuthenticated: true,
         isLoading: false,
-        noveltyThreshold: response.user.novelty_threshold ?? 0.3,
-        maxRegenerationAttempts: response.user.max_regeneration_attempts ?? 3,
+        noveltyThreshold: response.user.novelty_threshold ?? 1.0,
+        maxRegenerationAttempts: response.user.max_regeneration_attempts ?? 5,
       });
       return true;
     } catch (error: unknown) {
@@ -71,8 +71,8 @@ export const useAuthStore = create<AuthState>((set, get) => ({
         user: response.user,
         isAuthenticated: true,
         isLoading: false,
-        noveltyThreshold: response.user.novelty_threshold ?? 0.3,
-        maxRegenerationAttempts: response.user.max_regeneration_attempts ?? 3,
+        noveltyThreshold: response.user.novelty_threshold ?? 1.0,
+        maxRegenerationAttempts: response.user.max_regeneration_attempts ?? 5,
       });
       return true;
     } catch (error: unknown) {
@@ -126,8 +126,8 @@ export const useAuthStore = create<AuthState>((set, get) => ({
         user,
         isAuthenticated: true,
         isLoading: false,
-        noveltyThreshold: user.novelty_threshold ?? 0.3,
-        maxRegenerationAttempts: user.max_regeneration_attempts ?? 3,
+        noveltyThreshold: user.novelty_threshold ?? 1.0,
+        maxRegenerationAttempts: user.max_regeneration_attempts ?? 5,
       });
       return true;
     } catch {

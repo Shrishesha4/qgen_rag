@@ -60,7 +60,7 @@ export default function GenerateScreen() {
   const [selectedRubric, setSelectedRubric] = useState<Rubric | null>(null);
   const [isGenerating, setIsGenerating] = useState(false);
   const [generationProgress, setGenerationProgress] = useState<GenerationProgress | null>(null);
-  const [generatedQuestions, setGeneratedQuestions] = useState<Array<{id: string; question_text: string; question_type: string; marks: number}>>([]);
+  const [generatedQuestions, setGeneratedQuestions] = useState<Array<{id: string; question_text: string; question_type: string; marks: number; subject_id?: string | null; topic_id?: string | null; learning_outcome_id?: string | null; course_outcome_mapping?: Record<string, number> | null;}>>([]);
   const cancelGenerationRef = useRef<(() => void) | null>(null);
   const progressAnim = useRef(new Animated.Value(0)).current;
   

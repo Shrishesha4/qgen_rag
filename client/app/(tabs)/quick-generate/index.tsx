@@ -719,6 +719,22 @@ export default function QuickGenerateScreen() {
               <Text style={[styles.questionText, { color: colors.text }]}>
                 {q.question_text}
               </Text>
+
+              {/* Assigned LO / CO / Topic badges (if present) */}
+              <View style={styles.generatedMetaRow}>
+                { (q as any).learning_outcome_id ? (
+                  <Text style={[styles.generatedMetaText, { color: colors.textSecondary }]}>{(q as any).learning_outcome_id}</Text>
+                ) : null }
+
+                { (q as any).course_outcome_mapping && Object.keys((q as any).course_outcome_mapping).length ? (
+                  <Text style={[styles.generatedMetaText, { color: colors.textSecondary }]}>{Object.keys((q as any).course_outcome_mapping).join(', ')}</Text>
+                ) : null }
+
+                { q.topic_tags && q.topic_tags.length ? (
+                  <Text style={[styles.generatedMetaText, { color: colors.textSecondary }]}>{q.topic_tags[0]}</Text>
+                ) : null }
+              </View>
+
               {q.options && q.options.length > 0 && (
                 <View style={styles.optionsContainer}>
                   {q.options.map((opt, optIdx) => {
