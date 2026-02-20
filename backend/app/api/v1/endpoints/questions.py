@@ -1272,12 +1272,13 @@ async def vet_question(
                 system_prompt = _get_rubric_system_prompt(q_type)
                 prompt = f"Chapter: \"{topic_name}\"\n\nSyllabus Content:\n{syllabus_content[:3000]}\n"
                 if reference_context:
-                    prompt += f"\nReference Material:\n{reference_context}\n"
+                    prompt += f"\nBackground knowledge (use to inform the question, do NOT cite or reference it):\n{reference_context}\n"
                 prompt += f"""
 Generate a {q_type.replace('_', ' ')} question based on this chapter content.
 - Marks: {marks}
 - Difficulty: {question_snapshot["difficulty_level"] or "medium"}
 - The question must test understanding of the chapter material
+- The question text must be fully self-contained — do NOT mention "the text", "the reference", "the provided material", or any source
 - IMPORTANT: Generate a DIFFERENT question from: "{question_snapshot["question_text"][:150]}..."
 
 Output valid JSON only."""
@@ -2143,7 +2144,7 @@ async def generate_from_rubric(
 """
                         if reference_context:
                             prompt += f"""
-Additional reference material (use to enrich the question):
+Background knowledge (use to inform the question, do NOT cite or reference it):
 {reference_context}
 """
                         prompt += f"""
@@ -2151,6 +2152,7 @@ Generate a {mapped_type.replace('_', ' ')} question based on this content.
 - Marks: {marks}
 - The question must start with an interrogative word (What, Which, How, Why, etc.) or a valid imperative (Find, Calculate, Explain, etc.)
 - The question should directly test understanding of the material
+- The question text must be fully self-contained — do NOT mention "the text", "the reference", "the provided material", "reference [N]", or any source
 - Avoid questions that are too similar to: {', '.join([q[:50] for q in generated_questions[-5:]]) if generated_questions else 'None yet'}
 {lo_context}
 {co_context}
@@ -2591,7 +2593,7 @@ Syllabus content:
 """
                         if reference_context:
                             prompt += f"""
-Additional reference material (use to enrich the question):
+Background knowledge (use to inform the question, do NOT cite or reference it):
 {reference_context}
 """
                         # Build LO/CO context for the LLM
@@ -2617,6 +2619,7 @@ Generate a {q_type.replace('_', ' ')} question based STRICTLY on the chapter "{t
 - The question MUST be about the topic "{topic_name}" — do NOT use content from other chapters
 - Start with an interrogative word (What, Which, How, Why, etc.) or imperative (Find, Calculate, Explain, etc.)
 - Directly test understanding of the material
+- The question text must be fully self-contained — do NOT mention "the text", "the reference", "the provided material", "reference [N]", or any source
 - Avoid questions similar to: {', '.join([q[:50] for q in generated_texts[-5:]]) if generated_texts else 'None yet'}
 {lo_context}
 {co_context}
@@ -2792,6 +2795,7 @@ Guidelines:
 - Start with an interrogative word (What, Which, How, When, etc.) or imperative (Calculate, Find, Determine)
 - All options should be plausible but only one correct
 - Avoid "all of the above" or "none of the above"
+- CRITICAL: The question text must be fully self-contained. NEVER mention, cite, or reference the source material, context, references, or any provided text. Do NOT use phrases like "According to the text", "As discussed in the reference", "Based on the provided material", "As mentioned in reference", "According to reference [N]", "As stated in the context", or any similar phrasing. The question must stand alone as if no source was provided.
 
 Output format (JSON):
 {
@@ -2812,6 +2816,7 @@ Guidelines:
 - The question should require application or analysis of concepts
 - Start with action verbs like Explain, Describe, Compare, Define
 - Be specific about what is expected in the answer
+- CRITICAL: The question text must be fully self-contained. NEVER mention, cite, or reference the source material, context, references, or any provided text. Do NOT use phrases like "According to the text", "As discussed in the reference", "Based on the provided material", "As mentioned in reference", "According to reference [N]", "As stated in the context", or any similar phrasing. The question must stand alone as if no source was provided.
 
 Output format (JSON):
 {
@@ -2825,12 +2830,13 @@ Output format (JSON):
 }"""
     else:
         return """You are an expert educator creating examination questions.
-Generate an long-answer question requiring a detailed response.
+Generate a long-answer question requiring a detailed response.
 
 Guidelines:
 - The question should require analysis, evaluation, or synthesis
 - Start with higher-order verbs like Analyze, Evaluate, Discuss, Compare and contrast
 - Clearly state what aspects should be covered
+- CRITICAL: The question text must be fully self-contained. NEVER mention, cite, or reference the source material, context, references, or any provided text. Do NOT use phrases like "According to the text", "As discussed in the reference", "Based on the provided material", "As mentioned in reference", "According to reference [N]", "As stated in the context", or any similar phrasing. The question must stand alone as if no source was provided.
 
 Output format (JSON):
 {
