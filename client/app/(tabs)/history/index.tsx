@@ -173,9 +173,9 @@ export default function HistoryScreen() {
                                                     <Text style={[styles.sessionTime, { color: colors.textTertiary }]}>
                                                         {formatTime(session.started_at)}
                                                     </Text>
-                                                    <TouchableOpacity onPress={() => handleDeleteSession(session)} hitSlop={8}>
+                                                    {/* <TouchableOpacity onPress={() => handleDeleteSession(session)} hitSlop={8}>
                                                         <IconSymbol name="trash" size={14} color={colors.textTertiary} />
-                                                    </TouchableOpacity>
+                                                    </TouchableOpacity> */}
                                                 </View>
                                             </View>
 
@@ -302,11 +302,11 @@ export default function HistoryScreen() {
                             <TouchableOpacity onPress={() => setSelectedSession(null)}>
                                 <IconSymbol name="xmark.circle.fill" size={28} color={colors.textTertiary} />
                             </TouchableOpacity>
-                            {selectedSession && (
+                            {/* {selectedSession && (
                                 <TouchableOpacity onPress={() => handleDeleteSession(selectedSession)}>
                                     <IconSymbol name="trash.fill" size={20} color="#FF3B30" />
                                 </TouchableOpacity>
-                            )}
+                            )} */}
                         </View>
                         {selectedSession && (
                             <View style={styles.modalMeta}>

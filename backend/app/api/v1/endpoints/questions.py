@@ -1845,6 +1845,27 @@ async def generate_from_rubric(
 
             yield f"data: {json.dumps({'status': 'processing', 'progress': 10, 'message': f'Prepared {len(all_chunks)} content sections from {len(topic_data)} topics + {ref_count} reference excerpts'})}\n\n"
             
+            # Create a GenerationSession so this shows up in history
+            rubric_session_id = uuid.uuid4()
+            rubric_gen_session = GenerationSession(
+                id=rubric_session_id,
+                user_id=current_user.id,
+                subject_id=uuid.UUID(subject_id_str),
+                topic_id=uuid.UUID(str(request.topic_id)) if request.topic_id else None,
+                generation_method="rubric",
+                requested_count=total_questions,
+                status="in_progress",
+                started_at=datetime.now(timezone.utc),
+                generation_config={
+                    "rubric_id": str(rubric_id),
+                    "rubric_name": rubric_name,
+                    "question_distribution": question_distribution,
+                },
+            )
+            db.add(rubric_gen_session)
+            await db.commit()
+            await db.refresh(rubric_gen_session)
+            
             questions_generated = 0
             questions_failed = 0
             generated_questions = []  # Track for duplicate detection
@@ -2027,6 +2048,7 @@ Output valid JSON only."""
 
                         # Create question (accepted candidate) with LO/CO and metadata
                         question = Question(
+                            session_id=rubric_session_id,
                             subject_id=uuid.UUID(subject_id_str),
                             topic_id=uuid.UUID(selected_chunk["topic_id"]),
                             question_text=question_text,
@@ -2070,6 +2092,16 @@ Output valid JSON only."""
                         await db.rollback()
                         continue
             
+            # Finalize rubric session
+            try:
+                rubric_gen_session.questions_generated = questions_generated
+                rubric_gen_session.questions_failed = questions_failed
+                rubric_gen_session.status = "completed"
+                rubric_gen_session.completed_at = datetime.now(timezone.utc)
+                await db.commit()
+            except Exception as e:
+                logger.error(f"[{request_id}] Error finalizing rubric session: {e}")
+
             # Update subject stats
             try:
                 result = await db.execute(
@@ -2240,6 +2272,26 @@ async def generate_chapter(
 
             yield f"data: {json.dumps({'status': 'processing', 'progress': 10, 'message': f'Prepared {len(syllabus_chunks)} content sections + {ref_count} reference excerpts'})}\n\n"
 
+            # ── Create a GenerationSession for chapter generation ──
+            chapter_session_id = uuid.uuid4()
+            chapter_gen_session = GenerationSession(
+                id=chapter_session_id,
+                user_id=user_id,
+                subject_id=uuid.UUID(subject_id_str),
+                topic_id=uuid.UUID(topic_id_str),
+                generation_method="chapter",
+                requested_count=total_questions,
+                status="in_progress",
+                started_at=datetime.now(timezone.utc),
+                generation_config={
+                    "topic_name": topic_name,
+                    "question_types": request.question_types,
+                },
+            )
+            db.add(chapter_gen_session)
+            await db.commit()
+            await db.refresh(chapter_gen_session)
+
             # ── Preload existing embeddings ──
             existing_embeddings = []
             try:
@@ -2386,6 +2438,7 @@ Output valid JSON only."""
                                     assigned_co_map = {co_id: 1}
 
                             question = Question(
+                                session_id=chapter_session_id,
                                 subject_id=uuid.UUID(subject_id_str),
                                 topic_id=uuid.UUID(topic_id_str),
                                 question_text=candidate_text,
@@ -2427,6 +2480,16 @@ Output valid JSON only."""
                         questions_failed += 1
                         await db.rollback()
                         continue
+
+            # Finalize chapter session
+            try:
+                chapter_gen_session.questions_generated = questions_generated
+                chapter_gen_session.questions_failed = questions_failed
+                chapter_gen_session.status = "completed"
+                chapter_gen_session.completed_at = datetime.now(timezone.utc)
+                await db.commit()
+            except Exception as e:
+                logger.error(f"[{request_id}] Error finalizing chapter session: {e}")
 
             # Update subject stats
             try:

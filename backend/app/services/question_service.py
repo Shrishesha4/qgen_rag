@@ -1676,6 +1676,9 @@ Output valid JSON only."""
             session = GenerationSession(
                 document_id=document_id,
                 user_id=user_id,
+                subject_id=subject_id,
+                topic_id=topic_id,
+                generation_method="quick",
                 requested_count=count,
                 requested_types=types,
                 requested_difficulty=difficulty,
@@ -2164,6 +2167,9 @@ Output valid JSON only."""
             session = GenerationSession(
                 document_id=document_id,
                 user_id=user_id,
+                subject_id=subject_id,
+                topic_id=topic_id,
+                generation_method="quick",
                 requested_count=count,
                 requested_types=types,
                 requested_difficulty=difficulty,
