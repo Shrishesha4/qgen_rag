@@ -83,7 +83,7 @@ export const vettingService = {
    */
   async vetQuestion(questionId: string, status: 'approved' | 'rejected', notes?: string): Promise<Question> {
     const data: VettingRequest = { status, notes };
-    const response = await apiClient.post<Question>(`/questions/${questionId}/vet`, data);
+    const response = await apiClient.post<Question>(`/questions/${questionId}/vet`, data, { timeout: 120000 });
     return response.data;
   },
 

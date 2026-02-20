@@ -579,14 +579,14 @@ export default function SubjectDetailScreen() {
               onPress={() => router.push(`/(tabs)/home/generate?subjectId=${id}` as never)}
             >
               <IconSymbol name="sparkles" size={18} color="#FFFFFF" />
-              <Text style={styles.actionButtonText}>Generate Exam</Text>
+              <Text style={styles.actionButtonText}>Exam</Text>
             </TouchableOpacity>
             <TouchableOpacity
               style={[styles.actionButton, { backgroundColor: colors.secondary }]}
               onPress={() => router.push(`/(tabs)/home/questions?subjectId=${id}` as never)}
             >
               <IconSymbol name="list.bullet" size={18} color="#FFFFFF" />
-              <Text style={styles.actionButtonText}>View Questions</Text>
+              <Text style={styles.actionButtonText}>Questions</Text>
             </TouchableOpacity>
             <TouchableOpacity
               style={[styles.actionButton, { backgroundColor: '#FF9500' }]}

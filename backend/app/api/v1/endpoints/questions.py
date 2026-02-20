@@ -45,6 +45,51 @@ MIME_TYPE_MAPPING = {
 router = APIRouter()
 
 
+def _sanitize_question_fields(kwargs: dict) -> dict:
+    """
+    Sanitize Question field values to fit within DB column limits.
+    Extracts short IDs from verbose LLM responses (e.g. 'LO2 - description...' → 'LO2').
+    """
+    import re as _re
+
+    # Extract short LO ID from verbose string
+    lo = kwargs.get("learning_outcome_id")
+    if lo and isinstance(lo, str) and len(lo) > 50:
+        # Try to extract 'LO1', 'LO2', etc.
+        m = _re.match(r"(LO\d+)", lo)
+        kwargs["learning_outcome_id"] = m.group(1) if m else lo[:50]
+    elif lo and isinstance(lo, str):
+        kwargs["learning_outcome_id"] = lo[:50]
+
+    # Sanitize CO mapping keys (truncate verbose keys)
+    co_map = kwargs.get("course_outcome_mapping")
+    if co_map and isinstance(co_map, dict):
+        clean_map = {}
+        for k, v in co_map.items():
+            if isinstance(k, str) and len(k) > 20:
+                m = _re.match(r"(CO\d+)", k)
+                k = m.group(1) if m else k[:20]
+            clean_map[k] = v
+        kwargs["course_outcome_mapping"] = clean_map
+
+    # Truncate other VARCHAR fields to their column limits
+    _limits = {
+        "question_type": 50,
+        "difficulty_level": 20,
+        "bloom_taxonomy_level": 30,
+        "vetting_status": 20,
+        "similarity_source": 50,
+        "generation_status": 20,
+        "user_difficulty_rating": 20,
+    }
+    for field, limit in _limits.items():
+        val = kwargs.get(field)
+        if val and isinstance(val, str) and len(val) > limit:
+            kwargs[field] = val[:limit]
+
+    return kwargs
+
+
 @router.post("/generate")
 async def generate_questions(
     request: QuestionGenerationRequest,
@@ -1062,42 +1107,74 @@ async def vet_question(
     await db.commit()
     await db.refresh(question)
     
+    # Eagerly snapshot the question fields BEFORE regeneration (which may do internal
+    # commits/rollbacks that invalidate the ORM object's lazy-loadable attributes).
+    question_snapshot = {
+        "id": question.id,
+        "document_id": question.document_id,
+        "subject_id": question.subject_id,
+        "topic_id": question.topic_id,
+        "session_id": getattr(question, "session_id", None),
+        "question_text": question.question_text,
+        "question_type": question.question_type,
+        "marks": question.marks,
+        "difficulty_level": question.difficulty_level,
+        "bloom_taxonomy_level": question.bloom_taxonomy_level,
+        "correct_answer": question.correct_answer,
+        "options": question.options,
+        "explanation": question.explanation,
+        "topic_tags": question.topic_tags,
+        "course_outcome_mapping": question.course_outcome_mapping,
+        "learning_outcome_id": question.learning_outcome_id,
+        "vetting_status": question.vetting_status,
+        "vetted_by": question.vetted_by,
+        "vetted_at": question.vetted_at,
+        "vetting_notes": question.vetting_notes,
+        "answerability_score": question.answerability_score,
+        "specificity_score": question.specificity_score,
+        "generation_confidence": question.generation_confidence,
+        "generated_at": question.generated_at,
+        "times_shown": question.times_shown,
+        "user_rating": question.user_rating,
+        "is_archived": question.is_archived,
+    }
+
     if vetting_data.status == "rejected":
         replacement = None
         qsvc = QuestionGenerationService(db)
         
         from loguru import logger
-        logger.info(f"Question rejected: {question_id}, document_id={question.document_id}, subject_id={question.subject_id}")
+        logger.info(f"Question rejected: {question_id}, document_id={question_snapshot['document_id']}, subject_id={question_snapshot['subject_id']}")
         
-        if question.document_id:
+        if question_snapshot["document_id"]:
             # Document-based question: regenerate using quick_generate
-            q_type = question.question_type or "mcq"
+            q_type = question_snapshot["question_type"] or "mcq"
             marks_map = {"mcq": 1, "short_answer": 2, "long_answer": 5}
-            if question.marks and q_type in marks_map:
-                marks_map[q_type] = question.marks
-            context = (question.question_text or "")[:500] if question.question_text else "Replacement question"
+            if question_snapshot["marks"] and q_type in marks_map:
+                marks_map[q_type] = question_snapshot["marks"]
+            context = (question_snapshot["question_text"] or "")[:500] if question_snapshot["question_text"] else "Replacement question"
 
             # Ensure we regenerate the same question type but prefer a different question text/topic/LO
-            subject_for_gen = question.subject_id
+            subject_for_gen = question_snapshot["subject_id"]
             topic_for_gen = None  # explicitly unset so generator can pick other chapters
 
             bloom_levels_all = ["remember", "understand", "apply", "analyze", "evaluate", "create"]
             bloom_to_use = None
-            if question.bloom_taxonomy_level and question.bloom_taxonomy_level in bloom_levels_all:
-                bloom_candidates = [b for b in bloom_levels_all if b != question.bloom_taxonomy_level]
+            if question_snapshot["bloom_taxonomy_level"] and question_snapshot["bloom_taxonomy_level"] in bloom_levels_all:
+                bloom_candidates = [b for b in bloom_levels_all if b != question_snapshot["bloom_taxonomy_level"]]
                 if bloom_candidates:
                     bloom_to_use = bloom_candidates
 
-            logger.info(f"Regenerating via quick_generate for document_id={question.document_id}")
+            logger.info(f"Regenerating via quick_generate for document_id={question_snapshot['document_id']}")
             
             # Generate replacements but accept only those that keep the same type and are sufficiently different
             async for progress in qsvc.quick_generate(
                 user_id=current_user.id,
-                document_id=question.document_id,
+                document_id=question_snapshot["document_id"],
                 context=context,
                 count=1,
                 types=[q_type],
-                difficulty=question.difficulty_level or "medium",
+                difficulty=question_snapshot["difficulty_level"] or "medium",
                 marks_by_type=marks_map,
                 subject_id=subject_for_gen,
                 topic_id=topic_for_gen,
@@ -1110,11 +1187,11 @@ async def vet_question(
                         logger.info(f"Skipping replacement with different type: {candidate.id} ({candidate.question_type})")
                         continue
                     # ensure text differs
-                    if candidate.question_text and question.question_text and candidate.question_text.strip() == question.question_text.strip():
+                    if candidate.question_text and question_snapshot["question_text"] and candidate.question_text.strip() == question_snapshot["question_text"].strip():
                         logger.info(f"Skipping replacement with identical text: {candidate.id}")
                         continue
                     # prefer different topic if available
-                    if candidate.topic_id and question.topic_id and candidate.topic_id == question.topic_id:
+                    if candidate.topic_id and question_snapshot["topic_id"] and candidate.topic_id == question_snapshot["topic_id"]:
                         logger.info(f"Skipping replacement in same topic: {candidate.id}")
                         continue
 
@@ -1128,23 +1205,23 @@ async def vet_question(
             else:
                 logger.info(f"No replacement generated from quick_generate")
         
-        elif question.subject_id:
+        elif question_snapshot["subject_id"]:
             # Rubric-based question: regenerate using rubric-style generation from syllabus
             from app.models.subject import Subject, Topic
             from app.services.llm_service import LLMService
             from app.services.embedding_service import EmbeddingService
             import random
 
-            logger.info(f"Regenerating rubric-based question for subject_id={question.subject_id}")
+            logger.info(f"Regenerating rubric-based question for subject_id={question_snapshot['subject_id']}")
             
-            q_type = question.question_type or "mcq"
-            marks = question.marks or 2
+            q_type = question_snapshot["question_type"] or "mcq"
+            marks = question_snapshot["marks"] or 2
             
             # Get topics with syllabus content from the same subject
             result = await db.execute(
                 select(Topic)
                 .where(
-                    Topic.subject_id == question.subject_id,
+                    Topic.subject_id == question_snapshot["subject_id"],
                     Topic.has_syllabus == True,
                 )
                 .order_by(Topic.order_index)
@@ -1157,7 +1234,7 @@ async def vet_question(
                 for t in topics:
                     if t.syllabus_content:
                         # Skip the same topic if there are other options
-                        if question.topic_id and t.id == question.topic_id and len(topics) > 1:
+                        if question_snapshot["topic_id"] and t.id == question_snapshot["topic_id"] and len(topics) > 1:
                             continue
                         
                         content = t.syllabus_content
@@ -1280,14 +1357,14 @@ Output valid JSON only."""
 
                                 # Create new question (with LO/CO mapping)
                                 new_question = Question(
-                                    subject_id=question.subject_id,
+                                    subject_id=question_snapshot["subject_id"],
                                     topic_id=uuid.UUID(selected_chunk["topic_id"]),
                                     question_text=question_text,
                                     question_embedding=question_embedding,
                                     question_type=q_type,
                                     marks=marks,
-                                    difficulty_level=question.difficulty_level or "medium",
-                                    bloom_taxonomy_level=response.get("bloom_level", "understand"),
+                                    difficulty_level=(question_snapshot["difficulty_level"] or "medium")[:20],
+                                    bloom_taxonomy_level=response.get("bloom_level", "understand")[:30],
                                     correct_answer=response.get("correct_answer") or response.get("expected_answer"),
                                     options=response.get("options"),
                                     explanation=response.get("explanation"),
@@ -1323,7 +1400,15 @@ Output valid JSON only."""
         # (frontend will remove it from the list, no fake replacement)
         logger.info(f"Returning original rejected question (no replacement available)")
     
-    return QuestionResponse.model_validate(question)
+    # Re-fetch the question from DB to get a clean ORM object with all attributes loaded
+    fresh = await db.execute(
+        select(Question).where(Question.id == question_snapshot["id"])
+    )
+    fresh_question = fresh.scalar_one_or_none()
+    if fresh_question:
+        return QuestionResponse.model_validate(fresh_question)
+    # Fallback: build response from snapshot dict
+    return QuestionResponse(**question_snapshot)
 
 
 @router.put("/{question_id}/co-mapping", response_model=QuestionResponse)
@@ -2046,6 +2131,16 @@ Output valid JSON only."""
                                 co_id = subject_cos[idx].get('id', f'CO{idx+1}') if isinstance(subject_cos[idx], dict) else f'CO{idx+1}'
                                 assigned_co_map = {co_id: 1}
 
+                        # Sanitize fields to fit DB column limits
+                        _s = _sanitize_question_fields({
+                            "learning_outcome_id": assigned_lo,
+                            "course_outcome_mapping": assigned_co_map,
+                            "bloom_taxonomy_level": (response_obj.get("bloom_level") if response_obj else "understand"),
+                            "difficulty_level": "medium",
+                        })
+                        assigned_lo = _s["learning_outcome_id"]
+                        assigned_co_map = _s["course_outcome_mapping"]
+
                         # Create question (accepted candidate) with LO/CO and metadata
                         question = Question(
                             session_id=rubric_session_id,
@@ -2055,8 +2150,8 @@ Output valid JSON only."""
                             question_embedding=question_embedding,
                             question_type=mapped_type,
                             marks=marks,
-                            difficulty_level="medium",
-                            bloom_taxonomy_level=(response_obj.get("bloom_level") if response_obj else "understand"),
+                            difficulty_level=_s["difficulty_level"],
+                            bloom_taxonomy_level=_s["bloom_taxonomy_level"],
                             correct_answer=(response_obj.get("correct_answer") or (response_obj.get("expected_answer") if response_obj else None)),
                             options=(response_obj.get("options") if response_obj else None),
                             explanation=(response_obj.get("explanation") if response_obj else None),
@@ -2227,20 +2322,52 @@ async def generate_chapter(
     logger.info(f"[{request_id}] Chapter gen: topic={topic_name} ({topic_id_str}), {total_questions} questions")
 
     # ── Chunk the syllabus ──
-    paragraphs = re.split(r'\n\n+', topic_content)
-    syllabus_chunks = []
-    current_chunk = ""
-    for para in paragraphs:
-        if len(current_chunk) + len(para) < 1500:
-            current_chunk += "\n\n" + para if current_chunk else para
-        else:
-            if current_chunk:
-                syllabus_chunks.append(current_chunk.strip())
-            current_chunk = para
-    if current_chunk:
-        syllabus_chunks.append(current_chunk.strip())
-    if not syllabus_chunks:
-        syllabus_chunks = [topic_content]
+    # Multi-level splitting: try double newlines first, then single newlines,
+    # then sentence boundaries. Also break long single blocks into ~1000-char chunks.
+    CHUNK_TARGET = 1000
+    CHUNK_MAX = 1800
+
+    def _smart_chunk(text: str) -> list:
+        """Split text into chunks of ~CHUNK_TARGET chars, using natural boundaries."""
+        # Try double-newline paragraphs first
+        parts = re.split(r'\n\n+', text)
+        # If only 1 big block, try single newlines
+        if len(parts) <= 1:
+            parts = re.split(r'\n', text)
+        # If still only 1, try sentence boundaries
+        if len(parts) <= 1:
+            parts = re.split(r'(?<=[.!?])\s+', text)
+
+        chunks = []
+        current = ""
+        for part in parts:
+            part = part.strip()
+            if not part:
+                continue
+            if len(current) + len(part) < CHUNK_TARGET:
+                current += "\n\n" + part if current else part
+            else:
+                if current:
+                    chunks.append(current.strip())
+                # If single part exceeds max, split by sentences
+                if len(part) > CHUNK_MAX:
+                    sentences = re.split(r'(?<=[.!?])\s+', part)
+                    sub = ""
+                    for s in sentences:
+                        if len(sub) + len(s) < CHUNK_TARGET:
+                            sub += " " + s if sub else s
+                        else:
+                            if sub:
+                                chunks.append(sub.strip())
+                            sub = s
+                    current = sub
+                else:
+                    current = part
+        if current and current.strip():
+            chunks.append(current.strip())
+        return chunks if chunks else [text]
+
+    syllabus_chunks = _smart_chunk(topic_content)
 
     async def event_generator():
         db = AsyncSessionLocal()
@@ -2437,6 +2564,16 @@ Output valid JSON only."""
                                     co_id = subject_cos[idx].get('id', f'CO{idx+1}') if isinstance(subject_cos[idx], dict) else f'CO{idx+1}'
                                     assigned_co_map = {co_id: 1}
 
+                            # Sanitize fields to fit DB column limits
+                            _s = _sanitize_question_fields({
+                                "learning_outcome_id": assigned_lo,
+                                "course_outcome_mapping": assigned_co_map,
+                                "bloom_taxonomy_level": (resp.get("bloom_level") if resp else "understand"),
+                                "difficulty_level": "medium",
+                            })
+                            assigned_lo = _s["learning_outcome_id"]
+                            assigned_co_map = _s["course_outcome_mapping"]
+
                             question = Question(
                                 session_id=chapter_session_id,
                                 subject_id=uuid.UUID(subject_id_str),
@@ -2445,8 +2582,8 @@ Output valid JSON only."""
                                 question_embedding=candidate_emb,
                                 question_type=q_type,
                                 marks=marks,
-                                difficulty_level="medium",
-                                bloom_taxonomy_level=(resp.get("bloom_level") if resp else "understand"),
+                                difficulty_level=_s["difficulty_level"],
+                                bloom_taxonomy_level=_s["bloom_taxonomy_level"],
                                 correct_answer=(resp.get("correct_answer") or resp.get("expected_answer")),
                                 options=resp.get("options"),
                                 explanation=resp.get("explanation"),

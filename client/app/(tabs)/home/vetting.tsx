@@ -44,7 +44,7 @@ export default function VettingScreen() {
   const colors = Colors[colorScheme ?? 'light'];
   const isDark = colorScheme === 'dark';
   const { showError, showSuccess } = useToast();
-  
+
   const [questions, setQuestions] = useState<PendingQuestion[]>([]);
   const [stats, setStats] = useState<VettingStats | null>(null);
   const [isLoading, setIsLoading] = useState(true);
@@ -56,7 +56,7 @@ export default function VettingScreen() {
   const [coMappings, setCoMappings] = useState<Record<string, CourseOutcomeMapping>>({});
   const [replacedQuestionId, setReplacedQuestionId] = useState<string | null>(null);
   const [regenerating, setRegenerating] = useState<Record<string, boolean>>({});
-  
+
   // Edit state for marks and subject/topic
   const [editMarks, setEditMarks] = useState<Record<string, number>>({});
   const [editDifficulty, setEditDifficulty] = useState<Record<string, string>>({});
@@ -67,7 +67,7 @@ export default function VettingScreen() {
   const [answerEditMode, setAnswerEditMode] = useState<Record<string, boolean>>({});
   const [answerDraft, setAnswerDraft] = useState<Record<string, string | null>>({});
   const [savingAnswer, setSavingAnswer] = useState<string | null>(null);
-  
+
   // Subject/Topic picker state
   const [subjects, setSubjects] = useState<Subject[]>([]);
   const [topics, setTopics] = useState<Record<string, Topic[]>>({});
@@ -283,7 +283,7 @@ export default function VettingScreen() {
       await vettingService.vetQuestion(questionId, 'approved');
       setQuestions((prev) => prev.filter((q) => q.id !== questionId));
       showSuccess('Question approved');
-      loadData(); // Refresh stats
+      refreshStatsOnly();
     } catch (error) {
       showError(error, 'Approval Failed');
     }
@@ -312,7 +312,7 @@ export default function VettingScreen() {
               console.log('Replacement ID:', replacement?.id);
               console.log('Original question ID:', questionId);
               console.log('Is different ID?', replacement?.id !== questionId);
-              
+
               if (replacement && replacement.id && replacement.id !== questionId) {
                 console.log('Replacing question with new one');
                 // Filter out both the original question AND any existing question with the replacement ID
@@ -383,7 +383,7 @@ export default function VettingScreen() {
               } else {
                 setQuestions((prev) => prev.filter((q) => q.id !== questionId));
                 showSuccess('Question rejected');
-                loadData();
+                refreshStatsOnly();
               }
             } catch (error) {
               // clear regenerating flag on error too
@@ -451,11 +451,11 @@ export default function VettingScreen() {
 
   const renderStatsCard = () => {
     if (!stats) return null;
-    
-    const approvalRate = stats.total_vetted > 0 
-      ? Math.round((stats.approved / stats.total_vetted) * 100) 
+
+    const approvalRate = stats.total_vetted > 0
+      ? Math.round((stats.approved / stats.total_vetted) * 100)
       : 0;
-    
+
     return (
       <View style={[styles.statsContainer, { backgroundColor: colors.card }]}>
         <View style={styles.statsRow}>
@@ -483,7 +483,7 @@ export default function VettingScreen() {
   const renderQuestionCard = (question: PendingQuestion) => {
     const isExpanded = expandedQuestion === question.id;
     const mapping = coMappings[question.id] || {};
-    
+
     return (
       <View
         key={question.id}
@@ -622,7 +622,7 @@ export default function VettingScreen() {
               <IconSymbol name="slider.horizontal.3" size={16} color="#FFFFFF" />
               <Text style={styles.coHeaderText}>Marks & Difficulty</Text>
             </LinearGradient>
-            
+
             <View style={styles.editRow}>
               <Text style={[styles.editLabel, { color: colors.text }]}>Marks</Text>
               <View style={styles.marksInputWrapper}>
@@ -646,7 +646,7 @@ export default function VettingScreen() {
                 </TouchableOpacity>
               </View>
             </View>
-            
+
             <View style={[styles.editRow, { marginTop: Spacing.md }]}>
               <Text style={[styles.editLabel, { color: colors.text }]}>Difficulty</Text>
               <View style={styles.difficultyButtons}>
@@ -726,7 +726,7 @@ export default function VettingScreen() {
               <IconSymbol name="list.number" size={16} color="#FFFFFF" />
               <Text style={styles.coHeaderText}>Course Outcome Mapping</Text>
             </LinearGradient>
-            
+
             <View style={styles.coMappingGrid}>
               {COURSE_OUTCOMES.map((co) => (
                 <View key={co} style={styles.coRow}>
@@ -770,7 +770,7 @@ export default function VettingScreen() {
             <View style={{ marginBottom: Spacing.md }}>
               {!answerEditMode[question.id] ? (
                 <>
-                  <View style={[styles.answerContainer, { backgroundColor: isDark ? 'rgba(255,255,255,0.02)' : 'rgba(0,0,0,0.02)', borderColor: colors.border }]}> 
+                  <View style={[styles.answerContainer, { backgroundColor: isDark ? 'rgba(255,255,255,0.02)' : 'rgba(0,0,0,0.02)', borderColor: colors.border }]}>
                     <Text style={[styles.answerLabel, { color: colors.textSecondary }]}>Answer</Text>
                     <Text style={[styles.answerText, { color: colors.text }]} numberOfLines={4}>{answerDraft[question.id] ?? question.correct_answer ?? '—'}</Text>
                     <TouchableOpacity onPress={() => setAnswerEditMode(prev => ({ ...prev, [question.id]: true }))} style={{ marginLeft: Spacing.sm }}>
@@ -902,7 +902,7 @@ export default function VettingScreen() {
           </>
         )}
         ListEmptyComponent={() => (
-          <View style={[styles.section, { paddingTop: 20 }]}> 
+          <View style={[styles.section, { paddingTop: 20 }]}>
             <View style={[styles.emptyCard, { backgroundColor: colors.card }]}>
               <IconSymbol name="checkmark.circle" size={48} color={colors.success} />
               <Text style={[styles.emptyTitle, { color: colors.text }]}>All Caught Up!</Text>
