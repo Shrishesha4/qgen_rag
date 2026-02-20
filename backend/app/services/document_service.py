@@ -98,8 +98,8 @@ class DocumentService:
         Upload a reference document (book or template paper).
         These are stored in a separate index for novelty comparison.
         """
-        if index_type not in ("reference_book", "template_paper"):
-            raise ValueError("index_type must be 'reference_book' or 'template_paper'")
+        if index_type not in ("reference_book", "template_paper", "reference_questions"):
+            raise ValueError("index_type must be 'reference_book', 'template_paper', or 'reference_questions'")
         
         return await self.upload_document(
             user_id=user_id,
@@ -599,13 +599,12 @@ class DocumentService:
         index_type: Optional[str] = None,
     ) -> List[Document]:
         """
-        Get reference documents (books and template papers) for a user.
-        Optionally filter by subject and type.
+        Get reference documents (books, template papers, and reference questions) for a user.
+        Includes all processing statuses so users can see pending/processing uploads.
         """
         query = select(Document).where(
             Document.user_id == user_id,
-            Document.index_type.in_(["reference_book", "template_paper"]),
-            Document.processing_status == "completed",
+            Document.index_type.in_(["reference_book", "template_paper", "reference_questions"]),
         )
         
         if subject_id:
@@ -613,6 +612,8 @@ class DocumentService:
         
         if index_type:
             query = query.where(Document.index_type == index_type)
+        
+        query = query.order_by(Document.upload_timestamp.desc())
         
         result = await self.db.execute(query)
         return result.scalars().all()

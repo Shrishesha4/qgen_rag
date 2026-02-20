@@ -581,7 +581,7 @@ export default function SubjectDetailScreen() {
               onPress={() => router.push(`/(tabs)/home/generate?subjectId=${id}` as never)}
             >
               <IconSymbol name="sparkles" size={18} color="#FFFFFF" />
-              <Text style={styles.actionButtonText}>Exam</Text>
+              <Text style={styles.actionButtonText}>Generate</Text>
             </TouchableOpacity>
             <TouchableOpacity
               style={[styles.actionButton, { backgroundColor: colors.secondary }]}
@@ -600,14 +600,7 @@ export default function SubjectDetailScreen() {
               ) : (
                 <IconSymbol name="square.and.arrow.down.fill" size={18} color="#FFFFFF" />
               )}
-              <Text style={styles.actionButtonText}>{isImporting ? 'Importing...' : 'Import'}</Text>
-            </TouchableOpacity>
-            <TouchableOpacity
-              style={[styles.actionButton, { backgroundColor: '#8E8E93' }]}
-              onPress={() => router.push('/(tabs)/history' as never)}
-            >
-              <IconSymbol name="clock.arrow.circlepath" size={18} color="#FFFFFF" />
-              <Text style={styles.actionButtonText}>History</Text>
+              <Text style={styles.actionButtonText}>{isImporting ? 'Importing...' : "Import Q&A's"}</Text>
             </TouchableOpacity>
           </View>
 
@@ -825,7 +818,7 @@ export default function SubjectDetailScreen() {
                       quick: '#007AFF', rubric: '#AF52DE', chapter: '#34C759', import: '#FF9500',
                     };
                     const methodLabels: Record<string, string> = {
-                      quick: 'Quick', rubric: 'Rubric', chapter: 'Chapter', import: 'Import',
+                      quick: 'Quick', rubric: 'Rubric', chapter: 'Chapter-wise', import: 'Import',
                     };
                     const mColor = methodColors[session.generation_method || ''] || '#8E8E93';
                     const mLabel = methodLabels[session.generation_method || ''] || 'Generated';
@@ -1449,9 +1442,10 @@ const styles = StyleSheet.create({
     gap: Spacing.xs,
   },
   sectionTitle: {
-    fontSize: FontSizes.xs,
+    fontSize: FontSizes.sm,
     fontWeight: '600',
     letterSpacing: 0.5,
+    paddingBottom: Spacing.md,
   },
   addButton: {
     flexDirection: 'row',

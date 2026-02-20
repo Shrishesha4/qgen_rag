@@ -30,7 +30,7 @@ class Settings(BaseSettings):
 
     # File Upload
     UPLOAD_DIR: str = Field(default="./uploads")
-    MAX_UPLOAD_SIZE_MB: int = Field(default=50)
+    MAX_UPLOAD_SIZE_MB: int = Field(default=500)
     ALLOWED_EXTENSIONS: List[str] = Field(default=[".pdf", ".docx", ".txt", ".xlsx", ".csv"])
 
     # Rate Limiting

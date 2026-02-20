@@ -45,6 +45,62 @@ MIME_TYPE_MAPPING = {
 router = APIRouter()
 
 
+# ── Question Starter Diversity Pool ──────────────────────────────────────────
+# Organised by question type so the LLM gets type-appropriate starters.
+# Each batch cycles through these to ensure no two questions share the same opening.
+_QUESTION_STARTERS: dict[str, list[str]] = {
+    "mcq": [
+        "Which", "What", "How", "Why", "When", "Where", "Who",
+        "Select", "Identify", "Choose", "Determine", "Classify",
+        "Given that", "According to", "In the context of",
+        "From the following", "Among the following",
+        "A student observes", "A system", "An engineer",
+    ],
+    "short_answer": [
+        "Explain", "Describe", "Define", "Outline", "Summarize",
+        "Distinguish", "Compare", "Contrast", "Illustrate", "Justify",
+        "State", "List", "Mention", "Write", "Give",
+        "What is meant by", "What are the", "How does", "Why is",
+        "In what way", "What happens when", "What are the effects of",
+        "Briefly explain", "With an example", "Using a diagram",
+    ],
+    "long_answer": [
+        "Analyze", "Evaluate", "Discuss", "Examine", "Elaborate",
+        "Critically analyze", "Compare and contrast", "With the help of",
+        "Derive", "Prove", "Show that", "Sketch and explain",
+        "Design a", "Propose", "Formulate", "Develop",
+        "Assess", "Critique", "Investigate", "Synthesize",
+        "With suitable examples", "With a neat diagram",
+    ],
+    # default pool used when type is unknown
+    "default": [
+        "What", "How", "Why", "Which", "Describe", "Explain",
+        "Analyze", "Define", "Discuss", "Evaluate", "Identify",
+        "Compare", "Illustrate", "Justify", "State",
+    ],
+}
+
+
+def _pick_starter(q_type: str, used_starters: list[str]) -> str:
+    """
+    Pick the next unused starter word for a question type, cycling through
+    the pool to guarantee variety across a generation batch.
+    """
+    import random
+    pool = _QUESTION_STARTERS.get(q_type, _QUESTION_STARTERS["default"])
+    # Prefer starters not yet used in this batch
+    available = [s for s in pool if s not in used_starters]
+    if not available:
+        # All used — reset and pick randomly
+        used_starters.clear()
+        available = pool
+    chosen = random.choice(available)
+    used_starters.append(chosen)
+    return chosen
+
+
+# ─────────────────────────────────────────────────────────────────────────────
+
 def _sanitize_question_fields(kwargs: dict) -> dict:
     """
     Sanitize Question field values to fit within DB column limits.
@@ -1397,12 +1453,16 @@ Output valid JSON only."""
                     embedding_service = EmbeddingService()
 
                     system_prompt = _get_rubric_system_prompt(q_type)
+                    # Use a random starter from the pool for regen
+                    import random as _r
+                    regen_starter = _r.choice(_QUESTION_STARTERS.get(q_type, _QUESTION_STARTERS["default"]))
                     prompt = f"""Context from "{selected_chunk['topic_name']}":
 {selected_chunk['content']}
 
 Generate a {q_type.replace('_', ' ')} question based on this content.
 - Marks: {marks}
-- The question must start with an interrogative word or a valid imperative
+- REQUIRED: Your question MUST start with the word/phrase "{regen_starter}" — this is non-negotiable
+- The question text must be fully self-contained — do NOT mention "the text", "the reference", or any source
 - IMPORTANT: Generate a DIFFERENT question from: "{question_snapshot["question_text"][:100]}..."
 
 Output valid JSON only."""
@@ -2077,6 +2137,7 @@ async def generate_from_rubric(
             generated_questions = []  # Track for duplicate detection
             generated_embeddings = []  # Track embeddings for semantic dedupe within this session
             existing_question_embeddings = []  # Preloaded DB embeddings for subject-level dedupe
+            used_starters_rubric: list[str] = []  # Track starters for variety
 
             # Preload existing question embeddings for this subject to reduce false positives
             try:
@@ -2136,6 +2197,9 @@ async def generate_from_rubric(
                         selected_chunk = all_chunks[selected_idx]
                         chunk_index = (chunk_index + chunks_per_question) % len(all_chunks)
                         
+                        # Pick a unique starter for this question
+                        starter = _pick_starter(mapped_type, used_starters_rubric)
+
                         # Build enhanced prompt
                         system_prompt = _get_rubric_system_prompt(mapped_type)
                         
@@ -2150,8 +2214,7 @@ Background knowledge (use to inform the question, do NOT cite or reference it):
                         prompt += f"""
 Generate a {mapped_type.replace('_', ' ')} question based on this content.
 - Marks: {marks}
-- The question must start with an interrogative word (What, Which, How, Why, etc.) or a valid imperative (Find, Calculate, Explain, etc.)
-- The question should directly test understanding of the material
+- REQUIRED: Your question MUST start with the word/phrase "{starter}" — this is non-negotiable
 - The question text must be fully self-contained — do NOT mention "the text", "the reference", "the provided material", "reference [N]", or any source
 - Avoid questions that are too similar to: {', '.join([q[:50] for q in generated_questions[-5:]]) if generated_questions else 'None yet'}
 {lo_context}
@@ -2558,6 +2621,7 @@ async def generate_chapter(
             questions_generated = 0
             questions_failed = 0
             generated_texts = []
+            used_starters_chapter: list[str] = []  # Track starters for variety
             generated_embeddings = []
 
             RETRY_LIMIT = 5
@@ -2613,12 +2677,14 @@ Background knowledge (use to inform the question, do NOT cite or reference it):
                             if all_cos:
                                 co_context += f"\nAvailable Course Outcomes for this subject: {', '.join(sorted(all_cos))}"
 
+                        # Pick a unique starter for this question
+                        starter = _pick_starter(q_type, used_starters_chapter)
+
                         prompt += f"""
 Generate a {q_type.replace('_', ' ')} question based STRICTLY on the chapter "{topic_name}" content above.
 - Marks: {marks}
 - The question MUST be about the topic "{topic_name}" — do NOT use content from other chapters
-- Start with an interrogative word (What, Which, How, Why, etc.) or imperative (Find, Calculate, Explain, etc.)
-- Directly test understanding of the material
+- REQUIRED: Your question MUST start with the word/phrase "{starter}" — this is non-negotiable
 - The question text must be fully self-contained — do NOT mention "the text", "the reference", "the provided material", "reference [N]", or any source
 - Avoid questions similar to: {', '.join([q[:50] for q in generated_texts[-5:]]) if generated_texts else 'None yet'}
 {lo_context}

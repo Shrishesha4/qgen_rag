@@ -60,7 +60,7 @@ export const referencesService = {
       headers: {
         'Content-Type': 'multipart/form-data',
       },
-      timeout: 120000,
+      timeout: 600000, // 10 minutes for large file upload
     });
 
     return response.data;
@@ -89,7 +89,7 @@ export const referencesService = {
       headers: {
         'Content-Type': 'multipart/form-data',
       },
-      timeout: 120000,
+      timeout: 600000, // 10 minutes for large file upload
     });
 
     return response.data;
@@ -118,7 +118,7 @@ export const referencesService = {
       headers: {
         'Content-Type': 'multipart/form-data',
       },
-      timeout: 120000,
+      timeout: 600000, // 10 minutes for large file upload
     });
 
     return response.data;

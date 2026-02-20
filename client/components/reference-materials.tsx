@@ -64,9 +64,9 @@ export function ReferenceMaterials({
       const file = result.assets[0];
       const fileSizeMB = file.size ? (file.size / (1024 * 1024)).toFixed(1) : '?';
 
-      // Validate file size (max 50MB)
-      if (file.size && file.size > 50 * 1024 * 1024) {
-        showError(new Error('File size must be less than 50MB'), 'File Too Large');
+      // Validate file size (max 500MB)
+      if (file.size && file.size > 500 * 1024 * 1024) {
+        showError(new Error('File size must be less than 500MB'), 'File Too Large');
         setIsUploadingBook(false);
         setUploadProgress('');
         return;
@@ -110,9 +110,9 @@ export function ReferenceMaterials({
       const file = result.assets[0];
       const fileSizeMB = file.size ? (file.size / (1024 * 1024)).toFixed(1) : '?';
 
-      // Validate file size (max 50MB)
-      if (file.size && file.size > 50 * 1024 * 1024) {
-        showError(new Error('File size must be less than 50MB'), 'File Too Large');
+      // Validate file size (max 500MB)
+      if (file.size && file.size > 500 * 1024 * 1024) {
+        showError(new Error('File size must be less than 500MB'), 'File Too Large');
         setIsUploadingPaper(false);
         setUploadProgress('');
         return;
@@ -187,8 +187,8 @@ export function ReferenceMaterials({
       const file = result.assets[0];
       const fileSizeMB = file.size ? (file.size / (1024 * 1024)).toFixed(1) : '?';
 
-      if (file.size && file.size > 50 * 1024 * 1024) {
-        showError(new Error('File size must be less than 50MB'), 'File Too Large');
+      if (file.size && file.size > 500 * 1024 * 1024) {
+        showError(new Error('File size must be less than 500MB'), 'File Too Large');
         setIsUploadingQuestions(false);
         setUploadProgress('');
         return;
