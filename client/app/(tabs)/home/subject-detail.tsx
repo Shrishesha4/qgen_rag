@@ -60,6 +60,7 @@ export default function SubjectDetailScreen() {
   // Reference materials state
   const [referenceBooks, setReferenceBooks] = useState<ReferenceDocument[]>([]);
   const [templatePapers, setTemplatePapers] = useState<ReferenceDocument[]>([]);
+  const [referenceQuestions, setReferenceQuestions] = useState<ReferenceDocument[]>([]);
   const [isLoadingReferences, setIsLoadingReferences] = useState(false);
 
   // Chapter generation state
@@ -116,6 +117,7 @@ export default function SubjectDetailScreen() {
       const data = await referencesService.listReferences(id);
       setReferenceBooks(data.reference_books || []);
       setTemplatePapers(data.template_papers || []);
+      setReferenceQuestions(data.reference_questions || []);
     } catch (error) {
       console.error('Error loading references:', error);
       // Don't show error for references, they may not exist yet
@@ -586,7 +588,7 @@ export default function SubjectDetailScreen() {
               onPress={() => router.push(`/(tabs)/home/questions?subjectId=${id}` as never)}
             >
               <IconSymbol name="list.bullet" size={18} color="#FFFFFF" />
-              <Text style={styles.actionButtonText}>Questions</Text>
+              <Text style={styles.actionButtonText}>Q&A's</Text>
             </TouchableOpacity>
             <TouchableOpacity
               style={[styles.actionButton, { backgroundColor: '#FF9500' }]}
@@ -791,6 +793,7 @@ export default function SubjectDetailScreen() {
                 subjectId={id!}
                 referenceBooks={referenceBooks}
                 templatePapers={templatePapers}
+                referenceQuestions={referenceQuestions}
                 onRefresh={loadReferences}
                 isLoading={isLoadingReferences}
               />

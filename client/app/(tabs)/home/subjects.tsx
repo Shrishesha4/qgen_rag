@@ -22,7 +22,7 @@ export default function SubjectsScreen() {
   const colorScheme = useColorScheme();
   const colors = Colors[colorScheme ?? 'light'];
   const { showError, showSuccess, showWarning } = useToast();
-  
+
   const [subjects, setSubjects] = useState<Subject[]>([]);
   const [isLoading, setIsLoading] = useState(true);
   const [isRefreshing, setIsRefreshing] = useState(false);
@@ -47,7 +47,7 @@ export default function SubjectsScreen() {
     const debounceTimer = setTimeout(() => {
       loadSubjects();
     }, 300);
-    
+
     return () => clearTimeout(debounceTimer);
   }, [loadSubjects]);
 
@@ -61,7 +61,7 @@ export default function SubjectsScreen() {
       showWarning('Please fill in all required fields', 'Missing Information');
       return;
     }
-    
+
     setIsCreating(true);
     try {
       await subjectsService.createSubject(newSubject);
@@ -120,21 +120,21 @@ export default function SubjectsScreen() {
           {getSubjectInitials(item.name, item.code)}
         </Text>
       </View>
-      
+
       <View style={styles.subjectInfo}>
         <Text style={[styles.subjectName, { color: colors.text }]}>{item.name}</Text>
         <Text style={[styles.subjectCode, { color: colors.textSecondary }]}>
           {item.code} • {item.total_topics} Chapters
         </Text>
       </View>
-      
+
       <View style={styles.questionsBadge}>
         <IconSymbol name="questionmark.circle" size={14} color={colors.primary} />
         <Text style={[styles.questionsCount, { color: colors.primary }]}>
           {item.total_questions}
         </Text>
       </View>
-      
+
       <IconSymbol name="chevron.right" size={16} color={colors.textTertiary} />
     </TouchableOpacity>
   );
@@ -210,7 +210,7 @@ export default function SubjectsScreen() {
               )}
             </TouchableOpacity>
           </View>
-          
+
           <View style={styles.modalContent}>
             <View style={[styles.inputGroup, { backgroundColor: colors.card }]}>
               <Text style={[styles.inputLabel, { color: colors.textSecondary }]}>
@@ -224,7 +224,7 @@ export default function SubjectsScreen() {
                 onChangeText={(text) => setNewSubject({ ...newSubject, name: text })}
               />
             </View>
-            
+
             <View style={[styles.inputGroup, { backgroundColor: colors.card }]}>
               <Text style={[styles.inputLabel, { color: colors.textSecondary }]}>
                 SUBJECT CODE
@@ -238,7 +238,7 @@ export default function SubjectsScreen() {
                 autoCapitalize="characters"
               />
             </View>
-            
+
             <View style={[styles.inputGroup, { backgroundColor: colors.card }]}>
               <Text style={[styles.inputLabel, { color: colors.textSecondary }]}>
                 DESCRIPTION (OPTIONAL)
@@ -350,7 +350,7 @@ const styles = StyleSheet.create({
   },
   addButton: {
     position: 'absolute',
-    bottom: Spacing.xxl,
+    bottom: Spacing.xxl + 100,
     right: Spacing.lg,
     width: 56,
     height: 56,

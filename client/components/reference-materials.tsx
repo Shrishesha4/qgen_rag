@@ -23,6 +23,7 @@ interface ReferenceMaterialsProps {
   subjectId: string;
   referenceBooks: ReferenceDocument[];
   templatePapers: ReferenceDocument[];
+  referenceQuestions: ReferenceDocument[];
   onRefresh: () => void;
   isLoading?: boolean;
 }
@@ -31,6 +32,7 @@ export function ReferenceMaterials({
   subjectId,
   referenceBooks,
   templatePapers,
+  referenceQuestions,
   onRefresh,
   isLoading = false,
 }: ReferenceMaterialsProps) {
@@ -40,6 +42,7 @@ export function ReferenceMaterials({
 
   const [isUploadingBook, setIsUploadingBook] = useState(false);
   const [isUploadingPaper, setIsUploadingPaper] = useState(false);
+  const [isUploadingQuestions, setIsUploadingQuestions] = useState(false);
   const [uploadProgress, setUploadProgress] = useState('');
   const [deletingId, setDeletingId] = useState<string | null>(null);
 
@@ -161,6 +164,54 @@ export function ReferenceMaterials({
       ]
     );
   }, [onRefresh, showError, showSuccess]);
+
+  const handleUploadReferenceQuestions = useCallback(async () => {
+    setIsUploadingQuestions(true);
+    setUploadProgress('Selecting file...');
+    try {
+      const result = await DocumentPicker.getDocumentAsync({
+        type: [
+          'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
+          'application/vnd.ms-excel',
+          'text/csv',
+        ],
+        copyToCacheDirectory: true,
+      });
+
+      if (result.canceled || !result.assets || result.assets.length === 0) {
+        setIsUploadingQuestions(false);
+        setUploadProgress('');
+        return;
+      }
+
+      const file = result.assets[0];
+      const fileSizeMB = file.size ? (file.size / (1024 * 1024)).toFixed(1) : '?';
+
+      if (file.size && file.size > 50 * 1024 * 1024) {
+        showError(new Error('File size must be less than 50MB'), 'File Too Large');
+        setIsUploadingQuestions(false);
+        setUploadProgress('');
+        return;
+      }
+
+      setUploadProgress(`Uploading ${file.name} (${fileSizeMB}MB)...`);
+
+      await referencesService.uploadReferenceQuestions(
+        subjectId,
+        file.uri,
+        file.name,
+        file.mimeType || 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet'
+      );
+
+      showSuccess('Reference questions uploaded successfully');
+      setTimeout(() => onRefresh(), 500);
+    } catch (error) {
+      showError(error, 'Upload Failed');
+    } finally {
+      setIsUploadingQuestions(false);
+      setUploadProgress('');
+    }
+  }, [subjectId, onRefresh, showError, showSuccess]);
 
   const formatDate = (dateString: string) => {
     const date = new Date(dateString);
@@ -290,7 +341,7 @@ export function ReferenceMaterials({
             )}
           </TouchableOpacity>
         </View>
-        
+
         {isLoading ? (
           <View style={styles.loadingState}>
             <ActivityIndicator size="small" color={colors.primary} />
@@ -339,7 +390,7 @@ export function ReferenceMaterials({
             )}
           </TouchableOpacity>
         </View>
-        
+
         {isLoading ? (
           <View style={styles.loadingState}>
             <ActivityIndicator size="small" color={colors.primary} />
@@ -362,6 +413,108 @@ export function ReferenceMaterials({
             Reference materials help generate more unique questions. When a generated question is too similar to existing ones, the system uses these references to create more diverse alternatives.
           </Text>
         </View>
+      </View>
+
+      {/* Reference Questions Section */}
+      <View style={[styles.section, { backgroundColor: colors.card, marginTop: Spacing.md }]}>
+        <View style={styles.sectionHeader}>
+          <View style={styles.sectionTitleRow}>
+            <View style={[styles.sectionIcon, { backgroundColor: '#34C75915' }]}>
+              <IconSymbol name="doc.text.fill" size={18} color="#34C759" />
+            </View>
+            <Text style={[styles.sectionTitle, { color: colors.text }]}>Reference Questions</Text>
+          </View>
+          <TouchableOpacity
+            style={[
+              styles.uploadButton,
+              { backgroundColor: '#34C759' + '15' },
+              isUploadingQuestions && { opacity: 0.6 },
+            ]}
+            onPress={handleUploadReferenceQuestions}
+            disabled={isUploadingBook || isUploadingPaper || isUploadingQuestions}
+          >
+            {isUploadingQuestions ? (
+              <>
+                <ActivityIndicator size="small" color="#34C759" />
+                <Text style={[styles.uploadButtonText, { color: '#34C759' }]}>
+                  Uploading...
+                </Text>
+              </>
+            ) : (
+              <>
+                <IconSymbol name="plus.circle.fill" size={16} color="#34C759" />
+                <Text style={[styles.uploadButtonText, { color: '#34C759' }]}>
+                  Upload
+                </Text>
+              </>
+            )}
+          </TouchableOpacity>
+        </View>
+
+        <Text style={[styles.sectionDescription, { color: colors.textSecondary }]}>
+          Upload Excel (.xlsx) or CSV files with past exam questions to set the standard for AI-generated questions.
+        </Text>
+
+        {isLoading ? (
+          <View style={styles.loadingState}>
+            <ActivityIndicator size="small" color={colors.primary} />
+          </View>
+        ) : referenceQuestions.length === 0 ? (
+          <View style={styles.emptyState}>
+            <IconSymbol name="tablecells" size={32} color={colors.textTertiary} />
+            <Text style={[styles.emptyText, { color: colors.textSecondary }]}>
+              No reference questions uploaded yet
+            </Text>
+          </View>
+        ) : (
+          <View style={styles.documentList}>
+            {referenceQuestions.map((doc) => (
+              <View
+                key={doc.id}
+                style={[styles.documentItem, { borderBottomColor: colors.border }]}
+              >
+                <View style={[styles.docIcon, { backgroundColor: '#34C75915' }]}>
+                  <IconSymbol name="tablecells" size={20} color="#34C759" />
+                </View>
+                <View style={styles.docInfo}>
+                  <Text style={[styles.docName, { color: colors.text }]} numberOfLines={1}>
+                    {doc.filename}
+                  </Text>
+                  <View style={styles.docMeta}>
+                    <Text style={[styles.docMetaText, { color: colors.textSecondary }]}>
+                      {formatDate(doc.upload_timestamp)}
+                    </Text>
+                    {doc.parsed_question_count != null && doc.parsed_question_count > 0 && (
+                      <>
+                        <View style={[styles.metaDot, { backgroundColor: colors.textTertiary }]} />
+                        <Text style={[styles.docMetaText, { color: '#34C759', fontWeight: '600' }]}>
+                          {doc.parsed_question_count} questions
+                        </Text>
+                      </>
+                    )}
+                    <View style={[styles.metaDot, { backgroundColor: colors.textTertiary }]} />
+                    <View style={[styles.statusBadge, { backgroundColor: getStatusColor(doc.processing_status) + '20' }]}>
+                      <Text style={[styles.statusText, { color: getStatusColor(doc.processing_status) }]}>
+                        {doc.processing_status}
+                      </Text>
+                    </View>
+                  </View>
+                </View>
+                <TouchableOpacity
+                  style={styles.deleteButton}
+                  onPress={() => handleDeleteReference(doc)}
+                  disabled={deletingId === doc.id}
+                >
+                  {deletingId === doc.id ? (
+                    <ActivityIndicator size="small" color={colors.error} />
+                  ) : (
+                    <IconSymbol name="trash.fill" size={18} color={colors.error} />
+                  )}
+                </TouchableOpacity>
+              </View>
+            ))}
+          </View>
+        )}
       </View>
     </View>
   );
@@ -409,6 +562,12 @@ const styles = StyleSheet.create({
   sectionTitle: {
     fontSize: FontSizes.md,
     fontWeight: '600',
+  },
+  sectionDescription: {
+    fontSize: FontSizes.sm,
+    lineHeight: 18,
+    marginBottom: Spacing.md,
+    marginTop: -Spacing.xs,
   },
   uploadButton: {
     flexDirection: 'row',
