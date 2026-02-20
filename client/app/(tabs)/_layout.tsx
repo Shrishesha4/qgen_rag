@@ -30,10 +30,15 @@ export default function TabLayout() {
           <Label>Home</Label>
           <Icon sf="house.fill" />
         </NativeTabs.Trigger>
-        
+
         <NativeTabs.Trigger name="quick-generate">
           <Label>Generate</Label>
           <Icon sf="sparkles" />
+        </NativeTabs.Trigger>
+
+        <NativeTabs.Trigger name="history">
+          <Label>History</Label>
+          <Icon sf="clock.arrow.circlepath" />
         </NativeTabs.Trigger>
       </NativeTabs>
     );
@@ -96,6 +101,15 @@ export default function TabLayout() {
           title: 'Generate',
           tabBarIcon: ({ color }) => (
             <IconSymbol size={28} name="sparkles" color={color} />
+          ),
+        }}
+      />
+      <Tabs.Screen
+        name="history"
+        options={{
+          title: 'History',
+          tabBarIcon: ({ color }) => (
+            <IconSymbol size={26} name="clock.arrow.circlepath" color={color} />
           ),
         }}
       />

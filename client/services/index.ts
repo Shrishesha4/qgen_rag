@@ -5,7 +5,7 @@ export type { User, LoginCredentials, RegisterData, TokenResponse } from './auth
 export { documentsService } from './documents';
 export type { Document, DocumentListItem, DocumentListResponse } from './documents';
 export { questionsService } from './questions';
-export type { Question, GenerationRequest, GenerationProgress, GenerationSession, QuestionStats } from './questions';
+export type { Question, GenerationRequest, GenerationProgress, GenerationSession, QuestionStats, SessionQuestion } from './questions';
 export { subjectsService } from './subjects';
 export type { Subject, SubjectDetail, Topic, LearningOutcome, CourseOutcome } from './subjects';
 export { rubricsService } from './rubrics';

@@ -127,15 +127,24 @@ class GenerationSession(Base):
     id: Mapped[uuid.UUID] = mapped_column(
         UUID(as_uuid=True), primary_key=True, default=uuid.uuid4
     )
-    document_id: Mapped[uuid.UUID] = mapped_column(
-        UUID(as_uuid=True), ForeignKey("documents.id", ondelete="CASCADE"), nullable=False
+    document_id: Mapped[Optional[uuid.UUID]] = mapped_column(
+        UUID(as_uuid=True), ForeignKey("documents.id", ondelete="SET NULL"), nullable=True
     )
     user_id: Mapped[uuid.UUID] = mapped_column(
         UUID(as_uuid=True), ForeignKey("users.id", ondelete="CASCADE"), nullable=False
     )
+    subject_id: Mapped[Optional[uuid.UUID]] = mapped_column(
+        UUID(as_uuid=True), ForeignKey("subjects.id", ondelete="SET NULL"), nullable=True
+    )
+    topic_id: Mapped[Optional[uuid.UUID]] = mapped_column(
+        UUID(as_uuid=True), ForeignKey("topics.id", ondelete="SET NULL"), nullable=True
+    )
+    
+    # Generation method: quick, rubric, chapter, import
+    generation_method: Mapped[Optional[str]] = mapped_column(String(20))
     
     # Request parameters
-    requested_count: Mapped[int] = mapped_column(Integer, nullable=False)
+    requested_count: Mapped[int] = mapped_column(Integer, default=0)
     requested_types: Mapped[Optional[List[str]]] = mapped_column(ARRAY(Text))
     requested_marks: Mapped[Optional[int]] = mapped_column(Integer)
     requested_difficulty: Mapped[Optional[str]] = mapped_column(String(20))

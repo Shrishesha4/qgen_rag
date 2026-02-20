@@ -102,8 +102,14 @@ export interface QuestionUpdateRequest {
 
 export interface GenerationSession {
   id: string;
-  document_id: string;
+  document_id: string | null;
   user_id: string;
+  subject_id: string | null;
+  subject_name: string | null;
+  subject_code: string | null;
+  topic_id: string | null;
+  topic_name: string | null;
+  generation_method: string | null;
   requested_count: number;
   requested_types: string[] | null;
   requested_marks: number | null;
@@ -121,6 +127,23 @@ export interface GenerationSession {
   blacklist_size: number | null;
   chunks_used: number | null;
   error_message: string | null;
+  generation_config: Record<string, unknown> | null;
+}
+
+export interface SessionQuestion {
+  id: string;
+  question_text: string;
+  question_type: string;
+  options: string[] | null;
+  correct_answer: string | null;
+  marks: number | null;
+  difficulty_level: string | null;
+  bloom_taxonomy_level: string | null;
+  course_outcome_mapping: Record<string, number> | null;
+  learning_outcome_id: string | null;
+  topic_tags: string[] | null;
+  vetting_status: string;
+  generated_at: string | null;
 }
 
 export interface QuestionStats {
@@ -291,16 +314,55 @@ export const questionsService = {
    */
   async listSessions(
     documentId?: string,
+    subjectId?: string,
     page: number = 1,
     limit: number = 20
-  ): Promise<{ sessions: GenerationSession[]; pagination: { page: number; limit: number; total: number; total_pages: number } }> {
+  ): Promise<{ sessions: GenerationSession[]; pagination: { page: number; limit: number; total: number; pages: number } }> {
     const params = new URLSearchParams({
       page: page.toString(),
       limit: limit.toString(),
     });
     if (documentId) params.append('document_id', documentId);
+    if (subjectId) params.append('subject_id', subjectId);
 
     const response = await apiClient.get(`/questions/sessions/list?${params}`);
+    return response.data;
+  },
+
+  /**
+   * Get questions for a specific session
+   */
+  async getSessionQuestions(sessionId: string): Promise<{
+    session_id: string;
+    generation_method: string | null;
+    started_at: string | null;
+    questions: SessionQuestion[];
+  }> {
+    const response = await apiClient.get(`/questions/sessions/${sessionId}/questions`);
+    return response.data;
+  },
+
+  /**
+   * Import questions from Excel/CSV file
+   */
+  async importQuestions(
+    file: { uri: string; name: string; type: string },
+    subjectId: string,
+    topicId?: string,
+  ): Promise<{ message: string; imported: number; skipped: number; session_id: string }> {
+    const formData = new FormData();
+    formData.append('file', {
+      uri: file.uri,
+      name: file.name,
+      type: file.type,
+    } as unknown as Blob);
+    formData.append('subject_id', subjectId);
+    if (topicId) formData.append('topic_id', topicId);
+
+    const response = await apiClient.post('/questions/import', formData, {
+      headers: { 'Content-Type': 'multipart/form-data' },
+      timeout: 120000,
+    });
     return response.data;
   },
 
@@ -310,6 +372,13 @@ export const questionsService = {
   async getSession(sessionId: string): Promise<GenerationSession> {
     const response = await apiClient.get<GenerationSession>(`/questions/sessions/${sessionId}`);
     return response.data;
+  },
+
+  /**
+   * Delete a generation session and its questions
+   */
+  async deleteSession(sessionId: string): Promise<void> {
+    await apiClient.delete(`/questions/sessions/${sessionId}`);
   },
 
   /**

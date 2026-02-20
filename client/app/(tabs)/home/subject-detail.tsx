@@ -28,6 +28,7 @@ import { ReferenceMaterials } from '@/components/reference-materials';
 import * as DocumentPicker from 'expo-document-picker';
 import { useToast } from '@/components/toast';
 import { rubricsService, Rubric, RubricCreateData, GenerationProgress } from '@/services/rubrics';
+import { questionsService, GenerationSession, SessionQuestion } from '@/services/questions';
 
 export default function SubjectDetailScreen() {
   const colorScheme = useColorScheme();
@@ -53,8 +54,8 @@ export default function SubjectDetailScreen() {
   const [isExtractingChapters, setIsExtractingChapters] = useState(false);
   const [extractionStatus, setExtractionStatus] = useState('');
 
-  // Tab state for switching between chapters and references
-  const [activeTab, setActiveTab] = useState<'chapters' | 'references'>('chapters');
+  // Tab state for switching between chapters, references, and history
+  const [activeTab, setActiveTab] = useState<'chapters' | 'references' | 'history'>('chapters');
 
   // Reference materials state
   const [referenceBooks, setReferenceBooks] = useState<ReferenceDocument[]>([]);
@@ -79,6 +80,16 @@ export default function SubjectDetailScreen() {
   const [qgMcqMarks, setQgMcqMarks] = useState('1');
   const [qgShortMarks, setQgShortMarks] = useState('2');
   const [qgLongMarks, setQgLongMarks] = useState('5');
+
+  // Import state
+  const [isImporting, setIsImporting] = useState(false);
+
+  // History state
+  const [historySessions, setHistorySessions] = useState<GenerationSession[]>([]);
+  const [isLoadingHistory, setIsLoadingHistory] = useState(false);
+  const [historySessionQuestions, setHistorySessionQuestions] = useState<SessionQuestion[]>([]);
+  const [selectedHistorySession, setSelectedHistorySession] = useState<GenerationSession | null>(null);
+  const [isLoadingSessionQuestions, setIsLoadingSessionQuestions] = useState(false);
 
   const loadData = useCallback(async () => {
     if (!id) return;
@@ -430,8 +441,69 @@ export default function SubjectDetailScreen() {
   };
 
   const getTopicColor = (index: number) => {
-    const colorPalette = ['#007AFF', '#5856D6', '#34C759', '#FF9500', '#FF3B30', '#AF52DE'];
-    return colorPalette[index % colorPalette.length];
+    const topicColors = ['#007AFF', '#FF9500', '#34C759', '#AF52DE', '#FF3B30', '#5AC8FA', '#FFCC00', '#FF2D55', '#4CD964', '#FF6B6B'];
+    return topicColors[index % topicColors.length];
+  };
+
+  // ---- Import Questions ----
+  const handleImportQuestions = async (topicId?: string) => {
+    try {
+      const result = await DocumentPicker.getDocumentAsync({
+        type: [
+          'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
+          'text/csv',
+          'application/vnd.ms-excel',
+        ],
+        copyToCacheDirectory: true,
+      });
+
+      if (result.canceled || !result.assets?.[0]) return;
+
+      const file = result.assets[0];
+      setIsImporting(true);
+
+      const response = await questionsService.importQuestions(
+        { uri: file.uri, name: file.name, type: file.mimeType || 'application/octet-stream' },
+        id,
+        topicId,
+      );
+
+      showSuccess(`Imported ${response.imported} questions${response.skipped > 0 ? `, ${response.skipped} skipped` : ''}`);
+      loadData(); // Refresh to show new question count
+    } catch (error) {
+      console.error('Import failed:', error);
+      showError(error, 'Import Failed');
+    } finally {
+      setIsImporting(false);
+    }
+  };
+
+  // ---- Load History Sessions ----
+  const loadHistory = useCallback(async () => {
+    if (!id) return;
+    setIsLoadingHistory(true);
+    try {
+      const data = await questionsService.listSessions(undefined, id, 1, 50);
+      setHistorySessions(data.sessions);
+    } catch (error) {
+      console.error('Error loading history:', error);
+    } finally {
+      setIsLoadingHistory(false);
+    }
+  }, [id]);
+
+  const openHistorySession = async (session: GenerationSession) => {
+    setSelectedHistorySession(session);
+    setIsLoadingSessionQuestions(true);
+    try {
+      const data = await questionsService.getSessionQuestions(session.id);
+      setHistorySessionQuestions(data.questions);
+    } catch (error) {
+      console.error('Error loading session questions:', error);
+      setHistorySessionQuestions([]);
+    } finally {
+      setIsLoadingSessionQuestions(false);
+    }
   };
 
   if (isLoading) {
@@ -516,6 +588,25 @@ export default function SubjectDetailScreen() {
               <IconSymbol name="list.bullet" size={18} color="#FFFFFF" />
               <Text style={styles.actionButtonText}>View Questions</Text>
             </TouchableOpacity>
+            <TouchableOpacity
+              style={[styles.actionButton, { backgroundColor: '#FF9500' }]}
+              onPress={() => handleImportQuestions()}
+              disabled={isImporting}
+            >
+              {isImporting ? (
+                <ActivityIndicator size="small" color="#FFFFFF" />
+              ) : (
+                <IconSymbol name="square.and.arrow.down.fill" size={18} color="#FFFFFF" />
+              )}
+              <Text style={styles.actionButtonText}>{isImporting ? 'Importing...' : 'Import'}</Text>
+            </TouchableOpacity>
+            <TouchableOpacity
+              style={[styles.actionButton, { backgroundColor: '#8E8E93' }]}
+              onPress={() => router.push('/(tabs)/history' as never)}
+            >
+              <IconSymbol name="clock.arrow.circlepath" size={18} color="#FFFFFF" />
+              <Text style={styles.actionButtonText}>History</Text>
+            </TouchableOpacity>
           </View>
 
           {/* Tab Selector */}
@@ -560,6 +651,30 @@ export default function SubjectDetailScreen() {
                 ]}
               >
                 References
+              </Text>
+            </TouchableOpacity>
+            <TouchableOpacity
+              style={[
+                styles.tabButton,
+                activeTab === 'history' && { backgroundColor: colors.primary },
+              ]}
+              onPress={() => {
+                setActiveTab('history');
+                loadHistory();
+              }}
+            >
+              <IconSymbol
+                name="clock.arrow.circlepath"
+                size={16}
+                color={activeTab === 'history' ? '#FFFFFF' : colors.textSecondary}
+              />
+              <Text
+                style={[
+                  styles.tabButtonText,
+                  { color: activeTab === 'history' ? '#FFFFFF' : colors.textSecondary },
+                ]}
+              >
+                History
               </Text>
             </TouchableOpacity>
           </View>
@@ -679,6 +794,71 @@ export default function SubjectDetailScreen() {
                 onRefresh={loadReferences}
                 isLoading={isLoadingReferences}
               />
+            </View>
+          )}
+
+          {/* History Section */}
+          {activeTab === 'history' && (
+            <View style={styles.section}>
+              <Text style={[styles.sectionTitle, { color: colors.textSecondary }]}>
+                GENERATION HISTORY
+              </Text>
+              {isLoadingHistory ? (
+                <View style={{ padding: 40, alignItems: 'center' }}>
+                  <ActivityIndicator size="large" color={colors.primary} />
+                </View>
+              ) : historySessions.length === 0 ? (
+                <View style={[styles.emptyCard, { backgroundColor: colors.card }]}>
+                  <IconSymbol name="clock.arrow.circlepath" size={48} color={colors.textTertiary} />
+                  <Text style={[styles.emptyTitle, { color: colors.text }]}>No History Yet</Text>
+                  <Text style={[styles.emptyText, { color: colors.textSecondary }]}>
+                    Generation sessions for this subject will appear here.
+                  </Text>
+                </View>
+              ) : (
+                <View style={{ gap: Spacing.sm }}>
+                  {historySessions.map((session) => {
+                    const methodColors: Record<string, string> = {
+                      quick: '#007AFF', rubric: '#AF52DE', chapter: '#34C759', import: '#FF9500',
+                    };
+                    const methodLabels: Record<string, string> = {
+                      quick: 'Quick', rubric: 'Rubric', chapter: 'Chapter', import: 'Import',
+                    };
+                    const mColor = methodColors[session.generation_method || ''] || '#8E8E93';
+                    const mLabel = methodLabels[session.generation_method || ''] || 'Generated';
+                    const time = session.started_at
+                      ? new Date(session.started_at).toLocaleString('en-US', { month: 'short', day: 'numeric', hour: '2-digit', minute: '2-digit' })
+                      : '';
+
+                    return (
+                      <TouchableOpacity
+                        key={session.id}
+                        activeOpacity={0.7}
+                        onPress={() => openHistorySession(session)}
+                        style={[styles.historyCard, { backgroundColor: colors.card, borderColor: colors.border }]}
+                      >
+                        <View style={{ flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center' }}>
+                          <View style={[styles.historyBadge, { backgroundColor: mColor + '20' }]}>
+                            <Text style={{ fontSize: FontSizes.xs, fontWeight: '600', color: mColor }}>{mLabel}</Text>
+                          </View>
+                          <Text style={{ fontSize: FontSizes.xs, color: colors.textTertiary }}>{time}</Text>
+                        </View>
+                        <View style={{ flexDirection: 'row', alignItems: 'center', marginTop: 8, gap: 12 }}>
+                          <Text style={{ fontSize: FontSizes.lg, fontWeight: '700', color: colors.primary }}>
+                            {session.questions_generated}
+                          </Text>
+                          <Text style={{ fontSize: FontSizes.sm, color: colors.textSecondary }}>questions</Text>
+                          {session.generation_config?.source_file ? (
+                            <Text style={{ fontSize: FontSizes.xs, color: colors.textTertiary, flex: 1 }} numberOfLines={1}>
+                              {'📄 ' + String(session.generation_config.source_file)}
+                            </Text>
+                          ) : null}
+                        </View>
+                      </TouchableOpacity>
+                    );
+                  })}
+                </View>
+              )}
             </View>
           )}
 
@@ -1657,5 +1837,15 @@ const styles = StyleSheet.create({
     borderRadius: BorderRadius.md,
     alignItems: 'center',
     justifyContent: 'center',
+  },
+  historyCard: {
+    padding: Spacing.md,
+    borderRadius: BorderRadius.lg,
+    borderWidth: 1,
+  },
+  historyBadge: {
+    paddingHorizontal: Spacing.sm,
+    paddingVertical: 3,
+    borderRadius: BorderRadius.sm,
   },
 });

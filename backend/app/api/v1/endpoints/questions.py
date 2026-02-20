@@ -436,9 +436,254 @@ async def unarchive_question(
     return {"message": "Question unarchived successfully"}
 
 
+# ============== Excel/CSV Import Endpoint ==============
+
+@router.post("/import")
+async def import_questions_from_file(
+    file: UploadFile = File(..., description="Excel (.xlsx) or CSV file with questions"),
+    subject_id: str = Form(..., description="Subject ID to link questions to"),
+    topic_id: Optional[str] = Form(default=None, description="Topic/Chapter ID to link questions to"),
+    current_user: User = Depends(rate_limit(requests=50, window_seconds=86400)),
+    db: AsyncSession = Depends(get_db),
+):
+    """
+    Import questions from an Excel (.xlsx) or CSV file.
+    
+    Expected format (row 2 = headers):
+    question | option_a | option_b | option_c | option_d | option_correct | CO | LO mapping | difficulty | marks | course_code | topic | Reference
+    
+    If option_a through option_d are present → MCQ, otherwise → short_answer.
+    """
+    import csv
+    import io
+    import logging
+    
+    logger = logging.getLogger(__name__)
+    
+    # Validate file extension
+    filename = file.filename or ""
+    ext = os.path.splitext(filename)[1].lower()
+    if ext not in (".xlsx", ".csv"):
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail=f"Unsupported file type: {ext}. Only .xlsx and .csv are supported.",
+        )
+    
+    # Parse subject/topic IDs
+    try:
+        parsed_subject_id = uuid.UUID(subject_id)
+    except ValueError:
+        raise HTTPException(status_code=400, detail="Invalid subject_id")
+    parsed_topic_id = uuid.UUID(topic_id) if topic_id else None
+    
+    # Read file content
+    content = await file.read()
+    
+    rows = []
+    headers = []
+    
+    try:
+        if ext == ".xlsx":
+            import openpyxl
+            wb = openpyxl.load_workbook(io.BytesIO(content), data_only=True)
+            ws = wb.active
+            
+            # Find headers — check row 1 and row 2
+            row1_values = [str(cell.value).strip().lower() if cell.value else "" for cell in ws[1]]
+            row2_values = [str(cell.value).strip().lower() if cell.value else "" for cell in ws[2]] if ws.max_row >= 2 else []
+            
+            # If row 2 looks like headers (contains 'question'), use row 2
+            if any("question" in v for v in row2_values):
+                headers = row2_values
+                data_start_row = 3
+            elif any("question" in v for v in row1_values):
+                headers = row1_values
+                data_start_row = 2
+            else:
+                raise HTTPException(status_code=400, detail="Could not find 'question' column in headers (checked rows 1-2)")
+            
+            for row in ws.iter_rows(min_row=data_start_row, values_only=True):
+                if row and any(v is not None for v in row):
+                    rows.append([str(v).strip() if v is not None else "" for v in row])
+        
+        elif ext == ".csv":
+            text = content.decode("utf-8-sig")  # handle BOM
+            reader = csv.reader(io.StringIO(text))
+            all_rows = list(reader)
+            
+            if not all_rows:
+                raise HTTPException(status_code=400, detail="CSV file is empty")
+            
+            # Check first two rows for headers
+            row1 = [v.strip().lower() for v in all_rows[0]]
+            row2 = [v.strip().lower() for v in all_rows[1]] if len(all_rows) > 1 else []
+            
+            if any("question" in v for v in row2):
+                headers = row2
+                rows = [[v.strip() for v in r] for r in all_rows[2:] if any(v.strip() for v in r)]
+            elif any("question" in v for v in row1):
+                headers = row1
+                rows = [[v.strip() for v in r] for r in all_rows[1:] if any(v.strip() for v in r)]
+            else:
+                raise HTTPException(status_code=400, detail="Could not find 'question' column in headers")
+    
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.exception(f"Failed to parse file: {e}")
+        raise HTTPException(status_code=400, detail=f"Failed to parse file: {str(e)}")
+    
+    if not rows:
+        raise HTTPException(status_code=400, detail="No data rows found in file")
+    
+    # Map column indices
+    def find_col(names):
+        """Find column index matching any of the given names."""
+        for name in names:
+            for i, h in enumerate(headers):
+                if name in h:
+                    return i
+        return None
+    
+    col_question = find_col(["question"])
+    col_opt_a = find_col(["option_a"])
+    col_opt_b = find_col(["option_b"])
+    col_opt_c = find_col(["option_c"])
+    col_opt_d = find_col(["option_d"])
+    col_correct = find_col(["option_correct", "correct", "answer"])
+    col_co = find_col(["co", "course_outcome"])
+    col_lo = find_col(["lo", "learning"])
+    col_difficulty = find_col(["difficulty"])
+    col_marks = find_col(["marks", "mark"])
+    col_topic = find_col(["topic"])
+    col_reference = find_col(["reference"])
+    
+    if col_question is None:
+        raise HTTPException(status_code=400, detail="Required column 'question' not found in headers")
+    
+    # Create generation session for this import
+    session_id = uuid.uuid4()
+    gen_session = GenerationSession(
+        id=session_id,
+        user_id=current_user.id,
+        subject_id=parsed_subject_id,
+        topic_id=parsed_topic_id,
+        generation_method="import",
+        requested_count=len(rows),
+        status="completed",
+        started_at=datetime.now(timezone.utc),
+        completed_at=datetime.now(timezone.utc),
+        generation_config={"source_file": filename, "format": ext},
+    )
+    db.add(gen_session)
+    
+    # Import questions
+    imported = 0
+    skipped = 0
+    
+    for row_data in rows:
+        def get_val(col_idx):
+            if col_idx is not None and col_idx < len(row_data):
+                return row_data[col_idx]
+            return ""
+        
+        question_text = get_val(col_question)
+        if not question_text:
+            skipped += 1
+            continue
+        
+        # Determine options
+        opt_a = get_val(col_opt_a)
+        opt_b = get_val(col_opt_b)
+        opt_c = get_val(col_opt_c)
+        opt_d = get_val(col_opt_d)
+        
+        options = [o for o in [opt_a, opt_b, opt_c, opt_d] if o]
+        is_mcq = len(options) >= 2
+        
+        # Correct answer
+        correct = get_val(col_correct)
+        correct_answer = None
+        if correct:
+            # Map letter answer to full text
+            answer_map = {"a": opt_a, "b": opt_b, "c": opt_c, "d": opt_d}
+            correct_answer = answer_map.get(correct.lower().strip(), correct)
+        
+        # CO mapping
+        co_text = get_val(col_co)
+        co_mapping = None
+        if co_text:
+            # Parse "CO1" or "CO1, CO2" format
+            co_mapping = {}
+            for co in re.findall(r'CO\d+', co_text, re.IGNORECASE):
+                co_mapping[co.upper()] = 1
+        
+        # Marks
+        marks_val = get_val(col_marks)
+        marks = None
+        if marks_val:
+            try:
+                marks = int(float(marks_val))
+            except (ValueError, TypeError):
+                pass
+        
+        # Difficulty
+        difficulty = get_val(col_difficulty).lower() or None
+        if difficulty and difficulty not in ("easy", "medium", "hard"):
+            difficulty = "medium"
+        
+        # Topic tags
+        topic_text = get_val(col_topic)
+        topic_tags = [topic_text] if topic_text else None
+        
+        # LO mapping
+        lo_text = get_val(col_lo)
+        learning_outcome_id = None
+        if lo_text:
+            lo_match = re.search(r'LO\d+', lo_text, re.IGNORECASE)
+            learning_outcome_id = lo_match.group(0).upper() if lo_match else lo_text
+        
+        question = Question(
+            id=uuid.uuid4(),
+            subject_id=parsed_subject_id,
+            topic_id=parsed_topic_id,
+            session_id=session_id,
+            question_text=question_text,
+            question_type="mcq" if is_mcq else "short_answer",
+            options=options if is_mcq else None,
+            correct_answer=correct_answer,
+            marks=marks,
+            difficulty_level=difficulty,
+            bloom_taxonomy_level=None,
+            course_outcome_mapping=co_mapping,
+            learning_outcome_id=learning_outcome_id,
+            topic_tags=topic_tags,
+            vetting_status="pending",
+            generation_metadata={"source": "import", "file": filename},
+        )
+        db.add(question)
+        imported += 1
+    
+    gen_session.questions_generated = imported
+    gen_session.questions_failed = skipped
+    
+    await db.commit()
+    
+    logger.info(f"Import complete: {imported} questions imported, {skipped} skipped from {filename}")
+    
+    return {
+        "message": f"Successfully imported {imported} questions",
+        "imported": imported,
+        "skipped": skipped,
+        "session_id": str(session_id),
+        "subject_id": subject_id,
+    }
+
+
 @router.get("/sessions/list")
 async def list_generation_sessions(
     document_id: Optional[uuid.UUID] = Query(None, description="Filter by document"),
+    subject_id: Optional[uuid.UUID] = Query(None, description="Filter by subject"),
     page: int = Query(1, ge=1),
     limit: int = Query(20, ge=1, le=100),
     current_user: User = Depends(get_current_user),
@@ -447,18 +692,131 @@ async def list_generation_sessions(
     """
     List question generation sessions.
     """
-    question_service = QuestionGenerationService(db)
+    from app.models.subject import Subject, Topic
     
-    sessions, pagination = await question_service.get_generation_sessions(
-        user_id=current_user.id,
-        document_id=document_id,
-        page=page,
-        limit=limit,
+    query = (
+        select(
+            GenerationSession,
+            Subject.name.label("subject_name"),
+            Subject.code.label("subject_code"),
+            Topic.name.label("topic_name"),
+        )
+        .outerjoin(Subject, GenerationSession.subject_id == Subject.id)
+        .outerjoin(Topic, GenerationSession.topic_id == Topic.id)
+        .where(GenerationSession.user_id == current_user.id)
+        .order_by(GenerationSession.started_at.desc())
     )
     
+    if document_id:
+        query = query.where(GenerationSession.document_id == document_id)
+    if subject_id:
+        query = query.where(GenerationSession.subject_id == subject_id)
+    
+    # Count total
+    count_q = select(func.count()).select_from(
+        select(GenerationSession.id)
+        .where(GenerationSession.user_id == current_user.id)
+    )
+    if document_id:
+        count_q = select(func.count()).select_from(
+            select(GenerationSession.id)
+            .where(GenerationSession.user_id == current_user.id, GenerationSession.document_id == document_id)
+        )
+    if subject_id:
+        count_q = select(func.count()).select_from(
+            select(GenerationSession.id)
+            .where(GenerationSession.user_id == current_user.id, GenerationSession.subject_id == subject_id)
+        )
+    count_result = await db.execute(count_q)
+    total = count_result.scalar_one()
+    
+    # Paginate
+    offset = (page - 1) * limit
+    result = await db.execute(query.offset(offset).limit(limit))
+    rows = result.all()
+    
     return {
-        "sessions": [GenerationSessionResponse.model_validate(s) for s in sessions],
-        "pagination": pagination,
+        "sessions": [
+            {
+                "id": str(s.id),
+                "document_id": str(s.document_id) if s.document_id else None,
+                "subject_id": str(s.subject_id) if s.subject_id else None,
+                "subject_name": subject_name or None,
+                "subject_code": subject_code or None,
+                "topic_id": str(s.topic_id) if s.topic_id else None,
+                "topic_name": topic_name or None,
+                "generation_method": s.generation_method,
+                "requested_count": s.requested_count,
+                "requested_difficulty": s.requested_difficulty,
+                "focus_topics": s.focus_topics,
+                "questions_generated": s.questions_generated,
+                "questions_failed": s.questions_failed,
+                "status": s.status,
+                "started_at": s.started_at.isoformat() if s.started_at else None,
+                "completed_at": s.completed_at.isoformat() if s.completed_at else None,
+                "generation_config": s.generation_config,
+            }
+            for s, subject_name, subject_code, topic_name in rows
+        ],
+        "pagination": {
+            "page": page,
+            "limit": limit,
+            "total": total,
+            "pages": (total + limit - 1) // limit,
+        },
+    }
+
+
+@router.get("/sessions/{session_id}/questions")
+async def get_session_questions(
+    session_id: uuid.UUID,
+    current_user: User = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+):
+    """
+    Get all questions from a specific generation session.
+    """
+    # Verify session belongs to user
+    session_result = await db.execute(
+        select(GenerationSession).where(
+            GenerationSession.id == session_id,
+            GenerationSession.user_id == current_user.id,
+        )
+    )
+    session = session_result.scalar_one_or_none()
+    if not session:
+        raise HTTPException(status_code=404, detail="Session not found")
+    
+    # Get questions for this session
+    questions_result = await db.execute(
+        select(Question).where(
+            Question.session_id == session_id,
+        ).order_by(Question.generated_at.asc())
+    )
+    questions = questions_result.scalars().all()
+    
+    return {
+        "session_id": str(session_id),
+        "generation_method": session.generation_method,
+        "started_at": session.started_at.isoformat() if session.started_at else None,
+        "questions": [
+            {
+                "id": str(q.id),
+                "question_text": q.question_text,
+                "question_type": q.question_type,
+                "options": q.options,
+                "correct_answer": q.correct_answer,
+                "marks": q.marks,
+                "difficulty_level": q.difficulty_level,
+                "bloom_taxonomy_level": q.bloom_taxonomy_level,
+                "course_outcome_mapping": q.course_outcome_mapping,
+                "learning_outcome_id": q.learning_outcome_id,
+                "topic_tags": q.topic_tags,
+                "vetting_status": q.vetting_status,
+                "generated_at": q.generated_at.isoformat() if q.generated_at else None,
+            }
+            for q in questions
+        ],
     }
 
 
@@ -489,6 +847,43 @@ async def get_generation_session(
         )
     
     return GenerationSessionResponse.model_validate(session)
+
+
+@router.delete("/sessions/{session_id}")
+async def delete_generation_session(
+    session_id: uuid.UUID,
+    current_user: User = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+):
+    """
+    Delete a generation session and all its associated questions.
+    """
+    # Verify session belongs to user
+    result = await db.execute(
+        select(GenerationSession).where(
+            GenerationSession.id == session_id,
+            GenerationSession.user_id == current_user.id,
+        )
+    )
+    session = result.scalar_one_or_none()
+
+    if not session:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="Session not found",
+        )
+
+    # Delete associated questions
+    from sqlalchemy import delete as sql_delete
+    await db.execute(
+        sql_delete(Question).where(Question.session_id == session_id)
+    )
+
+    # Delete the session
+    await db.delete(session)
+    await db.commit()
+
+    return {"message": "Session and associated questions deleted successfully"}
 
 
 @router.get("/stats/summary")
