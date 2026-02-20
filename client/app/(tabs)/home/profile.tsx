@@ -12,7 +12,6 @@ import {
   Platform,
   ActivityIndicator,
 } from 'react-native';
-import Slider from '@react-native-community/slider';
 import { useNavigation } from '@react-navigation/native';
 import { IconSymbol } from '@/components/ui/icon-symbol';
 import { GlassCard } from '@/components/ui/glass-card';
@@ -23,31 +22,31 @@ import { useToast } from '@/components/toast';
 import { subjectsService } from '@/services/subjects';
 import { vettingService } from '@/services/vetting';
 
-type ModalType = 'editProfile' | 'changePassword' | 'notifications' | 'appearance' | 'help' | 'about' | 'novelty' | null;
+type ModalType = 'editProfile' | 'changePassword' | 'notifications' | 'appearance' | 'help' | 'about' | null;
 
 export default function ProfileScreen() {
   const colorScheme = useColorScheme();
   const colors = Colors[colorScheme ?? 'light'];
-  const { user, logout, noveltyThreshold, maxRegenerationAttempts, setNoveltyThreshold, setMaxRegenerationAttempts } = useAuthStore();
+  const { user, logout } = useAuthStore();
   const navigation = useNavigation();
   const { showError, showSuccess, showWarning } = useToast();
-  
+
   const [activeModal, setActiveModal] = useState<ModalType>(null);
-  
+
   useEffect(() => {
     // Hide tab bar and header title on this screen
     navigation.getParent()?.setOptions({
       tabBarStyle: { display: 'none' },
       headerShown: false,
     });
-    
+
     // Load statistics
     loadStatistics();
-    
+
     return () => {
       // Show tab bar again when leaving (do NOT toggle parent headerShown here)
       navigation.getParent()?.setOptions({
-        tabBarStyle: { 
+        tabBarStyle: {
           backgroundColor: colors.card,
           borderTopColor: colors.border,
           height: 60,
@@ -55,50 +54,45 @@ export default function ProfileScreen() {
       });
     };
   }, [navigation, colors]);
-  
+
   // Edit Profile State
   const [fullName, setFullName] = useState(user?.full_name || '');
   const [email, setEmail] = useState(user?.email || '');
-  
+
   // Change Password State
   const [currentPassword, setCurrentPassword] = useState('');
   const [newPassword, setNewPassword] = useState('');
   const [confirmPassword, setConfirmPassword] = useState('');
-  
+
   // Notification Settings
   const [pushNotifications, setPushNotifications] = useState(true);
   const [emailNotifications, setEmailNotifications] = useState(true);
   const [questionGenerated, setQuestionGenerated] = useState(true);
   const [vettingReminders, setVettingReminders] = useState(false);
-  
+
   // Statistics State
   const [totalQuestions, setTotalQuestions] = useState(0);
   const [approvedQuestions, setApprovedQuestions] = useState(0);
   const [totalSubjects, setTotalSubjects] = useState(0);
   const [isLoadingStats, setIsLoadingStats] = useState(true);
-  
-  // Novelty Settings State
-  const [localNoveltyThreshold, setLocalNoveltyThreshold] = useState(noveltyThreshold);
-  const [localMaxAttempts, setLocalMaxAttempts] = useState(maxRegenerationAttempts);
-  const [isSavingNovelty, setIsSavingNovelty] = useState(false);
 
   const loadStatistics = async () => {
     try {
       setIsLoadingStats(true);
-      
+
       // Fetch vetting stats and subjects
       const [vettingStatsResponse, subjectsResponse] = await Promise.all([
         vettingService.getVettingStats().catch(() => ({ total_generated: 0, total_approved: 0 })),
         subjectsService.listSubjects(1, 100),
       ]);
-      
+
       const vettingStats = vettingStatsResponse || { total_generated: 0, total_approved: 0 };
       const subjects = subjectsResponse?.subjects || [];
-      
+
       setTotalQuestions(vettingStats.total_generated);
       setApprovedQuestions(vettingStats.total_approved);
       setTotalSubjects(subjects.length);
-      
+
       console.log('[Profile] Statistics loaded:', {
         totalQuestions: vettingStats.total_generated,
         approvedQuestions: vettingStats.total_approved,
@@ -155,41 +149,26 @@ export default function ProfileScreen() {
     {
       title: 'Account',
       items: [
-        { 
-          icon: 'person.fill', 
-          label: 'Edit Profile', 
+        {
+          icon: 'person.fill',
+          label: 'Edit Profile',
           color: colors.primary,
           onPress: () => setActiveModal('editProfile'),
         },
-        { 
-          icon: 'lock.fill', 
-          label: 'Change Password', 
+        {
+          icon: 'lock.fill',
+          label: 'Change Password',
           color: '#FF9500',
           onPress: () => setActiveModal('changePassword'),
         },
       ],
     },
     {
-      title: 'Generation Settings',
-      items: [
-        { 
-          icon: 'sparkles', 
-          label: 'Question Novelty', 
-          color: '#AF52DE',
-          onPress: () => {
-            setLocalNoveltyThreshold(noveltyThreshold);
-            setLocalMaxAttempts(maxRegenerationAttempts);
-            setActiveModal('novelty');
-          },
-        },
-      ],
-    },
-    {
       title: 'Preferences',
       items: [
-        { 
-          icon: 'bell.fill', 
-          label: 'Notifications', 
+        {
+          icon: 'bell.fill',
+          label: 'Notifications',
           color: '#FF3B30',
           onPress: () => setActiveModal('notifications'),
         },
@@ -198,15 +177,15 @@ export default function ProfileScreen() {
     {
       title: 'Support',
       items: [
-        { 
-          icon: 'questionmark.circle.fill', 
-          label: 'Help Center', 
+        {
+          icon: 'questionmark.circle.fill',
+          label: 'Help Center',
           color: '#34C759',
           onPress: () => setActiveModal('help'),
         },
-        { 
-          icon: 'info.circle.fill', 
-          label: 'About', 
+        {
+          icon: 'info.circle.fill',
+          label: 'About',
           color: '#007AFF',
           onPress: () => setActiveModal('about'),
         },
@@ -222,10 +201,10 @@ export default function ProfileScreen() {
             <Text style={[styles.modalTitle, { color: colors.text }]}>Edit Profile</Text>
             <Text style={[styles.inputLabel, { color: colors.textSecondary }]}>Full Name</Text>
             <TextInput
-              style={[styles.input, { 
-                backgroundColor: colors.card, 
+              style={[styles.input, {
+                backgroundColor: colors.card,
                 color: colors.text,
-                borderColor: colors.border 
+                borderColor: colors.border
               }]}
               value={fullName}
               onChangeText={setFullName}
@@ -234,10 +213,10 @@ export default function ProfileScreen() {
             />
             <Text style={[styles.inputLabel, { color: colors.textSecondary }]}>Email</Text>
             <TextInput
-              style={[styles.input, { 
-                backgroundColor: colors.card, 
+              style={[styles.input, {
+                backgroundColor: colors.card,
                 color: colors.text,
-                borderColor: colors.border 
+                borderColor: colors.border
               }]}
               value={email}
               onChangeText={setEmail}
@@ -247,13 +226,13 @@ export default function ProfileScreen() {
               autoCapitalize="none"
             />
             <View style={styles.modalButtons}>
-              <TouchableOpacity 
+              <TouchableOpacity
                 style={[styles.modalButton, { backgroundColor: colors.card }]}
                 onPress={() => setActiveModal(null)}
               >
                 <Text style={[styles.modalButtonText, { color: colors.text }]}>Cancel</Text>
               </TouchableOpacity>
-              <TouchableOpacity 
+              <TouchableOpacity
                 style={[styles.modalButton, { backgroundColor: colors.primary }]}
                 onPress={handleSaveProfile}
               >
@@ -262,17 +241,17 @@ export default function ProfileScreen() {
             </View>
           </View>
         );
-        
+
       case 'changePassword':
         return (
           <View style={styles.modalContent}>
             <Text style={[styles.modalTitle, { color: colors.text }]}>Change Password</Text>
             <Text style={[styles.inputLabel, { color: colors.textSecondary }]}>Current Password</Text>
             <TextInput
-              style={[styles.input, { 
-                backgroundColor: colors.card, 
+              style={[styles.input, {
+                backgroundColor: colors.card,
                 color: colors.text,
-                borderColor: colors.border 
+                borderColor: colors.border
               }]}
               value={currentPassword}
               onChangeText={setCurrentPassword}
@@ -282,10 +261,10 @@ export default function ProfileScreen() {
             />
             <Text style={[styles.inputLabel, { color: colors.textSecondary }]}>New Password</Text>
             <TextInput
-              style={[styles.input, { 
-                backgroundColor: colors.card, 
+              style={[styles.input, {
+                backgroundColor: colors.card,
                 color: colors.text,
-                borderColor: colors.border 
+                borderColor: colors.border
               }]}
               value={newPassword}
               onChangeText={setNewPassword}
@@ -295,10 +274,10 @@ export default function ProfileScreen() {
             />
             <Text style={[styles.inputLabel, { color: colors.textSecondary }]}>Confirm Password</Text>
             <TextInput
-              style={[styles.input, { 
-                backgroundColor: colors.card, 
+              style={[styles.input, {
+                backgroundColor: colors.card,
                 color: colors.text,
-                borderColor: colors.border 
+                borderColor: colors.border
               }]}
               value={confirmPassword}
               onChangeText={setConfirmPassword}
@@ -307,13 +286,13 @@ export default function ProfileScreen() {
               secureTextEntry
             />
             <View style={styles.modalButtons}>
-              <TouchableOpacity 
+              <TouchableOpacity
                 style={[styles.modalButton, { backgroundColor: colors.card }]}
                 onPress={() => setActiveModal(null)}
               >
                 <Text style={[styles.modalButtonText, { color: colors.text }]}>Cancel</Text>
               </TouchableOpacity>
-              <TouchableOpacity 
+              <TouchableOpacity
                 style={[styles.modalButton, { backgroundColor: '#FF9500' }]}
                 onPress={handleChangePassword}
               >
@@ -322,7 +301,7 @@ export default function ProfileScreen() {
             </View>
           </View>
         );
-        
+
       case 'notifications':
         return (
           <View style={styles.modalContent}>
@@ -375,7 +354,7 @@ export default function ProfileScreen() {
                 thumbColor={vettingReminders ? colors.primary : '#F4F3F4'}
               />
             </View>
-            <TouchableOpacity 
+            <TouchableOpacity
               style={[styles.modalButtonFull, { backgroundColor: colors.primary }]}
               onPress={() => setActiveModal(null)}
             >
@@ -383,7 +362,7 @@ export default function ProfileScreen() {
             </TouchableOpacity>
           </View>
         );
-        
+
       case 'help':
         return (
           <View style={styles.modalContent}>
@@ -511,7 +490,7 @@ export default function ProfileScreen() {
                 </View>
               </View>
             </ScrollView>
-            <TouchableOpacity 
+            <TouchableOpacity
               style={[styles.modalButtonFull, { backgroundColor: colors.primary }]}
               onPress={() => setActiveModal(null)}
             >
@@ -519,7 +498,7 @@ export default function ProfileScreen() {
             </TouchableOpacity>
           </View>
         );
-        
+
       case 'about':
         return (
           <View style={styles.modalContent}>
@@ -534,7 +513,7 @@ export default function ProfileScreen() {
             <View style={[styles.aboutSection, { borderColor: colors.border }]}>
               <Text style={[styles.aboutSectionTitle, { color: colors.textSecondary }]}>ABOUT</Text>
               <Text style={[styles.aboutText, { color: colors.text }]}>
-                QuestionGen AI is an intelligent question generation system powered by advanced AI. 
+                QuestionGen AI is an intelligent question generation system powered by advanced AI.
                 Generate high-quality examination questions from your course materials instantly.
               </Text>
             </View>
@@ -562,7 +541,7 @@ export default function ProfileScreen() {
             <Text style={[styles.copyright, { color: colors.textTertiary }]}>
               © {new Date().getFullYear()} QuestionGen AI. All rights reserved.
             </Text>
-            <TouchableOpacity 
+            <TouchableOpacity
               style={[styles.modalButtonFull, { backgroundColor: colors.primary }]}
               onPress={() => setActiveModal(null)}
             >
@@ -570,125 +549,7 @@ export default function ProfileScreen() {
             </TouchableOpacity>
           </View>
         );
-        
-      case 'novelty':
-        const handleSaveNoveltySettings = async () => {
-          setIsSavingNovelty(true);
-          try {
-            await setNoveltyThreshold(localNoveltyThreshold);
-            await setMaxRegenerationAttempts(localMaxAttempts);
-            showSuccess('Novelty settings saved');
-            setActiveModal(null);
-          } catch (error) {
-            showError(error, 'Failed to Save');
-          } finally {
-            setIsSavingNovelty(false);
-          }
-        };
 
-        return (
-          <View style={styles.modalContent}>
-            <Text style={[styles.modalTitle, { color: colors.text }]}>Question Novelty Settings</Text>
-            <Text style={[styles.noveltyDescription, { color: colors.textSecondary }]}>
-              Configure how strictly the system ensures generated questions are unique and novel compared to existing questions.
-            </Text>
-            
-            {/* Novelty Threshold */}
-            <View style={[styles.noveltySection, { backgroundColor: colors.card, borderColor: colors.border }]}>
-              <View style={styles.noveltyHeader}>
-                <View>
-                  <Text style={[styles.noveltyLabel, { color: colors.text }]}>Novelty Threshold</Text>
-                  <Text style={[styles.noveltyHint, { color: colors.textSecondary }]}>
-                    Minimum uniqueness required for questions
-                  </Text>
-                </View>
-                <View style={[styles.noveltyValueBadge, { backgroundColor: colors.primary + '20' }]}>
-                  <Text style={[styles.noveltyValueText, { color: colors.primary }]}>
-                    {Math.round(localNoveltyThreshold * 100)}%
-                  </Text>
-                </View>
-              </View>
-              <Slider
-                style={styles.slider}
-                minimumValue={0}
-                maximumValue={1}
-                step={0.05}
-                value={localNoveltyThreshold}
-                onValueChange={setLocalNoveltyThreshold}
-                minimumTrackTintColor={colors.primary}
-                maximumTrackTintColor={colors.border}
-                thumbTintColor={colors.primary}
-              />
-              <View style={styles.sliderLabels}>
-                <Text style={[styles.sliderLabel, { color: colors.textTertiary }]}>0% (Any)</Text>
-                <Text style={[styles.sliderLabel, { color: colors.textTertiary }]}>100% (Unique)</Text>
-              </View>
-            </View>
-
-            {/* Max Regeneration Attempts */}
-            <View style={[styles.noveltySection, { backgroundColor: colors.card, borderColor: colors.border }]}>
-              <View style={styles.noveltyHeader}>
-                <View>
-                  <Text style={[styles.noveltyLabel, { color: colors.text }]}>Max Regeneration Attempts</Text>
-                  <Text style={[styles.noveltyHint, { color: colors.textSecondary }]}>
-                    How many times to retry if novelty is too low
-                  </Text>
-                </View>
-                <View style={[styles.noveltyValueBadge, { backgroundColor: '#FF9500' + '20' }]}>
-                  <Text style={[styles.noveltyValueText, { color: '#FF9500' }]}>
-                    {localMaxAttempts}
-                  </Text>
-                </View>
-              </View>
-              <View style={styles.attemptsRow}>
-                {[1,2,3,4,5].map((num) => (
-                  <TouchableOpacity
-                    key={num}
-                    style={[
-                      styles.attemptButton,
-                      {
-                        backgroundColor: localMaxAttempts === num ? colors.primary : colors.background,
-                        borderColor: localMaxAttempts === num ? colors.primary : colors.border,
-                      },
-                    ]}
-                    onPress={() => setLocalMaxAttempts(num)}
-                  >
-                    <Text
-                      style={[
-                        styles.attemptButtonText,
-                        { color: localMaxAttempts === num ? '#FFFFFF' : colors.text },
-                      ]}
-                    >
-                      {num}
-                    </Text>
-                  </TouchableOpacity>
-                ))}
-              </View>
-            </View>
-
-            {/* Info Card */}
-            <View style={[styles.infoCard, { backgroundColor: colors.primary + '10', borderColor: colors.primary + '30' }]}>
-              <IconSymbol name="info.circle.fill" size={20} color={colors.primary} />
-              <Text style={[styles.infoText, { color: colors.text }]}>
-                Higher thresholds ensure more unique questions but may require more regeneration attempts. 
-                Reference materials are automatically used when novelty is insufficient.
-              </Text>
-            </View>
-
-            <TouchableOpacity 
-              style={[styles.modalButtonFull, { backgroundColor: colors.primary }]}
-              onPress={handleSaveNoveltySettings}
-              disabled={isSavingNovelty}
-            >
-              {isSavingNovelty ? (
-                <ActivityIndicator size="small" color="#FFFFFF" />
-              ) : (
-                <Text style={[styles.modalButtonText, { color: '#FFFFFF' }]}>Save Settings</Text>
-              )}
-            </TouchableOpacity>
-          </View>
-        );
-        
       default:
         return null;
     }
@@ -909,7 +770,7 @@ const styles = StyleSheet.create({
     textAlign: 'center',
     marginTop: Spacing.xl,
   },
-  
+
   // Modal Styles
   modalContainer: {
     flex: 1,
@@ -971,7 +832,7 @@ const styles = StyleSheet.create({
     fontSize: FontSizes.md,
     fontWeight: '600',
   },
-  
+
   // Settings Row
   settingRow: {
     flexDirection: 'row',
@@ -992,7 +853,7 @@ const styles = StyleSheet.create({
     fontSize: FontSizes.xs,
     marginTop: 2,
   },
-  
+
   // Theme Options
   themeOptions: {
     flexDirection: 'row',
@@ -1021,7 +882,7 @@ const styles = StyleSheet.create({
     textAlign: 'center',
     marginTop: Spacing.lg,
   },
-  
+
   // Help Items
   helpContent: {
     maxHeight: 500,
@@ -1115,7 +976,7 @@ const styles = StyleSheet.create({
     fontStyle: 'italic',
     lineHeight: 16,
   },
-  
+
   // About
   aboutHeader: {
     alignItems: 'center',
@@ -1166,83 +1027,5 @@ const styles = StyleSheet.create({
     fontSize: FontSizes.xs,
     textAlign: 'center',
     marginTop: Spacing.lg,
-  },
-  
-  // Novelty Settings
-  noveltyDescription: {
-    fontSize: FontSizes.sm,
-    lineHeight: 20,
-    marginBottom: Spacing.lg,
-  },
-  noveltySection: {
-    padding: Spacing.md,
-    borderRadius: BorderRadius.md,
-    borderWidth: 1,
-    marginBottom: Spacing.md,
-  },
-  noveltyHeader: {
-    flexDirection: 'row',
-    justifyContent: 'space-between',
-    alignItems: 'center',
-    marginBottom: Spacing.md,
-  },
-  noveltyLabel: {
-    fontSize: FontSizes.md,
-    fontWeight: '600',
-  },
-  noveltyHint: {
-    fontSize: FontSizes.xs,
-    marginTop: 2,
-  },
-  noveltyValueBadge: {
-    paddingHorizontal: Spacing.md,
-    paddingVertical: Spacing.xs,
-    borderRadius: BorderRadius.md,
-    minWidth: 60,
-    alignItems: 'center',
-  },
-  noveltyValueText: {
-    fontSize: FontSizes.lg,
-    fontWeight: '700',
-  },
-  slider: {
-    width: '100%',
-    height: 40,
-  },
-  sliderLabels: {
-    flexDirection: 'row',
-    justifyContent: 'space-between',
-  },
-  sliderLabel: {
-    fontSize: FontSizes.xs,
-  },
-  attemptsRow: {
-    flexDirection: 'row',
-    gap: Spacing.sm,
-  },
-  attemptButton: {
-    flex: 1,
-    paddingVertical: Spacing.sm,
-    borderRadius: BorderRadius.md,
-    borderWidth: 1,
-    alignItems: 'center',
-  },
-  attemptButtonText: {
-    fontSize: FontSizes.md,
-    fontWeight: '600',
-  },
-  infoCard: {
-    flexDirection: 'row',
-    alignItems: 'flex-start',
-    gap: Spacing.sm,
-    padding: Spacing.md,
-    borderRadius: BorderRadius.md,
-    borderWidth: 1,
-    marginBottom: Spacing.lg,
-  },
-  infoText: {
-    flex: 1,
-    fontSize: FontSizes.sm,
-    lineHeight: 18,
   },
 });

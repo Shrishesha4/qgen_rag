@@ -53,10 +53,7 @@ class User(Base):
     # Preferences
     preferences: Mapped[Optional[dict]] = mapped_column(JSONB, default={})
     
-    # Novelty Configuration
-    # Default to strict novelty (1.0) and allow up to 5 regeneration attempts by default.
-    novelty_threshold: Mapped[float] = mapped_column(Float, default=1.0)  # 0.0 to 1.0
-    max_regeneration_attempts: Mapped[int] = mapped_column(Integer, default=5)  # 1 to 5
+
     
     # Subject-level Reference Materials (stored per subject)
     # Format: {"subject_id": {"reference_books": [...], "template_papers": [...]}}

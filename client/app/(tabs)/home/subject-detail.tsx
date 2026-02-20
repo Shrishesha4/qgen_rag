@@ -69,13 +69,16 @@ export default function SubjectDetailScreen() {
   const [isLoadingRubrics, setIsLoadingRubrics] = useState(false);
   const [isGenerating, setIsGenerating] = useState(false);
   const [genProgress, setGenProgress] = useState<GenerationProgress | null>(null);
-  const [genQuestions, setGenQuestions] = useState<Array<{ id: string; question_text: string; question_type: string; marks: number }>>([]);
+  const [genQuestions, setGenQuestions] = useState<Array<{ id: string; question_text: string; question_type: string; marks: number; learning_outcome_id?: string | null; course_outcome_mapping?: Record<string, number> | null }>>([]);
   const cancelGenRef = useRef<(() => void) | null>(null);
   const genProgressAnim = useRef(new Animated.Value(0)).current;
   // Quick generate form
-  const [qgMcqCount, setQgMcqCount] = useState('5');
-  const [qgShortCount, setQgShortCount] = useState('3');
+  const [qgMcqCount, setQgMcqCount] = useState('0');
+  const [qgShortCount, setQgShortCount] = useState('0');
   const [qgLongCount, setQgLongCount] = useState('0');
+  const [qgMcqMarks, setQgMcqMarks] = useState('1');
+  const [qgShortMarks, setQgShortMarks] = useState('2');
+  const [qgLongMarks, setQgLongMarks] = useState('5');
 
   const loadData = useCallback(async () => {
     if (!id) return;
@@ -187,6 +190,9 @@ export default function SubjectDetailScreen() {
     setQgMcqCount('5');
     setQgShortCount('3');
     setQgLongCount('0');
+    setQgMcqMarks('2');
+    setQgShortMarks('5');
+    setQgLongMarks('10');
     setShowGenerateModal(true);
     // Load existing rubrics for this subject
     setIsLoadingRubrics(true);
@@ -204,6 +210,7 @@ export default function SubjectDetailScreen() {
     setGenProgress(null);
     setGenQuestions([]);
     setGenerateTopic(null);
+    loadData(); // refresh data only after modal is closed
   };
 
   const runGeneration = (rubricId: string, isTempRubric: boolean) => {
@@ -232,11 +239,10 @@ export default function SubjectDetailScreen() {
         }
       },
       async () => {
-        setIsGenerating(false);
+        // Don't setIsGenerating(false) yet — let completion UI stay visible
         if (isTempRubric) {
           try { await rubricsService.deleteRubric(rubricId); } catch { }
         }
-        loadData();
       },
       async (error) => {
         showError(error, 'Generation Failed');
@@ -250,7 +256,7 @@ export default function SubjectDetailScreen() {
     cancelGenRef.current = cancel;
   };
 
-  const handleQuickGenerate = async () => {
+  const handleQuickGenerate = () => {
     if (!generateTopic || !id) return;
     const mcq = parseInt(qgMcqCount) || 0;
     const short = parseInt(qgShortCount) || 0;
@@ -260,25 +266,44 @@ export default function SubjectDetailScreen() {
       return;
     }
     setIsGenerating(true);
-    try {
-      const dist: Record<string, { count: number; marks_each: number }> = {};
-      if (mcq > 0) dist.mcq = { count: mcq, marks_each: 2 };
-      if (short > 0) dist.short_notes = { count: short, marks_each: 6 };
-      if (long > 0) dist.essay = { count: long, marks_each: 10 };
+    setGenQuestions([]);
+    setGenProgress(null);
+    genProgressAnim.setValue(0);
 
-      const rubric = await rubricsService.createRubric({
-        subject_id: id,
-        name: `__temp_${generateTopic.name}_${Date.now()}`,
-        exam_type: 'quiz',
-        duration_minutes: 60,
-        question_type_distribution: dist,
-        learning_outcomes_distribution: { LO1: 50, LO2: 50 },
-      });
-      runGeneration(rubric.id, true);
-    } catch (error) {
-      showError(error, 'Failed to Start Generation');
-      setIsGenerating(false);
-    }
+    const dist: Record<string, { count: number; marks_each: number }> = {};
+    if (mcq > 0) dist.mcq = { count: mcq, marks_each: parseInt(qgMcqMarks) || 2 };
+    if (short > 0) dist.short_notes = { count: short, marks_each: parseInt(qgShortMarks) || 5 };
+    if (long > 0) dist.essay = { count: long, marks_each: parseInt(qgLongMarks) || 10 };
+
+    const cancel = rubricsService.generateChapter(
+      generateTopic.id,
+      dist,
+      (progress) => {
+        setGenProgress(progress);
+        if (progress.progress) {
+          Animated.timing(genProgressAnim, {
+            toValue: progress.progress,
+            duration: 300,
+            useNativeDriver: false,
+          }).start();
+        }
+        if (progress.question) {
+          setGenQuestions((prev) => [...prev, progress.question!]);
+        }
+        if (progress.status === 'error') {
+          showError(new Error(progress.message || 'Generation failed'), 'Generation Failed');
+          setIsGenerating(false);
+        }
+      },
+      () => {
+        // Don't setIsGenerating(false) — let completion UI stay visible
+      },
+      (error) => {
+        showError(error, 'Generation Failed');
+        setIsGenerating(false);
+      },
+    );
+    cancelGenRef.current = cancel;
   };
 
   const handleUseExistingRubric = (rubric: Rubric) => {
@@ -888,7 +913,7 @@ export default function SubjectDetailScreen() {
                       {genProgress.message}
                     </Text>
                   )}
-                  {genProgress?.current_question && genProgress?.total_questions && (
+                  {genProgress != null && genProgress.current_question != null && genProgress.total_questions != null && genProgress.total_questions > 0 && (
                     <Text style={{ color: colors.textSecondary, fontSize: FontSizes.xs, marginTop: 4 }}>
                       {genProgress.current_question} / {genProgress.total_questions} questions
                     </Text>
@@ -903,10 +928,26 @@ export default function SubjectDetailScreen() {
                     </Text>
                     {genQuestions.slice(-5).map((q, idx) => (
                       <View key={q.id} style={[styles.genQuestionRow, idx > 0 && { borderTopWidth: 1, borderTopColor: colors.border }]}>
-                        <View style={[styles.genQTypeBadge, { backgroundColor: colors.primary + '15' }]}>
-                          <Text style={{ color: colors.primary, fontSize: 10, fontWeight: '700' }}>
-                            {q.question_type.toUpperCase()}
-                          </Text>
+                        <View style={{ flexDirection: 'row', gap: 4, marginBottom: 4, flexWrap: 'wrap' }}>
+                          <View style={[styles.genQTypeBadge, { backgroundColor: colors.primary + '15' }]}>
+                            <Text style={{ color: colors.primary, fontSize: 10, fontWeight: '700' }}>
+                              {q.question_type.toUpperCase()}
+                            </Text>
+                          </View>
+                          {q.learning_outcome_id && (
+                            <View style={[styles.genQTypeBadge, { backgroundColor: '#34C75915' }]}>
+                              <Text style={{ color: '#34C759', fontSize: 10, fontWeight: '700' }}>
+                                {q.learning_outcome_id}
+                              </Text>
+                            </View>
+                          )}
+                          {q.course_outcome_mapping && Object.keys(q.course_outcome_mapping).length > 0 && (
+                            <View style={[styles.genQTypeBadge, { backgroundColor: '#FF950015' }]}>
+                              <Text style={{ color: '#FF9500', fontSize: 10, fontWeight: '700' }}>
+                                {Object.keys(q.course_outcome_mapping).join(', ')}
+                              </Text>
+                            </View>
+                          )}
                         </View>
                         <Text style={{ color: colors.text, fontSize: FontSizes.sm, flex: 1 }} numberOfLines={2}>
                           {q.question_text}
@@ -965,9 +1006,9 @@ export default function SubjectDetailScreen() {
                     /* Quick Generate Form */
                     <>
                       <View style={[styles.genSection, { backgroundColor: colors.card }]}>
-                        <Text style={[styles.genSectionLabel, { color: colors.textSecondary }]}>QUESTION COUNTS</Text>
+                        <Text style={[styles.genSectionLabel, { color: colors.textSecondary }]}>QUESTION TYPES & MARKS</Text>
                         <Text style={{ color: colors.textTertiary, fontSize: FontSizes.xs, marginBottom: Spacing.md }}>
-                          A temporary rubric will be created and deleted after generation.
+                          Set count and marks per question type. No limits.
                         </Text>
 
                         {/* MCQ */}
@@ -984,6 +1025,8 @@ export default function SubjectDetailScreen() {
                             <TouchableOpacity style={[styles.genCountBtn, { borderColor: colors.border }]} onPress={() => setQgMcqCount(String((parseInt(qgMcqCount) || 0) + 1))}>
                               <Text style={{ color: colors.text, fontWeight: '700' }}>+</Text>
                             </TouchableOpacity>
+                            <Text style={{ color: colors.textSecondary, fontSize: FontSizes.xs, marginLeft: 8 }}>Marks:</Text>
+                            <TextInput style={[styles.genCountInput, { color: colors.text, borderColor: colors.border, width: 40 }]} value={qgMcqMarks} onChangeText={setQgMcqMarks} keyboardType="number-pad" />
                           </View>
                         </View>
 
@@ -1001,6 +1044,8 @@ export default function SubjectDetailScreen() {
                             <TouchableOpacity style={[styles.genCountBtn, { borderColor: colors.border }]} onPress={() => setQgShortCount(String((parseInt(qgShortCount) || 0) + 1))}>
                               <Text style={{ color: colors.text, fontWeight: '700' }}>+</Text>
                             </TouchableOpacity>
+                            <Text style={{ color: colors.textSecondary, fontSize: FontSizes.xs, marginLeft: 8 }}>Marks:</Text>
+                            <TextInput style={[styles.genCountInput, { color: colors.text, borderColor: colors.border, width: 40 }]} value={qgShortMarks} onChangeText={setQgShortMarks} keyboardType="number-pad" />
                           </View>
                         </View>
 
@@ -1018,6 +1063,8 @@ export default function SubjectDetailScreen() {
                             <TouchableOpacity style={[styles.genCountBtn, { borderColor: colors.border }]} onPress={() => setQgLongCount(String((parseInt(qgLongCount) || 0) + 1))}>
                               <Text style={{ color: colors.text, fontWeight: '700' }}>+</Text>
                             </TouchableOpacity>
+                            <Text style={{ color: colors.textSecondary, fontSize: FontSizes.xs, marginLeft: 8 }}>Marks:</Text>
+                            <TextInput style={[styles.genCountInput, { color: colors.text, borderColor: colors.border, width: 40 }]} value={qgLongMarks} onChangeText={setQgLongMarks} keyboardType="number-pad" />
                           </View>
                         </View>
                       </View>

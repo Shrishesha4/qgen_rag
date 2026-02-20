@@ -9,7 +9,7 @@ import uuid
 from datetime import datetime, timezone
 import re
 
-from fastapi import APIRouter, Depends, HTTPException, status, Query, UploadFile, File, Form
+from fastapi import APIRouter, Depends, HTTPException, status, Query, UploadFile, File, Form, Request
 from fastapi.responses import StreamingResponse
 from sqlalchemy import select, func
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -95,7 +95,6 @@ async def quick_generate_questions(
     marks_long: Optional[int] = Form(default=5, ge=1, le=100, description="Marks for long answer/essay questions"),
     subject_id: Optional[str] = Form(default=None, description="Subject ID to link questions to"),
     topic_id: Optional[str] = Form(default=None, description="Topic/Chapter ID to link questions to"),
-    enforce_novelty: bool = Form(default=True, description="Enable novelty validation (uses user's novelty threshold)"),
     current_user: User = Depends(rate_limit(requests=50, window_seconds=86400)),  # 50/day for quick generate
     db: AsyncSession = Depends(get_db),
 ):
@@ -200,7 +199,7 @@ async def quick_generate_questions(
             yield f"data: {QuickGenerateProgress(status='processing', progress=20, message=f'Document processed: {doc_chunks} sections extracted', document_id=doc_id).model_dump_json()}\n\n"
             
             # Step 2: Generate questions
-            logger.info(f"Quick generate: Starting question generation, count={count}, types={type_list}, enforce_novelty={enforce_novelty}")
+            logger.info(f"Quick generate: Starting question generation, count={count}, types={type_list}")
             generation_started = False
             
             # Build marks by type dictionary
@@ -215,35 +214,18 @@ async def quick_generate_questions(
             parsed_topic_id = uuid.UUID(topic_id) if topic_id else None
             
             try:
-                # Choose generation method based on novelty enforcement
-                if enforce_novelty:
-                    # Use novelty-validated generation
-                    generator = question_service.quick_generate_with_novelty(
-                        user_id=current_user.id,
-                        document_id=doc_id,
-                        context=context,
-                        count=count,
-                        types=type_list,
-                        difficulty=difficulty,
-                        bloom_levels=bloom_list,
-                        marks_by_type=marks_by_type,
-                        subject_id=parsed_subject_id,
-                        topic_id=parsed_topic_id,
-                    )
-                else:
-                    # Use standard generation without novelty validation
-                    generator = question_service.quick_generate(
-                        user_id=current_user.id,
-                        document_id=doc_id,
-                        context=context,
-                        count=count,
-                        types=type_list,
-                        difficulty=difficulty,
-                        bloom_levels=bloom_list,
-                        marks_by_type=marks_by_type,
-                        subject_id=parsed_subject_id,
-                        topic_id=parsed_topic_id,
-                    )
+                generator = question_service.quick_generate(
+                    user_id=current_user.id,
+                    document_id=doc_id,
+                    context=context,
+                    count=count,
+                    types=type_list,
+                    difficulty=difficulty,
+                    bloom_levels=bloom_list,
+                    marks_by_type=marks_by_type,
+                    subject_id=parsed_subject_id,
+                    topic_id=parsed_topic_id,
+                )
                 
                 async for progress in generator:
                     generation_started = True
@@ -1272,6 +1254,7 @@ class RubricGenerationRequest(BaseModel):
 @router.post("/generate-from-rubric")
 async def generate_from_rubric(
     request: RubricGenerationRequest,
+    raw_request: Request,
     current_user: User = Depends(rate_limit(requests=50, window_seconds=86400)),  # 50/day
     db: AsyncSession = Depends(get_db),
 ):
@@ -1368,13 +1351,18 @@ async def generate_from_rubric(
     llm_service = LLMService()
     embedding_service = EmbeddingService()
     
+    # Pre-fetch subject attributes that might not be loaded in the new session
+    subject_lo_mappings = getattr(subject, "learning_outcome_mappings", {}) or {}
+    subject_cos = (subject.course_outcomes or {}).get("outcomes") if subject.course_outcomes else None
+
     logger.info(f"[{request_id}] Rubric generation starting: {rubric_name}, {total_questions} questions, topic_id={request.topic_id}, topics_found={len(topic_data)}")
     for td in topic_data:
         logger.info(f"[{request_id}]   -> Topic: {td['name']} ({td['id']})")
     
     async def event_generator():
         """Generate SSE events with questions."""
-        nonlocal db
+        from app.core.database import AsyncSessionLocal
+        db = AsyncSessionLocal()
         
         try:
             yield f"data: {json.dumps({'status': 'processing', 'progress': 5, 'message': 'Analyzing syllabus content...'})}\n\n"
@@ -1413,8 +1401,54 @@ async def generate_from_rubric(
             if not all_chunks:
                 yield f"data: {json.dumps({'status': 'error', 'progress': 0, 'message': 'No syllabus content found in topics'})}\n\n"
                 return
-            
-            yield f"data: {json.dumps({'status': 'processing', 'progress': 10, 'message': f'Prepared {len(all_chunks)} content sections from {len(topic_data)} topics'})}\n\n"
+
+            # ── RAG: fetch reference-book chunks ──
+            reference_context = ""
+            ref_count = 0
+            try:
+                from app.services.document_service import DocumentService
+                doc_service = DocumentService(db, embedding_service)
+                # Build a query from the topic names + first few hundred chars of syllabus
+                rag_query_parts = [td["name"] + ": " + (td["content"] or "")[:200] for td in topic_data if td["content"]]
+                rag_query = " ".join(rag_query_parts)[:1000]
+                query_emb = await embedding_service.get_query_embedding(rag_query)
+                ref_chunks = await doc_service.get_reference_chunks(
+                    user_id=current_user.id,
+                    subject_id=uuid.UUID(subject_id_str),
+                    index_type="reference_book",
+                    query_embedding=query_emb,
+                    top_k=5,
+                )
+                if ref_chunks:
+                    reference_context = "\n\n".join(
+                        f"[Reference {i+1}]: {c.chunk_text}" for i, c in enumerate(ref_chunks)
+                    )
+                    ref_count = len(ref_chunks)
+                    logger.info(f"[{request_id}] RAG found {ref_count} reference chunks for rubric generation")
+            except Exception as e:
+                logger.warning(f"[{request_id}] RAG lookup failed ({e}); continuing without reference context")
+
+            # Build LO/CO context strings for prompts
+            lo_context = ""
+            all_lo_keys = set()
+            for td in topic_data:
+                if td.get("lo_mappings"):
+                    all_lo_keys.update(td["lo_mappings"].keys())
+            if all_lo_keys:
+                lo_context = f"\nAvailable Learning Outcomes: {', '.join(sorted(all_lo_keys))}"
+            co_context = ""
+            if subject_cos and isinstance(subject_cos, list):
+                co_ids = [co.get('id', f'CO{i+1}') if isinstance(co, dict) else str(co) for i, co in enumerate(subject_cos)]
+                co_context = f"\nAvailable Course Outcomes: {', '.join(co_ids)}"
+            elif subject_lo_mappings:
+                all_cos = set()
+                for lo_key, co_map in subject_lo_mappings.items():
+                    if isinstance(co_map, dict):
+                        all_cos.update(co_map.keys())
+                if all_cos:
+                    co_context = f"\nAvailable Course Outcomes: {', '.join(sorted(all_cos))}"
+
+            yield f"data: {json.dumps({'status': 'processing', 'progress': 10, 'message': f'Prepared {len(all_chunks)} content sections from {len(topic_data)} topics + {ref_count} reference excerpts'})}\n\n"
             
             questions_generated = 0
             questions_failed = 0
@@ -1428,9 +1462,10 @@ async def generate_from_rubric(
                     select(Question.question_embedding).where(
                         Question.subject_id == uuid.UUID(subject_id_str),
                         Question.is_archived == False,
+                        Question.question_embedding.isnot(None),
                     ).limit(2000)
                 )
-                existing_question_embeddings = [r[0] for r in emb_res.all() if r[0]]
+                existing_question_embeddings = [r[0] for r in emb_res.all()]
                 logger.info(f"[{request_id}] Preloaded {len(existing_question_embeddings)} existing embeddings for dedupe")
             except Exception as e:
                 logger.warning(f"[{request_id}] Could not preload existing embeddings ({e}); continuing without DB dedupe")
@@ -1443,9 +1478,15 @@ async def generate_from_rubric(
                 "essay": "long_answer",
                 "long_answer": "long_answer",
             }
+
+            RETRY_LIMIT = 5
+
+            cancelled = False
             
             # Generate questions for each type
             for q_type, config in question_distribution.items():
+                if cancelled:
+                    break
                 count = config.get("count", 0)
                 marks = config.get("marks_each", 2)
                 mapped_type = type_mapping.get(q_type, "mcq")
@@ -1461,6 +1502,12 @@ async def generate_from_rubric(
                 
                 for i in range(count):
                     # Get a fresh session connection for each question
+                    # Check if client has disconnected (cancelled)
+                    if await raw_request.is_disconnected():
+                        logger.info(f"[{request_id}] Client disconnected, cancelling generation")
+                        cancelled = True
+                        break
+
                     try:
                         # Select chunk (round-robin with some randomization)
                         selected_idx = (chunk_index + random.randint(0, min(2, len(all_chunks)-1))) % len(all_chunks)
@@ -1472,31 +1519,23 @@ async def generate_from_rubric(
                         
                         prompt = f"""Context from "{selected_chunk['topic_name']}":
 {selected_chunk['content']}
-
+"""
+                        if reference_context:
+                            prompt += f"""
+Additional reference material (use to enrich the question):
+{reference_context}
+"""
+                        prompt += f"""
 Generate a {mapped_type.replace('_', ' ')} question based on this content.
 - Marks: {marks}
 - The question must start with an interrogative word (What, Which, How, Why, etc.) or a valid imperative (Find, Calculate, Explain, etc.)
 - The question should directly test understanding of the material
 - Avoid questions that are too similar to: {', '.join([q[:50] for q in generated_questions[-5:]]) if generated_questions else 'None yet'}
+{lo_context}
+{co_context}
+- In your JSON output, include "learning_outcome" (the most relevant LO based on the question content) and "course_outcome" (the most relevant CO based on the question content). Analyze what the question tests and choose accordingly.
 
 Output valid JSON only."""
-
-                        # Attempt to generate a non-duplicate question (embedding dedupe + retries)
-                        # Defaults (can be overridden by user's novelty settings)
-                        # Set strict novelty by default and allow maximum regeneration attempts (user schema limits to 10)
-                        DUP_THRESHOLD = 1.0
-                        RETRY_LIMIT = 5
-
-                        # Try to read user novelty settings (if available) to tune threshold/attempts
-                        try:
-                            from app.services.novelty_service import NoveltyService
-                            novelty_svc = NoveltyService(db)
-                            ns = await novelty_svc.get_user_novelty_settings(current_user.id)
-                            DUP_THRESHOLD = ns.get("novelty_threshold", DUP_THRESHOLD)
-                            RETRY_LIMIT = ns.get("max_regeneration_attempts", RETRY_LIMIT)
-                        except Exception:
-                            # Non-fatal; continue with defaults
-                            pass
 
                         accepted = False
                         response_obj = None
@@ -1533,25 +1572,6 @@ Output valid JSON only."""
                                     questions_failed += 1
                                 continue
 
-                            # Check against in-session generated embeddings
-                            duplicate = False
-                            if generated_embeddings:
-                                sims = embedding_service.compute_similarity_batch(candidate_emb, generated_embeddings)
-                                if any(s > DUP_THRESHOLD for s in sims):
-                                    duplicate = True
-
-                            # Check against preloaded DB embeddings for the subject
-                            if not duplicate and existing_question_embeddings:
-                                sims_db = embedding_service.compute_similarity_batch(candidate_emb, existing_question_embeddings)
-                                if any(s > DUP_THRESHOLD for s in sims_db):
-                                    duplicate = True
-
-                            if duplicate:
-                                logger.warning(f"[{request_id}] Duplicate detected (attempt {attempt+1}), retrying")
-                                if attempt == RETRY_LIMIT - 1:
-                                    questions_failed += 1
-                                continue
-
                             # Accepted candidate
                             question_text = candidate_text
                             question_embedding = candidate_emb
@@ -1565,7 +1585,7 @@ Output valid JSON only."""
 
                         # --- Determine Learning Outcome (LO) and Course Outcome (CO) mapping ---
                         assigned_lo = None
-                        assigned_co_map = None
+                        assigned_co_map = {}
 
                         # 1) Prefer explicit LO returned by the LLM
                         if response_obj and isinstance(response_obj.get("learning_outcome_id"), str):
@@ -1576,7 +1596,6 @@ Output valid JSON only."""
                         # 2) If no LO from LLM, prefer topic's LO mappings (highest weight)
                         topic_lo_map = selected_chunk.get("lo_mappings") or {}
                         if not assigned_lo and topic_lo_map:
-                            # topic_lo_map expected to be { "LO1": weight, "LO2": weight }
                             try:
                                 assigned_lo = max(topic_lo_map.items(), key=lambda kv: (kv[1] or 0))[0]
                             except Exception:
@@ -1584,7 +1603,6 @@ Output valid JSON only."""
 
                         # 3) If still no LO, fall back to rubric LO distribution (weighted random)
                         if not assigned_lo and lo_distribution:
-                            # Normalize distribution values and sample
                             items = [(k, float(v or 0)) for k, v in lo_distribution.items() if (v or 0) > 0]
                             if items:
                                 total_w = sum(w for _, w in items)
@@ -1598,22 +1616,19 @@ Output valid JSON only."""
                                             assigned_lo = k
                                             break
 
-                        # 4) Derive CO mapping if possible from subject mappings or sensible default
-                        subject_lo_mappings = getattr(subject, "learning_outcome_mappings", {}) or {}
-                        if assigned_lo and subject_lo_mappings and isinstance(subject_lo_mappings.get(assigned_lo), dict):
+                        # 4) CO mapping — prefer LLM's intelligent choice
+                        if response_obj and isinstance(response_obj.get("course_outcome"), str):
+                            assigned_co_map = {response_obj["course_outcome"]: 1}
+                        elif response_obj and isinstance(response_obj.get("course_outcome"), dict):
+                            assigned_co_map = response_obj["course_outcome"]
+                        elif assigned_lo and subject_lo_mappings and isinstance(subject_lo_mappings.get(assigned_lo), dict):
                             assigned_co_map = subject_lo_mappings.get(assigned_lo)
-                        else:
-                            # Heuristic fallback: map LO# -> CO# if course_outcomes exist
-                            cos = (subject.course_outcomes or {}).get("outcomes") if subject.course_outcomes else None
-                            if assigned_lo and cos and isinstance(cos, list) and len(cos) > 0:
-                                m = re.search(r"LO(\d+)", str(assigned_lo))
-                                if m:
-                                    idx = (int(m.group(1)) - 1) % len(cos)
-                                    assigned_co_map = { f"CO{idx+1}": 1 }
-                                else:
-                                    assigned_co_map = { cos[0]["id"] if isinstance(cos[0], dict) and "id" in cos[0] else f"CO1": 1 }
-                            else:
-                                assigned_co_map = {}
+                        elif assigned_lo and subject_cos and isinstance(subject_cos, list) and len(subject_cos) > 0:
+                            m = re.search(r"LO(\d+)", str(assigned_lo))
+                            if m:
+                                idx = (int(m.group(1)) - 1) % len(subject_cos)
+                                co_id = subject_cos[idx].get('id', f'CO{idx+1}') if isinstance(subject_cos[idx], dict) else f'CO{idx+1}'
+                                assigned_co_map = {co_id: 1}
 
                         # Create question (accepted candidate) with LO/CO and metadata
                         question = Question(
@@ -1653,7 +1668,7 @@ Output valid JSON only."""
                         # Calculate progress
                         progress = 10 + int((questions_generated / max(total_questions, 1)) * 85)
 
-                        yield f"data: {json.dumps({'status': 'generating', 'progress': min(progress, 95), 'current_question': questions_generated, 'total_questions': total_questions, 'message': f'Generated {questions_generated}/{total_questions} questions', 'question': {'id': str(question.id), 'question_text': question.question_text[:100] + '...' if len(question.question_text) > 100 else question.question_text, 'question_type': question.question_type, 'marks': question.marks}})}\n\n"
+                        yield f"data: {json.dumps({'status': 'generating', 'progress': min(progress, 95), 'current_question': questions_generated, 'total_questions': total_questions, 'message': f'Generated {questions_generated}/{total_questions} questions', 'question': {'id': str(question.id), 'question_text': question.question_text[:100] + '...' if len(question.question_text) > 100 else question.question_text, 'question_type': question.question_type, 'marks': question.marks, 'learning_outcome_id': question.learning_outcome_id, 'course_outcome_mapping': question.course_outcome_mapping}})}\n\n"
                     except Exception as e:
                         logger.error(f"[{request_id}] Error generating question: {e}")
                         questions_failed += 1
@@ -1679,7 +1694,367 @@ Output valid JSON only."""
         except Exception as e:
             logger.error(f"[{request_id}] Rubric generation failed: {e}")
             yield f"data: {json.dumps({'status': 'error', 'progress': 0, 'message': f'Generation failed: {str(e)}'})}\n\n"
-    
+        finally:
+            try:
+                await db.close()
+            except Exception:
+                pass
+    return StreamingResponse(
+        event_generator(),
+        media_type="text/event-stream",
+        headers={
+            "Cache-Control": "no-cache",
+            "Connection": "keep-alive",
+            "X-Accel-Buffering": "no",
+        },
+    )
+
+
+# ============== Per-Chapter Generation with RAG ==============
+
+class QuestionTypeSpec(BaseModel):
+    """Specification for a single question type."""
+    count: int
+    marks_each: int = 2
+
+class ChapterGenerationRequest(BaseModel):
+    """Schema for generating questions from a single chapter."""
+    topic_id: uuid.UUID
+    question_types: dict  # e.g. {"mcq": {"count": 5, "marks_each": 2}, ...}
+
+
+@router.post("/generate-chapter")
+async def generate_chapter(
+    request: ChapterGenerationRequest,
+    raw_request: Request,
+    current_user: User = Depends(rate_limit(requests=200, window_seconds=86400)),
+    db: AsyncSession = Depends(get_db),
+):
+    """
+    Generate questions strictly from a single chapter.
+    Uses the chapter's syllabus content + RAG from reference books.
+    Streams SSE progress updates.
+    """
+    from app.models.subject import Subject, Topic
+    from app.services.llm_service import LLMService
+    from app.services.embedding_service import EmbeddingService
+    from app.services.document_service import DocumentService
+    from app.models.question import Question
+    from app.core.database import AsyncSessionLocal
+    from loguru import logger
+    import random
+
+    request_id = uuid.uuid4().hex[:8]
+
+    # ── Load the topic ──
+    result = await db.execute(
+        select(Topic).where(Topic.id == request.topic_id)
+    )
+    topic = result.scalar_one_or_none()
+    if not topic:
+        raise HTTPException(status_code=404, detail="Topic not found")
+
+    if not topic.has_syllabus or not topic.syllabus_content:
+        raise HTTPException(status_code=400, detail="This chapter has no syllabus content. Upload syllabus first.")
+
+    topic_id_str = str(topic.id)
+    topic_name = topic.name
+    topic_content = topic.syllabus_content
+    topic_lo_mappings = topic.learning_outcome_mappings or {}
+    subject_id = topic.subject_id
+
+    # ── Load the subject ──
+    result = await db.execute(select(Subject).where(Subject.id == subject_id))
+    subject = result.scalar_one_or_none()
+    if not subject:
+        raise HTTPException(status_code=404, detail="Subject not found")
+
+    subject_id_str = str(subject.id)
+    subject_name = subject.name
+    subject_lo_mappings_data = getattr(subject, "learning_outcome_mappings", {}) or {}
+    subject_cos = (subject.course_outcomes or {}).get("outcomes") if subject.course_outcomes else None
+    user_id = current_user.id
+
+    # ── Parse question types ──
+    type_mapping = {
+        "mcq": "mcq", "short_notes": "short_answer",
+        "short_answer": "short_answer", "essay": "long_answer",
+        "long_answer": "long_answer",
+    }
+    generation_plan = []
+    total_questions = 0
+    for q_type, spec in request.question_types.items():
+        count = spec.get("count", 0) if isinstance(spec, dict) else 0
+        marks = spec.get("marks_each", 2) if isinstance(spec, dict) else 2
+        mapped = type_mapping.get(q_type, q_type)
+        if count > 0:
+            generation_plan.append({"type": mapped, "count": count, "marks": marks})
+            total_questions += count
+
+    if total_questions == 0:
+        raise HTTPException(status_code=400, detail="Add at least one question to generate.")
+
+    llm_service = LLMService()
+    embedding_service = EmbeddingService()
+
+    logger.info(f"[{request_id}] Chapter gen: topic={topic_name} ({topic_id_str}), {total_questions} questions")
+
+    # ── Chunk the syllabus ──
+    paragraphs = re.split(r'\n\n+', topic_content)
+    syllabus_chunks = []
+    current_chunk = ""
+    for para in paragraphs:
+        if len(current_chunk) + len(para) < 1500:
+            current_chunk += "\n\n" + para if current_chunk else para
+        else:
+            if current_chunk:
+                syllabus_chunks.append(current_chunk.strip())
+            current_chunk = para
+    if current_chunk:
+        syllabus_chunks.append(current_chunk.strip())
+    if not syllabus_chunks:
+        syllabus_chunks = [topic_content]
+
+    async def event_generator():
+        db = AsyncSessionLocal()
+        try:
+            yield f"data: {json.dumps({'status': 'processing', 'progress': 5, 'message': 'Analyzing chapter content...'})}\n\n"
+
+            # ── RAG: fetch reference-book chunks ──
+            reference_context = ""
+            ref_count = 0
+            try:
+                doc_service = DocumentService(db, embedding_service)
+                rag_query = f"{topic_name}: {topic_content[:500]}"
+                query_emb = await embedding_service.get_query_embedding(rag_query)
+                ref_chunks = await doc_service.get_reference_chunks(
+                    user_id=user_id,
+                    subject_id=uuid.UUID(subject_id_str),
+                    index_type="reference_book",
+                    query_embedding=query_emb,
+                    top_k=5,
+                )
+                if ref_chunks:
+                    reference_context = "\n\n".join(
+                        f"[Reference {i+1}]: {c.chunk_text}" for i, c in enumerate(ref_chunks)
+                    )
+                    ref_count = len(ref_chunks)
+                    logger.info(f"[{request_id}] RAG found {ref_count} reference chunks")
+            except Exception as e:
+                logger.warning(f"[{request_id}] RAG lookup failed ({e}); continuing without reference context")
+
+            yield f"data: {json.dumps({'status': 'processing', 'progress': 10, 'message': f'Prepared {len(syllabus_chunks)} content sections + {ref_count} reference excerpts'})}\n\n"
+
+            # ── Preload existing embeddings ──
+            existing_embeddings = []
+            try:
+                emb_res = await db.execute(
+                    select(Question.question_embedding).where(
+                        Question.subject_id == uuid.UUID(subject_id_str),
+                        Question.is_archived == False,
+                        Question.question_embedding.isnot(None),
+                    ).limit(2000)
+                )
+                existing_embeddings = [r[0] for r in emb_res.all()]
+            except Exception as e:
+                logger.warning(f"[{request_id}] Embedding preload failed ({e})")
+
+            questions_generated = 0
+            questions_failed = 0
+            generated_texts = []
+            generated_embeddings = []
+
+            RETRY_LIMIT = 5
+
+            cancelled = False
+
+            for plan in generation_plan:
+                if cancelled:
+                    break
+                q_type = plan["type"]
+                count = plan["count"]
+                marks = plan["marks"]
+                chunk_idx = 0
+
+                for i in range(count):
+                    # Check if client has disconnected (cancelled)
+                    if await raw_request.is_disconnected():
+                        logger.info(f"[{request_id}] Client disconnected, cancelling chapter generation")
+                        cancelled = True
+                        break
+
+                    try:
+                        sel_idx = (chunk_idx + random.randint(0, min(2, len(syllabus_chunks) - 1))) % len(syllabus_chunks)
+                        selected_content = syllabus_chunks[sel_idx]
+                        chunk_idx = (chunk_idx + max(1, len(syllabus_chunks) // count)) % len(syllabus_chunks)
+
+                        system_prompt = _get_rubric_system_prompt(q_type)
+
+                        prompt = f"""Chapter: "{topic_name}"
+
+Syllabus content:
+{selected_content}
+"""
+                        if reference_context:
+                            prompt += f"""
+Additional reference material (use to enrich the question):
+{reference_context}
+"""
+                        # Build LO/CO context for the LLM
+                        lo_context = ""
+                        if topic_lo_mappings:
+                            lo_list = ', '.join(topic_lo_mappings.keys())
+                            lo_context += f"\nAvailable Learning Outcomes for this chapter: {lo_list}"
+                        co_context = ""
+                        if subject_cos and isinstance(subject_cos, list):
+                            co_ids = [co.get('id', f'CO{i+1}') if isinstance(co, dict) else str(co) for i, co in enumerate(subject_cos)]
+                            co_context += f"\nAvailable Course Outcomes for this subject: {', '.join(co_ids)}"
+                        elif subject_lo_mappings_data:
+                            all_cos = set()
+                            for lo_key, co_map in subject_lo_mappings_data.items():
+                                if isinstance(co_map, dict):
+                                    all_cos.update(co_map.keys())
+                            if all_cos:
+                                co_context += f"\nAvailable Course Outcomes for this subject: {', '.join(sorted(all_cos))}"
+
+                        prompt += f"""
+Generate a {q_type.replace('_', ' ')} question based STRICTLY on the chapter "{topic_name}" content above.
+- Marks: {marks}
+- The question MUST be about the topic "{topic_name}" — do NOT use content from other chapters
+- Start with an interrogative word (What, Which, How, Why, etc.) or imperative (Find, Calculate, Explain, etc.)
+- Directly test understanding of the material
+- Avoid questions similar to: {', '.join([q[:50] for q in generated_texts[-5:]]) if generated_texts else 'None yet'}
+{lo_context}
+{co_context}
+- In your JSON output, include "learning_outcome" (the most relevant LO for this question based on content) and "course_outcome" (the most relevant CO for this question based on content). Analyze the question content and choose the LO/CO that best matches what the question tests.
+
+Output valid JSON only."""
+
+                        accepted = False
+                        for attempt in range(RETRY_LIMIT):
+                            try:
+                                resp = await llm_service.generate_json(
+                                    prompt=prompt,
+                                    system_prompt=system_prompt,
+                                    temperature=0.75 + (0.05 * attempt),
+                                )
+                            except Exception:
+                                resp = None
+
+                            if not resp or "question_text" not in resp:
+                                if attempt == RETRY_LIMIT - 1:
+                                    questions_failed += 1
+                                continue
+
+                            candidate_text = resp["question_text"]
+                            if len(candidate_text) < 15:
+                                if attempt == RETRY_LIMIT - 1:
+                                    questions_failed += 1
+                                continue
+
+                            try:
+                                candidate_emb = await embedding_service.get_embedding(candidate_text)
+                            except Exception:
+                                if attempt == RETRY_LIMIT - 1:
+                                    questions_failed += 1
+                                continue
+
+                            accepted = True
+
+                            # LO / CO assignment — use LLM response, then fallback to topic data
+                            assigned_lo = None
+                            if isinstance(resp.get("learning_outcome_id"), str):
+                                assigned_lo = resp["learning_outcome_id"]
+                            elif isinstance(resp.get("learning_outcome"), str):
+                                assigned_lo = resp["learning_outcome"]
+                            if not assigned_lo and topic_lo_mappings:
+                                try:
+                                    assigned_lo = max(topic_lo_mappings.items(), key=lambda kv: (kv[1] or 0))[0]
+                                except Exception:
+                                    pass
+
+                            # CO — prefer LLM's intelligent choice, then subject mappings
+                            assigned_co_map = {}
+                            if isinstance(resp.get("course_outcome"), str):
+                                # LLM chose a CO — use it
+                                assigned_co_map = {resp["course_outcome"]: 1}
+                            elif isinstance(resp.get("course_outcome"), dict):
+                                assigned_co_map = resp["course_outcome"]
+                            elif assigned_lo and subject_lo_mappings_data and isinstance(subject_lo_mappings_data.get(assigned_lo), dict):
+                                # Subject has explicit LO→CO mapping
+                                assigned_co_map = subject_lo_mappings_data.get(assigned_lo)
+                            elif assigned_lo and subject_cos and isinstance(subject_cos, list) and len(subject_cos) > 0:
+                                m = re.search(r"LO(\d+)", str(assigned_lo))
+                                if m:
+                                    idx = (int(m.group(1)) - 1) % len(subject_cos)
+                                    co_id = subject_cos[idx].get('id', f'CO{idx+1}') if isinstance(subject_cos[idx], dict) else f'CO{idx+1}'
+                                    assigned_co_map = {co_id: 1}
+
+                            question = Question(
+                                subject_id=uuid.UUID(subject_id_str),
+                                topic_id=uuid.UUID(topic_id_str),
+                                question_text=candidate_text,
+                                question_embedding=candidate_emb,
+                                question_type=q_type,
+                                marks=marks,
+                                difficulty_level="medium",
+                                bloom_taxonomy_level=(resp.get("bloom_level") if resp else "understand"),
+                                correct_answer=(resp.get("correct_answer") or resp.get("expected_answer")),
+                                options=resp.get("options"),
+                                explanation=resp.get("explanation"),
+                                topic_tags=resp.get("topic_tags", [topic_name]),
+                                learning_outcome_id=assigned_lo,
+                                course_outcome_mapping=assigned_co_map,
+                                generation_confidence=0.75,
+                                vetting_status="pending",
+                                generation_metadata={
+                                    "source": "chapter_generation",
+                                    "topic_name": topic_name,
+                                    "has_reference_context": bool(reference_context),
+                                },
+                            )
+                            db.add(question)
+                            await db.commit()
+                            await db.refresh(question)
+
+                            generated_texts.append(candidate_text)
+                            generated_embeddings.append(candidate_emb)
+                            questions_generated += 1
+
+                            progress = 10 + int((questions_generated / max(total_questions, 1)) * 85)
+                            yield f"data: {json.dumps({'status': 'generating', 'progress': min(progress, 95), 'current_question': questions_generated, 'total_questions': total_questions, 'message': f'Generated {questions_generated}/{total_questions} questions', 'question': {'id': str(question.id), 'question_text': question.question_text[:100] + ('...' if len(question.question_text) > 100 else ''), 'question_type': question.question_type, 'marks': question.marks, 'learning_outcome_id': question.learning_outcome_id, 'course_outcome_mapping': question.course_outcome_mapping}})}\n\n"
+                            break
+
+                        if not accepted:
+                            continue
+                    except Exception as e:
+                        logger.error(f"[{request_id}] Error generating question: {e}")
+                        questions_failed += 1
+                        await db.rollback()
+                        continue
+
+            # Update subject stats
+            try:
+                from app.models.subject import Subject as SubjModel
+                result = await db.execute(select(SubjModel).where(SubjModel.id == uuid.UUID(subject_id_str)))
+                subj = result.scalar_one_or_none()
+                if subj:
+                    subj.total_questions = (subj.total_questions or 0) + questions_generated
+                    await db.commit()
+            except Exception as e:
+                logger.error(f"[{request_id}] Error updating subject stats: {e}")
+
+            yield f"data: {json.dumps({'status': 'complete', 'progress': 100, 'current_question': questions_generated, 'total_questions': total_questions, 'message': f'Generated {questions_generated} questions' + (f' ({questions_failed} failed)' if questions_failed > 0 else '')})}\n\n"
+            logger.info(f"[{request_id}] Chapter gen complete: {questions_generated} generated, {questions_failed} failed")
+
+        except Exception as e:
+            logger.error(f"[{request_id}] Chapter generation failed: {e}")
+            yield f"data: {json.dumps({'status': 'error', 'progress': 0, 'message': f'Generation failed: {str(e)}'})}\n\n"
+        finally:
+            try:
+                await db.close()
+            except Exception:
+                pass
     return StreamingResponse(
         event_generator(),
         media_type="text/event-stream",
@@ -1710,7 +2085,9 @@ Output format (JSON):
     "correct_answer": "A",
     "explanation": "Brief explanation of why A is correct",
     "topic_tags": ["topic1"],
-    "bloom_level": "understand"
+    "bloom_level": "understand",
+    "learning_outcome": "LO1",
+    "course_outcome": "CO1"
 }"""
     elif question_type == "short_answer":
         return """You are an expert educator creating examination questions.
@@ -1727,7 +2104,9 @@ Output format (JSON):
     "expected_answer": "Model answer (2-4 sentences)",
     "key_points": ["point1", "point2"],
     "topic_tags": ["topic1"],
-    "bloom_level": "apply"
+    "bloom_level": "apply",
+    "learning_outcome": "LO1",
+    "course_outcome": "CO1"
 }"""
     else:
         return """You are an expert educator creating examination questions.
@@ -1743,136 +2122,10 @@ Output format (JSON):
     "question_text": "The question text",
     "expected_answer": "Model answer outline with key points",
     "topic_tags": ["topic1"],
-    "bloom_level": "analyze"
+    "bloom_level": "analyze",
+    "learning_outcome": "LO1",
+    "course_outcome": "CO1"
 }"""
 
 
-# ============== Novelty Settings Endpoints ==============
 
-class NoveltySettingsResponse(BaseModel):
-    """Schema for novelty settings response."""
-    novelty_threshold: float
-    max_regeneration_attempts: int
-
-
-class NoveltySettingsUpdate(BaseModel):
-    """Schema for updating novelty settings."""
-    novelty_threshold: Optional[float] = None
-    max_regeneration_attempts: Optional[int] = None
-
-
-@router.get("/novelty/settings", response_model=NoveltySettingsResponse)
-async def get_novelty_settings(
-    current_user: User = Depends(get_current_user),
-    db: AsyncSession = Depends(get_db),
-):
-    """
-    Get the current user's novelty validation settings.
-    
-    - novelty_threshold: Minimum novelty score (0.0 - 1.0) required for a question.
-      Higher values mean questions must be more unique.
-    - max_regeneration_attempts: Maximum times to regenerate a question before giving up.
-    """
-    from app.services.novelty_service import NoveltyService
-    
-    novelty_service = NoveltyService(db)
-    settings = await novelty_service.get_user_novelty_settings(current_user.id)
-    
-    return NoveltySettingsResponse(**settings)
-
-
-@router.put("/novelty/settings", response_model=NoveltySettingsResponse)
-async def update_novelty_settings(
-    settings_data: NoveltySettingsUpdate,
-    current_user: User = Depends(get_current_user),
-    db: AsyncSession = Depends(get_db),
-):
-    """
-    Update the current user's novelty validation settings.
-    
-    - novelty_threshold: Value between 0.0 and 1.0
-      - 0.0: Accept all questions (no novelty enforcement)
-      - 1.0: Default - strict uniqueness required (prefer fully novel questions)
-      - 0.5: High uniqueness required
-      - 0.7+: Very strict - questions must be highly unique
-
-    - max_regeneration_attempts: Value between 1 and 5
-      - Default: 5 (maximum allowed) — higher values allow more regeneration attempts before giving up
-    """
-    from sqlalchemy import select
-    
-    result = await db.execute(
-        select(User).where(User.id == current_user.id)
-    )
-    user = result.scalar_one_or_none()
-    
-    if not user:
-        raise HTTPException(
-            status_code=status.HTTP_404_NOT_FOUND,
-            detail="User not found",
-        )
-    
-    if settings_data.novelty_threshold is not None:
-        if not 0.0 <= settings_data.novelty_threshold <= 1.0:
-            raise HTTPException(
-                status_code=status.HTTP_400_BAD_REQUEST,
-                detail="novelty_threshold must be between 0.0 and 1.0",
-            )
-        user.novelty_threshold = settings_data.novelty_threshold
-    
-    if settings_data.max_regeneration_attempts is not None:
-        if not 1 <= settings_data.max_regeneration_attempts <= 5:
-            raise HTTPException(
-                status_code=status.HTTP_400_BAD_REQUEST,
-                detail="max_regeneration_attempts must be between 1 and 5",
-            )
-        user.max_regeneration_attempts = settings_data.max_regeneration_attempts
-    
-    await db.commit()
-    await db.refresh(user)
-    
-    return NoveltySettingsResponse(
-        novelty_threshold=user.novelty_threshold,
-        max_regeneration_attempts=user.max_regeneration_attempts,
-    )
-
-
-@router.get("/novelty/reference-materials/{subject_id}")
-async def get_reference_materials_for_subject(
-    subject_id: uuid.UUID,
-    current_user: User = Depends(get_current_user),
-    db: AsyncSession = Depends(get_db),
-):
-    """
-    Get reference books and template papers for a subject.
-    These are used in novelty validation and intelligent regeneration.
-    """
-    from app.services.novelty_service import NoveltyService
-    
-    novelty_service = NoveltyService(db)
-    materials = await novelty_service.get_reference_documents_for_subject(
-        user_id=current_user.id,
-        subject_id=subject_id,
-    )
-    
-    return {
-        "subject_id": str(subject_id),
-        "reference_books": [
-            {
-                "id": str(doc.id),
-                "filename": doc.filename,
-                "total_chunks": doc.total_chunks,
-                "processing_status": doc.processing_status,
-            }
-            for doc in materials["reference_books"]
-        ],
-        "template_papers": [
-            {
-                "id": str(doc.id),
-                "filename": doc.filename,
-                "total_chunks": doc.total_chunks,
-                "processing_status": doc.processing_status,
-            }
-            for doc in materials["template_papers"]
-        ],
-    }

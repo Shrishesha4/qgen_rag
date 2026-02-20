@@ -23,10 +23,6 @@ export interface ReferenceMaterialsResponse {
   template_papers: ReferenceDocument[];
 }
 
-export interface NoveltySettings {
-  novelty_threshold: number;
-  max_regeneration_attempts: number;
-}
 
 export const referencesService = {
   /**
@@ -49,7 +45,7 @@ export const referencesService = {
     mimeType: string
   ): Promise<{ document_id: string; status: string }> {
     const formData = new FormData();
-    
+
     formData.append('file', {
       uri,
       name: filename,
@@ -78,7 +74,7 @@ export const referencesService = {
     mimeType: string
   ): Promise<{ document_id: string; status: string }> {
     const formData = new FormData();
-    
+
     formData.append('file', {
       uri,
       name: filename,
@@ -102,22 +98,6 @@ export const referencesService = {
    */
   async deleteReference(documentId: string): Promise<void> {
     await apiClient.delete(`/documents/${documentId}`);
-  },
-
-  /**
-   * Get user's novelty settings
-   */
-  async getNoveltySettings(): Promise<NoveltySettings> {
-    const response = await apiClient.get<NoveltySettings>('/questions/novelty/settings');
-    return response.data;
-  },
-
-  /**
-   * Update user's novelty settings
-   */
-  async updateNoveltySettings(settings: Partial<NoveltySettings>): Promise<NoveltySettings> {
-    const response = await apiClient.put<NoveltySettings>('/questions/novelty/settings', settings);
-    return response.data;
   },
 };
 

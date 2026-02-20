@@ -7,7 +7,7 @@ import * as SecureStore from 'expo-secure-store';
 import { Platform } from 'react-native';
 
 // Your machine's local IP address - update this if it changes
-const DEV_MACHINE_IP = '10.0.0.5';
+const DEV_MACHINE_IP = '100.64.0.5';
 
 // Use environment variable to override for simulator testing
 // Set EXPO_PUBLIC_SIMULATOR=true to test with iOS Simulator (uses localhost)
@@ -131,7 +131,7 @@ apiClient.interceptors.response.use(
   async (error: AxiosError) => {
     const status = error.response?.status;
     const url = error.config?.url;
-    
+
     console.log('[API Error]', {
       url,
       status,
@@ -204,11 +204,11 @@ apiClient.interceptors.response.use(
         console.log('[API] Token refresh failed, logging out');
         processQueue(refreshError as Error, null);
         await tokenStorage.clearTokens();
-        
+
         // Import router dynamically to avoid circular dependency
         const { router } = await import('expo-router');
         router.replace('/(auth)/login');
-        
+
         return Promise.reject(refreshError);
       } finally {
         isRefreshing = false;
