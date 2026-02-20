@@ -1765,26 +1765,38 @@ async def get_analytics_by_lo(
 ):
     """
     Get question distribution by Learning Outcome.
+    Covers all question sources: document-based, rubric/chapter/subject-generated.
     """
     from app.models.question import Question
     from app.models.document import Document
-    
-    base_where = [Document.user_id == current_user.id, Question.is_archived == False]
+    from app.models.subject import Subject
+    from sqlalchemy import or_
+
+    # Subqueries for user ownership
+    user_doc_ids = select(Document.id).where(Document.user_id == current_user.id).scalar_subquery()
+    user_subject_ids = select(Subject.id).where(Subject.user_id == current_user.id).scalar_subquery()
+
+    base_where = [
+        or_(
+            Question.document_id.in_(user_doc_ids),
+            Question.subject_id.in_(user_subject_ids),
+        ),
+        Question.is_archived == False,
+    ]
     if subject_id:
         base_where.append(Question.subject_id == subject_id)
-    
+
     result = await db.execute(
         select(Question.learning_outcome_id, func.count())
-        .join(Document)
         .where(*base_where)
         .group_by(Question.learning_outcome_id)
     )
-    
+
     distribution = {}
     for row in result.all():
         lo_id = row[0] or "Unassigned"
         distribution[lo_id] = row[1]
-    
+
     return {"learning_outcomes": distribution}
 
 
@@ -1796,26 +1808,38 @@ async def get_analytics_by_bloom(
 ):
     """
     Get question distribution by Bloom's Taxonomy level.
+    Covers all question sources: document-based, rubric/chapter/subject-generated.
     """
     from app.models.question import Question
     from app.models.document import Document
-    
-    base_where = [Document.user_id == current_user.id, Question.is_archived == False]
+    from app.models.subject import Subject
+    from sqlalchemy import or_
+
+    # Subqueries for user ownership
+    user_doc_ids = select(Document.id).where(Document.user_id == current_user.id).scalar_subquery()
+    user_subject_ids = select(Subject.id).where(Subject.user_id == current_user.id).scalar_subquery()
+
+    base_where = [
+        or_(
+            Question.document_id.in_(user_doc_ids),
+            Question.subject_id.in_(user_subject_ids),
+        ),
+        Question.is_archived == False,
+    ]
     if subject_id:
         base_where.append(Question.subject_id == subject_id)
-    
+
     result = await db.execute(
         select(Question.bloom_taxonomy_level, func.count())
-        .join(Document)
         .where(*base_where)
         .group_by(Question.bloom_taxonomy_level)
     )
-    
+
     distribution = {}
     for row in result.all():
         level = row[0] or "unspecified"
         distribution[level] = row[1]
-    
+
     return {"bloom_levels": distribution}
 
 
