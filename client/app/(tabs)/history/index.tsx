@@ -385,6 +385,7 @@ export default function HistoryScreen() {
                                         setShowExportModal(true);
                                     }}
                                     hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}
+                                    style={{ alignItems: 'center', justifyContent: 'center' }}
                                 >
                                     <IconSymbol name="square.and.arrow.up" size={22} color={colors.primary} />
                                 </TouchableOpacity>
@@ -651,16 +652,16 @@ export default function HistoryScreen() {
                         )}
                         <View style={{ height: 40 }} />
                     </ScrollView>
+
+                    {/* Export Modal - inside pageSheet modal so it renders on top */}
+                    <ExportModal
+                        visible={showExportModal}
+                        onClose={() => setShowExportModal(false)}
+                        questions={exportQuestions}
+                        defaultFilename={selectedSession?.subject_code ? `${selectedSession.subject_code}_session_${selectedSession.id.slice(0, 8)}` : `session_${selectedSession?.id.slice(0, 8) || 'export'}`}
+                    />
                 </View>
             </Modal>
-
-            {/* Export Modal */}
-            <ExportModal
-                visible={showExportModal}
-                onClose={() => setShowExportModal(false)}
-                questions={exportQuestions}
-                defaultFilename={selectedSession?.subject_code ? `${selectedSession.subject_code}_session_${selectedSession.id.slice(0, 8)}` : `session_${selectedSession?.id.slice(0, 8) || 'export'}`}
-            />
         </View>
     );
 }

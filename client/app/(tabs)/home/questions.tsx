@@ -791,7 +791,7 @@ export default function QuestionsScreen() {
             <TouchableOpacity
               onPress={() => setShowExportModal(true)}
               hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}
-              style={{ marginRight: 8 }}
+              style={{ alignItems: 'center', justifyContent: 'center' }}
             >
               <IconSymbol name="square.and.arrow.up" size={22} color={colors.primary} />
             </TouchableOpacity>

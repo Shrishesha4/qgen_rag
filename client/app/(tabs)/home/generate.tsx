@@ -435,14 +435,6 @@ export default function GenerateScreen() {
           </View>
         </View>
 
-        {/* Generate Button */}
-        <TouchableOpacity
-          style={[styles.generateButton, { backgroundColor: colors.textTertiary }]}
-          disabled={rubrics.length === 0}
-        >
-          <IconSymbol name="sparkles" size={20} color="#FFFFFF" />
-          <Text style={styles.generateButtonText}>Generate</Text>
-        </TouchableOpacity>
       </ScrollView>
 
       {/* Create/Edit Rubric Modal */}
@@ -933,6 +925,7 @@ const styles = StyleSheet.create({
     flexDirection: 'row',
     justifyContent: 'center',
     alignItems: 'center',
+    marginTop: Spacing.lg,
     padding: Spacing.md,
     borderRadius: BorderRadius.md,
     gap: Spacing.sm,

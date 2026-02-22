@@ -546,15 +546,24 @@ export default function SubjectDetailScreen() {
             <TouchableOpacity
               onPress={async () => {
                 try {
-                  const response = await questionsService.listQuestions(1, 500, undefined, undefined, undefined, id, false, 'approved');
-                  setExportQuestions(response.questions);
+                  // Paginate to load all questions (API max limit is 100)
+                  let allQuestions: Question[] = [];
+                  let currentPage = 1;
+                  let hasMore = true;
+                  while (hasMore) {
+                    const response = await questionsService.listQuestions(currentPage, 100, undefined, undefined, undefined, id, false);
+                    allQuestions = [...allQuestions, ...response.questions];
+                    hasMore = currentPage < response.pagination.total_pages;
+                    currentPage++;
+                  }
+                  setExportQuestions(allQuestions);
                   setShowExportModal(true);
                 } catch (error) {
                   showError(error, 'Failed to load questions for export');
                 }
               }}
               hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}
-              style={{ marginRight: 8 }}
+              style={{ alignItems: 'center', justifyContent: 'center' }}
             >
               <IconSymbol name="square.and.arrow.up" size={22} color={colors.primary} />
             </TouchableOpacity>
