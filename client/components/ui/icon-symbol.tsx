@@ -90,6 +90,26 @@ const MAPPING: IconMapping = {
   'lock.fill': 'lock',
   'bell.fill': 'notifications',
   'info.circle.fill': 'info',
+  'camera.fill': 'camera-alt',
+
+  // actions / misc
+  'archivebox.fill': 'archive',
+  'arrow.left.arrow.right': 'swap-horiz',
+  'bolt.fill': 'flash-on',
+  'book.closed.fill': 'book',
+  'bookmark.fill': 'bookmark',
+  'checkmark.shield': 'verified-user',
+  'circle': 'circle',
+  'clock.arrow.circlepath': 'history',
+  'doc': 'description',
+  'exclamationmark.circle.fill': 'error',
+  'lightbulb.fill': 'lightbulb',
+  'play.circle.fill': 'play-circle-filled',
+  'square.and.arrow.down.fill': 'file-download',
+  'star': 'star-border',
+  'tablecells': 'table-chart',
+  'trash': 'delete',
+  'trash.fill': 'delete',
 };
 
 /**
