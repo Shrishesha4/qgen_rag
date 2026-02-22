@@ -87,7 +87,7 @@ class GeminiService:
         prompt: str,
         system_prompt: Optional[str] = None,
         temperature: float = 0.7,
-        max_tokens: int = 2000,
+        max_tokens: int = 5000,
     ) -> str:
         """Generate a response from Gemini with retry logic."""
         from google import genai
@@ -187,7 +187,7 @@ class GeminiService:
         prompt: str,
         system_prompt: Optional[str] = None,
         temperature: float = 0.7,
-        max_tokens: int = 2000,
+        max_tokens: int = 5000,
         fallback_response: Optional[str] = None,
     ) -> str:
         """Generate response with optional fallback on failure."""
@@ -209,7 +209,7 @@ class GeminiService:
         prompt: str,
         system_prompt: Optional[str] = None,
         temperature: float = 0.7,
-        max_tokens: int = 2000,
+        max_tokens: int = 5000,
     ) -> AsyncGenerator[str, None]:
         """Generate a streaming response from Gemini."""
         from google.genai import types

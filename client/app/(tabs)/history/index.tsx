@@ -1,4 +1,4 @@
-import React, { useState, useEffect, useCallback } from 'react';
+import React, { useState, useEffect, useCallback, useRef } from 'react';
 import {
     View,
     Text,
@@ -9,12 +9,61 @@ import {
     Modal,
     RefreshControl,
     Alert,
+    Dimensions,
 } from 'react-native';
 import { IconSymbol } from '@/components/ui/icon-symbol';
 import { GlassCard } from '@/components/ui/glass-card';
 import { Colors, Spacing, BorderRadius, FontSizes } from '@/constants/theme';
 import { useColorScheme } from '@/hooks/use-color-scheme';
 import { questionsService, GenerationSession, SessionQuestion } from '@/services/questions';
+
+// Type for version chain groups
+interface VersionChain {
+    chainId: string;
+    questions: SessionQuestion[]; // Newest first
+}
+
+// Helper to group questions into version chains
+function groupIntoVersionChains(questions: SessionQuestion[]): VersionChain[] {
+    const qById = new Map<string, SessionQuestion>();
+    questions.forEach(q => qById.set(q.id, q));
+    
+    const visited = new Set<string>();
+    const chains: VersionChain[] = [];
+    
+    for (const q of questions) {
+        if (visited.has(q.id)) continue;
+        
+        // Walk backwards to find the root (oldest version)
+        let root = q;
+        while (root.replaces_id && qById.has(root.replaces_id)) {
+            root = qById.get(root.replaces_id)!;
+        }
+        
+        // Walk forwards from root to build chain
+        const chain: SessionQuestion[] = [];
+        let current: SessionQuestion | undefined = root;
+        while (current) {
+            chain.push(current);
+            visited.add(current.id);
+            // Find next version (the one with replaces_id == current.id)
+            current = questions.find(nq => nq.replaces_id === current!.id && !visited.has(nq.id));
+        }
+        
+        // Reverse so newest is first
+        chain.reverse();
+        chains.push({ chainId: root.id, questions: chain });
+    }
+    
+    // Sort chains by the original question's generated_at
+    chains.sort((a, b) => {
+        const aOldest = a.questions[a.questions.length - 1];
+        const bOldest = b.questions[b.questions.length - 1];
+        return new Date(aOldest.generated_at || 0).getTime() - new Date(bOldest.generated_at || 0).getTime();
+    });
+    
+    return chains;
+}
 
 export default function HistoryScreen() {
     const colorScheme = useColorScheme();
@@ -30,6 +79,9 @@ export default function HistoryScreen() {
     const [selectedSession, setSelectedSession] = useState<GenerationSession | null>(null);
     const [sessionQuestions, setSessionQuestions] = useState<SessionQuestion[]>([]);
     const [isLoadingQuestions, setIsLoadingQuestions] = useState(false);
+    
+    // Track current visible page for each version chain
+    const [chainCurrentPage, setChainCurrentPage] = useState<Record<string, number>>({});
 
     const loadSessions = useCallback(async (pageNum: number = 1, refresh = false) => {
         try {
@@ -345,150 +397,222 @@ export default function HistoryScreen() {
                                 No questions found in this session
                             </Text>
                         ) : (
-                            sessionQuestions.map((q, index) => (
-                                <GlassCard key={q.id} style={styles.questionCard}>
-                                    {/* Question header: index + type + difficulty + marks */}
-                                    <View style={styles.questionHeaderRow}>
-                                        <View style={[styles.qIndex, { backgroundColor: colors.primary + '20' }]}>
-                                            <Text style={[styles.qIndexText, { color: colors.primary }]}>{index + 1}</Text>
-                                        </View>
-                                        <View style={styles.qMetaRow}>
-                                            <View style={[styles.qBadge, { backgroundColor: q.question_type === 'mcq' ? '#007AFF15' : '#AF52DE15' }]}>
-                                                <Text style={{ fontSize: 10, fontWeight: '600', color: q.question_type === 'mcq' ? '#007AFF' : '#AF52DE' }}>
-                                                    {q.question_type === 'mcq' ? 'MCQ' : q.question_type === 'short_answer' ? 'SHORT' : 'LONG'}
-                                                </Text>
+                            groupIntoVersionChains(sessionQuestions).map((chain, chainIndex) => {
+                                const hasVersions = chain.questions.length > 1;
+                                const screenWidth = Dimensions.get('window').width;
+                                const cardWidth = screenWidth - Spacing.md * 4;
+                                
+                                return (
+                                    <View key={chain.chainId} style={styles.versionChainContainer}>
+                                        {/* Chain header with version indicator */}
+                                        <View style={styles.chainHeader}>
+                                            <View style={[styles.qIndex, { backgroundColor: colors.primary + '20' }]}>
+                                                <Text style={[styles.qIndexText, { color: colors.primary }]}>{chainIndex + 1}</Text>
                                             </View>
-                                            {q.difficulty_level && (
-                                                <View style={[styles.qBadge, {
-                                                    backgroundColor: q.difficulty_level === 'easy' ? '#34C75915' : q.difficulty_level === 'hard' ? '#FF3B3015' : '#FF950015',
-                                                }]}>
-                                                    <Text style={{
-                                                        fontSize: 10, fontWeight: '600',
-                                                        color: q.difficulty_level === 'easy' ? '#34C759' : q.difficulty_level === 'hard' ? '#FF3B30' : '#FF9500',
-                                                    }}>
-                                                        {q.difficulty_level.toUpperCase()}
+                                            {hasVersions && (
+                                                <View style={styles.versionIndicator}>
+                                                    <IconSymbol name="arrow.left.arrow.right" size={12} color={colors.textTertiary} />
+                                                    <Text style={{ fontSize: 10, color: colors.textTertiary, marginLeft: 4 }}>
+                                                        {chain.questions.length} versions
                                                     </Text>
                                                 </View>
                                             )}
-                                            {q.marks != null && (
-                                                <Text style={{ fontSize: 10, color: colors.textTertiary, fontWeight: '600' }}>
-                                                    {q.marks} mark{q.marks !== 1 ? 's' : ''}
-                                                </Text>
-                                            )}
                                         </View>
-                                    </View>
-
-                                    {/* Question text */}
-                                    <Text style={[styles.questionText, { color: colors.text }]}>{q.question_text}</Text>
-
-                                    {/* MCQ Options with correct answer highlighted */}
-                                    {q.options && q.options.length > 0 && (
-                                        <View style={styles.optionsList}>
-                                            {q.options.map((opt, i) => {
-                                                // Match correct answer with various formats
-                                                const optionMatches = (option: string, correct: string | null | undefined, index: number): boolean => {
-                                                    if (!correct) return false;
-                                                    const trimmedCorrect = correct.trim();
-                                                    const trimmedOption = option.trim();
-
-                                                    // Exact match
-                                                    if (trimmedOption === trimmedCorrect) return true;
-                                                    // Option starts with correct answer
-                                                    if (trimmedOption.startsWith(trimmedCorrect)) return true;
-
-                                                    // Handle single-letter correct answers like 'A', 'B'
-                                                    const letter = String.fromCharCode(65 + index);
-                                                    if (trimmedCorrect === letter || trimmedCorrect.startsWith(letter + ')') || trimmedCorrect.startsWith(letter + ' ')) return true;
-
-                                                    // Handle 'Option X' format
-                                                    if (trimmedCorrect.toLowerCase().startsWith('option ' + letter.toLowerCase())) return true;
-
-                                                    return false;
-                                                };
-
-                                                const isCorrect = optionMatches(opt, q.correct_answer, i);
+                                        
+                                        {/* Horizontal scroll for version chain */}
+                                        <ScrollView
+                                            horizontal
+                                            pagingEnabled
+                                            showsHorizontalScrollIndicator={false}
+                                            style={{ marginHorizontal: -Spacing.md }}
+                                            contentContainerStyle={{ paddingHorizontal: Spacing.md }}
+                                            snapToInterval={cardWidth + Spacing.sm}
+                                            decelerationRate="fast"
+                                            onMomentumScrollEnd={(event) => {
+                                                const offset = event.nativeEvent.contentOffset.x;
+                                                const currentPage = Math.round(offset / (cardWidth + Spacing.sm));
+                                                setChainCurrentPage(prev => ({
+                                                    ...prev,
+                                                    [chain.chainId]: currentPage
+                                                }));
+                                            }}
+                                            scrollEventThrottle={16}
+                                        >
+                                            {chain.questions.map((q, versionIndex) => {
+                                                const isNewest = versionIndex === 0;
+                                                const isOldVersion = !isNewest;
+                                                
                                                 return (
-                                                    <View
-                                                        key={i}
-                                                        style={[styles.optionRow, {
-                                                            backgroundColor: isCorrect ? '#34C75910' : 'transparent',
-                                                            borderColor: isCorrect ? '#34C759' : colors.border,
-                                                            borderWidth: isCorrect ? 1.5 : 1,
-                                                        }]}
+                                                    <GlassCard 
+                                                        key={q.id} 
+                                                        style={[
+                                                            styles.questionCard,
+                                                            { width: cardWidth, marginRight: hasVersions ? Spacing.sm : 0 },
+                                                            isOldVersion && { borderLeftWidth: 3, borderLeftColor: '#FF9500' },
+                                                            isNewest && hasVersions && { borderLeftWidth: 3, borderLeftColor: '#34C759' },
+                                                        ]}
                                                     >
-                                                        <View style={[styles.optionLetter, {
-                                                            backgroundColor: isCorrect ? '#34C759' : colors.card,
-                                                        }]}>
-                                                            <Text style={{
-                                                                fontSize: 11,
-                                                                fontWeight: '700',
-                                                                color: isCorrect ? '#FFFFFF' : colors.textTertiary,
-                                                            }}>
-                                                                {String.fromCharCode(65 + i)}
-                                                            </Text>
+                                                        {/* Version badge */}
+                                                        <View style={styles.questionHeaderRow}>
+                                                            <View style={styles.qMetaRow}>
+                                                                <View style={[styles.qBadge, { 
+                                                                    backgroundColor: isNewest ? '#34C75920' : '#FF950020' 
+                                                                }]}>
+                                                                    <Text style={{ 
+                                                                        fontSize: 9, fontWeight: '700', 
+                                                                        color: isNewest ? '#34C759' : '#FF9500' 
+                                                                    }}>
+                                                                        {isNewest ? 'CURRENT' : `v${q.version_number ?? (chain.questions.length - versionIndex)}`}
+                                                                    </Text>
+                                                                </View>
+                                                                <View style={[styles.qBadge, { backgroundColor: q.question_type === 'mcq' ? '#007AFF15' : '#AF52DE15' }]}>
+                                                                    <Text style={{ fontSize: 10, fontWeight: '600', color: q.question_type === 'mcq' ? '#007AFF' : '#AF52DE' }}>
+                                                                        {q.question_type === 'mcq' ? 'MCQ' : q.question_type === 'short_answer' ? 'SHORT' : 'LONG'}
+                                                                    </Text>
+                                                                </View>
+                                                                {q.difficulty_level && (
+                                                                    <View style={[styles.qBadge, {
+                                                                        backgroundColor: q.difficulty_level === 'easy' ? '#34C75915' : q.difficulty_level === 'hard' ? '#FF3B3015' : '#FF950015',
+                                                                    }]}>
+                                                                        <Text style={{
+                                                                            fontSize: 10, fontWeight: '600',
+                                                                            color: q.difficulty_level === 'easy' ? '#34C759' : q.difficulty_level === 'hard' ? '#FF3B30' : '#FF9500',
+                                                                        }}>
+                                                                            {q.difficulty_level.toUpperCase()}
+                                                                        </Text>
+                                                                    </View>
+                                                                )}
+                                                                {q.marks != null && (
+                                                                    <Text style={{ fontSize: 10, color: colors.textTertiary, fontWeight: '600' }}>
+                                                                        {q.marks} mark{q.marks !== 1 ? 's' : ''}
+                                                                    </Text>
+                                                                )}
+                                                            </View>
                                                         </View>
-                                                        <Text style={[styles.optionText, {
-                                                            color: isCorrect ? '#34C759' : colors.text,
-                                                            fontWeight: isCorrect ? '600' : '400',
-                                                        }]}>
-                                                            {opt}
-                                                        </Text>
-                                                        {isCorrect && <IconSymbol name="checkmark.circle.fill" size={16} color="#34C759" />}
-                                                    </View>
+
+                                                        {/* Question text */}
+                                                        <Text style={[styles.questionText, { color: colors.text }]}>{q.question_text}</Text>
+
+                                                        {/* MCQ Options with correct answer highlighted */}
+                                                        {q.options && q.options.length > 0 && (
+                                                            <View style={styles.optionsList}>
+                                                                {q.options.map((opt, i) => {
+                                                                    const optionMatches = (option: string, correct: string | null | undefined, idx: number): boolean => {
+                                                                        if (!correct) return false;
+                                                                        const trimmedCorrect = correct.trim();
+                                                                        const trimmedOption = option.trim();
+                                                                        if (trimmedOption === trimmedCorrect) return true;
+                                                                        if (trimmedOption.startsWith(trimmedCorrect)) return true;
+                                                                        const letter = String.fromCharCode(65 + idx);
+                                                                        if (trimmedCorrect === letter || trimmedCorrect.startsWith(letter + ')') || trimmedCorrect.startsWith(letter + ' ')) return true;
+                                                                        if (trimmedCorrect.toLowerCase().startsWith('option ' + letter.toLowerCase())) return true;
+                                                                        return false;
+                                                                    };
+                                                                    const isCorrect = optionMatches(opt, q.correct_answer, i);
+                                                                    return (
+                                                                        <View
+                                                                            key={i}
+                                                                            style={[styles.optionRow, {
+                                                                                backgroundColor: isCorrect ? '#34C75910' : 'transparent',
+                                                                                borderColor: isCorrect ? '#34C759' : colors.border,
+                                                                                borderWidth: isCorrect ? 1.5 : 1,
+                                                                            }]}
+                                                                        >
+                                                                            <View style={[styles.optionLetter, {
+                                                                                backgroundColor: isCorrect ? '#34C759' : colors.card,
+                                                                            }]}>
+                                                                                <Text style={{
+                                                                                    fontSize: 11, fontWeight: '700',
+                                                                                    color: isCorrect ? '#FFFFFF' : colors.textTertiary,
+                                                                                }}>
+                                                                                    {String.fromCharCode(65 + i)}
+                                                                                </Text>
+                                                                            </View>
+                                                                            <Text style={[styles.optionText, {
+                                                                                color: isCorrect ? '#34C759' : colors.text,
+                                                                                fontWeight: isCorrect ? '600' : '400',
+                                                                            }]}>
+                                                                                {opt}
+                                                                            </Text>
+                                                                            {isCorrect && <IconSymbol name="checkmark.circle.fill" size={16} color="#34C759" />}
+                                                                        </View>
+                                                                    );
+                                                                })}
+                                                            </View>
+                                                        )}
+
+                                                        {/* Non-MCQ correct answer */}
+                                                        {q.correct_answer && (!q.options || q.options.length === 0) && (
+                                                            <View style={[styles.answerBox, { backgroundColor: '#34C75910', borderColor: '#34C759' }]}>
+                                                                <Text style={{ fontSize: 11, fontWeight: '600', color: '#34C759', marginBottom: 2 }}>
+                                                                    ✓ Answer
+                                                                </Text>
+                                                                <Text style={{ fontSize: FontSizes.sm, color: colors.text }}>{q.correct_answer}</Text>
+                                                            </View>
+                                                        )}
+
+                                                        {/* LO / CO tags */}
+                                                        {(q.learning_outcome_id || (q.course_outcome_mapping && Object.keys(q.course_outcome_mapping).length > 0) || q.bloom_taxonomy_level) && (
+                                                            <View style={styles.tagsRow}>
+                                                                {q.learning_outcome_id && (
+                                                                    <View style={[styles.loTag, { backgroundColor: '#5AC8FA15' }]}>
+                                                                        <Text style={{ fontSize: 10, fontWeight: '600', color: '#5AC8FA' }}>
+                                                                            LO: {q.learning_outcome_id}
+                                                                        </Text>
+                                                                    </View>
+                                                                )}
+                                                                {q.course_outcome_mapping && Object.keys(q.course_outcome_mapping).map(co => (
+                                                                    <View key={co} style={[styles.loTag, { backgroundColor: '#AF52DE15' }]}>
+                                                                        <Text style={{ fontSize: 10, fontWeight: '600', color: '#AF52DE' }}>
+                                                                            {co}
+                                                                        </Text>
+                                                                    </View>
+                                                                ))}
+                                                                {q.bloom_taxonomy_level && (
+                                                                    <View style={[styles.loTag, { backgroundColor: '#FF950015' }]}>
+                                                                        <Text style={{ fontSize: 10, fontWeight: '600', color: '#FF9500' }}>
+                                                                            {q.bloom_taxonomy_level.charAt(0).toUpperCase() + q.bloom_taxonomy_level.slice(1)}
+                                                                        </Text>
+                                                                    </View>
+                                                                )}
+                                                            </View>
+                                                        )}
+
+                                                        {/* Topic tags */}
+                                                        {q.topic_tags && q.topic_tags.length > 0 && (
+                                                            <View style={[styles.tagsRow, { marginTop: 4 }]}>
+                                                                {q.topic_tags.map((tag, i) => (
+                                                                    <View key={i} style={[styles.loTag, { backgroundColor: colors.card }]}>
+                                                                        <Text style={{ fontSize: 10, color: colors.textSecondary }}>{tag}</Text>
+                                                                    </View>
+                                                                ))}
+                                                            </View>
+                                                        )}
+                                                    </GlassCard>
                                                 );
                                             })}
-                                        </View>
-                                    )}
-
-                                    {/* Non-MCQ correct answer */}
-                                    {q.correct_answer && (!q.options || q.options.length === 0) && (
-                                        <View style={[styles.answerBox, { backgroundColor: '#34C75910', borderColor: '#34C759' }]}>
-                                            <Text style={{ fontSize: 11, fontWeight: '600', color: '#34C759', marginBottom: 2 }}>
-                                                ✓ Answer
-                                            </Text>
-                                            <Text style={{ fontSize: FontSizes.sm, color: colors.text }}>{q.correct_answer}</Text>
-                                        </View>
-                                    )}
-
-                                    {/* LO / CO tags */}
-                                    {(q.learning_outcome_id || (q.course_outcome_mapping && Object.keys(q.course_outcome_mapping).length > 0) || q.bloom_taxonomy_level) && (
-                                        <View style={styles.tagsRow}>
-                                            {q.learning_outcome_id && (
-                                                <View style={[styles.loTag, { backgroundColor: '#5AC8FA15' }]}>
-                                                    <Text style={{ fontSize: 10, fontWeight: '600', color: '#5AC8FA' }}>
-                                                        LO: {q.learning_outcome_id}
-                                                    </Text>
-                                                </View>
-                                            )}
-                                            {q.course_outcome_mapping && Object.keys(q.course_outcome_mapping).map(co => (
-                                                <View key={co} style={[styles.loTag, { backgroundColor: '#AF52DE15' }]}>
-                                                    <Text style={{ fontSize: 10, fontWeight: '600', color: '#AF52DE' }}>
-                                                        {co}
-                                                    </Text>
-                                                </View>
-                                            ))}
-                                            {q.bloom_taxonomy_level && (
-                                                <View style={[styles.loTag, { backgroundColor: '#FF950015' }]}>
-                                                    <Text style={{ fontSize: 10, fontWeight: '600', color: '#FF9500' }}>
-                                                        {q.bloom_taxonomy_level.charAt(0).toUpperCase() + q.bloom_taxonomy_level.slice(1)}
-                                                    </Text>
-                                                </View>
-                                            )}
-                                        </View>
-                                    )}
-
-                                    {/* Topic tags */}
-                                    {q.topic_tags && q.topic_tags.length > 0 && (
-                                        <View style={[styles.tagsRow, { marginTop: 4 }]}>
-                                            {q.topic_tags.map((tag, i) => (
-                                                <View key={i} style={[styles.loTag, { backgroundColor: colors.card }]}>
-                                                    <Text style={{ fontSize: 10, color: colors.textSecondary }}>{tag}</Text>
-                                                </View>
-                                            ))}
-                                        </View>
-                                    )}
-                                </GlassCard>
-                            ))
+                                        </ScrollView>
+                                        
+                                        {/* Page dots for multi-version chains */}
+                                        {hasVersions && (
+                                            <View style={styles.pageDots}>
+                                                {chain.questions.map((_, idx) => {
+                                                    const currentPage = chainCurrentPage[chain.chainId] ?? 0;
+                                                    return (
+                                                        <View 
+                                                            key={idx} 
+                                                            style={[
+                                                                styles.pageDot, 
+                                                                { backgroundColor: idx === currentPage ? colors.primary : colors.textTertiary + '40' }
+                                                            ]} 
+                                                        />
+                                                    );
+                                                })}
+                                            </View>
+                                        )}
+                                    </View>
+                                );
+                            })
                         )}
                         <View style={{ height: 40 }} />
                     </ScrollView>
@@ -572,4 +696,11 @@ const styles = StyleSheet.create({
     // Tags
     tagsRow: { flexDirection: 'row', flexWrap: 'wrap', gap: 5, marginTop: 8 },
     loTag: { paddingHorizontal: 7, paddingVertical: 3, borderRadius: 4 },
+
+    // Version chain UI
+    versionChainContainer: { marginBottom: Spacing.lg },
+    chainHeader: { flexDirection: 'row', alignItems: 'center', marginBottom: Spacing.sm, gap: 8 },
+    versionIndicator: { flexDirection: 'row', alignItems: 'center' },
+    pageDots: { flexDirection: 'row', justifyContent: 'center', gap: 6, marginTop: 8 },
+    pageDot: { width: 6, height: 6, borderRadius: 3 },
 });

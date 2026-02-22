@@ -50,7 +50,7 @@ class LLMProvider(Protocol):
         prompt: str,
         system_prompt: Optional[str] = None,
         temperature: float = 0.7,
-        max_tokens: int = 2000,
+        max_tokens: int = 5000,
     ) -> str:
         """Generate a response from the LLM."""
         ...
@@ -60,7 +60,7 @@ class LLMProvider(Protocol):
         prompt: str,
         system_prompt: Optional[str] = None,
         temperature: float = 0.7,
-        max_tokens: int = 2000,
+        max_tokens: int = 5000,
         fallback_response: Optional[str] = None,
     ) -> str:
         """Generate response with optional fallback on failure."""
@@ -71,7 +71,7 @@ class LLMProvider(Protocol):
         prompt: str,
         system_prompt: Optional[str] = None,
         temperature: float = 0.7,
-        max_tokens: int = 2000,
+        max_tokens: int = 5000,
     ) -> AsyncGenerator[str, None]:
         """Generate a streaming response."""
         ...
@@ -201,14 +201,19 @@ class OllamaLLMService:
             )
             response.raise_for_status()
             result = response.json()
-            return result["message"]["content"]
+            content = result.get("message", {}).get("content", "")
+            
+            if not content:
+                logger.warning(f"Ollama returned empty content. Full response: {result}")
+            
+            return content
 
     async def generate_with_fallback(
         self,
         prompt: str,
         system_prompt: Optional[str] = None,
         temperature: float = 0.7,
-        max_tokens: int = 2000,
+        max_tokens: int = 5000,
         fallback_response: Optional[str] = None,
     ) -> str:
         """
@@ -235,7 +240,7 @@ class OllamaLLMService:
         prompt: str,
         system_prompt: Optional[str] = None,
         temperature: float = 0.7,
-        max_tokens: int = 2000,
+        max_tokens: int = 5000,
     ) -> AsyncGenerator[str, None]:
         """Generate a streaming response from the LLM."""
         messages = []
@@ -271,13 +276,18 @@ class OllamaLLMService:
         temperature: float = 0.3,
     ) -> Dict[str, Any]:
         """Generate a JSON response from the LLM with retry logic."""
-        json_system = (system_prompt or "") + "\n\nYou must respond with valid JSON only. No extra text."
+        json_system = (system_prompt or "") + "\n\nYou must respond with valid JSON only. No extra text. Keep responses concise."
         
         response = await self.generate(
             prompt=prompt,
             system_prompt=json_system,
             temperature=temperature,
+            max_tokens=6000,  # Increased to avoid truncation
         )
+        
+        # Log raw response for debugging
+        raw_preview = response[:500] if response else "(empty)"
+        logger.debug(f"LLM raw response preview: {raw_preview}")
         
         # Clean response - strip markdown code blocks
         response = response.strip()
@@ -291,8 +301,12 @@ class OllamaLLMService:
         
         # Extract first valid JSON object from response
         # LLMs sometimes output extra text after the JSON
-        json_obj = self._extract_json_object(response)
-        return json_obj
+        try:
+            json_obj = self._extract_json_object(response)
+            return json_obj
+        except json.JSONDecodeError as e:
+            logger.warning(f"JSON extraction failed: {e}. Cleaned response was: {response[:800]}")
+            raise
     
     def _sanitize_control_chars(self, text: str) -> str:
         """Sanitize control characters that break JSON parsing.
@@ -399,9 +413,63 @@ class OllamaLLMService:
                         # Try fixing syntax on extracted JSON
                         return json.loads(self._fix_json_syntax(json_str))
         
+        # JSON appears truncated - try to repair it
+        logger.warning(f"JSON appears truncated (depth={depth}, in_string={in_string}). Attempting repair.")
+        repaired = self._repair_truncated_json(text[start:], depth, in_string)
+        if repaired:
+            try:
+                return json.loads(repaired)
+            except json.JSONDecodeError:
+                pass
+        
         # If we get here, try parsing from start to end of text
         raise json.JSONDecodeError("No valid JSON object found", text, 0)
     
+    def _repair_truncated_json(self, text: str, depth: int, in_string: bool) -> Optional[str]:
+        """Attempt to repair truncated JSON by closing incomplete structures.
+        
+        Args:
+            text: The partial JSON text starting from '{'
+            depth: Current brace depth (how many unclosed {)
+            in_string: Whether we're currently inside a string
+        
+        Returns:
+            Repaired JSON string or None if repair failed
+        """
+        if not text:
+            return None
+        
+        result = text.rstrip()
+        
+        # If we're inside a string, close it
+        if in_string:
+            # Remove trailing incomplete content that might be a broken escape sequence
+            while result and result[-1] == '\\':
+                result = result[:-1]
+            result += '"'
+        
+        # Check if we need to add a colon and value (key without value)
+        # Pattern: ..."key"  (missing : "value")
+        import re
+        if re.search(r'"[^"]*"\s*$', result) and not re.search(r':\s*"[^"]*"\s*$', result):
+            # Check if this looks like a key (preceded by { or ,)
+            stripped = result.rstrip()
+            if re.search(r'[{,]\s*"[^"]*"\s*$', stripped):
+                result += ': ""'
+        
+        # Close any open arrays
+        # Count [ and ]
+        open_arrays = result.count('[') - result.count(']')
+        for _ in range(open_arrays):
+            result += ']'
+        
+        # Close any open objects
+        for _ in range(depth):
+            result += '}'
+        
+        logger.debug(f"Repaired JSON: {result[:200]}...{result[-100:]}")
+        return result
+
     def _fix_json_syntax(self, text: str) -> str:
         """Try to fix common JSON syntax errors."""
         import re

@@ -54,6 +54,7 @@ export default function GenerateScreen() {
   const [isRefreshing, setIsRefreshing] = useState(false);
   const [showCreateModal, setShowCreateModal] = useState(false);
   const [isCreating, setIsCreating] = useState(false);
+  const [editingRubric, setEditingRubric] = useState<Rubric | null>(null);
   
   // Generation state
   const [showGenerateModal, setShowGenerateModal] = useState(false);
@@ -151,17 +152,71 @@ export default function GenerateScreen() {
         learning_outcomes_distribution: loDistribution,
       };
       
-      await rubricsService.createRubric(data);
+      if (editingRubric) {
+        // Update existing rubric
+        await rubricsService.updateRubric(editingRubric.id, data);
+        showSuccess('Rubric updated successfully');
+      } else {
+        // Create new rubric
+        await rubricsService.createRubric(data);
+        showSuccess('Rubric created successfully');
+      }
+      
       setShowCreateModal(false);
+      setEditingRubric(null);
       resetForm();
       loadData();
-      showSuccess('Rubric created successfully');
     } catch (error) {
-      console.error('[Rubric Creation Error]', error);
-      showError(error, 'Failed to Create Rubric');
+      console.error('[Rubric Save Error]', error);
+      showError(error, editingRubric ? 'Failed to Update Rubric' : 'Failed to Create Rubric');
     } finally {
       setIsCreating(false);
     }
+  };
+
+  const handleEditRubric = (rubric: Rubric) => {
+    // Populate form with existing rubric data
+    setEditingRubric(rubric);
+    setRubricName(rubric.name);
+    setSelectedExamType(rubric.exam_type);
+    setDuration(rubric.duration_minutes.toString());
+    
+    // Find and set the subject
+    const subject = subjects.find(s => s.id === rubric.subject_id);
+    if (subject) {
+      setSelectedSubject(subject);
+    }
+    
+    // Convert question distribution
+    const dist: Record<string, QuestionTypeDistribution> = {};
+    for (const [key, value] of Object.entries(rubric.question_type_distribution)) {
+      if (typeof value === 'object' && value !== null) {
+        dist[key] = {
+          count: (value as QuestionTypeDistribution).count || 0,
+          marks_each: (value as QuestionTypeDistribution).marks_each || 1,
+        };
+      }
+    }
+    // Ensure all question types have entries
+    QUESTION_TYPES.forEach(qt => {
+      if (!dist[qt.value]) {
+        dist[qt.value] = { count: 0, marks_each: qt.value === 'essay' ? 10 : qt.value === 'short_notes' ? 6 : 2 };
+      }
+    });
+    setQuestionDistribution(dist);
+    
+    // Set LO distribution
+    setLoDistribution(rubric.learning_outcomes_distribution as Record<string, number> || {
+      LO1: 25, LO2: 25, LO3: 20, LO4: 15, LO5: 15,
+    });
+    
+    setShowCreateModal(true);
+  };
+
+  const handleCloseModal = () => {
+    setShowCreateModal(false);
+    setEditingRubric(null);
+    resetForm();
   };
 
   const resetForm = () => {
@@ -296,6 +351,7 @@ export default function GenerateScreen() {
     >
       <TouchableOpacity 
         style={styles.rubricCardContent}
+        onPress={() => handleEditRubric(rubric)}
         onLongPress={() => handleDeleteRubric(rubric)}
         activeOpacity={0.7}
       >
@@ -309,12 +365,20 @@ export default function GenerateScreen() {
           </Text>
         </View>
       </TouchableOpacity>
-      <TouchableOpacity
-        style={[styles.generateIconButton, { backgroundColor: colors.primary }]}
-        onPress={() => handleStartGeneration(rubric)}
-      >
-        <IconSymbol name="sparkles" size={16} color="#FFFFFF" />
-      </TouchableOpacity>
+      <View style={styles.rubricCardActions}>
+        <TouchableOpacity
+          style={[styles.editIconButton, { backgroundColor: colors.textTertiary + '30' }]}
+          onPress={() => handleEditRubric(rubric)}
+        >
+          <IconSymbol name="pencil" size={14} color={colors.textSecondary} />
+        </TouchableOpacity>
+        <TouchableOpacity
+          style={[styles.generateIconButton, { backgroundColor: colors.primary }]}
+          onPress={() => handleStartGeneration(rubric)}
+        >
+          <IconSymbol name="sparkles" size={16} color="#FFFFFF" />
+        </TouchableOpacity>
+      </View>
     </View>
   );
 
@@ -377,26 +441,26 @@ export default function GenerateScreen() {
           disabled={rubrics.length === 0}
         >
           <IconSymbol name="sparkles" size={20} color="#FFFFFF" />
-          <Text style={styles.generateButtonText}>Generate Final Exam</Text>
+          <Text style={styles.generateButtonText}>Generate</Text>
         </TouchableOpacity>
       </ScrollView>
 
-      {/* Create Rubric Modal */}
+      {/* Create/Edit Rubric Modal */}
       <Modal
         visible={showCreateModal}
         animationType="slide"
         presentationStyle="pageSheet"
-        onRequestClose={() => setShowCreateModal(false)}
+        onRequestClose={handleCloseModal}
       >
         <View style={[styles.modalContainer, { backgroundColor: colors.background }]}>
           <LinearGradient
             colors={['#4A90D9', '#357ABD'] as const}
             style={styles.modalHeader}
           >
-            <TouchableOpacity onPress={() => setShowCreateModal(false)}>
+            <TouchableOpacity onPress={handleCloseModal}>
               <Text style={styles.modalCancel}>Cancel</Text>
             </TouchableOpacity>
-            <Text style={styles.modalTitle}>Create Exam Rubric</Text>
+            <Text style={styles.modalTitle}>{editingRubric ? 'Edit Rubric' : 'Create Exam Rubric'}</Text>
             <View style={{ width: 50 }} />
           </LinearGradient>
 
@@ -678,13 +742,13 @@ export default function GenerateScreen() {
               {isCreating ? (
                 <ActivityIndicator size="small" color="#FFFFFF" />
               ) : (
-                <Text style={styles.saveButtonText}>Save Rubric</Text>
+                <Text style={styles.saveButtonText}>{editingRubric ? 'Update Rubric' : 'Save Rubric'}</Text>
               )}
             </TouchableOpacity>
             
             <TouchableOpacity
               style={[styles.cancelButton, { borderColor: colors.border }]}
-              onPress={() => setShowCreateModal(false)}
+              onPress={handleCloseModal}
             >
               <Text style={[styles.cancelButtonText, { color: colors.text }]}>Cancel</Text>
             </TouchableOpacity>
@@ -902,13 +966,24 @@ const styles = StyleSheet.create({
     flexDirection: 'row',
     alignItems: 'center',
   },
-  generateIconButton: {
+  rubricCardActions: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 12,
+  },
+  editIconButton: {
     width: 36,
     height: 36,
     borderRadius: 18,
     justifyContent: 'center',
     alignItems: 'center',
-    marginLeft: Spacing.sm,
+  },
+  generateIconButton: {
+    width: 42,
+    height: 42,
+    borderRadius: 22,
+    justifyContent: 'center',
+    alignItems: 'center',
   },
   rubricIcon: {
     width: 44,
@@ -969,6 +1044,7 @@ const styles = StyleSheet.create({
   },
   modalContent: {
     flex: 1,
+    paddingTop: Spacing.xxl,
   },
   formSection: {
     padding: Spacing.lg,

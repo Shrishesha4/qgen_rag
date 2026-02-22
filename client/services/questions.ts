@@ -144,6 +144,9 @@ export interface SessionQuestion {
   topic_tags: string[] | null;
   vetting_status: string;
   generated_at: string | null;
+  version_number?: number;
+  replaces_id?: string | null;
+  is_latest?: boolean;
 }
 
 export interface QuestionStats {

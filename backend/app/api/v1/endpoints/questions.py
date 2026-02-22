@@ -146,6 +146,26 @@ def _sanitize_question_fields(kwargs: dict) -> dict:
     return kwargs
 
 
+def _normalize_llm_response(response: dict) -> dict:
+    """
+    Normalize LLM response keys to match expected schema.
+    Handles common variations like 'question' -> 'question_text', 'answer' -> 'correct_answer'.
+    """
+    if not response:
+        return response
+    
+    key_mappings = {
+        "question": "question_text",
+        "answer": "correct_answer",
+    }
+    
+    for old_key, new_key in key_mappings.items():
+        if old_key in response and new_key not in response:
+            response[new_key] = response.pop(old_key)
+    
+    return response
+
+
 @router.post("/generate")
 async def generate_questions(
     request: QuestionGenerationRequest,
@@ -962,6 +982,50 @@ async def get_session_questions(
     )
     questions = questions_result.scalars().all()
     
+    # Build version chains: group questions so replacements are stacked with newest first
+    # 1. Build lookup maps
+    q_by_id = {q.id: q for q in questions}
+    
+    # 2. Find chain roots and build chains
+    # A chain root is a question where replaces_id is None or points outside this session
+    chains = []  # List of lists, each list is a version chain (newest first)
+    visited = set()
+    
+    for q in questions:
+        if q.id in visited:
+            continue
+        
+        # Walk backwards to find the root of this chain
+        root = q
+        while root.replaces_id and root.replaces_id in q_by_id:
+            root = q_by_id[root.replaces_id]
+        
+        # Walk forwards from root to build the chain
+        chain = []
+        current = root
+        while current:
+            chain.append(current)
+            visited.add(current.id)
+            # Find next version (the one that has replaces_id == current.id)
+            next_version = None
+            for nq in questions:
+                if nq.replaces_id == current.id and nq.id not in visited:
+                    next_version = nq
+                    break
+            current = next_version
+        
+        # Reverse so newest is first
+        chain.reverse()
+        chains.append(chain)
+    
+    # 3. Sort chains by the original (oldest) question's generated_at
+    chains.sort(key=lambda c: c[-1].generated_at if c else None)
+    
+    # 4. Flatten chains into final list
+    ordered_questions = []
+    for chain in chains:
+        ordered_questions.extend(chain)
+    
     return {
         "session_id": str(session_id),
         "generation_method": session.generation_method,
@@ -981,8 +1045,11 @@ async def get_session_questions(
                 "topic_tags": q.topic_tags,
                 "vetting_status": q.vetting_status,
                 "generated_at": q.generated_at.isoformat() if q.generated_at else None,
+                "version_number": q.version_number,
+                "replaces_id": str(q.replaces_id) if q.replaces_id else None,
+                "is_latest": q.is_latest,
             }
-            for q in questions
+            for q in ordered_questions
         ],
     }
 
@@ -1336,78 +1403,93 @@ async def vet_question(
 
             if content_context:
                 system_prompt = _get_rubric_system_prompt(q_type)
-                import random as _r
-                regen_starter = _r.choice(_QUESTION_STARTERS.get(q_type, _QUESTION_STARTERS["default"]))
-                prompt = f"Content:\n{content_context}\n"
-                prompt += f"""
+                
+                # Retry loop for robustness
+                max_retries = 3
+                for attempt in range(max_retries):
+                    try:
+                        import random as _r
+                        regen_starter = _r.choice(_QUESTION_STARTERS.get(q_type, _QUESTION_STARTERS["default"]))
+                        prompt = f"Content:\n{content_context}\n"
+                        prompt += f"""
 Generate a {q_type.replace('_', ' ')} question based on this content.
 - Marks: {marks}
 - Difficulty: {question_snapshot["difficulty_level"] or "medium"}
 - REQUIRED: Your question MUST start with the word/phrase "{regen_starter}" — this is non-negotiable
 - FORBIDDEN: Do NOT start with "A clinician", "A patient", "A doctor", "A dentist", "A practitioner", "A student", "A researcher", or similar scenario setups.
-- The question text must be fully self-contained — do NOT mention "the text", "the reference", "the provided material", or any source
+- CRITICAL: The question must be FULLY SELF-CONTAINED. NEVER reference the source material in ANY way. Do NOT use ANY of these phrases or similar: "the text", "the reference", "the provided material", "the provided content", "the context", "the passage", "according to", "based on the content", "as stated", "as mentioned", "in the material", "from the content". The question must stand completely alone as if no source was given.
 - IMPORTANT: Generate a DIFFERENT question from: "{question_snapshot["question_text"][:150]}..."
 
 Output valid JSON only."""
 
-                try:
-                    response = await llm_service.generate_json(
-                        prompt=prompt, system_prompt=system_prompt, temperature=0.8,
-                    )
-                    if response and "question_text" in response:
-                        question_text = response["question_text"]
-                        if len(question_text) >= 15 and question_text.strip() != (question_snapshot["question_text"] or "").strip():
-                            question_embedding = await embedding_service.get_embedding(question_text)
+                        logger.info(f"Quick regen attempt {attempt + 1}/{max_retries}")
+                        response = await llm_service.generate_json(
+                            prompt=prompt, system_prompt=system_prompt, temperature=0.7 + (attempt * 0.1),
+                        )
+                        response = _normalize_llm_response(response)
+                        logger.info(f"Quick regen got response: {bool(response)}, keys={list(response.keys()) if response else []}")
+                        
+                        if response and "question_text" in response:
+                            question_text = response["question_text"]
+                            if len(question_text) >= 15 and question_text.strip() != (question_snapshot["question_text"] or "").strip():
+                                question_embedding = await embedding_service.get_embedding(question_text)
 
-                            _s = _sanitize_question_fields({
-                                "learning_outcome_id": question_snapshot["learning_outcome_id"],
-                                "course_outcome_mapping": question_snapshot["course_outcome_mapping"],
-                                "bloom_taxonomy_level": response.get("bloom_level", question_snapshot["bloom_taxonomy_level"] or "understand"),
-                                "difficulty_level": question_snapshot["difficulty_level"] or "medium",
-                            })
+                                _s = _sanitize_question_fields({
+                                    "learning_outcome_id": question_snapshot["learning_outcome_id"],
+                                    "course_outcome_mapping": question_snapshot["course_outcome_mapping"],
+                                    "bloom_taxonomy_level": response.get("bloom_level", question_snapshot["bloom_taxonomy_level"] or "understand"),
+                                    "difficulty_level": question_snapshot["difficulty_level"] or "medium",
+                                })
 
-                            new_question = QuestionModel(
-                                document_id=question_snapshot["document_id"],
-                                subject_id=question_snapshot["subject_id"],
-                                topic_id=question_snapshot["topic_id"],
-                                session_id=session_id,
-                                question_text=question_text,
-                                question_embedding=question_embedding,
-                                question_type=q_type,
-                                marks=marks,
-                                difficulty_level=_s["difficulty_level"],
-                                bloom_taxonomy_level=_s["bloom_taxonomy_level"],
-                                correct_answer=response.get("correct_answer") or response.get("expected_answer"),
-                                options=response.get("options"),
-                                explanation=response.get("explanation"),
-                                topic_tags=response.get("topic_tags", question_snapshot["topic_tags"]),
-                                learning_outcome_id=_s["learning_outcome_id"],
-                                course_outcome_mapping=_s["course_outcome_mapping"],
-                                generation_confidence=0.75,
-                                vetting_status="pending",
-                                # Version control fields
-                                replaces_id=question_id,
-                                version_number=(question.version_number or 1) + 1,
-                                is_latest=True,
-                                generation_metadata={
-                                    "source": "quick_generation",
-                                    "regenerated_from": str(question_id),
-                                },
-                            )
-                            db.add(new_question)
-                            await db.commit()
-                            await db.refresh(new_question)
+                                new_question = QuestionModel(
+                                    document_id=question_snapshot["document_id"],
+                                    subject_id=question_snapshot["subject_id"],
+                                    topic_id=question_snapshot["topic_id"],
+                                    session_id=session_id,
+                                    question_text=question_text,
+                                    question_embedding=question_embedding,
+                                    question_type=q_type,
+                                    marks=marks,
+                                    difficulty_level=_s["difficulty_level"],
+                                    bloom_taxonomy_level=_s["bloom_taxonomy_level"],
+                                    correct_answer=response.get("correct_answer") or response.get("expected_answer"),
+                                    options=response.get("options"),
+                                    explanation=response.get("explanation"),
+                                    topic_tags=response.get("topic_tags", question_snapshot["topic_tags"]),
+                                    learning_outcome_id=_s["learning_outcome_id"],
+                                    course_outcome_mapping=_s["course_outcome_mapping"],
+                                    generation_confidence=0.75,
+                                    vetting_status="pending",
+                                    # Version control fields
+                                    replaces_id=question_id,
+                                    version_number=(question.version_number or 1) + 1,
+                                    is_latest=True,
+                                    generation_metadata={
+                                        "source": "quick_generation",
+                                        "regenerated_from": str(question_id),
+                                    },
+                                )
+                                db.add(new_question)
+                                await db.commit()
+                                await db.refresh(new_question)
 
-                            # Update old question to link to replacement
-                            question.replaced_by_id = new_question.id
-                            question.is_latest = False
-                            await db.commit()
+                                # Update old question to link to replacement
+                                question.replaced_by_id = new_question.id
+                                question.is_latest = False
+                                await db.commit()
 
-                            replacement = new_question
-                            logger.info(f"Quick regen: replacement={replacement.id}")
-                except Exception as e:
-                    logger.error(f"Quick regen error: {e}")
-                    await db.rollback()
+                                replacement = new_question
+                                logger.info(f"Quick regen: replacement={replacement.id}")
+                                break  # Success - exit retry loop
+                            else:
+                                logger.warning(f"Quick regen attempt {attempt + 1}: question too short or duplicate")
+                        else:
+                            logger.warning(f"Quick regen attempt {attempt + 1}: response missing question_text")
+                    except Exception as e:
+                        logger.error(f"Quick regen attempt {attempt + 1} error: {e}")
+                        await db.rollback()
+                        if attempt == max_retries - 1:
+                            logger.error(f"Quick regen failed after {max_retries} attempts")
 
             if replacement:
                 return QR.model_validate(replacement)
@@ -1452,103 +1534,117 @@ Output valid JSON only."""
                     logger.warning(f"RAG lookup for chapter regen failed: {e}")
 
                 system_prompt = _get_rubric_system_prompt(q_type)
-                # Use a random starter from the pool for regen
-                import random as _r
-                regen_starter = _r.choice(_QUESTION_STARTERS.get(q_type, _QUESTION_STARTERS["default"]))
-                prompt = f"Chapter: \"{topic_name}\"\n\nSyllabus Content:\n{syllabus_content[:3000]}\n"
-                if reference_context:
-                    prompt += f"\nBackground knowledge (use to inform the question, do NOT cite or reference it):\n{reference_context}\n"
-                prompt += f"""
+                
+                # Retry loop for robustness
+                max_retries = 3
+                for attempt in range(max_retries):
+                    try:
+                        import random as _r
+                        regen_starter = _r.choice(_QUESTION_STARTERS.get(q_type, _QUESTION_STARTERS["default"]))
+                        prompt = f"Chapter: \"{topic_name}\"\n\nSyllabus Content:\n{syllabus_content[:3000]}\n"
+                        if reference_context:
+                            prompt += f"\nBackground knowledge (use to inform the question, do NOT cite or reference it):\n{reference_context}\n"
+                        prompt += f"""
 Generate a {q_type.replace('_', ' ')} question based on this chapter content.
 - Marks: {marks}
 - Difficulty: {question_snapshot["difficulty_level"] or "medium"}
 - REQUIRED: Your question MUST start with the word/phrase "{regen_starter}" — this is non-negotiable
 - FORBIDDEN: Do NOT start all the questions with "A clinician", "A patient", "A doctor", "A dentist", "A practitioner", "A student", "A researcher", or similar scenario setups. Also start directly with the required starter word.
-- The question text must be fully self-contained — do NOT mention "the text", "the reference", "the provided material", or any source
+- CRITICAL: The question must be FULLY SELF-CONTAINED. NEVER reference the source material in ANY way. Do NOT use ANY of these phrases or similar: "the text", "the reference", "the provided material", "the provided content", "the context", "the passage", "according to", "based on the content", "as stated", "as mentioned", "in the material", "from the content". The question must stand completely alone as if no source was given.
 - IMPORTANT: Generate a DIFFERENT question from: "{question_snapshot["question_text"][:150]}..."
 
 Output valid JSON only."""
 
-                try:
-                    response = await llm_service.generate_json(
-                        prompt=prompt, system_prompt=system_prompt, temperature=0.8,
-                    )
-                    if response and "question_text" in response:
-                        question_text = response["question_text"]
-                        if len(question_text) >= 15 and question_text.strip() != (question_snapshot["question_text"] or "").strip():
-                            question_embedding = await embedding_service.get_embedding(question_text)
+                        logger.info(f"Chapter regen attempt {attempt + 1}/{max_retries}")
+                        response = await llm_service.generate_json(
+                            prompt=prompt, system_prompt=system_prompt, temperature=0.7 + (attempt * 0.1),
+                        )
+                        response = _normalize_llm_response(response)
+                        logger.info(f"Chapter regen got response: {bool(response)}, keys={list(response.keys()) if response else []}")
+                        
+                        if response and "question_text" in response:
+                            question_text = response["question_text"]
+                            if len(question_text) >= 15 and question_text.strip() != (question_snapshot["question_text"] or "").strip():
+                                question_embedding = await embedding_service.get_embedding(question_text)
 
-                            assigned_lo = response.get("learning_outcome_id") or response.get("learning_outcome")
-                            if not assigned_lo and topic_lo_mappings:
-                                try:
-                                    assigned_lo = max(topic_lo_mappings.items(), key=lambda kv: (kv[1] or 0))[0]
-                                except Exception:
-                                    pass
+                                assigned_lo = response.get("learning_outcome_id") or response.get("learning_outcome")
+                                if not assigned_lo and topic_lo_mappings:
+                                    try:
+                                        assigned_lo = max(topic_lo_mappings.items(), key=lambda kv: (kv[1] or 0))[0]
+                                    except Exception:
+                                        pass
 
-                            assigned_co_map = {}
-                            co_val = response.get("course_outcome")
-                            if isinstance(co_val, str):
-                                assigned_co_map = {co_val: 1}
-                            elif isinstance(co_val, dict):
-                                assigned_co_map = co_val
-                            elif assigned_lo:
-                                subj_res = await db.execute(select(Subject).where(Subject.id == question_snapshot["subject_id"]))
-                                subj = subj_res.scalar_one_or_none()
-                                if subj:
-                                    s_lo_map = getattr(subj, "learning_outcome_mappings", {}) or {}
-                                    if isinstance(s_lo_map.get(assigned_lo), dict):
-                                        assigned_co_map = s_lo_map[assigned_lo]
+                                assigned_co_map = {}
+                                co_val = response.get("course_outcome")
+                                if isinstance(co_val, str):
+                                    assigned_co_map = {co_val: 1}
+                                elif isinstance(co_val, dict):
+                                    assigned_co_map = co_val
+                                elif assigned_lo:
+                                    subj_res = await db.execute(select(Subject).where(Subject.id == question_snapshot["subject_id"]))
+                                    subj = subj_res.scalar_one_or_none()
+                                    if subj:
+                                        s_lo_map = getattr(subj, "learning_outcome_mappings", {}) or {}
+                                        if isinstance(s_lo_map.get(assigned_lo), dict):
+                                            assigned_co_map = s_lo_map[assigned_lo]
 
-                            _s = _sanitize_question_fields({
-                                "learning_outcome_id": assigned_lo,
-                                "course_outcome_mapping": assigned_co_map,
-                                "bloom_taxonomy_level": response.get("bloom_level", "understand"),
-                                "difficulty_level": question_snapshot["difficulty_level"] or "medium",
-                            })
+                                _s = _sanitize_question_fields({
+                                    "learning_outcome_id": assigned_lo,
+                                    "course_outcome_mapping": assigned_co_map,
+                                    "bloom_taxonomy_level": response.get("bloom_level", "understand"),
+                                    "difficulty_level": question_snapshot["difficulty_level"] or "medium",
+                                })
 
-                            new_question = QuestionModel(
-                                subject_id=question_snapshot["subject_id"],
-                                topic_id=topic_id_for_regen,
-                                session_id=session_id,
-                                question_text=question_text,
-                                question_embedding=question_embedding,
-                                question_type=q_type,
-                                marks=marks,
-                                difficulty_level=_s["difficulty_level"],
-                                bloom_taxonomy_level=_s["bloom_taxonomy_level"],
-                                correct_answer=response.get("correct_answer") or response.get("expected_answer"),
-                                options=response.get("options"),
-                                explanation=response.get("explanation"),
-                                topic_tags=response.get("topic_tags", [topic_name]),
-                                learning_outcome_id=_s["learning_outcome_id"],
-                                course_outcome_mapping=_s["course_outcome_mapping"],
-                                generation_confidence=0.75,
-                                vetting_status="pending",
-                                # Version control fields
-                                replaces_id=question_id,
-                                version_number=(question.version_number or 1) + 1,
-                                is_latest=True,
-                                generation_metadata={
-                                    "source": "chapter_generation",
-                                    "regenerated_from": str(question_id),
-                                    "topic_name": topic_name,
-                                    "has_reference_context": bool(reference_context),
-                                },
-                            )
-                            db.add(new_question)
-                            await db.commit()
-                            await db.refresh(new_question)
-                            
-                            # Update old question to link to replacement
-                            question.replaced_by_id = new_question.id
-                            question.is_latest = False
-                            await db.commit()
-                            
-                            replacement = new_question
-                            logger.info(f"Chapter regen: replacement={replacement.id}")
-                except Exception as e:
-                    logger.error(f"Chapter regen error: {e}")
-                    await db.rollback()
+                                new_question = QuestionModel(
+                                    subject_id=question_snapshot["subject_id"],
+                                    topic_id=topic_id_for_regen,
+                                    session_id=session_id,
+                                    question_text=question_text,
+                                    question_embedding=question_embedding,
+                                    question_type=q_type,
+                                    marks=marks,
+                                    difficulty_level=_s["difficulty_level"],
+                                    bloom_taxonomy_level=_s["bloom_taxonomy_level"],
+                                    correct_answer=response.get("correct_answer") or response.get("expected_answer"),
+                                    options=response.get("options"),
+                                    explanation=response.get("explanation"),
+                                    topic_tags=response.get("topic_tags", [topic_name]),
+                                    learning_outcome_id=_s["learning_outcome_id"],
+                                    course_outcome_mapping=_s["course_outcome_mapping"],
+                                    generation_confidence=0.75,
+                                    vetting_status="pending",
+                                    # Version control fields
+                                    replaces_id=question_id,
+                                    version_number=(question.version_number or 1) + 1,
+                                    is_latest=True,
+                                    generation_metadata={
+                                        "source": "chapter_generation",
+                                        "regenerated_from": str(question_id),
+                                        "topic_name": topic_name,
+                                        "has_reference_context": bool(reference_context),
+                                    },
+                                )
+                                db.add(new_question)
+                                await db.commit()
+                                await db.refresh(new_question)
+                                
+                                # Update old question to link to replacement
+                                question.replaced_by_id = new_question.id
+                                question.is_latest = False
+                                await db.commit()
+                                
+                                replacement = new_question
+                                logger.info(f"Chapter regen: replacement={replacement.id}")
+                                break  # Success - exit retry loop
+                            else:
+                                logger.warning(f"Chapter regen attempt {attempt + 1}: question too short or duplicate")
+                        else:
+                            logger.warning(f"Chapter regen attempt {attempt + 1}: response missing question_text")
+                    except Exception as e:
+                        logger.error(f"Chapter regen attempt {attempt + 1} error: {e}")
+                        await db.rollback()
+                        if attempt == max_retries - 1:
+                            logger.error(f"Chapter regen failed after {max_retries} attempts")
 
             if replacement:
                 return QR.model_validate(replacement)
@@ -1588,113 +1684,126 @@ Output valid JSON only."""
                             all_chunks.append({"topic_id": str(t.id), "topic_name": t.name, "content": current_chunk.strip()})
 
                 if all_chunks:
-                    selected_chunk = random.choice(all_chunks)
                     llm_service = LLMService()
                     embedding_service = EmbeddingService()
-
                     system_prompt = _get_rubric_system_prompt(q_type)
-                    # Use a random starter from the pool for regen
-                    import random as _r
-                    regen_starter = _r.choice(_QUESTION_STARTERS.get(q_type, _QUESTION_STARTERS["default"]))
-                    prompt = f"""Context from "{selected_chunk['topic_name']}":
+                    
+                    # Retry loop for robustness
+                    max_retries = 3
+                    for attempt in range(max_retries):
+                        try:
+                            selected_chunk = random.choice(all_chunks)
+                            import random as _r
+                            regen_starter = _r.choice(_QUESTION_STARTERS.get(q_type, _QUESTION_STARTERS["default"]))
+                            prompt = f"""Context from "{selected_chunk['topic_name']}":
 {selected_chunk['content']}
 
 Generate a {q_type.replace('_', ' ')} question based on this content.
 - Marks: {marks}
 - REQUIRED: Your question MUST start with the word/phrase "{regen_starter}" — this is non-negotiable
 - FORBIDDEN: Do NOT start all the questions with "A clinician", "A patient", "A doctor", "A dentist", "A practitioner", "A student", "A researcher", or similar scenario setups. Also start directly with the required starter word.
-- The question text must be fully self-contained — do NOT mention "the text", "the reference", or any source
+- CRITICAL: The question must be FULLY SELF-CONTAINED. NEVER reference the source material in ANY way. Do NOT use ANY of these phrases or similar: "the text", "the reference", "the provided material", "the provided content", "the context", "the passage", "according to", "based on the content", "as stated", "as mentioned", "in the material", "from the content". The question must stand completely alone as if no source was given.
 - IMPORTANT: Generate a DIFFERENT question from: "{question_snapshot["question_text"][:100]}..."
 
 Output valid JSON only."""
 
-                    try:
-                        response = await llm_service.generate_json(
-                            prompt=prompt, system_prompt=system_prompt, temperature=0.8,
-                        )
-                        if response and "question_text" in response:
-                            question_text = response["question_text"]
-                            if len(question_text) >= 15 and question_text.strip() != (question_snapshot["question_text"] or "").strip():
-                                question_embedding = await embedding_service.get_embedding(question_text)
+                            logger.info(f"Rubric regen attempt {attempt + 1}/{max_retries}")
+                            response = await llm_service.generate_json(
+                                prompt=prompt, system_prompt=system_prompt, temperature=0.7 + (attempt * 0.1),
+                            )
+                            response = _normalize_llm_response(response)
+                            logger.info(f"Rubric regen got response: {bool(response)}, keys={list(response.keys()) if response else []}")
+                            
+                            if response and "question_text" in response:
+                                question_text = response["question_text"]
+                                if len(question_text) >= 15 and question_text.strip() != (question_snapshot["question_text"] or "").strip():
+                                    question_embedding = await embedding_service.get_embedding(question_text)
 
-                                assigned_lo = response.get("learning_outcome_id") or response.get("learning_outcome")
-                                topic_obj = None
-                                try:
-                                    tres = await db.execute(select(Topic).where(Topic.id == uuid.UUID(selected_chunk["topic_id"])))
-                                    topic_obj = tres.scalar_one_or_none()
-                                except Exception:
-                                    pass
-
-                                topic_lo_map = (topic_obj.learning_outcome_mappings if topic_obj and getattr(topic_obj, "learning_outcome_mappings", None) else {}) or {}
-                                if not assigned_lo and topic_lo_map:
+                                    assigned_lo = response.get("learning_outcome_id") or response.get("learning_outcome")
+                                    topic_obj = None
                                     try:
-                                        assigned_lo = max(topic_lo_map.items(), key=lambda kv: (kv[1] or 0))[0]
+                                        tres = await db.execute(select(Topic).where(Topic.id == uuid.UUID(selected_chunk["topic_id"])))
+                                        topic_obj = tres.scalar_one_or_none()
                                     except Exception:
                                         pass
 
-                                assigned_co_map = {}
-                                subj_res = await db.execute(select(Subject).where(Subject.id == question_snapshot["subject_id"]))
-                                subj = subj_res.scalar_one_or_none()
-                                if subj and assigned_lo:
-                                    s_lo_map = getattr(subj, "learning_outcome_mappings", {}) or {}
-                                    if isinstance(s_lo_map.get(assigned_lo), dict):
-                                        assigned_co_map = s_lo_map[assigned_lo]
-                                    else:
-                                        cos = (subj.course_outcomes or {}).get("outcomes") if subj.course_outcomes else None
-                                        if cos and isinstance(cos, list) and len(cos) > 0:
-                                            m = re.search(r"LO(\d+)", str(assigned_lo))
-                                            if m:
-                                                idx = (int(m.group(1)) - 1) % len(cos)
-                                                assigned_co_map = {f"CO{idx+1}": 1}
+                                    topic_lo_map = (topic_obj.learning_outcome_mappings if topic_obj and getattr(topic_obj, "learning_outcome_mappings", None) else {}) or {}
+                                    if not assigned_lo and topic_lo_map:
+                                        try:
+                                            assigned_lo = max(topic_lo_map.items(), key=lambda kv: (kv[1] or 0))[0]
+                                        except Exception:
+                                            pass
 
-                                _s = _sanitize_question_fields({
-                                    "learning_outcome_id": assigned_lo,
-                                    "course_outcome_mapping": assigned_co_map,
-                                    "bloom_taxonomy_level": response.get("bloom_level", "understand"),
-                                    "difficulty_level": question_snapshot["difficulty_level"] or "medium",
-                                })
+                                    assigned_co_map = {}
+                                    subj_res = await db.execute(select(Subject).where(Subject.id == question_snapshot["subject_id"]))
+                                    subj = subj_res.scalar_one_or_none()
+                                    if subj and assigned_lo:
+                                        s_lo_map = getattr(subj, "learning_outcome_mappings", {}) or {}
+                                        if isinstance(s_lo_map.get(assigned_lo), dict):
+                                            assigned_co_map = s_lo_map[assigned_lo]
+                                        else:
+                                            cos = (subj.course_outcomes or {}).get("outcomes") if subj.course_outcomes else None
+                                            if cos and isinstance(cos, list) and len(cos) > 0:
+                                                m = re.search(r"LO(\d+)", str(assigned_lo))
+                                                if m:
+                                                    idx = (int(m.group(1)) - 1) % len(cos)
+                                                    assigned_co_map = {f"CO{idx+1}": 1}
 
-                                new_question = QuestionModel(
-                                    subject_id=question_snapshot["subject_id"],
-                                    topic_id=uuid.UUID(selected_chunk["topic_id"]),
-                                    session_id=session_id,
-                                    question_text=question_text,
-                                    question_embedding=question_embedding,
-                                    question_type=q_type,
-                                    marks=marks,
-                                    difficulty_level=_s["difficulty_level"],
-                                    bloom_taxonomy_level=_s["bloom_taxonomy_level"],
-                                    correct_answer=response.get("correct_answer") or response.get("expected_answer"),
-                                    options=response.get("options"),
-                                    explanation=response.get("explanation"),
-                                    topic_tags=response.get("topic_tags", [selected_chunk["topic_name"]]),
-                                    learning_outcome_id=_s["learning_outcome_id"],
-                                    course_outcome_mapping=_s["course_outcome_mapping"],
-                                    generation_confidence=0.75,
-                                    vetting_status="pending",
-                                    # Version control fields
-                                    replaces_id=question_id,
-                                    version_number=(question.version_number or 1) + 1,
-                                    is_latest=True,
-                                    generation_metadata={
-                                        "regenerated_from": str(question_id),
-                                        "topic_name": selected_chunk["topic_name"],
-                                    },
-                                )
-                                db.add(new_question)
-                                await db.commit()
-                                await db.refresh(new_question)
-                                
-                                # Update old question to link to replacement
-                                question.replaced_by_id = new_question.id
-                                question.is_latest = False
-                                await db.commit()
-                                
-                                replacement = new_question
-                                logger.info(f"Rubric regen: replacement={replacement.id}")
-                    except Exception as e:
-                        logger.error(f"Rubric regen error: {e}")
-                        await db.rollback()
+                                    _s = _sanitize_question_fields({
+                                        "learning_outcome_id": assigned_lo,
+                                        "course_outcome_mapping": assigned_co_map,
+                                        "bloom_taxonomy_level": response.get("bloom_level", "understand"),
+                                        "difficulty_level": question_snapshot["difficulty_level"] or "medium",
+                                    })
+
+                                    new_question = QuestionModel(
+                                        subject_id=question_snapshot["subject_id"],
+                                        topic_id=uuid.UUID(selected_chunk["topic_id"]),
+                                        session_id=session_id,
+                                        question_text=question_text,
+                                        question_embedding=question_embedding,
+                                        question_type=q_type,
+                                        marks=marks,
+                                        difficulty_level=_s["difficulty_level"],
+                                        bloom_taxonomy_level=_s["bloom_taxonomy_level"],
+                                        correct_answer=response.get("correct_answer") or response.get("expected_answer"),
+                                        options=response.get("options"),
+                                        explanation=response.get("explanation"),
+                                        topic_tags=response.get("topic_tags", [selected_chunk["topic_name"]]),
+                                        learning_outcome_id=_s["learning_outcome_id"],
+                                        course_outcome_mapping=_s["course_outcome_mapping"],
+                                        generation_confidence=0.75,
+                                        vetting_status="pending",
+                                        # Version control fields
+                                        replaces_id=question_id,
+                                        version_number=(question.version_number or 1) + 1,
+                                        is_latest=True,
+                                        generation_metadata={
+                                            "regenerated_from": str(question_id),
+                                            "topic_name": selected_chunk["topic_name"],
+                                        },
+                                    )
+                                    db.add(new_question)
+                                    await db.commit()
+                                    await db.refresh(new_question)
+                                    
+                                    # Update old question to link to replacement
+                                    question.replaced_by_id = new_question.id
+                                    question.is_latest = False
+                                    await db.commit()
+                                    
+                                    replacement = new_question
+                                    logger.info(f"Rubric regen: replacement={replacement.id}")
+                                    break  # Success - exit retry loop
+                                else:
+                                    logger.warning(f"Rubric regen attempt {attempt + 1}: question too short or duplicate")
+                            else:
+                                logger.warning(f"Rubric regen attempt {attempt + 1}: response missing question_text")
+                        except Exception as e:
+                            logger.error(f"Rubric regen attempt {attempt + 1} error: {e}")
+                            await db.rollback()
+                            if attempt == max_retries - 1:
+                                logger.error(f"Rubric regen failed after {max_retries} attempts")
 
             if replacement:
                 return QR.model_validate(replacement)
@@ -2397,11 +2506,15 @@ Output valid JSON only."""
                                     system_prompt=system_prompt,
                                     temperature=0.75 + (0.05 * attempt),
                                 )
+                                resp = _normalize_llm_response(resp)
                             except Exception as e:
+                                logger.warning(f"[{request_id}] LLM call exception (attempt {attempt+1}): {e}")
                                 resp = None
 
                             if not resp or "question_text" not in resp:
-                                logger.warning(f"[{request_id}] LLM returned invalid response (attempt {attempt+1})")
+                                resp_keys = list(resp.keys()) if resp else []
+                                resp_preview = str(resp)[:300] if resp else "None"
+                                logger.warning(f"[{request_id}] LLM returned invalid response (attempt {attempt+1}), keys={resp_keys}, preview={resp_preview}")
                                 if attempt == RETRY_LIMIT - 1:
                                     questions_failed += 1
                                 continue
