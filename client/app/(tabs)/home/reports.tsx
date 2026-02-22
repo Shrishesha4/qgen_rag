@@ -14,6 +14,8 @@ import { Colors, Spacing, BorderRadius, FontSizes } from '@/constants/theme';
 import { useColorScheme } from '@/hooks/use-color-scheme';
 import { subjectsService, Subject } from '@/services/subjects';
 import { vettingService, VettingStats, SubjectAnalytics } from '@/services/vetting';
+import { exportReport, ReportData, ExportFormat } from '@/services/export';
+import { useToast } from '@/components/toast';
 
 interface AnalyticsData {
   total_questions: number;
@@ -40,6 +42,7 @@ const LO_COLORS = ['#007AFF', '#5856D6', '#FF9500', '#34C759', '#FF3B30', '#AF52
 export default function ReportsScreen() {
   const colorScheme = useColorScheme();
   const colors = Colors[colorScheme ?? 'light'];
+  const { showSuccess, showError } = useToast();
   
   const [subjects, setSubjects] = useState<Subject[]>([]);
   const [selectedSubject, setSelectedSubject] = useState<string | null>(null);
@@ -53,6 +56,7 @@ export default function ReportsScreen() {
     bloom: true,
     syllabus: false,
   });
+  const [isExporting, setIsExporting] = useState(false);
 
   const loadData = useCallback(async () => {
     try {
@@ -111,6 +115,48 @@ export default function ReportsScreen() {
   const handleSubjectChange = (subjectId: string | null) => {
     setSelectedSubject(subjectId);
     setIsLoading(true);
+  };
+
+  const handleExport = async (format: ExportFormat = 'xlsx') => {
+    if (!analytics || !vettingStats) return;
+    
+    setIsExporting(true);
+    try {
+      const selectedSubjectData = subjects.find(s => s.id === selectedSubject);
+      const reportData: ReportData = {
+        title: selectedSubjectData ? `${selectedSubjectData.code} Analytics Report` : 'Question Bank Analytics Report',
+        generatedAt: new Date().toISOString(),
+        summary: {
+          totalQuestions: analytics.total_questions,
+          approvedQuestions: vettingStats.total_approved,
+          pendingQuestions: vettingStats.pending_review,
+          rejectedQuestions: vettingStats.total_rejected,
+        },
+        byType: {}, // Not available in current analytics
+        byDifficulty: {}, // Not available in current analytics
+        byBloomLevel: analytics.by_bloom.reduce((acc, item) => {
+          acc[item.bloom_level] = item.count;
+          return acc;
+        }, {} as Record<string, number>),
+        bySubject: analytics.by_subject.reduce((acc, item) => {
+          acc[item.subject_code] = item.total_questions;
+          return acc;
+        }, {} as Record<string, number>),
+      };
+      
+      const filename = selectedSubjectData ? `${selectedSubjectData.code}_report` : 'analytics_report';
+      const result = await exportReport(reportData, format, filename);
+      
+      if (result.success) {
+        showSuccess('Report exported successfully');
+      } else {
+        showError(result.error || 'Export failed', 'Export Failed');
+      }
+    } catch (error) {
+      showError(error, 'Export Failed');
+    } finally {
+      setIsExporting(false);
+    }
   };
 
   const toggleSection = (section: string) => {
@@ -361,9 +407,17 @@ export default function ReportsScreen() {
         )}
 
         {/* Export Button */}
-        <TouchableOpacity style={[styles.exportButton, { backgroundColor: colors.primary }]}>
-          <IconSymbol name="square.and.arrow.up" size={18} color="#FFFFFF" />
-          <Text style={styles.exportButtonText}>Export Report</Text>
+        <TouchableOpacity 
+          style={[styles.exportButton, { backgroundColor: colors.primary }, isExporting && { opacity: 0.6 }]}
+          onPress={() => handleExport('xlsx')}
+          disabled={isExporting}
+        >
+          {isExporting ? (
+            <ActivityIndicator size="small" color="#FFFFFF" />
+          ) : (
+            <IconSymbol name="square.and.arrow.up" size={18} color="#FFFFFF" />
+          )}
+          <Text style={styles.exportButtonText}>{isExporting ? 'Exporting...' : 'Export Report'}</Text>
         </TouchableOpacity>
       </ScrollView>
     </View>

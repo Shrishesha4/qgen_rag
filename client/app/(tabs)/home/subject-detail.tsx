@@ -28,7 +28,8 @@ import { ReferenceMaterials } from '@/components/reference-materials';
 import * as DocumentPicker from 'expo-document-picker';
 import { useToast } from '@/components/toast';
 import { rubricsService, Rubric, RubricCreateData, GenerationProgress } from '@/services/rubrics';
-import { questionsService, GenerationSession, SessionQuestion } from '@/services/questions';
+import { questionsService, GenerationSession, SessionQuestion, Question } from '@/services/questions';
+import { ExportModal } from '@/components/export-modal';
 
 export default function SubjectDetailScreen() {
   const colorScheme = useColorScheme();
@@ -91,6 +92,10 @@ export default function SubjectDetailScreen() {
   const [historySessionQuestions, setHistorySessionQuestions] = useState<SessionQuestion[]>([]);
   const [selectedHistorySession, setSelectedHistorySession] = useState<GenerationSession | null>(null);
   const [isLoadingSessionQuestions, setIsLoadingSessionQuestions] = useState(false);
+
+  // Export state
+  const [showExportModal, setShowExportModal] = useState(false);
+  const [exportQuestions, setExportQuestions] = useState<Question[]>([]);
 
   const loadData = useCallback(async () => {
     if (!id) return;
@@ -537,6 +542,23 @@ export default function SubjectDetailScreen() {
         options={{
           title: subject.code,
           headerBackTitle: 'Subjects',
+          headerRight: () => (
+            <TouchableOpacity
+              onPress={async () => {
+                try {
+                  const response = await questionsService.listQuestions(1, 500, undefined, undefined, undefined, id, false, 'approved');
+                  setExportQuestions(response.questions);
+                  setShowExportModal(true);
+                } catch (error) {
+                  showError(error, 'Failed to load questions for export');
+                }
+              }}
+              hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}
+              style={{ marginRight: 8 }}
+            >
+              <IconSymbol name="square.and.arrow.up" size={22} color={colors.primary} />
+            </TouchableOpacity>
+          ),
         }}
       />
       <View style={[styles.container, { backgroundColor: colors.background }]}>
@@ -1297,6 +1319,14 @@ export default function SubjectDetailScreen() {
             )}
           </View>
         </Modal>
+
+        {/* Export Modal */}
+        <ExportModal
+          visible={showExportModal}
+          onClose={() => setShowExportModal(false)}
+          questions={exportQuestions}
+          defaultFilename={subject?.code ? `${subject.code}_questions` : 'questions'}
+        />
       </View>
     </>
   );

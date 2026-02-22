@@ -10,9 +10,7 @@ import {
   Modal,
   ScrollView,
   TextInput,
-  Alert,
 } from 'react-native';
-import { LinearGradient } from 'expo-linear-gradient';
 import { Stack, useLocalSearchParams } from 'expo-router';
 import { IconSymbol } from '@/components/ui/icon-symbol';
 import { Colors, Spacing, BorderRadius, FontSizes } from '@/constants/theme';
@@ -20,6 +18,7 @@ import { useColorScheme } from '@/hooks/use-color-scheme';
 import { questionsService, Question, QuestionUpdateRequest } from '@/services/questions';
 import { subjectsService, Topic } from '@/services/subjects';
 import { useToast } from '@/components/toast';
+import { ExportModal } from '@/components/export-modal';
 
 const FILTER_OPTIONS = [
   { label: 'All', value: '' },
@@ -64,6 +63,9 @@ export default function QuestionsScreen() {
   const [isEditing, setIsEditing] = useState(false);
   const [isSaving, setIsSaving] = useState(false);
   const [editData, setEditData] = useState<QuestionUpdateRequest>({});
+
+  // Export modal state
+  const [showExportModal, setShowExportModal] = useState(false);
 
   const loadQuestions = useCallback(async (pageNum: number, append: boolean = false) => {
     try {
@@ -785,6 +787,15 @@ export default function QuestionsScreen() {
         options={{
           title: subject?.code || 'Questions',
           headerBackTitle: 'Subjects',
+          headerRight: () => (
+            <TouchableOpacity
+              onPress={() => setShowExportModal(true)}
+              hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}
+              style={{ marginRight: 8 }}
+            >
+              <IconSymbol name="square.and.arrow.up" size={22} color={colors.primary} />
+            </TouchableOpacity>
+          ),
         }}
       />
       <View style={[styles.container, { backgroundColor: colors.background }]}>
@@ -886,6 +897,14 @@ export default function QuestionsScreen() {
         />
 
         {renderQuestionDetail()}
+
+        {/* Export Modal */}
+        <ExportModal
+          visible={showExportModal}
+          onClose={() => setShowExportModal(false)}
+          questions={questions}
+          defaultFilename={subject?.code ? `${subject.code}_questions` : 'questions'}
+        />
       </View>
     </>
   );

@@ -15,7 +15,8 @@ import { IconSymbol } from '@/components/ui/icon-symbol';
 import { GlassCard } from '@/components/ui/glass-card';
 import { Colors, Spacing, BorderRadius, FontSizes } from '@/constants/theme';
 import { useColorScheme } from '@/hooks/use-color-scheme';
-import { questionsService, GenerationSession, SessionQuestion } from '@/services/questions';
+import { questionsService, GenerationSession, SessionQuestion, Question } from '@/services/questions';
+import { ExportModal } from '@/components/export-modal';
 
 // Type for version chain groups
 interface VersionChain {
@@ -82,6 +83,10 @@ export default function HistoryScreen() {
     
     // Track current visible page for each version chain
     const [chainCurrentPage, setChainCurrentPage] = useState<Record<string, number>>({});
+
+    // Export modal state
+    const [showExportModal, setShowExportModal] = useState(false);
+    const [exportQuestions, setExportQuestions] = useState<Question[]>([]);
 
     const loadSessions = useCallback(async (pageNum: number = 1, refresh = false) => {
         try {
@@ -354,6 +359,36 @@ export default function HistoryScreen() {
                             <TouchableOpacity onPress={() => setSelectedSession(null)}>
                                 <IconSymbol name="xmark.circle.fill" size={28} color={colors.textTertiary} />
                             </TouchableOpacity>
+                            {sessionQuestions.length > 0 && (
+                                <TouchableOpacity 
+                                    onPress={() => {
+                                        // Cast SessionQuestion[] to Question[] for export (partial data is acceptable)
+                                        const questionsForExport = sessionQuestions.map(sq => ({
+                                            id: sq.id,
+                                            question_text: sq.question_text,
+                                            question_type: sq.question_type as Question['question_type'],
+                                            marks: sq.marks,
+                                            difficulty_level: sq.difficulty_level as Question['difficulty_level'],
+                                            bloom_taxonomy_level: sq.bloom_taxonomy_level,
+                                            options: sq.options,
+                                            correct_answer: sq.correct_answer,
+                                            explanation: null,
+                                            vetting_status: (sq.vetting_status || 'pending') as Question['vetting_status'],
+                                            vetting_notes: null,
+                                            topic_tags: sq.topic_tags,
+                                            subject_id: selectedSession?.subject_id || null,
+                                            topic_id: null,
+                                            learning_outcome_id: sq.learning_outcome_id,
+                                            course_outcome_mapping: sq.course_outcome_mapping,
+                                        })) as Question[];
+                                        setExportQuestions(questionsForExport);
+                                        setShowExportModal(true);
+                                    }}
+                                    hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}
+                                >
+                                    <IconSymbol name="square.and.arrow.up" size={22} color={colors.primary} />
+                                </TouchableOpacity>
+                            )}
                             {/* {selectedSession && (
                                 <TouchableOpacity onPress={() => handleDeleteSession(selectedSession)}>
                                     <IconSymbol name="trash.fill" size={20} color="#FF3B30" />
@@ -618,6 +653,14 @@ export default function HistoryScreen() {
                     </ScrollView>
                 </View>
             </Modal>
+
+            {/* Export Modal */}
+            <ExportModal
+                visible={showExportModal}
+                onClose={() => setShowExportModal(false)}
+                questions={exportQuestions}
+                defaultFilename={selectedSession?.subject_code ? `${selectedSession.subject_code}_session_${selectedSession.id.slice(0, 8)}` : `session_${selectedSession?.id.slice(0, 8) || 'export'}`}
+            />
         </View>
     );
 }

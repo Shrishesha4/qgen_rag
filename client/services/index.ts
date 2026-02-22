@@ -14,3 +14,5 @@ export { vettingService } from './vetting';
 export type { VettingRequest, VettingStats, SubjectAnalytics } from './vetting';
 export { referencesService } from './references';
 export type { ReferenceDocument, ReferenceMaterialsResponse } from './references';
+export { exportQuestions, exportReport } from './export';
+export type { ExportFormat, ExportOptions, ExportResult, ReportData } from './export';
