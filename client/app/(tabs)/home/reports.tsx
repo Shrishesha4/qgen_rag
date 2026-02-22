@@ -139,7 +139,7 @@ export default function ReportsScreen() {
           return acc;
         }, {} as Record<string, number>),
         bySubject: analytics.by_subject.reduce((acc, item) => {
-          acc[item.subject_code] = item.total_questions;
+          acc[item.code] = item.total_questions;
           return acc;
         }, {} as Record<string, number>),
       };
@@ -412,11 +412,13 @@ export default function ReportsScreen() {
           onPress={() => handleExport('xlsx')}
           disabled={isExporting}
         >
-          {isExporting ? (
-            <ActivityIndicator size="small" color="#FFFFFF" />
-          ) : (
-            <IconSymbol name="square.and.arrow.up" size={18} color="#FFFFFF" />
-          )}
+          <View style={styles.exportIconContainer}>
+            {isExporting ? (
+              <ActivityIndicator size="small" color="#FFFFFF" />
+            ) : (
+              <IconSymbol name="square.and.arrow.up" size={18} color="#FFFFFF" />
+            )}
+          </View>
           <Text style={styles.exportButtonText}>{isExporting ? 'Exporting...' : 'Export Report'}</Text>
         </TouchableOpacity>
       </ScrollView>
@@ -634,6 +636,12 @@ const styles = StyleSheet.create({
     borderRadius: BorderRadius.md,
     marginTop: Spacing.lg,
     gap: Spacing.sm,
+  },
+  exportIconContainer: {
+    width: 18,
+    height: 18,
+    justifyContent: 'center',
+    alignItems: 'center',
   },
   exportButtonText: {
     fontSize: FontSizes.md,

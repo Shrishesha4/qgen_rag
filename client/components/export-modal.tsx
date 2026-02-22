@@ -1,6 +1,7 @@
 /**
  * Export Modal Component
  * Reusable modal for exporting questions in various formats
+ * Uses native iOS page-sheet presentation for authentic feel
  */
 
 import React, { useState } from 'react';
@@ -13,8 +14,8 @@ import {
   Switch,
   ScrollView,
   ActivityIndicator,
+  Platform,
 } from 'react-native';
-import { BlurView } from 'expo-blur';
 import { IconSymbol } from './ui/icon-symbol';
 import { Colors, FontSizes, Spacing, BorderRadius } from '@/constants/theme';
 import { useColorScheme } from '@/hooks/use-color-scheme';
@@ -99,64 +100,57 @@ export function ExportModal({
   return (
     <Modal
       visible={visible}
-      transparent
       animationType="slide"
+      presentationStyle={Platform.OS === 'ios' ? 'pageSheet' : 'fullScreen'}
       onRequestClose={onClose}
     >
-      <BlurView intensity={isDark ? 50 : 30} tint={isDark ? 'dark' : 'light'} style={styles.backdrop}>
-        <TouchableOpacity style={styles.backdrop} activeOpacity={1} onPress={onClose}>
-          <View />
-        </TouchableOpacity>
-      </BlurView>
+      <View style={[styles.container, { backgroundColor: isDark ? '#1c1c1e' : '#fff' }]}>
+        {/* Header */}
+        <View style={[styles.header, { borderBottomColor: borderColor }]}>
+          <TouchableOpacity onPress={onClose} style={styles.headerButton}>
+            <Text style={[styles.headerButtonText, { color: colors.primary }]}>Cancel</Text>
+          </TouchableOpacity>
+          <Text style={[styles.title, { color: textColor }]}>Export Questions</Text>
+          <View style={styles.headerButton} />
+        </View>
 
-      <View style={styles.modalContainer}>
-        <View style={[styles.modal, { backgroundColor: isDark ? '#1c1c1e' : '#fff' }]}>
-          {/* Header */}
-          <View style={[styles.header, { borderBottomColor: borderColor }]}>
-            <TouchableOpacity onPress={onClose} style={styles.closeButton}>
-              <IconSymbol name="xmark.circle.fill" size={28} color={secondaryText} />
-            </TouchableOpacity>
-            <Text style={[styles.title, { color: textColor }]}>Export Questions</Text>
-            <View style={styles.placeholder} />
+        <ScrollView style={styles.content} showsVerticalScrollIndicator={false}>
+          {/* Question Count */}
+          <Text style={[styles.subtitle, { color: secondaryText }]}>
+            {questions.length} question{questions.length !== 1 ? 's' : ''} available
+          </Text>
+
+          {/* Format Selection */}
+          <Text style={[styles.sectionTitle, { color: textColor }]}>Export Format</Text>
+          <View style={styles.optionGroup}>
+            {formats.map((f) => (
+              <TouchableOpacity
+                key={f.format}
+                style={[
+                  styles.formatOption,
+                  { backgroundColor: selectedFormat === f.format ? selectedBg : cardBg },
+                  { borderColor: selectedFormat === f.format ? colors.primary : borderColor },
+                ]}
+                onPress={() => setSelectedFormat(f.format)}
+              >
+                <IconSymbol
+                  name={f.icon as any}
+                  size={24}
+                  color={selectedFormat === f.format ? colors.primary : secondaryText}
+                />
+                <Text
+                  style={[
+                    styles.formatLabel,
+                    { color: selectedFormat === f.format ? colors.primary : textColor },
+                  ]}
+                >
+                  {f.label}
+                </Text>
+              </TouchableOpacity>
+            ))}
           </View>
 
-          <ScrollView style={styles.content} showsVerticalScrollIndicator={false}>
-            {/* Question Count */}
-            <Text style={[styles.subtitle, { color: secondaryText }]}>
-              {questions.length} question{questions.length !== 1 ? 's' : ''} available
-            </Text>
-
-            {/* Format Selection */}
-            <Text style={[styles.sectionTitle, { color: textColor }]}>Export Format</Text>
-            <View style={styles.optionGroup}>
-              {formats.map((f) => (
-                <TouchableOpacity
-                  key={f.format}
-                  style={[
-                    styles.formatOption,
-                    { backgroundColor: selectedFormat === f.format ? selectedBg : cardBg },
-                    { borderColor: selectedFormat === f.format ? colors.primary : borderColor },
-                  ]}
-                  onPress={() => setSelectedFormat(f.format)}
-                >
-                  <IconSymbol
-                    name={f.icon as any}
-                    size={24}
-                    color={selectedFormat === f.format ? colors.primary : secondaryText}
-                  />
-                  <Text
-                    style={[
-                      styles.formatLabel,
-                      { color: selectedFormat === f.format ? colors.primary : textColor },
-                    ]}
-                  >
-                    {f.label}
-                  </Text>
-                </TouchableOpacity>
-              ))}
-            </View>
-
-            {/* Group By Selection */}
+          {/* Group By Selection */}
             {showGroupOptions && (
               <>
                 <Text style={[styles.sectionTitle, { color: textColor }]}>Group By</Text>
@@ -239,42 +233,33 @@ export function ExportModal({
             )}
           </ScrollView>
 
-          {/* Export Button */}
-          <View style={styles.footer}>
+          {/* Export Button Footer */}
+          <View style={[styles.footer, { borderTopColor: borderColor }]}>
             <TouchableOpacity
               style={[styles.exportButton, isExporting && styles.exportButtonDisabled]}
               onPress={handleExport}
               disabled={isExporting || questions.length === 0}
             >
-              {isExporting ? (
-                <ActivityIndicator color="#fff" />
-              ) : (
-                <>
-                  <IconSymbol name="square.and.arrow.up" size={20} color="#fff" />
-                  <Text style={styles.exportButtonText}>Export</Text>
-                </>
-              )}
+              <View style={styles.exportButtonContent}>
+                {isExporting ? (
+                  <ActivityIndicator color="#fff" size="small" />
+                ) : (
+                  <>
+                    <IconSymbol name="square.and.arrow.up" size={20} color="#fff" />
+                    <Text style={styles.exportButtonText}>Export</Text>
+                  </>
+                )}
+              </View>
             </TouchableOpacity>
           </View>
-        </View>
       </View>
     </Modal>
   );
 }
 
 const styles = StyleSheet.create({
-  backdrop: {
-    ...StyleSheet.absoluteFillObject,
-  },
-  modalContainer: {
+  container: {
     flex: 1,
-    justifyContent: 'flex-end',
-  },
-  modal: {
-    borderTopLeftRadius: 20,
-    borderTopRightRadius: 20,
-    maxHeight: '85%',
-    paddingBottom: 34, // Safe area
   },
   header: {
     flexDirection: 'row',
@@ -284,17 +269,22 @@ const styles = StyleSheet.create({
     paddingVertical: Spacing.sm,
     borderBottomWidth: StyleSheet.hairlineWidth,
   },
-  closeButton: {
-    padding: 4,
+  headerButton: {
+    minWidth: 60,
+    alignItems: 'center',
+    paddingVertical: 4,
+  },
+  headerButtonText: {
+    fontSize: FontSizes.md,
   },
   title: {
     fontSize: FontSizes.lg,
     fontWeight: '600',
-  },
-  placeholder: {
-    width: 36,
+    flex: 1,
+    textAlign: 'center',
   },
   content: {
+    flex: 1,
     paddingHorizontal: Spacing.md,
     paddingTop: Spacing.sm,
   },
@@ -370,15 +360,18 @@ const styles = StyleSheet.create({
   },
   footer: {
     paddingHorizontal: Spacing.md,
-    paddingTop: Spacing.md,
+    paddingVertical: Spacing.md,
+    borderTopWidth: StyleSheet.hairlineWidth,
   },
   exportButton: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    justifyContent: 'center',
     backgroundColor: '#007AFF',
     paddingVertical: Spacing.md,
     borderRadius: BorderRadius.md,
+  },
+  exportButtonContent: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'center',
     gap: 8,
   },
   exportButtonDisabled: {

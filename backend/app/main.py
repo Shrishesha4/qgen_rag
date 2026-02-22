@@ -8,6 +8,8 @@ from contextlib import asynccontextmanager
 from fastapi import FastAPI, Request
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
+from starlette.datastructures import MutableHeaders
+from starlette.types import ASGIApp, Scope, Receive, Send
 
 from app.core.config import settings
 from app.core.database import init_db
@@ -94,16 +96,36 @@ app.add_middleware(
 )
 
 
-# Request ID middleware for tracing
-@app.middleware("http")
-async def add_request_id(request: Request, call_next):
-    """Add a unique request ID to each request for tracing."""
-    request_id = request.headers.get("X-Request-ID", str(uuid.uuid4())[:8])
-    request_id_ctx.set(request_id)
-    
-    response = await call_next(request)
-    response.headers["X-Request-ID"] = request_id
-    return response
+# Request ID middleware for tracing — implemented as a pure ASGI middleware to
+# avoid the BaseHTTPMiddleware task-isolation issue that can leave SQLAlchemy
+# connections unchecked-in when a request is cancelled (client disconnect).
+class RequestIDMiddleware:
+    """Inject a unique X-Request-ID header into every HTTP request/response."""
+
+    def __init__(self, app: ASGIApp) -> None:
+        self.app = app
+
+    async def __call__(self, scope: Scope, receive: Receive, send: Send) -> None:
+        if scope["type"] != "http":
+            await self.app(scope, receive, send)
+            return
+
+        headers = dict(scope.get("headers", []))
+        request_id = (
+            headers.get(b"x-request-id", b"").decode() or str(uuid.uuid4())[:8]
+        )
+        request_id_ctx.set(request_id)
+
+        async def send_with_request_id(message: dict) -> None:
+            if message["type"] == "http.response.start":
+                mutable = MutableHeaders(scope=message)
+                mutable.append("X-Request-ID", request_id)
+            await send(message)
+
+        await self.app(scope, receive, send_with_request_id)
+
+
+app.add_middleware(RequestIDMiddleware)
 
 
 # Prometheus metrics (optional)
