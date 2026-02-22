@@ -239,7 +239,7 @@ export default function QuickGenerateScreen() {
 
       {/* Upload Section */}
       <GlassCard style={styles.section}>
-        <Text style={[styles.sectionTitle, { color: colors.text }]}>Document</Text>
+        {/* <Text style={[styles.sectionTitle, { color: colors.text }]}>Document</Text> */}
         <TouchableOpacity
           style={[
             styles.uploadButton,
@@ -267,7 +267,7 @@ export default function QuickGenerateScreen() {
 
       {/* Context Section */}
       <GlassCard style={styles.section}>
-        <Text style={[styles.sectionTitle, { color: colors.text }]}>Context</Text>
+        <Text style={[styles.sectionTitle, { color: colors.text }]}>Focus On</Text>
         <TextInput
           style={[
             styles.contextInput,
@@ -292,10 +292,10 @@ export default function QuickGenerateScreen() {
 
       {/* Options Section */}
       <GlassCard style={styles.section}>
-        <Text style={[styles.sectionTitle, { color: colors.text }]}>Options</Text>
+        {/* <Text style={[styles.sectionTitle, { color: colors.text }]}>Options</Text> */}
         
         {/* Question Types */}
-        <Text style={[styles.optionLabel, { color: colors.textSecondary }]}>Question Types</Text>
+        {/* <Text style={[styles.optionLabel, { color: colors.textSecondary }]}>Question Types</Text> */}
         <View style={styles.typesContainer}>
           {[
             { type: 'mcq' as QuestionType, label: 'MCQ', icon: 'list.bullet' },
@@ -561,19 +561,23 @@ export default function QuickGenerateScreen() {
       {/* Subject Picker Modal */}
       <Modal
         visible={showSubjectPicker}
-        transparent
         animationType="slide"
+        presentationStyle="pageSheet"
         onRequestClose={() => setShowSubjectPicker(false)}
       >
-        <View style={styles.modalOverlay}>
-          <View style={[styles.modalContent, { backgroundColor: colors.card }]}>
-            <View style={styles.modalHeader}>
-              <Text style={[styles.modalTitle, { color: colors.text }]}>Select Subject</Text>
-              <TouchableOpacity onPress={() => setShowSubjectPicker(false)}>
-                <IconSymbol name="xmark.circle.fill" size={28} color={colors.textSecondary} />
-              </TouchableOpacity>
-            </View>
-            <ScrollView style={styles.modalList}>
+        <View style={[styles.modalContainer, { backgroundColor: colors.background }]}>
+          <View style={styles.modalHeaderBar}>
+            <View style={[styles.modalHandle, { backgroundColor: colors.border }]} />
+          </View>
+          <View style={styles.modalTop}>
+            <Text style={[styles.modalTitle, { color: colors.text }]}>Select Subject</Text>
+            <TouchableOpacity onPress={() => setShowSubjectPicker(false)}>
+              <IconSymbol name="xmark.circle.fill" size={28} color={colors.textSecondary} />
+            </TouchableOpacity>
+          </View>
+          <View style={styles.modalDivider} />
+          <ScrollView style={styles.modalScrollContent}>
+
               {subjects.length === 0 ? (
                 <View style={styles.emptyList}>
                   <Text style={[styles.emptyListText, { color: colors.textSecondary }]}>
@@ -607,27 +611,30 @@ export default function QuickGenerateScreen() {
                   </TouchableOpacity>
                 ))
               )}
-            </ScrollView>
-          </View>
+          </ScrollView>
         </View>
       </Modal>
 
       {/* Topic Picker Modal */}
       <Modal
         visible={showTopicPicker}
-        transparent
         animationType="slide"
+        presentationStyle="pageSheet"
         onRequestClose={() => setShowTopicPicker(false)}
       >
-        <View style={styles.modalOverlay}>
-          <View style={[styles.modalContent, { backgroundColor: colors.card }]}>
-            <View style={styles.modalHeader}>
-              <Text style={[styles.modalTitle, { color: colors.text }]}>Select Chapter</Text>
-              <TouchableOpacity onPress={() => setShowTopicPicker(false)}>
-                <IconSymbol name="xmark.circle.fill" size={28} color={colors.textSecondary} />
-              </TouchableOpacity>
-            </View>
-            <ScrollView style={styles.modalList}>
+        <View style={[styles.modalContainer, { backgroundColor: colors.background }]}>
+          <View style={styles.modalHeaderBar}>
+            <View style={[styles.modalHandle, { backgroundColor: colors.border }]} />
+          </View>
+          <View style={styles.modalTop}>
+            <Text style={[styles.modalTitle, { color: colors.text }]}>Select Chapter</Text>
+            <TouchableOpacity onPress={() => setShowTopicPicker(false)}>
+              <IconSymbol name="xmark.circle.fill" size={28} color={colors.textSecondary} />
+            </TouchableOpacity>
+          </View>
+          <View style={styles.modalDivider} />
+          <ScrollView style={styles.modalScrollContent}>
+
               {topics.length === 0 ? (
                 <View style={styles.emptyList}>
                   <Text style={[styles.emptyListText, { color: colors.textSecondary }]}>
@@ -662,8 +669,7 @@ export default function QuickGenerateScreen() {
                   </TouchableOpacity>
                 ))
               )}
-            </ScrollView>
-          </View>
+          </ScrollView>
         </View>
       </Modal>
 
@@ -1026,31 +1032,38 @@ const styles = StyleSheet.create({
   clearButtonText: {
     fontSize: FontSizes.sm,
   },
-  modalOverlay: {
+  modalContainer: {
     flex: 1,
-    backgroundColor: 'rgba(0, 0, 0, 0.5)',
-    justifyContent: 'flex-end',
   },
-  modalContent: {
-    borderTopLeftRadius: BorderRadius.xl,
-    borderTopRightRadius: BorderRadius.xl,
-    maxHeight: '70%',
-    paddingBottom: 34,
+  modalHeaderBar: {
+    paddingVertical: Spacing.sm,
+    alignItems: 'center',
   },
-  modalHeader: {
+  modalHandle: {
+    width: 40,
+    height: 4,
+    borderRadius: 2,
+  },
+  modalTop: {
     flexDirection: 'row',
     alignItems: 'center',
     justifyContent: 'space-between',
-    padding: Spacing.lg,
-    borderBottomWidth: 1,
-    borderBottomColor: 'rgba(0, 0, 0, 0.1)',
+    paddingHorizontal: Spacing.lg,
+    paddingVertical: Spacing.md,
   },
   modalTitle: {
-    fontSize: FontSizes.lg,
-    fontWeight: '600',
+    fontSize: FontSizes.xl,
+    fontWeight: '700',
   },
-  modalList: {
+  modalDivider: {
+    height: 1,
+    backgroundColor: 'rgba(128, 128, 128, 0.2)',
+    marginHorizontal: Spacing.lg,
+  },
+  modalScrollContent: {
+    flex: 1,
     paddingHorizontal: Spacing.lg,
+    paddingTop: Spacing.md,
   },
   modalItem: {
     flexDirection: 'row',
