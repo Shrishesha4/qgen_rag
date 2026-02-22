@@ -135,11 +135,16 @@ async def root():
 @app.get("/health", tags=["Health"])
 async def health_check():
     """Detailed health check endpoint."""
+    from app.services.llm_service import get_llm_provider_info
+    
+    llm_info = get_llm_provider_info()
+    
     return JSONResponse(
         content={
             "status": "healthy",
             "database": "connected",
             "redis": "connected",
+            "llm_provider": llm_info,
             "version": "1.0.0",
         }
     )

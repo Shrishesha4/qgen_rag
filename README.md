@@ -195,6 +195,29 @@ ollama pull llama3.2:3b-instruct-q4_K_M
 ollama pull llama3.1:8b-instruct-q4_K_M
 ```
 
+### 2b. Alternative: Use Google Gemini API (Cloud)
+
+Instead of running Ollama locally, you can use Google's Gemini API for better quality and faster generation:
+
+```bash
+# Install the Gemini SDK
+pip install google-genai
+
+# Set environment variables in your .env file:
+LLM_PROVIDER=gemini
+GEMINI_API_KEY=your-gemini-api-key-here
+GEMINI_MODEL=gemini-2.0-flash  # Options: gemini-2.0-flash, gemini-1.5-pro, gemini-1.5-flash
+```
+
+**Get an API key:** Visit [Google AI Studio](https://aistudio.google.com/apikey) to create a free API key.
+
+**Available Gemini Models:**
+| Model | Speed | Quality | Cost |
+|-------|-------|---------|------|
+| `gemini-2.0-flash` | Fast | Good | Low |
+| `gemini-1.5-flash` | Fastest | Good | Lowest |
+| `gemini-1.5-pro` | Moderate | Best | Higher |
+
 ### 3. Start Backend Services
 
 ```bash

@@ -48,13 +48,13 @@ router = APIRouter()
 # ── Question Starter Diversity Pool ──────────────────────────────────────────
 # Organised by question type so the LLM gets type-appropriate starters.
 # Each batch cycles through these to ensure no two questions share the same opening.
+# IMPORTANT: Avoid scenario setups (A student, A clinician, etc.) as they lead to repetitive patterns.
 _QUESTION_STARTERS: dict[str, list[str]] = {
     "mcq": [
         "Which", "What", "How", "Why", "When", "Where", "Who",
         "Select", "Identify", "Choose", "Determine", "Classify",
-        "Given that", "According to", "In the context of",
-        "From the following", "Among the following",
-        "A student observes", "A system", "An engineer",
+        "Given that", "In the context of", "If", "During",
+        "From the following", "Among the following", "Consider",
     ],
     "short_answer": [
         "Explain", "Describe", "Define", "Outline", "Summarize",
@@ -68,7 +68,7 @@ _QUESTION_STARTERS: dict[str, list[str]] = {
         "Analyze", "Evaluate", "Discuss", "Examine", "Elaborate",
         "Critically analyze", "Compare and contrast", "With the help of",
         "Derive", "Prove", "Show that", "Sketch and explain",
-        "Design a", "Propose", "Formulate", "Develop",
+        "Design", "Propose", "Formulate", "Develop",
         "Assess", "Critique", "Investigate", "Synthesize",
         "With suitable examples", "With a neat diagram",
     ],
@@ -1326,6 +1326,9 @@ async def vet_question(
                     logger.warning(f"RAG lookup for chapter regen failed: {e}")
 
                 system_prompt = _get_rubric_system_prompt(q_type)
+                # Use a random starter from the pool for regen
+                import random as _r
+                regen_starter = _r.choice(_QUESTION_STARTERS.get(q_type, _QUESTION_STARTERS["default"]))
                 prompt = f"Chapter: \"{topic_name}\"\n\nSyllabus Content:\n{syllabus_content[:3000]}\n"
                 if reference_context:
                     prompt += f"\nBackground knowledge (use to inform the question, do NOT cite or reference it):\n{reference_context}\n"
@@ -1333,7 +1336,8 @@ async def vet_question(
 Generate a {q_type.replace('_', ' ')} question based on this chapter content.
 - Marks: {marks}
 - Difficulty: {question_snapshot["difficulty_level"] or "medium"}
-- The question must test understanding of the chapter material
+- REQUIRED: Your question MUST start with the word/phrase "{regen_starter}" — this is non-negotiable
+- FORBIDDEN: Do NOT start all the questions with "A clinician", "A patient", "A doctor", "A dentist", "A practitioner", "A student", "A researcher", or similar scenario setups. Also start directly with the required starter word.
 - The question text must be fully self-contained — do NOT mention "the text", "the reference", "the provided material", or any source
 - IMPORTANT: Generate a DIFFERENT question from: "{question_snapshot["question_text"][:150]}..."
 
@@ -1462,6 +1466,7 @@ Output valid JSON only."""
 Generate a {q_type.replace('_', ' ')} question based on this content.
 - Marks: {marks}
 - REQUIRED: Your question MUST start with the word/phrase "{regen_starter}" — this is non-negotiable
+- FORBIDDEN: Do NOT start all the questions with "A clinician", "A patient", "A doctor", "A dentist", "A practitioner", "A student", "A researcher", or similar scenario setups. Also start directly with the required starter word.
 - The question text must be fully self-contained — do NOT mention "the text", "the reference", or any source
 - IMPORTANT: Generate a DIFFERENT question from: "{question_snapshot["question_text"][:100]}..."
 
@@ -2215,6 +2220,7 @@ Background knowledge (use to inform the question, do NOT cite or reference it):
 Generate a {mapped_type.replace('_', ' ')} question based on this content.
 - Marks: {marks}
 - REQUIRED: Your question MUST start with the word/phrase "{starter}" — this is non-negotiable
+- FORBIDDEN: Do NOT start all the questions with "A clinician", "A patient", "A doctor", "A dentist", "A practitioner", "A student", "A researcher", "An engineer", or similar scenario setups. Also start directly with the required starter word.
 - The question text must be fully self-contained — do NOT mention "the text", "the reference", "the provided material", "reference [N]", or any source
 - Avoid questions that are too similar to: {', '.join([q[:50] for q in generated_questions[-5:]]) if generated_questions else 'None yet'}
 {lo_context}
@@ -2685,6 +2691,7 @@ Generate a {q_type.replace('_', ' ')} question based STRICTLY on the chapter "{t
 - Marks: {marks}
 - The question MUST be about the topic "{topic_name}" — do NOT use content from other chapters
 - REQUIRED: Your question MUST start with the word/phrase "{starter}" — this is non-negotiable
+- FORBIDDEN: Do NOT start all the questions with "A clinician", "A patient", "A doctor", "A dentist", "A practitioner", "A student", "A researcher", "An engineer", or similar scenario setups. Also start directly with the required starter word.
 - The question text must be fully self-contained — do NOT mention "the text", "the reference", "the provided material", "reference [N]", or any source
 - Avoid questions similar to: {', '.join([q[:50] for q in generated_texts[-5:]]) if generated_texts else 'None yet'}
 {lo_context}
@@ -2861,6 +2868,7 @@ Guidelines:
 - Start with an interrogative word (What, Which, How, When, etc.) or imperative (Calculate, Find, Determine)
 - All options should be plausible but only one correct
 - Avoid "all of the above" or "none of the above"
+- FORBIDDEN: Do NOT start all the questions with scenario setups like "A clinician", "A patient", "A doctor", "A dentist", "A practitioner", "A student", "A researcher", "An engineer", etc. Also start directly with the required starter word.
 - CRITICAL: The question text must be fully self-contained. NEVER mention, cite, or reference the source material, context, references, or any provided text. Do NOT use phrases like "According to the text", "As discussed in the reference", "Based on the provided material", "As mentioned in reference", "According to reference [N]", "As stated in the context", or any similar phrasing. The question must stand alone as if no source was provided.
 
 Output format (JSON):
@@ -2882,12 +2890,13 @@ Guidelines:
 - The question should require application or analysis of concepts
 - Start with action verbs like Explain, Describe, Compare, Define
 - Be specific about what is expected in the answer
-- CRITICAL: The question text must be fully self-contained. NEVER mention, cite, or reference the source material, context, references, or any provided text. Do NOT use phrases like "According to the text", "As discussed in the reference", "Based on the provided material", "As mentioned in reference", "According to reference [N]", "As stated in the context", or any similar phrasing. The question must stand alone as if no source was provided.
+- FORBIDDEN: Do NOT start all the questions with scenario setups like "A clinician", "A patient", "A doctor", "A dentist", "A practitioner", "A student", "A researcher", "An engineer", etc. Also start directly with the required starter word.
+- CRITICAL: Both the question AND expected_answer must be fully self-contained. NEVER mention, cite, or reference the source material, context, references, or any provided text. Do NOT use phrases like "According to the text", "As discussed in the reference", "Based on the provided material", "As mentioned in reference", "According to reference [N]", "As stated in the context", "According to the provided content", or any similar phrasing. Both must stand alone as professional exam content.
 
 Output format (JSON):
 {
     "question_text": "The question text",
-    "expected_answer": "Model answer (2-4 sentences)",
+    "expected_answer": "Model answer (2-4 sentences) - written as a direct answer without referencing any source",
     "key_points": ["point1", "point2"],
     "topic_tags": ["topic1"],
     "bloom_level": "apply",
@@ -2902,12 +2911,13 @@ Guidelines:
 - The question should require analysis, evaluation, or synthesis
 - Start with higher-order verbs like Analyze, Evaluate, Discuss, Compare and contrast
 - Clearly state what aspects should be covered
-- CRITICAL: The question text must be fully self-contained. NEVER mention, cite, or reference the source material, context, references, or any provided text. Do NOT use phrases like "According to the text", "As discussed in the reference", "Based on the provided material", "As mentioned in reference", "According to reference [N]", "As stated in the context", or any similar phrasing. The question must stand alone as if no source was provided.
+- FORBIDDEN: Do NOT start all the questions with scenario setups like "A clinician", "A patient", "A doctor", "A dentist", "A practitioner", "A student", "A researcher", "An engineer", etc. Also start directly with the required starter word.
+- CRITICAL: Both the question AND expected_answer must be fully self-contained. NEVER mention, cite, or reference the source material, context, references, or any provided text. Do NOT use phrases like "According to the text", "As discussed in the reference", "Based on the provided material", "As mentioned in reference", "According to reference [N]", "As stated in the context", "According to the provided content", or any similar phrasing. Both must stand alone as professional exam content.
 
 Output format (JSON):
 {
     "question_text": "The question text",
-    "expected_answer": "Model answer outline with key points",
+    "expected_answer": "Model answer outline with key points - written as a direct answer without referencing any source",
     "topic_tags": ["topic1"],
     "bloom_level": "analyze",
     "learning_outcome": "LO1",

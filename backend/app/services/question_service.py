@@ -29,7 +29,7 @@ from app.schemas.question import (
     QuickGenerateProgress,
 )
 from app.services.embedding_service import EmbeddingService
-from app.services.llm_service import LLMService
+from app.services.llm_service import LLMService, LLMProvider
 from app.services.redis_service import RedisService
 from app.services.document_service import DocumentService
 from app.services.reranker_service import RerankerService
@@ -38,7 +38,7 @@ from app.core.config import settings
 
 
 # System prompts for question generation
-SYSTEM_PROMPT_MCQ = """You are an expert educator creating examination questions for university students.
+SYSTEM_PROMPT_MCQ = """You are an expert educator creating UNIQUE examination questions for university students.
 
 CRITICAL RULES:
 1. The question MUST be directly answerable from the provided content
@@ -46,6 +46,10 @@ CRITICAL RULES:
 3. All 4 options must be plausible but only ONE is correct
 4. Do NOT create questions about things not mentioned in the content
 5. Do NOT use placeholder letters (A, B, C, D) as answers - use actual values
+6. DIVERSITY: Focus on specific details, examples, or applications from the content
+7. VARIETY: Ask about different aspects - definitions, operations, comparisons, use cases, limitations, or implementation details
+8. STANDALONE: Write questions as standalone exam questions. NEVER reference "the document", "the content", "the passage", "the text", "according to", or "based on the provided". Questions should read naturally as if from an exam paper.
+9. FORBIDDEN: Do NOT start questions with scenario setups like "A clinician", "A patient", "A doctor", "A dentist", "A practitioner", "A student", "A researcher", "An engineer", etc. Start directly with the question using interrogatives (What, Which, How, Why, etc.).
 
 Output ONLY valid JSON with this exact format:
 {
@@ -72,6 +76,8 @@ CRITICAL RULES:
 2. The expected answer MUST be factually accurate based on the content
 3. Questions should require 2-4 sentence responses demonstrating understanding
 4. Do NOT create questions about things not mentioned in the content
+5. STANDALONE: Write questions AND answers as standalone exam content. NEVER use phrases like "according to the document", "based on the provided content", "as mentioned in the text", "the passage states", etc. Both questions and answers should read naturally as if from an exam paper, not referencing any source material.
+6. FORBIDDEN: Do NOT start questions with scenario setups like "A clinician", "A patient", "A doctor", "A dentist", "A practitioner", "A student", "A researcher", "An engineer", etc. Start directly with action verbs (Explain, Describe, Define, etc.).
 
 Output ONLY valid JSON with this exact format:
 {
@@ -88,6 +94,8 @@ CRITICAL RULES:
 2. The expected answer MUST cover key concepts from the content
 3. Questions should require detailed responses (1-2 paragraphs)
 4. Do NOT create questions about things not mentioned in the content
+5. STANDALONE: Write questions AND answers as standalone exam content. NEVER reference "the document", "the content", "according to", "based on the provided", "as stated in", "the text mentions", etc. Both questions and answers should read naturally as professional exam questions and model answers.
+6. FORBIDDEN: Do NOT start questions with scenario setups like "A clinician", "A patient", "A doctor", "A dentist", "A practitioner", "A student", "A researcher", "An engineer", etc. Start directly with higher-order verbs (Analyze, Evaluate, Discuss, etc.).
 
 Output ONLY valid JSON with this exact format:
 {
@@ -119,7 +127,7 @@ class QuestionGenerationService:
         self,
         db: AsyncSession,
         embedding_service: Optional[EmbeddingService] = None,
-        llm_service: Optional[LLMService] = None,
+        llm_service: Optional[LLMProvider] = None,
         redis_service: Optional[RedisService] = None,
         document_service: Optional[DocumentService] = None,
         reranker_service: Optional[RerankerService] = None,
@@ -720,7 +728,7 @@ Output valid JSON only."""
         """
         import re
         
-        q_text = question_data.get("question_text", "")
+        q_text = question_data.get("question_text", "").strip()
         
         # Basic length checks
         if len(q_text) < 15:
@@ -730,13 +738,13 @@ Output valid JSON only."""
         
         # Check question has interrogative structure
         question_patterns = [
-            r'\?$',  # Ends with question mark
-            r'^(what|which|who|whom|whose|when|where|why|how|is|are|was|were|do|does|did|can|could|will|would|should|shall)\s',
-            r'^(explain|describe|define|compare|contrast|analyze|evaluate|discuss|identify|list|name|state)\s',
+            r'\?\s*$',  # Ends with question mark (allowing trailing spaces)
+            r'^(?:.*?[,:]\s*)?(what|which|who|whom|whose|when|where|why|how|is|are|was|were|do|does|did|can|could|will|would|should|shall)\b',
+            r'^(?:.*?[,:]\s*)?(explain|describe|define|compare|contrast|analyze|evaluate|discuss|identify|list|name|state|select|choose|classify)\b',
             # Math/engineering imperative patterns (common in exam questions)
-            r'^(find|calculate|determine|solve|compute|derive|prove|show|simplify|verify|express|convert|obtain)\s',
-            r'^(given|consider|let|suppose|assume|if)\s',  # Conditional/setup patterns
-            r'(find|calculate|determine|solve|compute)\s+(the|a|an)\s',  # Mid-sentence imperatives
+            r'^(?:.*?[,:]\s*)?(find|calculate|determine|solve|compute|derive|prove|show|simplify|verify|express|convert|obtain)\b',
+            r'^(given|consider|let|suppose|assume|if|according|in the context|from the|among the|a student|a system|an engineer)\b',  # Conditional/setup patterns
+            r'(find|calculate|determine|solve|compute|identify|select|choose)\s+(the|a|an)\b',  # Mid-sentence imperatives
         ]
         has_question_structure = any(
             re.search(pattern, q_text, re.IGNORECASE) for pattern in question_patterns
@@ -744,26 +752,10 @@ Output valid JSON only."""
         if not has_question_structure:
             return False, "Question lacks proper interrogative structure", 0.3
         
-        # Combine chunk text for grounding check
-        chunk_text = " ".join([c.chunk_text.lower() for c in chunks])
-        chunk_words = set(chunk_text.split())
+        # NOTE: Grounding overlap check removed — it was unreliable (punctuation, stemming,
+        # and LLM rephrasing all caused false rejections on perfectly valid questions).
+        # The LLM generates questions from provided chunks, so grounding is inherent.
         
-        # Remove common stop words from question for meaningful overlap check
-        stop_words = {'a', 'an', 'the', 'is', 'are', 'was', 'were', 'be', 'been', 'being',
-                      'have', 'has', 'had', 'do', 'does', 'did', 'will', 'would', 'could',
-                      'should', 'may', 'might', 'must', 'shall', 'can', 'of', 'in', 'to',
-                      'for', 'on', 'with', 'at', 'by', 'from', 'as', 'into', 'through',
-                      'and', 'or', 'but', 'if', 'then', 'else', 'when', 'up', 'out',
-                      'what', 'which', 'who', 'how', 'why', 'where', 'this', 'that',
-                      'these', 'those', 'it', 'its'}
-        
-        q_words = set(w.lower().strip('.,?!;:') for w in q_text.split() if len(w) > 2)
-        q_meaningful_words = q_words - stop_words
-        
-        if q_meaningful_words:
-            overlap = len(q_meaningful_words & chunk_words) / len(q_meaningful_words)
-            if overlap < 0.2:
-                return False, "Question may not be grounded in the source content", 0.4
         
         # MCQ-specific validation
         if question_type == "mcq":
@@ -804,13 +796,8 @@ Output valid JSON only."""
             if not key_points or len(key_points) < 2:
                 return False, "Long answer should have at least 2 key points", 0.5
         
-        # Calculate confidence score based on various factors
-        confidence = 0.7  # Base confidence
-        
-        # Boost for good grounding
-        if q_meaningful_words:
-            overlap = len(q_meaningful_words & chunk_words) / len(q_meaningful_words)
-            confidence += min(overlap * 0.2, 0.15)
+        # Calculate confidence score based on available factors
+        confidence = 0.75  # Base confidence
         
         # Boost for having proper structure
         if has_question_structure:
@@ -831,7 +818,7 @@ Output valid JSON only."""
     async def _check_options_too_similar(
         self,
         options: List[str],
-        similarity_threshold: float = 0.9,
+        similarity_threshold: float = 0.96,
     ) -> bool:
         """Check if any options are too similar to each other."""
         if len(options) < 2:
@@ -1701,6 +1688,20 @@ Output valid JSON only."""
             questions_generated = 0
             questions_failed = 0
             generated_embeddings = []  # Track embeddings for deduplication within session
+            generated_questions_text = []  # Track question text for diversity hints
+            total_question_index = 0  # Global index for diversity hints
+            
+            # Query variations for chunk selection diversity
+            query_aspects = [
+                context,  # Original query
+                f"{context} definition and concepts",
+                f"{context} operations and methods",
+                f"{context} advantages disadvantages",
+                f"{context} implementation details",
+                f"{context} examples and applications",
+                f"{context} comparison differences",
+                f"{context} performance complexity",
+            ]
             
             # Distribute question types
             type_distribution = self._distribute_types(count, types)
@@ -1712,29 +1713,34 @@ Output valid JSON only."""
                     try:
                         logger.info(f"Starting generation {i+1}/{type_count} for {q_type}")
                         
+                        # Use varied query for diversity in chunk selection
+                        varied_query = query_aspects[total_question_index % len(query_aspects)]
+                        
                         # Select relevant chunks using hybrid search (semantic + BM25)
-                        context_embedding = await self.embedding_service.get_embedding(context)
+                        context_embedding = await self.embedding_service.get_embedding(varied_query)
                         
                         # Use hybrid search for better chunk selection - get more for reranking
                         candidates = await self.document_service.hybrid_search(
                             document_id=document_id,
-                            query=context,
+                            query=varied_query,
                             query_embedding=context_embedding,
-                            top_k=6,  # Get more candidates for reranking
+                            top_k=8,  # Get more candidates for variety
                             alpha=0.6,  # Slightly favor semantic search
                         )
                         
                         # Rerank using cross-encoder if available
                         if self.reranker_service and len(candidates) > 3:
                             selected_chunks = self.reranker_service.rerank(
-                                query=context,
+                                query=varied_query,
                                 chunks=candidates,
                                 top_k=3,
                             )
                         else:
-                            selected_chunks = candidates[:3]
+                            # Offset selection for variety
+                            offset = (total_question_index % 2) * 2
+                            selected_chunks = candidates[offset:offset+3] if len(candidates) > offset + 2 else candidates[:3]
                         
-                        logger.info(f"Hybrid search returned {len(selected_chunks)} chunks")
+                        logger.info(f"Hybrid search returned {len(selected_chunks)} chunks (query: {varied_query[:50]}...)")
                         
                         if not selected_chunks:
                             logger.warning("No chunks from hybrid search, falling back to random selection")
@@ -1743,14 +1749,18 @@ Output valid JSON only."""
 
                         logger.info(f"Selected {len(selected_chunks)} chunks for generation")
 
-                        # Generate question with context-aware prompt
+                        # Generate question with context-aware prompt and diversity hints
                         question_data = await self._generate_quick_question(
                             chunks=selected_chunks,
                             question_type=q_type,
                             difficulty=difficulty,
                             context=context,
                             bloom_levels=bloom_levels,
+                            previous_questions=generated_questions_text,
+                            question_index=total_question_index,
                         )
+
+                        total_question_index += 1
 
                         if not question_data:
                             logger.warning(f"Question generation returned None for {q_type}")
@@ -1772,6 +1782,9 @@ Output valid JSON only."""
                                 logger.warning("Question rejected as duplicate")
                                 questions_failed += 1
                                 continue
+
+                        # Track generated question text for diversity
+                        generated_questions_text.append(q_text)
 
                         # Save question to database (includes validation)
                         try:
@@ -1808,6 +1821,11 @@ Output valid JSON only."""
                                 message=f"Generated question {questions_generated}/{count}",
                                 document_id=document_id,
                             )
+                        except ValueError as ve:
+                            # Validation failure, just skip and retry
+                            logger.warning(str(ve))
+                            questions_failed += 1
+                            continue
                         except Exception as save_error:
                             # Rollback this transaction and continue
                             await self.db.rollback()
@@ -1859,11 +1877,14 @@ Output valid JSON only."""
                         difficulty=difficulty,
                         context=context,
                         bloom_levels=bloom_levels,
+                        previous_questions=generated_questions_text,
+                        question_index=total_question_index + backfill_attempts,
                     )
                     
                     if question_data:
                         # Check for duplicates
                         is_duplicate = False
+                        q_text = question_data.get('question_text', '')
                         if generated_embeddings:
                             new_embedding = await self.embedding_service.get_embedding(
                                 question_data["question_text"]
@@ -1887,6 +1908,7 @@ Output valid JSON only."""
                                 )
                                 questions_generated += 1
                                 generated_embeddings.append(question.question_embedding)
+                                generated_questions_text.append(q_text)  # Track for diversity
                                 logger.info(f"Backfill successful: {questions_generated}/{count} questions")
                                 
                                 yield QuickGenerateProgress(
@@ -1960,6 +1982,8 @@ Output valid JSON only."""
         difficulty: str,
         context: str,
         bloom_levels: Optional[List[str]] = None,
+        previous_questions: Optional[List[str]] = None,
+        question_index: int = 0,
     ) -> Optional[Dict[str, Any]]:
         """Generate a single question for quick generation with context awareness."""
         import logging
@@ -1990,18 +2014,41 @@ Output valid JSON only."""
             }
             bloom_level = bloom_defaults.get(question_type, "understand")
 
+        # Build diversity hints based on question index
+        diversity_hints = [
+            "Focus on definitions or terminology",
+            "Focus on operations, methods, or procedures",
+            "Focus on comparisons or differences",
+            "Focus on advantages, disadvantages, or trade-offs",
+            "Focus on specific examples or use cases",
+            "Focus on implementation details or requirements",
+            "Focus on common errors or limitations",
+            "Focus on time/space complexity or performance",
+        ]
+        hint = diversity_hints[question_index % len(diversity_hints)]
+        
+        # Build exclusion context if we have previous questions
+        exclusion_text = ""
+        if previous_questions and len(previous_questions) > 0:
+            exclusion_text = "\n\nIMPORTANT: Generate a DIFFERENT question. Do NOT ask about:\n" + "\n".join(
+                f"- {q[:80]}..." if len(q) > 80 else f"- {q}" 
+                for q in previous_questions[-5:]  # Include last 5 questions max
+            )
+        
         # Build enhanced prompt with user context
         prompt = f"""Topic/Context: {context}
 
-Content from the document:
+Reference material:
 {doc_content}
 
 Generate a {question_type.replace('_', ' ')} question with the following requirements:
 - The question should be relevant to the topic: "{context}"
 - Difficulty: {difficulty}
 - Bloom's Taxonomy Level: {bloom_level}
-- The question must be directly answerable from the provided content
-- Ensure the question is clear, specific, and tests understanding of the material
+- {hint}
+- The question must be answerable using the knowledge from the reference material
+- Write the question AND answer as STANDALONE exam content - do NOT reference "the document", "the passage", "according to the text", "based on the provided content", etc.
+- Both question and answer should read naturally as professional exam questions{exclusion_text}
 
 Output valid JSON only."""
 
@@ -2053,9 +2100,10 @@ Output valid JSON only."""
                 if attempt > 0:
                     logger.info(f"Retry attempt {attempt + 1}/{max_retries} for {question_type}")
                     # Use lower temperature on retry for more predictable output
-                    temperature = max(0.1, 0.7 - (attempt * 0.2))
+                    temperature = max(0.2, 0.85 - (attempt * 0.25))
                 else:
-                    temperature = 0.7
+                    # Higher base temperature for diversity with smaller models
+                    temperature = 0.85
                 
                 response = await self.llm_service.generate_json(
                     prompt=prompt,

@@ -24,9 +24,19 @@ class Settings(BaseSettings):
     ACCESS_TOKEN_EXPIRE_MINUTES: int = Field(default=60)
     REFRESH_TOKEN_EXPIRE_DAYS: int = Field(default=30)
 
-    # Ollama LLM
+    # LLM Provider Configuration
+    # Options: "ollama", "gemini"
+    LLM_PROVIDER: str = Field(default="ollama")
+    
+    # Ollama LLM (local)
     OLLAMA_BASE_URL: str = Field(default="http://localhost:11434")
     OLLAMA_MODEL: str = Field(default="llama3")
+    
+    # Google Gemini API (cloud)
+    GEMINI_API_KEY: str = Field(default="")  # Get from aistudio.google.com/apikey
+    GEMINI_MODEL: str = Field(default="gemini-2.0-flash")  # Options: gemini-2.0-flash, gemini-1.5-pro, gemini-1.5-flash
+    GEMINI_MAX_OUTPUT_TOKENS: int = Field(default=2048)
+    GEMINI_SAFETY_BLOCK_NONE: bool = Field(default=True)  # Disable safety filters for educational content
 
     # File Upload
     UPLOAD_DIR: str = Field(default="./uploads")

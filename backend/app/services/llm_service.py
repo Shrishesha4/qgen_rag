@@ -1,16 +1,18 @@
 """
-LLM service for interacting with Ollama.
+LLM service for interacting with LLM providers (Ollama, Gemini).
 
 Features:
+- Multiple provider support (Ollama local, Gemini cloud)
 - Retry logic with exponential backoff
 - Connection error recovery
 - JSON response parsing with error handling
+- Factory pattern for provider selection
 """
 
 import json
 import asyncio
 import logging
-from typing import Optional, AsyncGenerator, Any, Dict
+from typing import Optional, AsyncGenerator, Any, Dict, Protocol, runtime_checkable
 import httpx
 
 from app.core.config import settings
@@ -37,6 +39,55 @@ class LLMTimeoutError(LLMError):
 class LLMResponseError(LLMError):
     """Raised when LLM returns invalid response."""
     pass
+
+
+@runtime_checkable
+class LLMProvider(Protocol):
+    """Protocol defining the interface for LLM providers."""
+    
+    async def generate(
+        self,
+        prompt: str,
+        system_prompt: Optional[str] = None,
+        temperature: float = 0.7,
+        max_tokens: int = 2000,
+    ) -> str:
+        """Generate a response from the LLM."""
+        ...
+    
+    async def generate_with_fallback(
+        self,
+        prompt: str,
+        system_prompt: Optional[str] = None,
+        temperature: float = 0.7,
+        max_tokens: int = 2000,
+        fallback_response: Optional[str] = None,
+    ) -> str:
+        """Generate response with optional fallback on failure."""
+        ...
+    
+    async def generate_stream(
+        self,
+        prompt: str,
+        system_prompt: Optional[str] = None,
+        temperature: float = 0.7,
+        max_tokens: int = 2000,
+    ) -> AsyncGenerator[str, None]:
+        """Generate a streaming response."""
+        ...
+    
+    async def generate_json(
+        self,
+        prompt: str,
+        system_prompt: Optional[str] = None,
+        temperature: float = 0.3,
+    ) -> Dict[str, Any]:
+        """Generate a JSON response."""
+        ...
+    
+    async def check_health(self) -> bool:
+        """Check if the LLM service is available."""
+        ...
 
 
 def with_retry(
@@ -107,13 +158,13 @@ def with_retry(
     return decorator
 
 
-class LLMService:
-    """Service for interacting with Ollama LLM."""
+class OllamaLLMService:
+    """Service for interacting with Ollama LLM (local)."""
 
     def __init__(self, model: Optional[str] = None):
         self.base_url = settings.OLLAMA_BASE_URL
         self.model = model or settings.OLLAMA_MODEL
-        logger.debug(f"LLMService initialized - base_url={self.base_url}, model={self.model}")
+        logger.info(f"OllamaLLMService initialized - base_url={self.base_url}, model={self.model}")
         self._timeout = httpx.Timeout(
             connect=10.0,   # Connection timeout
             read=120.0,     # Read timeout (LLM can be slow)
@@ -335,8 +386,14 @@ class LLMService:
         # Fix unquoted keys (common LLM error)
         text = re.sub(r'(\{|,)\s*([a-zA-Z_][a-zA-Z0-9_]*)\s*:', r'\1"\2":', text)
         
-        # Fix single quotes to double quotes
-        text = text.replace("'", '"')
+        # Escape control characters inside string values
+        # (tabs, carriage returns, etc. that aren't already escaped)
+        text = text.replace('\t', '\\t')
+        text = text.replace('\r', '')
+        
+        # NOTE: We intentionally do NOT do text.replace("'", '"') because
+        # LLM output often contains apostrophes inside strings (e.g., "'for' loop")
+        # and blindly replacing them corrupts the JSON structure.
         
         return text
 
@@ -348,3 +405,58 @@ class LLMService:
                 return response.status_code == 200
         except Exception:
             return False
+
+
+# Factory function to create the appropriate LLM service based on configuration
+def LLMService(model: Optional[str] = None) -> LLMProvider:
+    """
+    Factory function to create the appropriate LLM service based on configuration.
+    
+    Uses LLM_PROVIDER environment variable to select provider:
+    - "ollama": Local Ollama instance (default)
+    - "gemini": Google Gemini API
+    
+    Args:
+        model: Optional model name override. If not provided, uses the default
+               model for the configured provider.
+    
+    Returns:
+        An LLM service instance that implements the LLMProvider protocol.
+    
+    Example:
+        # Uses provider from LLM_PROVIDER env var
+        llm = LLMService()
+        
+        # Override model
+        llm = LLMService(model="gemini-1.5-pro")
+    """
+    provider = settings.LLM_PROVIDER.lower()
+    
+    if provider == "gemini":
+        from app.services.gemini_service import GeminiService
+        logger.info(f"Creating GeminiService (provider={provider})")
+        return GeminiService(model=model)
+    elif provider == "ollama":
+        logger.info(f"Creating OllamaLLMService (provider={provider})")
+        return OllamaLLMService(model=model)
+    else:
+        logger.warning(f"Unknown LLM provider '{provider}', falling back to Ollama")
+        return OllamaLLMService(model=model)
+
+
+def get_llm_provider_info() -> Dict[str, Any]:
+    """Get information about the current LLM provider configuration."""
+    provider = settings.LLM_PROVIDER.lower()
+    
+    if provider == "gemini":
+        return {
+            "provider": "gemini",
+            "model": settings.GEMINI_MODEL,
+            "api_configured": bool(settings.GEMINI_API_KEY),
+        }
+    else:
+        return {
+            "provider": "ollama",
+            "model": settings.OLLAMA_MODEL,
+            "base_url": settings.OLLAMA_BASE_URL,
+        }
