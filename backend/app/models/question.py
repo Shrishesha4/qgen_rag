@@ -94,6 +94,16 @@ class Question(Base):
     # Status
     is_archived: Mapped[bool] = mapped_column(Boolean, default=False)
     
+    # Version control for regeneration tracking
+    replaced_by_id: Mapped[Optional[uuid.UUID]] = mapped_column(
+        UUID(as_uuid=True), ForeignKey("questions.id", ondelete="SET NULL"), nullable=True
+    )
+    replaces_id: Mapped[Optional[uuid.UUID]] = mapped_column(
+        UUID(as_uuid=True), ForeignKey("questions.id", ondelete="SET NULL"), nullable=True
+    )
+    version_number: Mapped[int] = mapped_column(Integer, default=1)
+    is_latest: Mapped[bool] = mapped_column(Boolean, default=True)
+    
     # Timestamps
     generated_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), server_default=func.now()

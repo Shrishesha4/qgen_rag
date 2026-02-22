@@ -383,6 +383,7 @@ async def list_questions(
     question_type: Optional[str] = Query(None, description="Filter by question type"),
     difficulty: Optional[str] = Query(None, description="Filter by difficulty"),
     show_archived: bool = Query(False, description="Show only archived questions when true"),
+    include_all_versions: bool = Query(False, description="Include all versions including replaced questions"),
     current_user: User = Depends(get_current_user),
     db: AsyncSession = Depends(get_db),
 ):
@@ -390,6 +391,7 @@ async def list_questions(
     List questions with pagination and filtering.
     Can filter by document, subject, topic, or vetting status.
     Set show_archived=true to view archived questions only.
+    Set include_all_versions=true to see all versions (including old regenerated ones).
     """
     question_service = QuestionGenerationService(db)
     
@@ -405,6 +407,7 @@ async def list_questions(
             question_type=question_type,
             difficulty=difficulty,
             show_archived=show_archived,
+            include_all_versions=include_all_versions,
         )
         
         return QuestionListResponse(
@@ -454,6 +457,69 @@ async def get_question(
         )
     
     return QuestionResponse.model_validate(question)
+
+
+@router.get("/{question_id}/versions", response_model=List[QuestionResponse])
+async def get_question_versions(
+    question_id: uuid.UUID,
+    current_user: User = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+):
+    """
+    Get all versions of a question (version history / regeneration chain).
+    Returns questions ordered by version_number ascending (oldest first).
+    """
+    from sqlalchemy import select, or_
+    from app.models.question import Question
+    from app.models.document import Document
+    from app.models.subject import Subject
+    
+    # First verify the question exists and user has access
+    result = await db.execute(
+        select(Question)
+        .outerjoin(Document, Question.document_id == Document.id)
+        .outerjoin(Subject, Question.subject_id == Subject.id)
+        .where(
+            Question.id == question_id,
+            or_(
+                Document.user_id == current_user.id,
+                Subject.user_id == current_user.id,
+            )
+        )
+    )
+    question = result.scalar_one_or_none()
+    
+    if not question:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="Question not found",
+        )
+    
+    # Walk the version chain backwards to find the original (first version)
+    original_id = question.id
+    current = question
+    while current.replaces_id:
+        res = await db.execute(select(Question).where(Question.id == current.replaces_id))
+        prev = res.scalar_one_or_none()
+        if prev:
+            original_id = prev.id
+            current = prev
+        else:
+            break
+    
+    # Now collect all versions starting from the original
+    versions = []
+    current_id = original_id
+    while current_id:
+        res = await db.execute(select(Question).where(Question.id == current_id))
+        q = res.scalar_one_or_none()
+        if q:
+            versions.append(q)
+            current_id = q.replaced_by_id
+        else:
+            break
+    
+    return [QuestionResponse.model_validate(v) for v in versions]
 
 
 @router.post("/{question_id}/rate", response_model=QuestionResponse)
@@ -1398,6 +1464,10 @@ Output valid JSON only."""
                                 course_outcome_mapping=_s["course_outcome_mapping"],
                                 generation_confidence=0.75,
                                 vetting_status="pending",
+                                # Version control fields
+                                replaces_id=question_id,
+                                version_number=(question.version_number or 1) + 1,
+                                is_latest=True,
                                 generation_metadata={
                                     "source": "chapter_generation",
                                     "regenerated_from": str(question_id),
@@ -1408,6 +1478,12 @@ Output valid JSON only."""
                             db.add(new_question)
                             await db.commit()
                             await db.refresh(new_question)
+                            
+                            # Update old question to link to replacement
+                            question.replaced_by_id = new_question.id
+                            question.is_latest = False
+                            await db.commit()
+                            
                             replacement = new_question
                             logger.info(f"Chapter regen: replacement={replacement.id}")
                 except Exception as e:
@@ -1536,6 +1612,10 @@ Output valid JSON only."""
                                     course_outcome_mapping=_s["course_outcome_mapping"],
                                     generation_confidence=0.75,
                                     vetting_status="pending",
+                                    # Version control fields
+                                    replaces_id=question_id,
+                                    version_number=(question.version_number or 1) + 1,
+                                    is_latest=True,
                                     generation_metadata={
                                         "regenerated_from": str(question_id),
                                         "topic_name": selected_chunk["topic_name"],
@@ -1544,6 +1624,12 @@ Output valid JSON only."""
                                 db.add(new_question)
                                 await db.commit()
                                 await db.refresh(new_question)
+                                
+                                # Update old question to link to replacement
+                                question.replaced_by_id = new_question.id
+                                question.is_latest = False
+                                await db.commit()
+                                
                                 replacement = new_question
                                 logger.info(f"Rubric regen: replacement={replacement.id}")
                     except Exception as e:

@@ -91,6 +91,13 @@ class QuestionResponse(BaseModel):
     times_shown: int
     user_rating: Optional[int]
     is_archived: bool
+    
+    # Version control
+    replaced_by_id: Optional[uuid.UUID] = None
+    replaces_id: Optional[uuid.UUID] = None
+    version_number: int = 1
+    is_latest: bool = True
+    previous_versions: Optional[List["QuestionResponse"]] = None  # For nested version history
 
     model_config = {"from_attributes": True}
 

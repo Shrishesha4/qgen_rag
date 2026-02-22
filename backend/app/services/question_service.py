@@ -1395,6 +1395,7 @@ Output valid JSON only."""
         question_type: Optional[str] = None,
         difficulty: Optional[str] = None,
         show_archived: bool = False,
+        include_all_versions: bool = False,
     ) -> tuple[List[Question], Dict[str, Any]]:
         """Get questions with pagination and flexible filtering."""
         # Build base query - support both document-based and rubric-based questions
@@ -1417,6 +1418,10 @@ Output valid JSON only."""
         else:
             # If show_archived is True, only show archived questions
             query = query.where(Question.is_archived == True)
+        
+        # By default, only show latest versions
+        if not include_all_versions:
+            query = query.where(Question.is_latest == True)
 
         # Apply optional filters
         if document_id:
