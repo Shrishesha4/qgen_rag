@@ -901,7 +901,8 @@ const styles = StyleSheet.create({
     alignItems: 'center',
   },
   filterContainer: {
-    paddingVertical: Spacing.md,
+    paddingTop: Spacing.headerInset + 10,
+    paddingBottom: Spacing.md,
     paddingHorizontal: Spacing.md,
   },
   filterContent: {
@@ -930,13 +931,13 @@ const styles = StyleSheet.create({
   },
   listContent: {
     paddingHorizontal: Spacing.md,
-    paddingVertical: Spacing.md,
     paddingBottom: Spacing.xxl,
   },
   questionCard: {
     borderRadius: BorderRadius.lg,
     padding: Spacing.md,
     marginBottom: Spacing.md,
+    marginTop: Spacing.lg,
     shadowColor: '#000',
     shadowOffset: { width: 0, height: 1 },
     shadowOpacity: 0.08,

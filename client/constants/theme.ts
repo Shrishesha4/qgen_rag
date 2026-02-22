@@ -95,6 +95,7 @@ export const Spacing = {
   xl: 20,
   xxl: 24,
   xxxl: 32,
+  headerInset: 100, // Space for transparent header on iOS
 };
 
 // iOS 26 uses more rounded corners

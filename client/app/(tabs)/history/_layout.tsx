@@ -10,11 +10,13 @@ export default function HistoryLayout() {
         <Stack
             screenOptions={{
                 headerShown: true,
-                headerStyle: { backgroundColor: colors.background },
+                headerTransparent: true,
+                headerStyle: {
+                    backgroundColor: 'transparent',
+                },
                 headerTintColor: colors.primary,
                 headerTitleStyle: { fontWeight: '600', color: colors.text },
                 headerShadowVisible: false,
-                contentStyle: { backgroundColor: colors.background },
             }}
         >
             <Stack.Screen

@@ -11,8 +11,9 @@ export default function HomeStackLayout() {
     <Stack
       screenOptions={{
         headerShown: true,
+        headerTransparent: true,
         headerStyle: {
-          backgroundColor: colors.background,
+          backgroundColor: 'transparent',
         },
         headerTintColor: colors.primary,
         headerTitleStyle: {
@@ -21,9 +22,6 @@ export default function HomeStackLayout() {
         },
         headerShadowVisible: false,
         headerBackTitle: 'Back',
-        contentStyle: {
-          backgroundColor: colors.background,
-        },
       }}
     >
       <Stack.Screen

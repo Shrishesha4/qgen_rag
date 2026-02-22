@@ -624,7 +624,7 @@ export default function HistoryScreen() {
 
 const styles = StyleSheet.create({
     container: { flex: 1 },
-    scrollContent: { padding: Spacing.md },
+    scrollContent: { paddingTop: Spacing.headerInset, paddingHorizontal: Spacing.md, paddingBottom: Spacing.lg },
     centerContainer: { flex: 1, justifyContent: 'center', alignItems: 'center', paddingTop: 100 },
     loadingText: { marginTop: Spacing.md, fontSize: FontSizes.md },
     emptyState: { alignItems: 'center', paddingTop: 120 },

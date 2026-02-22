@@ -56,7 +56,12 @@ export default function RootLayout() {
       <ThemeProvider value={colorScheme === 'dark' ? DarkTheme : DefaultTheme}>
         <ToastProvider>
           <AuthGuard>
-            <Stack>
+            <Stack
+              screenOptions={{
+                headerTransparent: true,
+                headerStyle: { backgroundColor: 'transparent' },
+              }}
+            >
               <Stack.Screen name="(auth)" options={{ headerShown: false }} />
               <Stack.Screen name="(tabs)" options={{ headerShown: false }} />
               <Stack.Screen name="modal" options={{ presentation: 'modal', title: 'Modal' }} />

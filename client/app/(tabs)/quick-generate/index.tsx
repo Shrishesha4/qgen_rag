@@ -285,9 +285,9 @@ export default function QuickGenerateScreen() {
           numberOfLines={3}
           editable={!isGenerating}
         />
-        <Text style={[styles.helperText, { color: colors.textTertiary }]}>
+        {/* <Text style={[styles.helperText, { color: colors.textTertiary }]}>
           Describe the topic or provide a title for question generation
-        </Text>
+        </Text> */}
       </GlassCard>
 
       {/* Options Section */}

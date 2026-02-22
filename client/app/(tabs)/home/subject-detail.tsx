@@ -1333,6 +1333,7 @@ const styles = StyleSheet.create({
     fontWeight: '600',
   },
   scrollContent: {
+    paddingTop: Spacing.headerInset,
     paddingBottom: Spacing.xxl,
   },
   headerCard: {

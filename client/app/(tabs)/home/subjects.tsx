@@ -272,7 +272,9 @@ const styles = StyleSheet.create({
   searchContainer: {
     flexDirection: 'row',
     alignItems: 'center',
-    margin: Spacing.lg,
+    marginTop: Spacing.headerInset,
+    marginHorizontal: Spacing.lg,
+    marginBottom: Spacing.lg,
     paddingHorizontal: Spacing.md,
     paddingVertical: Spacing.sm,
     borderRadius: BorderRadius.md,

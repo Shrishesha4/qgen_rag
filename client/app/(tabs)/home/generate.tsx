@@ -905,7 +905,8 @@ const styles = StyleSheet.create({
     alignItems: 'center',
   },
   scrollContent: {
-    padding: Spacing.lg,
+    paddingTop: Spacing.headerInset,
+    paddingHorizontal: Spacing.lg,
     paddingBottom: 100,
   },
   infoCard: {
