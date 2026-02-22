@@ -26,7 +26,6 @@ const FILTER_OPTIONS = [
   { label: 'MCQ', value: 'mcq' },
   { label: 'Short Answer', value: 'short_answer' },
   { label: 'Long Answer', value: 'long_answer' },
-  { label: 'Essay', value: 'essay' },
 ];
 
 const BLOOM_COLORS: Record<string, string> = {

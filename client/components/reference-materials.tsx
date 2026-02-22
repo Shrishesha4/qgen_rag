@@ -404,19 +404,8 @@ export function ReferenceMaterials({
         )}
       </View>
 
-      {/* Info Card */}
-      <View style={[styles.infoCard, { backgroundColor: colors.primary + '10', borderColor: colors.primary + '30' }]}>
-        <IconSymbol name="lightbulb.fill" size={20} color={colors.primary} />
-        <View style={styles.infoContent}>
-          <Text style={[styles.infoTitle, { color: colors.text }]}>How it works</Text>
-          <Text style={[styles.infoText, { color: colors.textSecondary }]}>
-            Reference materials help generate more unique questions. When a generated question is too similar to existing ones, the system uses these references to create more diverse alternatives.
-          </Text>
-        </View>
-      </View>
-
       {/* Reference Questions Section */}
-      <View style={[styles.section, { backgroundColor: colors.card, marginTop: Spacing.md }]}>
+      <View style={[styles.section, { backgroundColor: colors.card }]}>
         <View style={styles.sectionHeader}>
           <View style={styles.sectionTitleRow}>
             <View style={[styles.sectionIcon, { backgroundColor: '#34C75915' }]}>
@@ -515,6 +504,17 @@ export function ReferenceMaterials({
             ))}
           </View>
         )}
+      </View>
+
+      {/* Info Card */}
+      <View style={[styles.infoCard, { backgroundColor: colors.primary + '10', borderColor: colors.primary + '30' }]}>
+        <IconSymbol name="lightbulb.fill" size={20} color={colors.primary} />
+        <View style={styles.infoContent}>
+          <Text style={[styles.infoTitle, { color: colors.text }]}>How it works</Text>
+          <Text style={[styles.infoText, { color: colors.textSecondary }]}>
+            Reference materials help generate more unique questions. When a generated question is too similar to existing ones, the system uses these references to create more diverse alternatives.
+          </Text>
+        </View>
       </View>
     </View>
   );

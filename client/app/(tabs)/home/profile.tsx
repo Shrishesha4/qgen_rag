@@ -818,7 +818,6 @@ const styles = StyleSheet.create({
     alignItems: 'center',
     marginBottom: Spacing.md,
     position: 'relative',
-    overflow: 'hidden',
   },
   avatarImage: {
     width: 88,
@@ -848,7 +847,6 @@ const styles = StyleSheet.create({
     justifyContent: 'center',
     alignItems: 'center',
     position: 'relative',
-    overflow: 'hidden',
   },
   avatarImageLarge: {
     width: 120,
@@ -857,8 +855,8 @@ const styles = StyleSheet.create({
   },
   avatarEditBadgeLarge: {
     position: 'absolute',
-    bottom: -6,
-    right: -6,
+    bottom: -4,
+    right: -4,
     width: 42,
     height: 42,
     borderRadius: 21,

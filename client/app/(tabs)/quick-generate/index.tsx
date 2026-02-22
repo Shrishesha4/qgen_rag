@@ -12,6 +12,7 @@ import {
   RefreshControl,
 } from 'react-native';
 import { LinearGradient } from 'expo-linear-gradient';
+import { BlurView } from 'expo-blur';
 import * as DocumentPicker from 'expo-document-picker';
 import { router } from 'expo-router';
 import { IconSymbol } from '@/components/ui/icon-symbol';
@@ -221,18 +222,20 @@ export default function QuickGenerateScreen() {
       }
     >
       {/* Header */}
-      <LinearGradient
-        colors={['#4A90D9', '#357ABD'] as [string, string]}
-        start={{ x: 0, y: 0 }}
-        end={{ x: 1, y: 1 }}
-        style={styles.header}
-      >
-        <IconSymbol name="sparkles" size={48} color="#FFFFFF" weight="semibold" />
-        <Text style={styles.headerTitle}>Quick Generate</Text>
-        <Text style={styles.headerSubtitle}>
-          Upload a PDF and describe what you need
-        </Text>
-      </LinearGradient>
+      <BlurView intensity={95} style={styles.headerBlur}>
+        <LinearGradient
+          colors={['#4A90D9', '#357ABD'] as [string, string]}
+          start={{ x: 0, y: 0 }}
+          end={{ x: 1, y: 1 }}
+          style={styles.header}
+        >
+          <IconSymbol name="sparkles" size={48} color="#FFFFFF" weight="semibold" />
+          <Text style={styles.headerTitle}>Quick Generate</Text>
+          <Text style={styles.headerSubtitle}>
+            Upload a PDF and describe what you need
+          </Text>
+        </LinearGradient>
+      </BlurView>
 
       {/* Upload Section */}
       <GlassCard style={styles.section}>
@@ -813,7 +816,7 @@ export default function QuickGenerateScreen() {
             </>
           ) : (
             <>
-              <IconSymbol name="sparkles" size={24} color="#FFFFFF" weight="semibold" />
+              <IconSymbol name="sparkles" size={32} color="#FFFFFF" weight="semibold" />
               <Text style={styles.generateButtonText}>Generate Questions</Text>
             </>
           )}
@@ -833,14 +836,19 @@ const styles = StyleSheet.create({
   contentContainer: {
     paddingBottom: Spacing.xxl,
   },
+  headerBlur: {
+    overflow: 'hidden',
+    borderRadius: BorderRadius.xxl,
+    marginTop: Spacing.lg,
+    marginBottom: Spacing.lg,
+    marginHorizontal: Spacing.md,
+    ...Shadows.medium,
+  },
   header: {
     paddingTop: 20,
     paddingBottom: Spacing.xxxl,
     paddingHorizontal: Spacing.lg,
     alignItems: 'center',
-    borderBottomLeftRadius: BorderRadius.xxl,
-    borderBottomRightRadius: BorderRadius.xxl,
-    marginBottom: Spacing.lg,
   },
   headerTitle: {
     fontSize: FontSizes.xxxl,
@@ -868,6 +876,8 @@ const styles = StyleSheet.create({
   },
   section: {
     marginBottom: Spacing.lg,
+    marginRight: Spacing.lg,
+    marginLeft: Spacing.lg,
   },
   sectionTitle: {
     fontSize: FontSizes.lg,
@@ -1127,6 +1137,20 @@ const styles = StyleSheet.create({
     gap: Spacing.sm,
     marginBottom: Spacing.xs,
   },
+  generatedMetaRow: {
+    flexDirection: 'row',
+    flexWrap: 'wrap',
+    gap: Spacing.sm,
+    marginTop: Spacing.sm,
+  },
+  generatedMetaText: {
+    fontSize: FontSizes.xs,
+    paddingHorizontal: Spacing.sm,
+    paddingVertical: 2,
+    borderRadius: BorderRadius.sm,
+    backgroundColor: 'rgba(128, 128, 128, 0.15)',
+    overflow: 'hidden',
+  },
   difficultyBadge: {
     paddingHorizontal: Spacing.sm,
     paddingVertical: 2,
@@ -1173,7 +1197,7 @@ const styles = StyleSheet.create({
     fontWeight: '600',
   },
   generateButton: {
-    marginHorizontal: Spacing.lg,
+    marginHorizontal: Spacing.xxxl + 60,
     marginTop: Spacing.xl,
     borderRadius: BorderRadius.lg,
     overflow: 'hidden',
