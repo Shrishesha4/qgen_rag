@@ -36,7 +36,7 @@ const getApiBaseUrl = (): string => {
   return `http://${DEV_MACHINE_IP}:8000/api/v1`;
 };
 
-const API_BASE_URL = getApiBaseUrl();
+export const API_BASE_URL = getApiBaseUrl();
 
 console.log('[API] Base URL:', API_BASE_URL);
 console.log('[API] Platform:', Platform.OS);

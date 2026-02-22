@@ -9,6 +9,7 @@ import {
   ActivityIndicator,
   Platform,
   StatusBar,
+  Image,
 } from 'react-native';
 import { LinearGradient } from 'expo-linear-gradient';
 import { router } from 'expo-router';
@@ -20,6 +21,7 @@ import { useColorScheme } from '@/hooks/use-color-scheme';
 import { useAuthStore } from '@/stores/authStore';
 import { subjectsService } from '@/services/subjects';
 import { vettingService, VettingStats } from '@/services/vetting';
+import { API_BASE_URL } from '@/services/api';
 
 interface DashboardStats {
   subjectsCount: number;
@@ -30,6 +32,15 @@ export default function HomeScreen() {
   const colorScheme = useColorScheme();
   const colors = Colors[colorScheme ?? 'light'];
   const { user } = useAuthStore();
+
+  const getAvatarUrl = () => {
+    if (!user?.avatar_url) return null;
+    if (user.avatar_url.startsWith('/')) {
+      const serverBase = API_BASE_URL.replace('/api/v1', '');
+      return serverBase + user.avatar_url;
+    }
+    return user.avatar_url;
+  };
   
   const [stats, setStats] = useState<DashboardStats>({ subjectsCount: 0, approvalRate: 0 });
   const [vettingStats, setVettingStats] = useState<VettingStats | null>(null);
@@ -143,9 +154,17 @@ export default function HomeScreen() {
           </View>
           <TouchableOpacity
             onPress={() => router.push('/(tabs)/home/profile')}
-            style={[styles.profileButton, { backgroundColor: colors.primary + '15' }]}
+            style={[styles.profileButton, { backgroundColor: getAvatarUrl() ? 'transparent' : colors.primary + '15' }]}
+            activeOpacity={0.8}
           >
-            <IconSymbol name="person.circle.fill" size={32} color={colors.primary} />
+            {getAvatarUrl() ? (
+              <Image
+                source={{ uri: getAvatarUrl() }}
+                style={styles.profileImage}
+              />
+            ) : (
+              <IconSymbol name="person.circle.fill" size={32} color={colors.primary} />
+            )}
           </TouchableOpacity>
         </View>
       </View>
@@ -310,6 +329,12 @@ const styles = StyleSheet.create({
     borderRadius: 24,
     justifyContent: 'center',
     alignItems: 'center',
+    overflow: 'hidden',
+  },
+  profileImage: {
+    width: 48,
+    height: 48,
+    borderRadius: 24,
   },
   greeting: {
     fontSize: FontSizes.md,

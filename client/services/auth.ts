@@ -41,6 +41,7 @@ export interface TokenResponse {
 
 export interface UpdateProfileData {
   full_name?: string;
+  avatar_url?: string | null;
   timezone?: string;
   language?: string;
   preferences?: Record<string, unknown>;
@@ -116,6 +117,41 @@ export const authService = {
    */
   async changePassword(data: PasswordChangeData): Promise<void> {
     await apiClient.post('/auth/change-password', data);
+  },
+
+  /**
+   * Upload profile avatar
+   */
+  async uploadAvatar(uri: string): Promise<User> {
+    const formData = new FormData();
+    
+    // Get file extension and mime type
+    const uriParts = uri.split('.');
+    const fileType = uriParts[uriParts.length - 1];
+    const mimeType = fileType === 'png' ? 'image/png' : 
+                     fileType === 'webp' ? 'image/webp' : 'image/jpeg';
+    
+    // Append file to form data
+    formData.append('file', {
+      uri,
+      name: `avatar.${fileType}`,
+      type: mimeType,
+    } as unknown as Blob);
+    
+    const response = await apiClient.post<User>('/auth/upload-avatar', formData, {
+      headers: {
+        'Content-Type': 'multipart/form-data',
+      },
+    });
+    return response.data;
+  },
+
+  /**
+   * Delete profile avatar
+   */
+  async deleteAvatar(): Promise<User> {
+    const response = await apiClient.delete<User>('/auth/avatar');
+    return response.data;
   },
 
   /**

@@ -2,7 +2,10 @@
 Authentication API endpoints.
 """
 
-from fastapi import APIRouter, Depends, HTTPException, status, Request
+import os
+import uuid as uuid_lib
+from fastapi import APIRouter, Depends, HTTPException, status, Request, UploadFile, File
+from fastapi.responses import FileResponse
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.database import get_db
@@ -193,6 +196,102 @@ async def update_profile(
     """
     user_service = UserService(db)
     
+    updated_user = await user_service.update_user(current_user.id, update_data)
+    
+    return UserResponse.model_validate(updated_user)
+
+
+@router.post("/upload-avatar", response_model=UserResponse)
+async def upload_avatar(
+    file: UploadFile = File(..., description="Profile image (JPEG, PNG, or WebP)"),
+    current_user: User = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+):
+    """
+    Upload a profile avatar image.
+    """
+    # Validate file type
+    allowed_types = ["image/jpeg", "image/png", "image/webp"]
+    if file.content_type not in allowed_types:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="Invalid file type. Allowed types: JPEG, PNG, WebP",
+        )
+    
+    # Validate file size (max 5MB)
+    max_size = 5 * 1024 * 1024
+    content = await file.read()
+    if len(content) > max_size:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="File too large. Maximum size is 5MB",
+        )
+    
+    # Create avatars directory
+    avatars_dir = os.path.join(settings.UPLOAD_DIR, "avatars")
+    os.makedirs(avatars_dir, exist_ok=True)
+    
+    # Generate unique filename
+    ext = file.filename.split(".")[-1] if file.filename else "jpg"
+    filename = f"{current_user.id}_{uuid_lib.uuid4().hex[:8]}.{ext}"
+    file_path = os.path.join(avatars_dir, filename)
+    
+    # Delete old avatar if exists
+    if current_user.avatar_url:
+        old_filename = current_user.avatar_url.split("/")[-1]
+        old_path = os.path.join(avatars_dir, old_filename)
+        if os.path.exists(old_path):
+            os.remove(old_path)
+    
+    # Save new avatar
+    with open(file_path, "wb") as f:
+        f.write(content)
+    
+    # Update user avatar_url
+    avatar_url = f"/api/v1/auth/avatars/{filename}"
+    user_service = UserService(db)
+    update_data = UserUpdate(avatar_url=avatar_url)
+    updated_user = await user_service.update_user(current_user.id, update_data)
+    
+    return UserResponse.model_validate(updated_user)
+
+
+@router.get("/avatars/{filename}")
+async def get_avatar(filename: str):
+    """
+    Serve avatar image.
+    """
+    avatars_dir = os.path.join(settings.UPLOAD_DIR, "avatars")
+    file_path = os.path.join(avatars_dir, filename)
+    
+    if not os.path.exists(file_path):
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="Avatar not found",
+        )
+    
+    return FileResponse(file_path)
+
+
+@router.delete("/avatar", response_model=UserResponse)
+async def delete_avatar(
+    current_user: User = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+):
+    """
+    Delete current user's avatar.
+    """
+    if current_user.avatar_url:
+        # Delete file
+        filename = current_user.avatar_url.split("/")[-1]
+        avatars_dir = os.path.join(settings.UPLOAD_DIR, "avatars")
+        file_path = os.path.join(avatars_dir, filename)
+        if os.path.exists(file_path):
+            os.remove(file_path)
+    
+    # Clear avatar_url
+    user_service = UserService(db)
+    update_data = UserUpdate(avatar_url=None)
     updated_user = await user_service.update_user(current_user.id, update_data)
     
     return UserResponse.model_validate(updated_user)

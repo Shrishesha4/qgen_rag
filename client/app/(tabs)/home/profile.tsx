@@ -11,8 +11,10 @@ import {
   Switch,
   Platform,
   ActivityIndicator,
+  Image,
 } from 'react-native';
 import { useNavigation } from '@react-navigation/native';
+import * as ImagePicker from 'expo-image-picker';
 import { IconSymbol } from '@/components/ui/icon-symbol';
 import { GlassCard } from '@/components/ui/glass-card';
 import { Colors, Spacing, BorderRadius, FontSizes } from '@/constants/theme';
@@ -21,13 +23,14 @@ import { useAuthStore } from '@/stores/authStore';
 import { useToast } from '@/components/toast';
 import { subjectsService } from '@/services/subjects';
 import { vettingService } from '@/services/vetting';
+import { API_BASE_URL } from '@/services/api';
 
 type ModalType = 'editProfile' | 'changePassword' | 'notifications' | 'appearance' | 'help' | 'about' | null;
 
 export default function ProfileScreen() {
   const colorScheme = useColorScheme();
   const colors = Colors[colorScheme ?? 'light'];
-  const { user, logout } = useAuthStore();
+  const { user, logout, updateProfile, changePassword, uploadAvatar, deleteAvatar, isLoading: authLoading } = useAuthStore();
   const navigation = useNavigation();
   const { showError, showSuccess, showWarning } = useToast();
 
@@ -124,12 +127,23 @@ export default function ProfileScreen() {
     );
   };
 
-  const handleSaveProfile = () => {
-    showSuccess('Profile updated successfully');
-    setActiveModal(null);
+  const [isSaving, setIsSaving] = useState(false);
+
+  const handleSaveProfile = async () => {
+    setIsSaving(true);
+    try {
+      await updateProfile({ full_name: fullName });
+      showSuccess('Profile updated successfully');
+      setActiveModal(null);
+    } catch (error) {
+      const message = error instanceof Error ? error.message : 'Failed to update profile';
+      showError(message);
+    } finally {
+      setIsSaving(false);
+    }
   };
 
-  const handleChangePassword = () => {
+  const handleChangePassword = async () => {
     if (newPassword !== confirmPassword) {
       showWarning('Passwords do not match', 'Validation Error');
       return;
@@ -138,11 +152,82 @@ export default function ProfileScreen() {
       showWarning('Password must be at least 8 characters', 'Validation Error');
       return;
     }
-    showSuccess('Password changed successfully');
-    setCurrentPassword('');
-    setNewPassword('');
-    setConfirmPassword('');
-    setActiveModal(null);
+    setIsSaving(true);
+    try {
+      await changePassword(currentPassword, newPassword);
+      showSuccess('Password changed successfully');
+      setCurrentPassword('');
+      setNewPassword('');
+      setConfirmPassword('');
+      setActiveModal(null);
+    } catch (error) {
+      const message = error instanceof Error ? error.message : 'Failed to change password';
+      showError(message);
+    } finally {
+      setIsSaving(false);
+    }
+  };
+
+  const handlePickAvatar = async () => {
+    try {
+      // Request permissions
+      const { status } = await ImagePicker.requestMediaLibraryPermissionsAsync();
+      if (status !== 'granted') {
+        showWarning('Permission to access photos is required');
+        return;
+      }
+
+      // Pick image
+      const result = await ImagePicker.launchImageLibraryAsync({
+        mediaTypes: ImagePicker.MediaTypeOptions.Images,
+        allowsEditing: true,
+        aspect: [1, 1],
+        quality: 0.8,
+      });
+
+      if (!result.canceled && result.assets[0]) {
+        const uri = result.assets[0].uri;
+        await uploadAvatar(uri);
+        showSuccess('Avatar updated successfully');
+      }
+    } catch (error) {
+      const message = error instanceof Error ? error.message : 'Failed to upload avatar';
+      showError(message);
+    }
+  };
+
+  const handleDeleteAvatar = () => {
+    Alert.alert(
+      'Remove Avatar',
+      'Are you sure you want to remove your profile picture?',
+      [
+        { text: 'Cancel', style: 'cancel' },
+        {
+          text: 'Remove',
+          style: 'destructive',
+          onPress: async () => {
+            try {
+              await deleteAvatar();
+              showSuccess('Avatar removed');
+            } catch (error) {
+              const message = error instanceof Error ? error.message : 'Failed to remove avatar';
+              showError(message);
+            }
+          },
+        },
+      ]
+    );
+  };
+
+  const getAvatarUrl = () => {
+    if (!user?.avatar_url) return null;
+    // If it's a relative URL, prepend the API base URL
+    if (user.avatar_url.startsWith('/')) {
+      // Remove /api/v1 from API_BASE_URL to get the server base
+      const serverBase = API_BASE_URL.replace('/api/v1', '');
+      return serverBase + user.avatar_url;
+    }
+    return user.avatar_url;
   };
 
   const menuSections = [
@@ -199,6 +284,34 @@ export default function ProfileScreen() {
         return (
           <View style={styles.modalContent}>
             <Text style={[styles.modalTitle, { color: colors.text }]}>Edit Profile</Text>
+            
+            {/* Avatar Edit */}
+            <View style={styles.avatarEditSection}>
+              <TouchableOpacity onPress={handlePickAvatar} activeOpacity={0.8}>
+                <View style={[styles.avatarContainerLarge, { backgroundColor: colors.primary + '20' }]}>
+                  {getAvatarUrl() ? (
+                    <Image 
+                      source={{ uri: getAvatarUrl()! }} 
+                      style={styles.avatarImageLarge}
+                    />
+                  ) : (
+                    <IconSymbol name="person.circle.fill" size={80} color={colors.primary} />
+                  )}
+                  <View style={[styles.avatarEditBadgeLarge, { backgroundColor: colors.primary }]}>
+                    <IconSymbol name="camera.fill" size={18} color="#FFFFFF" />
+                  </View>
+                </View>
+              </TouchableOpacity>
+              <Text style={[styles.avatarHint, { color: colors.textSecondary }]}>
+                Tap to change photo
+              </Text>
+              {user?.avatar_url && (
+                <TouchableOpacity onPress={handleDeleteAvatar} style={styles.removeAvatarButton}>
+                  <Text style={[styles.removeAvatarText, { color: '#FF3B30' }]}>Remove Photo</Text>
+                </TouchableOpacity>
+              )}
+            </View>
+
             <Text style={[styles.inputLabel, { color: colors.textSecondary }]}>Full Name</Text>
             <TextInput
               style={[styles.input, {
@@ -219,24 +332,33 @@ export default function ProfileScreen() {
                 borderColor: colors.border
               }]}
               value={email}
-              onChangeText={setEmail}
+              editable={false}
               placeholder="Enter your email"
               placeholderTextColor={colors.textTertiary}
               keyboardType="email-address"
               autoCapitalize="none"
             />
+            <Text style={[styles.inputHint, { color: colors.textTertiary }]}>
+              Email cannot be changed
+            </Text>
             <View style={styles.modalButtons}>
               <TouchableOpacity
                 style={[styles.modalButton, { backgroundColor: colors.card }]}
                 onPress={() => setActiveModal(null)}
+                disabled={isSaving}
               >
                 <Text style={[styles.modalButtonText, { color: colors.text }]}>Cancel</Text>
               </TouchableOpacity>
               <TouchableOpacity
-                style={[styles.modalButton, { backgroundColor: colors.primary }]}
+                style={[styles.modalButton, { backgroundColor: colors.primary, opacity: isSaving ? 0.7 : 1 }]}
                 onPress={handleSaveProfile}
+                disabled={isSaving}
               >
-                <Text style={[styles.modalButtonText, { color: '#FFFFFF' }]}>Save</Text>
+                {isSaving ? (
+                  <ActivityIndicator color="#FFFFFF" size="small" />
+                ) : (
+                  <Text style={[styles.modalButtonText, { color: '#FFFFFF' }]}>Save</Text>
+                )}
               </TouchableOpacity>
             </View>
           </View>
@@ -289,14 +411,20 @@ export default function ProfileScreen() {
               <TouchableOpacity
                 style={[styles.modalButton, { backgroundColor: colors.card }]}
                 onPress={() => setActiveModal(null)}
+                disabled={isSaving}
               >
                 <Text style={[styles.modalButtonText, { color: colors.text }]}>Cancel</Text>
               </TouchableOpacity>
               <TouchableOpacity
-                style={[styles.modalButton, { backgroundColor: '#FF9500' }]}
+                style={[styles.modalButton, { backgroundColor: '#FF9500', opacity: isSaving ? 0.7 : 1 }]}
                 onPress={handleChangePassword}
+                disabled={isSaving}
               >
-                <Text style={[styles.modalButtonText, { color: '#FFFFFF' }]}>Change</Text>
+                {isSaving ? (
+                  <ActivityIndicator color="#FFFFFF" size="small" />
+                ) : (
+                  <Text style={[styles.modalButtonText, { color: '#FFFFFF' }]}>Change</Text>
+                )}
               </TouchableOpacity>
             </View>
           </View>
@@ -563,9 +691,21 @@ export default function ProfileScreen() {
     >
       {/* Profile Header */}
       <GlassCard style={styles.headerCard}>
-        <View style={[styles.avatarContainer, { backgroundColor: colors.primary + '20' }]}>
-          <IconSymbol name="person.circle.fill" size={64} color={colors.primary} />
-        </View>
+        <TouchableOpacity onPress={handlePickAvatar} onLongPress={user?.avatar_url ? handleDeleteAvatar : undefined} activeOpacity={0.8}>
+          <View style={[styles.avatarContainer, { backgroundColor: colors.primary + '20' }]}>
+            {getAvatarUrl() ? (
+              <Image 
+                source={{ uri: getAvatarUrl()! }} 
+                style={styles.avatarImage}
+              />
+            ) : (
+              <IconSymbol name="person.circle.fill" size={64} color={colors.primary} />
+            )}
+            <View style={[styles.avatarEditBadge, { backgroundColor: colors.primary }]}>
+              <IconSymbol name="camera.fill" size={14} color="#FFFFFF" />
+            </View>
+          </View>
+        </TouchableOpacity>
         <Text style={[styles.userName, { color: colors.text }]}>
           {user?.full_name || user?.username || 'User'}
         </Text>
@@ -677,6 +817,71 @@ const styles = StyleSheet.create({
     justifyContent: 'center',
     alignItems: 'center',
     marginBottom: Spacing.md,
+    position: 'relative',
+    overflow: 'hidden',
+  },
+  avatarImage: {
+    width: 88,
+    height: 88,
+    borderRadius: 44,
+  },
+  avatarEditBadge: {
+    position: 'absolute',
+    bottom: -4,
+    right: -4,
+    width: 32,
+    height: 32,
+    borderRadius: 16,
+    justifyContent: 'center',
+    alignItems: 'center',
+    borderWidth: 2,
+    borderColor: '#FFFFFF',
+  },
+  avatarEditSection: {
+    alignItems: 'center',
+    marginBottom: Spacing.lg,
+  },
+  avatarContainerLarge: {
+    width: 120,
+    height: 120,
+    borderRadius: 60,
+    justifyContent: 'center',
+    alignItems: 'center',
+    position: 'relative',
+    overflow: 'hidden',
+  },
+  avatarImageLarge: {
+    width: 120,
+    height: 120,
+    borderRadius: 60,
+  },
+  avatarEditBadgeLarge: {
+    position: 'absolute',
+    bottom: -6,
+    right: -6,
+    width: 42,
+    height: 42,
+    borderRadius: 21,
+    justifyContent: 'center',
+    alignItems: 'center',
+    borderWidth: 2,
+    borderColor: '#FFFFFF',
+  },
+  avatarHint: {
+    fontSize: FontSizes.sm,
+    marginTop: Spacing.sm,
+  },
+  removeAvatarButton: {
+    marginTop: Spacing.sm,
+    paddingVertical: Spacing.xs,
+  },
+  removeAvatarText: {
+    fontSize: FontSizes.sm,
+    fontWeight: '500',
+  },
+  inputHint: {
+    fontSize: FontSizes.xs,
+    marginTop: Spacing.xs,
   },
   userName: {
     fontSize: FontSizes.xl,

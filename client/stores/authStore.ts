@@ -20,6 +20,8 @@ interface AuthState {
   checkAuth: () => Promise<boolean>;
   updateProfile: (data: UpdateProfileData) => Promise<void>;
   changePassword: (currentPassword: string, newPassword: string) => Promise<void>;
+  uploadAvatar: (uri: string) => Promise<void>;
+  deleteAvatar: () => Promise<void>;
   clearError: () => void;
 }
 
@@ -153,6 +155,40 @@ export const useAuthStore = create<AuthState>((set, get) => ({
       const message = error instanceof Error
         ? error.message
         : 'Failed to change password';
+      set({ error: message, isLoading: false });
+      throw error;
+    }
+  },
+
+  uploadAvatar: async (uri: string): Promise<void> => {
+    set({ isLoading: true, error: null });
+    try {
+      const updatedUser = await authService.uploadAvatar(uri);
+      set({
+        user: updatedUser,
+        isLoading: false,
+      });
+    } catch (error: unknown) {
+      const message = error instanceof Error
+        ? error.message
+        : 'Failed to upload avatar';
+      set({ error: message, isLoading: false });
+      throw error;
+    }
+  },
+
+  deleteAvatar: async (): Promise<void> => {
+    set({ isLoading: true, error: null });
+    try {
+      const updatedUser = await authService.deleteAvatar();
+      set({
+        user: updatedUser,
+        isLoading: false,
+      });
+    } catch (error: unknown) {
+      const message = error instanceof Error
+        ? error.message
+        : 'Failed to delete avatar';
       set({ error: message, isLoading: false });
       throw error;
     }
