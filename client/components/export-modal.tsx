@@ -99,6 +99,26 @@ export function ExportModal({
   const selectedBg = isDark ? 'rgba(0,122,255,0.3)' : 'rgba(0,122,255,0.15)';
   const borderColor = isDark ? 'rgba(255,255,255,0.15)' : 'rgba(0,0,0,0.1)';
 
+  // Filter questions based on current settings
+  const getFilteredQuestions = () => {
+    let filtered = [...questions];
+
+    // Filter by vetting status
+    if (vettingFilter !== 'all') {
+      filtered = filtered.filter(q => {
+        if (vettingFilter === 'approved') return q.vetting_status === 'approved';
+        if (vettingFilter === 'pending') return q.vetting_status === 'pending' || !q.vetting_status;
+        if (vettingFilter === 'rejected') return q.vetting_status === 'rejected';
+        return true;
+      });
+    }
+
+    return filtered;
+  };
+
+  const filteredQuestions = getFilteredQuestions();
+  const previewQuestions = filteredQuestions.slice(0, 3); // Show first 3 as preview
+
   return (
     <Modal
       visible={visible}
@@ -156,6 +176,92 @@ export function ExportModal({
                 </Text>
               </TouchableOpacity>
             ))}
+          </View>
+
+          {/* Preview */}
+          <Text style={[styles.sectionTitle, { color: textColor }]}>Preview</Text>
+          <View style={[styles.previewContainer, {
+            backgroundColor: isDark ? 'rgba(255,255,255,0.06)' : '#f8f9fa',
+            borderColor: isDark ? 'rgba(255,255,255,0.2)' : 'rgba(0,0,0,0.15)',
+          }]}>
+            <View style={styles.previewHeader}>
+              <IconSymbol name="eye" size={14} color={colors.primary} />
+              <Text style={[styles.previewHeaderText, { color: secondaryText }]}>
+                {filteredQuestions.length} question{filteredQuestions.length !== 1 ? 's' : ''} · {selectedFormat.toUpperCase()} format
+              </Text>
+            </View>
+
+            {previewQuestions.length > 0 ? (
+              selectedFormat === 'docx' ? (
+                /* Word-style preview */
+                <View style={styles.previewDocx}>
+                  {previewQuestions.map((q, idx) => (
+                    <View key={q.id} style={styles.previewDocxItem}>
+                      <Text style={[styles.previewDocxNumber, { color: textColor }]}>
+                        Q{idx + 1}. {q.marks ? `[${q.marks} marks]` : ''}
+                      </Text>
+                      <Text style={[styles.previewDocxText, { color: textColor }]} numberOfLines={2}>
+                        {q.question_text}
+                      </Text>
+                      {q.question_type === 'mcq' && q.options && q.options.length > 0 && (
+                        <View style={styles.previewDocxOptions}>
+                          {q.options.slice(0, 4).map((opt, oi) => (
+                            <Text key={oi} style={[styles.previewDocxOption, { color: secondaryText }]}>
+                              {String.fromCharCode(65 + oi)}) {opt}
+                            </Text>
+                          ))}
+                        </View>
+                      )}
+                      {q.correct_answer && (
+                        <Text style={[styles.previewDocxAnswer, { color: colors.primary }]} numberOfLines={1}>
+                          Answer: {q.correct_answer}
+                        </Text>
+                      )}
+                    </View>
+                  ))}
+                </View>
+              ) : (
+                /* Table-style preview for Excel/CSV */
+                <View style={styles.previewTable}>
+                  {/* Table header */}
+                  <View style={[styles.previewTableRow, styles.previewTableHeaderRow, {
+                    backgroundColor: isDark ? 'rgba(0,122,255,0.15)' : 'rgba(0,122,255,0.08)',
+                    borderBottomColor: isDark ? 'rgba(255,255,255,0.15)' : 'rgba(0,0,0,0.12)',
+                  }]}>
+                    <Text style={[styles.previewTableCell, styles.previewTableCellNum, styles.previewTableHeaderCell, { color: textColor }]}>#</Text>
+                    <Text style={[styles.previewTableCell, styles.previewTableCellQ, styles.previewTableHeaderCell, { color: textColor }]}>Question</Text>
+                    <Text style={[styles.previewTableCell, styles.previewTableCellType, styles.previewTableHeaderCell, { color: textColor }]}>Type</Text>
+                    <Text style={[styles.previewTableCell, styles.previewTableCellMarks, styles.previewTableHeaderCell, { color: textColor }]}>Marks</Text>
+                  </View>
+                  {/* Table rows */}
+                  {previewQuestions.map((q, idx) => (
+                    <View key={q.id} style={[styles.previewTableRow, {
+                      borderBottomColor: isDark ? 'rgba(255,255,255,0.08)' : 'rgba(0,0,0,0.06)',
+                      backgroundColor: idx % 2 === 0
+                        ? 'transparent'
+                        : isDark ? 'rgba(255,255,255,0.03)' : 'rgba(0,0,0,0.02)',
+                    }]}>
+                      <Text style={[styles.previewTableCell, styles.previewTableCellNum, { color: secondaryText }]}>{idx + 1}</Text>
+                      <Text style={[styles.previewTableCell, styles.previewTableCellQ, { color: textColor }]} numberOfLines={1}>{q.question_text}</Text>
+                      <Text style={[styles.previewTableCell, styles.previewTableCellType, { color: secondaryText }]}>
+                        {q.question_type === 'mcq' ? 'MCQ' : q.question_type === 'short_answer' ? 'Short' : 'Long'}
+                      </Text>
+                      <Text style={[styles.previewTableCell, styles.previewTableCellMarks, { color: secondaryText }]}>{q.marks ?? '-'}</Text>
+                    </View>
+                  ))}
+                </View>
+              )
+            ) : (
+              <Text style={[styles.previewEmpty, { color: secondaryText }]}>
+                No questions match the current filters
+              </Text>
+            )}
+
+            {filteredQuestions.length > 3 && previewQuestions.length > 0 && (
+              <Text style={[styles.previewMore, { color: secondaryText }]}>
+                + {filteredQuestions.length - 3} more question{filteredQuestions.length - 3 !== 1 ? 's' : ''}
+              </Text>
+            )}
           </View>
 
           {/* Group By Selection */}
@@ -374,6 +480,103 @@ const styles = StyleSheet.create({
   errorText: {
     fontSize: FontSizes.sm,
     flex: 1,
+  },
+  previewContainer: {
+    padding: Spacing.md,
+    borderRadius: BorderRadius.md,
+    borderWidth: 1.5,
+    overflow: 'hidden',
+  },
+  previewHeader: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 6,
+    marginBottom: Spacing.sm,
+  },
+  previewHeaderText: {
+    fontSize: FontSizes.xs,
+    fontWeight: '500',
+  },
+  // Word-style preview
+  previewDocx: {
+    gap: Spacing.sm,
+  },
+  previewDocxItem: {
+    gap: 3,
+  },
+  previewDocxNumber: {
+    fontSize: FontSizes.sm,
+    fontWeight: '600',
+  },
+  previewDocxText: {
+    fontSize: FontSizes.sm,
+    lineHeight: 19,
+    paddingLeft: Spacing.md,
+  },
+  previewDocxOptions: {
+    paddingLeft: Spacing.xl,
+    gap: 2,
+  },
+  previewDocxOption: {
+    fontSize: FontSizes.xs,
+    lineHeight: 16,
+  },
+  previewDocxAnswer: {
+    fontSize: FontSizes.xs,
+    fontWeight: '600',
+    paddingLeft: Spacing.md,
+    marginTop: 2,
+  },
+  // Table-style preview (Excel/CSV)
+  previewTable: {
+    borderRadius: BorderRadius.sm,
+    overflow: 'hidden',
+  },
+  previewTableRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    borderBottomWidth: StyleSheet.hairlineWidth,
+    paddingVertical: 6,
+    paddingHorizontal: 6,
+  },
+  previewTableHeaderRow: {
+    borderBottomWidth: 1,
+    paddingVertical: 8,
+  },
+  previewTableHeaderCell: {
+    fontWeight: '600',
+  },
+  previewTableCell: {
+    fontSize: FontSizes.xs,
+  },
+  previewTableCellNum: {
+    width: 24,
+    textAlign: 'center',
+  },
+  previewTableCellQ: {
+    flex: 1,
+    paddingHorizontal: 4,
+  },
+  previewTableCellType: {
+    width: 42,
+    textAlign: 'center',
+  },
+  previewTableCellMarks: {
+    width: 38,
+    textAlign: 'center',
+  },
+  previewMore: {
+    fontSize: FontSizes.xs,
+    textAlign: 'center',
+    marginTop: Spacing.sm,
+    fontWeight: '500',
+    fontStyle: 'italic',
+  },
+  previewEmpty: {
+    fontSize: FontSizes.sm,
+    textAlign: 'center',
+    paddingVertical: Spacing.lg,
+    fontStyle: 'italic',
   },
   footer: {
     paddingHorizontal: Spacing.md,

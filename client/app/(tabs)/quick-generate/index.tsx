@@ -15,6 +15,7 @@ import { LinearGradient } from 'expo-linear-gradient';
 import { BlurView } from 'expo-blur';
 import * as DocumentPicker from 'expo-document-picker';
 import { router } from 'expo-router';
+import Slider from '@react-native-community/slider';
 import { IconSymbol } from '@/components/ui/icon-symbol';
 import { GlassCard } from '@/components/ui/glass-card';
 import { Colors, Spacing, BorderRadius, FontSizes, Shadows } from '@/constants/theme';
@@ -23,7 +24,7 @@ import { questionsService, QuickGenerateProgress, Question } from '@/services/qu
 import { subjectsService, Subject, Topic } from '@/services/subjects';
 import { useToast } from '@/components/toast';
 import { extractErrorDetails } from '@/utils/errors';
-import { selectionImpact, mediumImpact } from '@/utils/haptics';
+import { selectionImpact, mediumImpact, lightImpact } from '@/utils/haptics';
 
 type QuestionType = 'mcq' | 'short_answer' | 'long_answer';
 type Difficulty = 'easy' | 'medium' | 'hard';
@@ -38,6 +39,8 @@ export default function QuickGenerateScreen() {
   const [selectedFile, setSelectedFile] = useState<{ uri: string; name: string; type: string } | null>(null);
   const [context, setContext] = useState('');
   const [count, setCount] = useState(5);
+  const [customCount, setCustomCount] = useState('');
+  const [showCustomInput, setShowCustomInput] = useState(false);
   const [selectedTypes, setSelectedTypes] = useState<QuestionType[]>(['mcq', 'short_answer']);
   const [difficulty, setDifficulty] = useState<Difficulty>('medium');
   
@@ -351,30 +354,39 @@ export default function QuickGenerateScreen() {
         <Text style={[styles.optionLabel, { color: colors.textSecondary, marginTop: Spacing.lg }]}>
           Number of Questions: {count}
         </Text>
-        <View style={styles.countContainer}>
-          {[3, 5, 10, 15, 20].map(num => (
-            <TouchableOpacity
-              key={num}
-              style={[
-                styles.countButton,
-                count === num && { backgroundColor: colors.primary },
-                { borderColor: count === num ? colors.primary : colors.border }
-              ]}
-              onPress={() => {
-                selectionImpact();
-                setCount(num);
-              }}
-              disabled={isGenerating}
-            >
-              <Text style={[
-                styles.countButtonText,
-                { color: count === num ? '#FFFFFF' : colors.text }
-              ]}>
-                {num}
-              </Text>
-            </TouchableOpacity>
-          ))}
+        <View style={styles.sliderRow}>
+          <Text style={[styles.sliderLabel, { color: colors.textSecondary }]}>1</Text>
+          <Slider
+            style={styles.slider}
+            minimumValue={1}
+            maximumValue={50}
+            step={1}
+            value={count}
+            onValueChange={(val: number) => {
+              lightImpact();
+              setCount(Math.round(val));
+            }}
+            onSlidingComplete={() => {
+              mediumImpact();
+            }}
+            minimumTrackTintColor={colors.primary}
+            maximumTrackTintColor={colors.border}
+            thumbTintColor={colors.primary}
+            disabled={isGenerating}
+          />
+          <Text style={[styles.sliderValue, { color: colors.primary }]}>{count}</Text>
         </View>
+        <TouchableOpacity
+          style={[styles.customButton, { borderColor: colors.border, backgroundColor: colors.card }]}
+          onPress={() => {
+            selectionImpact();
+            setShowCustomInput(true);
+          }}
+          disabled={isGenerating}
+        >
+          <IconSymbol name="pencil" size={16} color={colors.primary} />
+          <Text style={[styles.customButtonText, { color: colors.text }]}>Custom Amount</Text>
+        </TouchableOpacity>
 
         {/* Difficulty */}
         <Text style={[styles.optionLabel, { color: colors.textSecondary, marginTop: Spacing.lg }]}>
@@ -872,6 +884,64 @@ export default function QuickGenerateScreen() {
 
       {/* Bottom padding for tab bar */}
       <View style={{ height: 100 }} />
+
+      {/* Custom Count Input Modal */}
+      <Modal
+        visible={showCustomInput}
+        transparent
+        animationType="fade"
+        onRequestClose={() => setShowCustomInput(false)}
+      >
+        <View style={styles.customInputModal}>
+          <View style={[styles.customInputContainer, { backgroundColor: colors.card }]}>
+            <Text style={[styles.customInputTitle, { color: colors.text }]}>
+              Enter Number of Questions
+            </Text>
+            <TextInput
+              style={[styles.customInput, { 
+                borderColor: colors.border, 
+                color: colors.text,
+                backgroundColor: isDark ? 'rgba(255,255,255,0.05)' : 'rgba(0,0,0,0.02)',
+              }]}
+              value={customCount}
+              onChangeText={setCustomCount}
+              keyboardType="number-pad"
+              placeholder="e.g., 25"
+              placeholderTextColor={colors.textSecondary}
+              autoFocus
+              selectTextOnFocus
+            />
+            <View style={styles.customInputButtons}>
+              <TouchableOpacity
+                style={[styles.customInputButton, { backgroundColor: colors.border }]}
+                onPress={() => {
+                  selectionImpact();
+                  setShowCustomInput(false);
+                  setCustomCount('');
+                }}
+              >
+                <Text style={[styles.customInputButtonText, { color: colors.text }]}>Cancel</Text>
+              </TouchableOpacity>
+              <TouchableOpacity
+                style={[styles.customInputButton, { backgroundColor: colors.primary }]}
+                onPress={() => {
+                  mediumImpact();
+                  const num = parseInt(customCount, 10);
+                  if (!isNaN(num) && num >= 1 && num <= 150) {
+                    setCount(num);
+                    setShowCustomInput(false);
+                    setCustomCount('');
+                  } else {
+                    showError(new Error('Please enter a number between 1 and 150'), 'Invalid input');
+                  }
+                }}
+              >
+                <Text style={[styles.customInputButtonText, { color: '#FFFFFF' }]}>Set</Text>
+              </TouchableOpacity>
+            </View>
+          </View>
+        </View>
+      </Modal>
     </ScrollView>
   );
 }
@@ -990,18 +1060,77 @@ const styles = StyleSheet.create({
     fontSize: FontSizes.sm,
     fontWeight: '500',
   },
-  countContainer: {
+  sliderRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: Spacing.sm,
+  },
+  sliderLabel: {
+    fontSize: FontSizes.sm,
+    minWidth: 20,
+  },
+  slider: {
+    flex: 1,
+    height: 40,
+  },
+  sliderValue: {
+    fontSize: FontSizes.lg,
+    fontWeight: '700',
+    minWidth: 40,
+    textAlign: 'right',
+  },
+  customButton: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'center',
+    gap: Spacing.xs,
+    paddingVertical: Spacing.sm,
+    paddingHorizontal: Spacing.md,
+    borderRadius: BorderRadius.md,
+    borderWidth: 1,
+    marginTop: Spacing.sm,
+  },
+  customButtonText: {
+    fontSize: FontSizes.sm,
+    fontWeight: '500',
+  },
+  customInputModal: {
+    flex: 1,
+    justifyContent: 'center',
+    alignItems: 'center',
+    backgroundColor: 'rgba(0,0,0,0.5)',
+  },
+  customInputContainer: {
+    width: '80%',
+    padding: Spacing.xl,
+    borderRadius: BorderRadius.lg,
+    gap: Spacing.md,
+  },
+  customInputTitle: {
+    fontSize: FontSizes.lg,
+    fontWeight: '600',
+    textAlign: 'center',
+  },
+  customInput: {
+    borderWidth: 1,
+    borderRadius: BorderRadius.md,
+    paddingVertical: Spacing.md,
+    paddingHorizontal: Spacing.md,
+    fontSize: FontSizes.lg,
+    fontWeight: '600',
+    textAlign: 'center',
+  },
+  customInputButtons: {
     flexDirection: 'row',
     gap: Spacing.sm,
   },
-  countButton: {
+  customInputButton: {
     flex: 1,
-    alignItems: 'center',
     paddingVertical: Spacing.md,
     borderRadius: BorderRadius.md,
-    borderWidth: 1,
+    alignItems: 'center',
   },
-  countButtonText: {
+  customInputButtonText: {
     fontSize: FontSizes.md,
     fontWeight: '600',
   },
