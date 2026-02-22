@@ -294,9 +294,62 @@ class OllamaLLMService:
         json_obj = self._extract_json_object(response)
         return json_obj
     
+    def _sanitize_control_chars(self, text: str) -> str:
+        """Sanitize control characters that break JSON parsing.
+        
+        Control characters (0x00-0x1F) inside JSON strings must be escaped.
+        This function properly escapes them while preserving valid escape sequences.
+        """
+        import re
+        
+        def escape_control_chars_in_strings(match):
+            """Escape control chars inside a matched JSON string."""
+            s = match.group(0)
+            # Preserve the quotes, process the content
+            content = s[1:-1]  # Remove surrounding quotes
+            
+            # Replace unescaped control characters with their escaped forms
+            result = []
+            i = 0
+            while i < len(content):
+                char = content[i]
+                if char == '\\' and i + 1 < len(content):
+                    # This is an escape sequence, keep it as-is
+                    result.append(content[i:i+2])
+                    i += 2
+                elif ord(char) < 32:  # Control character
+                    # Escape it properly
+                    if char == '\n':
+                        result.append('\\n')
+                    elif char == '\r':
+                        result.append('\\r')
+                    elif char == '\t':
+                        result.append('\\t')
+                    elif char == '\x08':  # backspace
+                        result.append('\\b')
+                    elif char == '\x0c':  # form feed
+                        result.append('\\f')
+                    else:
+                        # Use unicode escape for other control chars
+                        result.append(f'\\u{ord(char):04x}')
+                    i += 1
+                else:
+                    result.append(char)
+                    i += 1
+            
+            return '"' + ''.join(result) + '"'
+        
+        # Match JSON strings (handling escaped quotes)
+        # This regex matches strings like "..." including escaped quotes inside
+        json_string_pattern = r'"(?:[^"\\]|\\.)*"'
+        return re.sub(json_string_pattern, escape_control_chars_in_strings, text)
+
     def _extract_json_object(self, text: str) -> Dict[str, Any]:
         """Extract the first valid JSON object from text."""
         import re
+        
+        # First, sanitize control characters
+        text = self._sanitize_control_chars(text)
         
         # Try parsing as-is first
         try:
@@ -386,10 +439,14 @@ class OllamaLLMService:
         # Fix unquoted keys (common LLM error)
         text = re.sub(r'(\{|,)\s*([a-zA-Z_][a-zA-Z0-9_]*)\s*:', r'\1"\2":', text)
         
-        # Escape control characters inside string values
-        # (tabs, carriage returns, etc. that aren't already escaped)
+        # Escape remaining control characters
+        # Note: Most control chars should already be handled by _sanitize_control_chars
+        # but this catches any edge cases in the syntax-fixing path
         text = text.replace('\t', '\\t')
         text = text.replace('\r', '')
+        
+        # Handle any remaining raw newlines that might be inside strings
+        # (This is a fallback - the per-line logic above should catch most cases)
         
         # NOTE: We intentionally do NOT do text.replace("'", '"') because
         # LLM output often contains apostrophes inside strings (e.g., "'for' loop")

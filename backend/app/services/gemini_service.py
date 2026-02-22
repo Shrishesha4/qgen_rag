@@ -350,6 +350,9 @@ class GeminiService:
     
     def _extract_json_object(self, text: str) -> Dict[str, Any]:
         """Extract the first valid JSON object from text."""
+        # First, sanitize control characters
+        text = self._sanitize_control_chars(text)
+        
         # Try parsing as-is first
         try:
             return json.loads(text)
@@ -398,9 +401,55 @@ class GeminiService:
         
         raise json.JSONDecodeError("No valid JSON object found", text, 0)
     
+    def _sanitize_control_chars(self, text: str) -> str:
+        """Sanitize control characters that break JSON parsing.
+        
+        Control characters (0x00-0x1F) inside JSON strings must be escaped.
+        This function properly escapes them while preserving valid escape sequences.
+        """
+        import re
+        
+        def escape_control_chars_in_strings(match):
+            """Escape control chars inside a matched JSON string."""
+            s = match.group(0)
+            content = s[1:-1]  # Remove surrounding quotes
+            
+            result = []
+            i = 0
+            while i < len(content):
+                char = content[i]
+                if char == '\\' and i + 1 < len(content):
+                    result.append(content[i:i+2])
+                    i += 2
+                elif ord(char) < 32:  # Control character
+                    if char == '\n':
+                        result.append('\\n')
+                    elif char == '\r':
+                        result.append('\\r')
+                    elif char == '\t':
+                        result.append('\\t')
+                    elif char == '\x08':
+                        result.append('\\b')
+                    elif char == '\x0c':
+                        result.append('\\f')
+                    else:
+                        result.append(f'\\u{ord(char):04x}')
+                    i += 1
+                else:
+                    result.append(char)
+                    i += 1
+            
+            return '"' + ''.join(result) + '"'
+        
+        json_string_pattern = r'"(?:[^"\\]|\\.)*"'
+        return re.sub(json_string_pattern, escape_control_chars_in_strings, text)
+
     def _fix_json_syntax(self, text: str) -> str:
         """Try to fix common JSON syntax errors."""
         import re
+        
+        # First sanitize control characters
+        text = self._sanitize_control_chars(text)
         
         # Handle newlines inside strings
         lines = text.split('\n')
@@ -431,7 +480,7 @@ class GeminiService:
         # Fix unquoted keys
         text = re.sub(r'(\{|,)\s*([a-zA-Z_][a-zA-Z0-9_]*)\s*:', r'\1"\2":', text)
         
-        # Escape control characters
+        # Escape remaining control characters (fallback)
         text = text.replace('\t', '\\t')
         text = text.replace('\r', '')
         

@@ -385,7 +385,28 @@ export default function HistoryScreen() {
                                     {q.options && q.options.length > 0 && (
                                         <View style={styles.optionsList}>
                                             {q.options.map((opt, i) => {
-                                                const isCorrect = q.correct_answer === opt;
+                                                // Match correct answer with various formats
+                                                const optionMatches = (option: string, correct: string | null | undefined, index: number): boolean => {
+                                                    if (!correct) return false;
+                                                    const trimmedCorrect = correct.trim();
+                                                    const trimmedOption = option.trim();
+
+                                                    // Exact match
+                                                    if (trimmedOption === trimmedCorrect) return true;
+                                                    // Option starts with correct answer
+                                                    if (trimmedOption.startsWith(trimmedCorrect)) return true;
+
+                                                    // Handle single-letter correct answers like 'A', 'B'
+                                                    const letter = String.fromCharCode(65 + index);
+                                                    if (trimmedCorrect === letter || trimmedCorrect.startsWith(letter + ')') || trimmedCorrect.startsWith(letter + ' ')) return true;
+
+                                                    // Handle 'Option X' format
+                                                    if (trimmedCorrect.toLowerCase().startsWith('option ' + letter.toLowerCase())) return true;
+
+                                                    return false;
+                                                };
+
+                                                const isCorrect = optionMatches(opt, q.correct_answer, i);
                                                 return (
                                                     <View
                                                         key={i}

@@ -1313,41 +1313,101 @@ async def vet_question(
         # PATH A: Quick Generate (document-based RAG)
         # ═══════════════════════════════════════════
         if gen_method == "quick" and question_snapshot["document_id"]:
-            marks_map = {"mcq": 1, "short_answer": 2, "long_answer": 5}
-            if question_snapshot["marks"] and q_type in marks_map:
-                marks_map[q_type] = question_snapshot["marks"]
-            context = (question_snapshot["question_text"] or "")[:500] if question_snapshot["question_text"] else "Replacement question"
+            logger.info(f"Regenerating via direct generation (method=quick)")
 
-            bloom_levels_all = ["remember", "understand", "apply", "analyze", "evaluate", "create"]
-            bloom_to_use = None
-            if question_snapshot["bloom_taxonomy_level"] and question_snapshot["bloom_taxonomy_level"] in bloom_levels_all:
-                bloom_candidates = [b for b in bloom_levels_all if b != question_snapshot["bloom_taxonomy_level"]]
-                if bloom_candidates:
-                    bloom_to_use = bloom_candidates
+            llm_service = LLMService()
+            embedding_service = EmbeddingService()
+            doc_service = DocumentService(db, embedding_service)
 
-            logger.info(f"Regenerating via quick_generate (method=quick)")
-            
-            async for progress in qsvc.quick_generate(
-                user_id=current_user.id,
-                document_id=question_snapshot["document_id"],
-                context=context,
-                count=1,
-                types=[q_type],
-                difficulty=question_snapshot["difficulty_level"] or "medium",
-                marks_by_type=marks_map,
-                subject_id=question_snapshot["subject_id"],
-                topic_id=None,
-                bloom_levels=bloom_to_use,
-            ):
-                if getattr(progress, "question", None):
-                    candidate = progress.question
-                    if (candidate.question_type or q_type) != q_type:
-                        continue
-                    if candidate.question_text and question_snapshot["question_text"] and candidate.question_text.strip() == question_snapshot["question_text"].strip():
-                        continue
-                    replacement = candidate
-                    logger.info(f"Quick regen: replacement={replacement.id}")
-                    break
+            # Fetch document chunks for RAG context
+            try:
+                from app.models.document import DocumentChunk
+                chunk_res = await db.execute(
+                    select(DocumentChunk)
+                    .where(DocumentChunk.document_id == question_snapshot["document_id"])
+                    .order_by(DocumentChunk.chunk_index)
+                    .limit(10)
+                )
+                doc_chunks = chunk_res.scalars().all()
+                content_context = "\n\n".join(c.chunk_text for c in doc_chunks if c.chunk_text)[:4000]
+            except Exception as e:
+                logger.warning(f"Failed to load document chunks for regen: {e}")
+                content_context = ""
+
+            if content_context:
+                system_prompt = _get_rubric_system_prompt(q_type)
+                import random as _r
+                regen_starter = _r.choice(_QUESTION_STARTERS.get(q_type, _QUESTION_STARTERS["default"]))
+                prompt = f"Content:\n{content_context}\n"
+                prompt += f"""
+Generate a {q_type.replace('_', ' ')} question based on this content.
+- Marks: {marks}
+- Difficulty: {question_snapshot["difficulty_level"] or "medium"}
+- REQUIRED: Your question MUST start with the word/phrase "{regen_starter}" — this is non-negotiable
+- FORBIDDEN: Do NOT start with "A clinician", "A patient", "A doctor", "A dentist", "A practitioner", "A student", "A researcher", or similar scenario setups.
+- The question text must be fully self-contained — do NOT mention "the text", "the reference", "the provided material", or any source
+- IMPORTANT: Generate a DIFFERENT question from: "{question_snapshot["question_text"][:150]}..."
+
+Output valid JSON only."""
+
+                try:
+                    response = await llm_service.generate_json(
+                        prompt=prompt, system_prompt=system_prompt, temperature=0.8,
+                    )
+                    if response and "question_text" in response:
+                        question_text = response["question_text"]
+                        if len(question_text) >= 15 and question_text.strip() != (question_snapshot["question_text"] or "").strip():
+                            question_embedding = await embedding_service.get_embedding(question_text)
+
+                            _s = _sanitize_question_fields({
+                                "learning_outcome_id": question_snapshot["learning_outcome_id"],
+                                "course_outcome_mapping": question_snapshot["course_outcome_mapping"],
+                                "bloom_taxonomy_level": response.get("bloom_level", question_snapshot["bloom_taxonomy_level"] or "understand"),
+                                "difficulty_level": question_snapshot["difficulty_level"] or "medium",
+                            })
+
+                            new_question = QuestionModel(
+                                document_id=question_snapshot["document_id"],
+                                subject_id=question_snapshot["subject_id"],
+                                topic_id=question_snapshot["topic_id"],
+                                session_id=session_id,
+                                question_text=question_text,
+                                question_embedding=question_embedding,
+                                question_type=q_type,
+                                marks=marks,
+                                difficulty_level=_s["difficulty_level"],
+                                bloom_taxonomy_level=_s["bloom_taxonomy_level"],
+                                correct_answer=response.get("correct_answer") or response.get("expected_answer"),
+                                options=response.get("options"),
+                                explanation=response.get("explanation"),
+                                topic_tags=response.get("topic_tags", question_snapshot["topic_tags"]),
+                                learning_outcome_id=_s["learning_outcome_id"],
+                                course_outcome_mapping=_s["course_outcome_mapping"],
+                                generation_confidence=0.75,
+                                vetting_status="pending",
+                                # Version control fields
+                                replaces_id=question_id,
+                                version_number=(question.version_number or 1) + 1,
+                                is_latest=True,
+                                generation_metadata={
+                                    "source": "quick_generation",
+                                    "regenerated_from": str(question_id),
+                                },
+                            )
+                            db.add(new_question)
+                            await db.commit()
+                            await db.refresh(new_question)
+
+                            # Update old question to link to replacement
+                            question.replaced_by_id = new_question.id
+                            question.is_latest = False
+                            await db.commit()
+
+                            replacement = new_question
+                            logger.info(f"Quick regen: replacement={replacement.id}")
+                except Exception as e:
+                    logger.error(f"Quick regen error: {e}")
+                    await db.rollback()
 
             if replacement:
                 return QR.model_validate(replacement)
@@ -1645,8 +1705,20 @@ Output valid JSON only."""
         elif gen_method == "import":
             logger.info("Imported question rejected — no automatic replacement")
 
-        # No replacement was generated
-        logger.info(f"Returning rejected question (no replacement, method={gen_method})")
+        # If no replacement was generated, restore the original question to pending
+        if not replacement:
+            logger.warning(f"Regeneration failed for question {question_id}, restoring to pending status")
+            try:
+                fresh_q = await db.execute(select(Question).where(Question.id == question_id))
+                original_question = fresh_q.scalar_one_or_none()
+                if original_question:
+                    original_question.vetting_status = "pending"
+                    original_question.vetted_at = None
+                    original_question.vetting_notes = "Regeneration failed - restored to pending"
+                    await db.commit()
+                    logger.info(f"Restored question {question_id} to pending status")
+            except Exception as restore_err:
+                logger.error(f"Failed to restore question to pending: {restore_err}")
     
     # Re-fetch the question from DB to get a clean ORM object with all attributes loaded
     fresh = await db.execute(
