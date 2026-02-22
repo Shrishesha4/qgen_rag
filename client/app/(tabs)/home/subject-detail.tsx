@@ -87,6 +87,9 @@ export default function SubjectDetailScreen() {
   // Import state
   const [isImporting, setIsImporting] = useState(false);
 
+  // Track if any document picker is currently open
+  const [isPickingDocument, setIsPickingDocument] = useState(false);
+
   // History state
   const [historySessions, setHistorySessions] = useState<GenerationSession[]>([]);
   const [isLoadingHistory, setIsLoadingHistory] = useState(false);
@@ -337,8 +340,15 @@ export default function SubjectDetailScreen() {
   const handleUploadSyllabus = async () => {
     if (!selectedTopic || !id) return;
 
+    // Prevent concurrent document picking
+    if (isPickingDocument) {
+      showWarning('Please wait for the current file selection to complete', 'File Picker Busy');
+      return;
+    }
+
     mediumImpact();
     setIsUploadingDoc(true);
+    setIsPickingDocument(true);
     setUploadStatus('Selecting file...');
     try {
       // Pick a document
@@ -377,9 +387,16 @@ export default function SubjectDetailScreen() {
       setShowTopicDetailModal(false);
       loadData();
     } catch (error: unknown) {
-      showError(error, 'Upload Failed');
+      // Check for concurrent picker error
+      const errorMessage = error instanceof Error ? error.message : String(error);
+      if (errorMessage.includes('document picking in progress') || errorMessage.includes('Different document picking')) {
+        showWarning('Please wait for the current file selection to complete', 'File Picker Busy');
+      } else {
+        showError(error, 'Upload Failed');
+      }
     } finally {
       setIsUploadingDoc(false);
+      setIsPickingDocument(false);
       setUploadStatus('');
     }
   };
@@ -405,7 +422,14 @@ export default function SubjectDetailScreen() {
   const handleExtractChaptersFromSyllabus = async () => {
     if (!id) return;
 
+    // Prevent concurrent document picking
+    if (isPickingDocument) {
+      showWarning('Please wait for the current file selection to complete', 'File Picker Busy');
+      return;
+    }
+
     setIsExtractingChapters(true);
+    setIsPickingDocument(true);
     setExtractionStatus('Selecting file...');
 
     try {
@@ -448,9 +472,16 @@ export default function SubjectDetailScreen() {
       showSuccess(`Successfully added ${response.chapters_created} chapters from syllabus`);
       loadData();
     } catch (error: unknown) {
-      showError(error, 'Extraction Failed');
+      // Check for concurrent picker error
+      const errorMessage = error instanceof Error ? error.message : String(error);
+      if (errorMessage.includes('document picking in progress') || errorMessage.includes('Different document picking')) {
+        showWarning('Please wait for the current file selection to complete', 'File Picker Busy');
+      } else {
+        showError(error, 'Extraction Failed');
+      }
     } finally {
       setIsExtractingChapters(false);
+      setIsPickingDocument(false);
       setExtractionStatus('');
     }
   };
@@ -462,7 +493,16 @@ export default function SubjectDetailScreen() {
 
   // ---- Import Questions ----
   const handleImportQuestions = async (topicId?: string) => {
+    // Prevent concurrent document picking
+    if (isPickingDocument) {
+      showWarning('Please wait for the current file selection to complete', 'File Picker Busy');
+      return;
+    }
+
     mediumImpact();
+    setIsImporting(true);
+    setIsPickingDocument(true);
+
     try {
       const result = await DocumentPicker.getDocumentAsync({
         type: [
@@ -476,7 +516,6 @@ export default function SubjectDetailScreen() {
       if (result.canceled || !result.assets?.[0]) return;
 
       const file = result.assets[0];
-      setIsImporting(true);
 
       const response = await questionsService.importQuestions(
         { uri: file.uri, name: file.name, type: file.mimeType || 'application/octet-stream' },
@@ -488,9 +527,16 @@ export default function SubjectDetailScreen() {
       loadData(); // Refresh to show new question count
     } catch (error) {
       console.error('Import failed:', error);
-      showError(error, 'Import Failed');
+      // Check for concurrent picker error
+      const errorMessage = error instanceof Error ? error.message : String(error);
+      if (errorMessage.includes('document picking in progress') || errorMessage.includes('Different document picking')) {
+        showWarning('Please wait for the current file selection to complete', 'File Picker Busy');
+      } else {
+        showError(error, 'Import Failed');
+      }
     } finally {
       setIsImporting(false);
+      setIsPickingDocument(false);
     }
   };
 

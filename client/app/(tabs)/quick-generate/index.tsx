@@ -64,6 +64,9 @@ export default function QuickGenerateScreen() {
   const cancelRef = useRef<(() => void) | null>(null);
   const progressAnim = useRef(new Animated.Value(0)).current;
 
+  // Track if document picker is currently open
+  const [isPickingDocument, setIsPickingDocument] = useState(false);
+
   // Load subjects on mount
   useEffect(() => {
     loadSubjects();
@@ -119,6 +122,12 @@ export default function QuickGenerateScreen() {
   };
 
   const handlePickDocument = async () => {
+    if (isPickingDocument) {
+      showWarning('Please wait for the current file selection to complete', 'File Picker Busy');
+      return;
+    }
+
+    setIsPickingDocument(true);
     try {
       mediumImpact();
       const result = await DocumentPicker.getDocumentAsync({
@@ -134,7 +143,14 @@ export default function QuickGenerateScreen() {
         });
       }
     } catch (error) {
-      showError(error, 'Document Error');
+      const errorMessage = error instanceof Error ? error.message : String(error);
+      if (errorMessage.includes('document picking in progress') || errorMessage.includes('Different document picking')) {
+        showWarning('Please wait for the current file selection to complete', 'File Picker Busy');
+      } else {
+        showError(error, 'Document Error');
+      }
+    } finally {
+      setIsPickingDocument(false);
     }
   };
 

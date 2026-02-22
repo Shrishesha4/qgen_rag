@@ -38,16 +38,23 @@ export function ReferenceMaterials({
 }: ReferenceMaterialsProps) {
   const colorScheme = useColorScheme();
   const colors = Colors[colorScheme ?? 'light'];
-  const { showError, showSuccess } = useToast();
+  const { showError, showSuccess, showWarning } = useToast();
 
   const [isUploadingBook, setIsUploadingBook] = useState(false);
   const [isUploadingPaper, setIsUploadingPaper] = useState(false);
   const [isUploadingQuestions, setIsUploadingQuestions] = useState(false);
   const [uploadProgress, setUploadProgress] = useState('');
   const [deletingId, setDeletingId] = useState<string | null>(null);
+  const [isPickingDocument, setIsPickingDocument] = useState(false);
 
   const handleUploadReferenceBook = useCallback(async () => {
+    if (isPickingDocument) {
+      showWarning('Please wait for the current file selection to complete', 'File Picker Busy');
+      return;
+    }
+
     setIsUploadingBook(true);
+    setIsPickingDocument(true);
     setUploadProgress('Selecting file...');
     try {
       const result = await DocumentPicker.getDocumentAsync({
@@ -85,15 +92,27 @@ export function ReferenceMaterials({
       // Wait a moment for backend to process, then refresh
       setTimeout(() => onRefresh(), 500);
     } catch (error) {
-      showError(error, 'Upload Failed');
+      const errorMessage = error instanceof Error ? error.message : String(error);
+      if (errorMessage.includes('document picking in progress') || errorMessage.includes('Different document picking')) {
+        showWarning('Please wait for the current file selection to complete', 'File Picker Busy');
+      } else {
+        showError(error, 'Upload Failed');
+      }
     } finally {
       setIsUploadingBook(false);
+      setIsPickingDocument(false);
       setUploadProgress('');
     }
-  }, [subjectId, onRefresh, showError, showSuccess]);
+  }, [subjectId, onRefresh, showError, showSuccess, showWarning, isPickingDocument]);
 
   const handleUploadTemplatePaper = useCallback(async () => {
+    if (isPickingDocument) {
+      showWarning('Please wait for the current file selection to complete', 'File Picker Busy');
+      return;
+    }
+
     setIsUploadingPaper(true);
+    setIsPickingDocument(true);
     setUploadProgress('Selecting file...');
     try {
       const result = await DocumentPicker.getDocumentAsync({
@@ -131,12 +150,18 @@ export function ReferenceMaterials({
       // Wait a moment for backend to process, then refresh
       setTimeout(() => onRefresh(), 500);
     } catch (error) {
-      showError(error, 'Upload Failed');
+      const errorMessage = error instanceof Error ? error.message : String(error);
+      if (errorMessage.includes('document picking in progress') || errorMessage.includes('Different document picking')) {
+        showWarning('Please wait for the current file selection to complete', 'File Picker Busy');
+      } else {
+        showError(error, 'Upload Failed');
+      }
     } finally {
       setIsUploadingPaper(false);
+      setIsPickingDocument(false);
       setUploadProgress('');
     }
-  }, [subjectId, onRefresh, showError, showSuccess]);
+  }, [subjectId, onRefresh, showError, showSuccess, showWarning, isPickingDocument]);
 
   const handleDeleteReference = useCallback((doc: ReferenceDocument) => {
     Alert.alert(
@@ -166,7 +191,13 @@ export function ReferenceMaterials({
   }, [onRefresh, showError, showSuccess]);
 
   const handleUploadReferenceQuestions = useCallback(async () => {
+    if (isPickingDocument) {
+      showWarning('Please wait for the current file selection to complete', 'File Picker Busy');
+      return;
+    }
+
     setIsUploadingQuestions(true);
+    setIsPickingDocument(true);
     setUploadProgress('Selecting file...');
     try {
       const result = await DocumentPicker.getDocumentAsync({
@@ -206,12 +237,18 @@ export function ReferenceMaterials({
       showSuccess('Reference questions uploaded successfully');
       setTimeout(() => onRefresh(), 500);
     } catch (error) {
-      showError(error, 'Upload Failed');
+      const errorMessage = error instanceof Error ? error.message : String(error);
+      if (errorMessage.includes('document picking in progress') || errorMessage.includes('Different document picking')) {
+        showWarning('Please wait for the current file selection to complete', 'File Picker Busy');
+      } else {
+        showError(error, 'Upload Failed');
+      }
     } finally {
       setIsUploadingQuestions(false);
+      setIsPickingDocument(false);
       setUploadProgress('');
     }
-  }, [subjectId, onRefresh, showError, showSuccess]);
+  }, [subjectId, onRefresh, showError, showSuccess, showWarning, isPickingDocument]);
 
   const formatDate = (dateString: string) => {
     const date = new Date(dateString);
