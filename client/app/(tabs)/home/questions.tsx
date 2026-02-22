@@ -19,6 +19,7 @@ import { questionsService, Question, QuestionUpdateRequest } from '@/services/qu
 import { subjectsService, Topic } from '@/services/subjects';
 import { useToast } from '@/components/toast';
 import { ExportModal } from '@/components/export-modal';
+import { selectionImpact, mediumImpact } from '@/utils/haptics';
 
 const FILTER_OPTIONS = [
   { label: 'All', value: '' },
@@ -142,6 +143,7 @@ export default function QuestionsScreen() {
 
   const handleRate = async (questionId: string, rating: number) => {
     try {
+      selectionImpact();
       await questionsService.rateQuestion(questionId, rating);
       setQuestions((prev) =>
         prev.map((q) => (q.id === questionId ? { ...q, user_rating: rating } : q))
@@ -157,6 +159,7 @@ export default function QuestionsScreen() {
 
   const handleArchive = async (questionId: string) => {
     try {
+      mediumImpact();
       await questionsService.archiveQuestion(questionId);
       setQuestions((prev) => prev.filter((q) => q.id !== questionId));
       setSelectedQuestion(null);
@@ -168,6 +171,7 @@ export default function QuestionsScreen() {
 
   const handleUnarchive = async (questionId: string) => {
     try {
+      mediumImpact();
       await questionsService.unarchiveQuestion(questionId);
       setQuestions((prev) => prev.filter((q) => q.id !== questionId));
       setSelectedQuestion(null);
@@ -180,6 +184,7 @@ export default function QuestionsScreen() {
   // Enter edit mode with current question values
   const startEditing = () => {
     if (!selectedQuestion) return;
+    selectionImpact();
     setEditData({
       question_text: selectedQuestion.question_text,
       correct_answer: selectedQuestion.correct_answer || undefined,
@@ -201,6 +206,7 @@ export default function QuestionsScreen() {
     if (!selectedQuestion) return;
     setIsSaving(true);
     try {
+      mediumImpact();
       const updated = await questionsService.updateQuestion(selectedQuestion.id, editData);
       // Update in list
       setQuestions((prev) =>
@@ -813,7 +819,10 @@ export default function QuestionsScreen() {
                   ],
                   filterType !== option.value && { backgroundColor: colors.background },
                 ]}
-                onPress={() => setFilterType(option.value)}
+                onPress={() => {
+                  selectionImpact();
+                  setFilterType(option.value);
+                }}
               >
                 <Text
                   style={[
@@ -836,7 +845,10 @@ export default function QuestionsScreen() {
                 ],
                 !showArchived && { backgroundColor: colors.background },
               ]}
-              onPress={() => setShowArchived(!showArchived)}
+              onPress={() => {
+                selectionImpact();
+                setShowArchived(!showArchived);
+              }}
             >
               <IconSymbol
                 name={showArchived ? "archivebox.fill" : "archivebox"}

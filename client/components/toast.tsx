@@ -19,6 +19,7 @@ import { IconSymbol } from '@/components/ui/icon-symbol';
 import { Colors, Spacing, BorderRadius, FontSizes } from '@/constants/theme';
 import { useColorScheme } from '@/hooks/use-color-scheme';
 import { extractErrorDetails } from '@/utils/errors';
+import { successNotification, errorNotification, warningNotification } from '@/utils/haptics';
 
 export type ToastType = 'success' | 'error' | 'warning' | 'info';
 
@@ -197,6 +198,7 @@ export function ToastProvider({ children }: { children: React.ReactNode }) {
   }, []);
 
   const showError = useCallback((error: unknown, title?: string) => {
+    errorNotification();
     const details = extractErrorDetails(error);
     showToast({
       type: 'error',
@@ -207,6 +209,7 @@ export function ToastProvider({ children }: { children: React.ReactNode }) {
   }, [showToast]);
 
   const showSuccess = useCallback((message: string, title?: string) => {
+    successNotification();
     showToast({
       type: 'success',
       title,
@@ -215,6 +218,7 @@ export function ToastProvider({ children }: { children: React.ReactNode }) {
   }, [showToast]);
 
   const showWarning = useCallback((message: string, title?: string) => {
+    warningNotification();
     showToast({
       type: 'warning',
       title,

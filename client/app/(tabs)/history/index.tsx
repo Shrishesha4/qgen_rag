@@ -17,6 +17,7 @@ import { Colors, Spacing, BorderRadius, FontSizes } from '@/constants/theme';
 import { useColorScheme } from '@/hooks/use-color-scheme';
 import { questionsService, GenerationSession, SessionQuestion, Question } from '@/services/questions';
 import { ExportModal } from '@/components/export-modal';
+import { mediumImpact, heavyImpact } from '@/utils/haptics';
 
 // Type for version chain groups
 interface VersionChain {
@@ -110,6 +111,7 @@ export default function HistoryScreen() {
     }, [loadSessions]);
 
     const openSessionDetail = async (session: GenerationSession) => {
+        mediumImpact();
         setSelectedSession(session);
         setIsLoadingQuestions(true);
         try {
@@ -124,6 +126,7 @@ export default function HistoryScreen() {
     };
 
     const handleDeleteSession = (session: GenerationSession) => {
+        mediumImpact();
         const count = session.questions_generated || 0;
         Alert.alert(
             'Delete Session',
@@ -135,6 +138,7 @@ export default function HistoryScreen() {
                     style: 'destructive',
                     onPress: async () => {
                         try {
+                            heavyImpact();
                             await questionsService.deleteSession(session.id);
                             setSessions(prev => prev.filter(s => s.id !== session.id));
                             if (selectedSession?.id === session.id) {
@@ -326,7 +330,10 @@ export default function HistoryScreen() {
                         <TouchableOpacity
                             style={[styles.pageButton, { opacity: page <= 1 ? 0.4 : 1 }]}
                             disabled={page <= 1}
-                            onPress={() => loadSessions(page - 1)}
+                            onPress={() => {
+                                mediumImpact();
+                                loadSessions(page - 1);
+                            }}
                         >
                             <Text style={[styles.pageButtonText, { color: colors.primary }]}>← Previous</Text>
                         </TouchableOpacity>
@@ -336,7 +343,10 @@ export default function HistoryScreen() {
                         <TouchableOpacity
                             style={[styles.pageButton, { opacity: page >= totalPages ? 0.4 : 1 }]}
                             disabled={page >= totalPages}
-                            onPress={() => loadSessions(page + 1)}
+                            onPress={() => {
+                                mediumImpact();
+                                loadSessions(page + 1);
+                            }}
                         >
                             <Text style={[styles.pageButtonText, { color: colors.primary }]}>Next →</Text>
                         </TouchableOpacity>

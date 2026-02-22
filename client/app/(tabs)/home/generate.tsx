@@ -21,6 +21,7 @@ import { useColorScheme } from '@/hooks/use-color-scheme';
 import { rubricsService, Rubric, RubricCreateData, QuestionTypeDistribution, GenerationProgress } from '@/services/rubrics';
 import { subjectsService, Subject } from '@/services/subjects';
 import { useToast } from '@/components/toast';
+import { lightImpact, mediumImpact, heavyImpact, selectionImpact } from '@/utils/haptics';
 
 const EXAM_TYPES = [
   { value: 'final_exam', label: 'Final Exam', icon: 'doc.fill' },
@@ -291,6 +292,7 @@ export default function GenerateScreen() {
   };
 
   const handleDeleteRubric = async (rubric: Rubric) => {
+    mediumImpact();
     Alert.alert(
       'Delete Rubric',
       `Are you sure you want to delete "${rubric.name}"?`,
@@ -301,6 +303,7 @@ export default function GenerateScreen() {
           style: 'destructive',
           onPress: async () => {
             try {
+              heavyImpact();
               await rubricsService.deleteRubric(rubric.id);
               loadData();
               showSuccess('Rubric deleted');
@@ -413,7 +416,10 @@ export default function GenerateScreen() {
         {/* Create New Rubric Button */}
         <TouchableOpacity
           style={[styles.createButton, { backgroundColor: colors.secondary }]}
-          onPress={() => setShowCreateModal(true)}
+          onPress={() => {
+            mediumImpact();
+            setShowCreateModal(true);
+          }}
         >
           <IconSymbol name="plus" size={20} color="#FFFFFF" />
           <Text style={styles.createButtonText}>Create New Rubric</Text>
@@ -622,7 +628,10 @@ export default function GenerateScreen() {
                         minimumValue={0}
                         maximumValue={50}
                         value={dist.count}
-                        onValueChange={(val: number) => updateQuestionCount(type.value, val)}
+                        onValueChange={(val: number) => {
+                          lightImpact();
+                          updateQuestionCount(type.value, val);
+                        }}
                         minimumTrackTintColor={type.color}
                         maximumTrackTintColor={colors.border}
                       />
@@ -632,7 +641,10 @@ export default function GenerateScreen() {
                       <Text style={[styles.sliderLabel, { color: colors.textSecondary }]}>Marks</Text>
                       <TouchableOpacity 
                         style={[styles.marksButton, { backgroundColor: colors.card, borderColor: colors.border }]}
-                        onPress={() => updateMarksEach(type.value, dist.marks_each - 1)}
+                        onPress={() => {
+                          mediumImpact();
+                          updateMarksEach(type.value, dist.marks_each - 1);
+                        }}
                       >
                         <Text style={[styles.marksButtonText, { color: type.color }]}>−</Text>
                       </TouchableOpacity>
@@ -647,7 +659,10 @@ export default function GenerateScreen() {
                       />
                       <TouchableOpacity 
                         style={[styles.marksButton, { backgroundColor: colors.card, borderColor: colors.border }]}
-                        onPress={() => updateMarksEach(type.value, dist.marks_each + 1)}
+                        onPress={() => {
+                          mediumImpact();
+                          updateMarksEach(type.value, dist.marks_each + 1);
+                        }}
                       >
                         <Text style={[styles.marksButtonText, { color: type.color }]}>+</Text>
                       </TouchableOpacity>
@@ -690,7 +705,10 @@ export default function GenerateScreen() {
                       minimumValue={0}
                       maximumValue={100}
                       value={loDistribution[lo.id]}
-                      onValueChange={(val: number) => updateLoPercentage(lo.id, val)}
+                      onValueChange={(val: number) => {
+                        lightImpact();
+                        updateLoPercentage(lo.id, val);
+                      }}
                       minimumTrackTintColor={color}
                       maximumTrackTintColor={colors.border}
                     />

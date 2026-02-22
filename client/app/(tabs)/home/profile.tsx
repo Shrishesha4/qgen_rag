@@ -24,6 +24,7 @@ import { useToast } from '@/components/toast';
 import { subjectsService } from '@/services/subjects';
 import { vettingService } from '@/services/vetting';
 import { API_BASE_URL } from '@/services/api';
+import { selectionImpact, mediumImpact, heavyImpact } from '@/utils/haptics';
 
 type ModalType = 'editProfile' | 'changePassword' | 'notifications' | 'appearance' | 'help' | 'about' | null;
 
@@ -197,6 +198,7 @@ export default function ProfileScreen() {
   };
 
   const handleDeleteAvatar = () => {
+    mediumImpact();
     Alert.alert(
       'Remove Avatar',
       'Are you sure you want to remove your profile picture?',
@@ -207,6 +209,7 @@ export default function ProfileScreen() {
           style: 'destructive',
           onPress: async () => {
             try {
+              heavyImpact();
               await deleteAvatar();
               showSuccess('Avatar removed');
             } catch (error) {
@@ -441,7 +444,10 @@ export default function ProfileScreen() {
               </View>
               <Switch
                 value={pushNotifications}
-                onValueChange={setPushNotifications}
+                onValueChange={(val) => {
+                  selectionImpact();
+                  setPushNotifications(val);
+                }}
                 trackColor={{ false: colors.border, true: colors.primary + '60' }}
                 thumbColor={pushNotifications ? colors.primary : '#F4F3F4'}
               />
@@ -453,7 +459,10 @@ export default function ProfileScreen() {
               </View>
               <Switch
                 value={emailNotifications}
-                onValueChange={setEmailNotifications}
+                onValueChange={(val) => {
+                  selectionImpact();
+                  setEmailNotifications(val);
+                }}
                 trackColor={{ false: colors.border, true: colors.primary + '60' }}
                 thumbColor={emailNotifications ? colors.primary : '#F4F3F4'}
               />
@@ -465,7 +474,10 @@ export default function ProfileScreen() {
               </View>
               <Switch
                 value={questionGenerated}
-                onValueChange={setQuestionGenerated}
+                onValueChange={(val) => {
+                  selectionImpact();
+                  setQuestionGenerated(val);
+                }}
                 trackColor={{ false: colors.border, true: colors.primary + '60' }}
                 thumbColor={questionGenerated ? colors.primary : '#F4F3F4'}
               />
@@ -477,7 +489,10 @@ export default function ProfileScreen() {
               </View>
               <Switch
                 value={vettingReminders}
-                onValueChange={setVettingReminders}
+                onValueChange={(val) => {
+                  selectionImpact();
+                  setVettingReminders(val);
+                }}
                 trackColor={{ false: colors.border, true: colors.primary + '60' }}
                 thumbColor={vettingReminders ? colors.primary : '#F4F3F4'}
               />

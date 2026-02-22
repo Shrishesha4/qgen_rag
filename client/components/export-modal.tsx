@@ -21,6 +21,7 @@ import { Colors, FontSizes, Spacing, BorderRadius } from '@/constants/theme';
 import { useColorScheme } from '@/hooks/use-color-scheme';
 import { ExportFormat, ExportOptions, exportQuestions } from '@/services/export';
 import { Question } from '@/services/questions';
+import { mediumImpact, selectionImpact } from '@/utils/haptics';
 
 interface ExportModalProps {
   visible: boolean;
@@ -72,6 +73,7 @@ export function ExportModal({
   ];
 
   const handleExport = async () => {
+    mediumImpact();
     setIsExporting(true);
     setError(null);
 
@@ -107,7 +109,10 @@ export function ExportModal({
       <View style={[styles.container, { backgroundColor: isDark ? '#1c1c1e' : '#fff' }]}>
         {/* Header */}
         <View style={[styles.header, { borderBottomColor: borderColor }]}>
-          <TouchableOpacity onPress={onClose} style={styles.headerButton}>
+          <TouchableOpacity onPress={() => {
+            mediumImpact();
+            onClose();
+          }} style={styles.headerButton}>
             <Text style={[styles.headerButtonText, { color: colors.primary }]}>Cancel</Text>
           </TouchableOpacity>
           <Text style={[styles.title, { color: textColor }]}>Export Questions</Text>
@@ -131,7 +136,10 @@ export function ExportModal({
                   { backgroundColor: selectedFormat === f.format ? selectedBg : cardBg },
                   { borderColor: selectedFormat === f.format ? colors.primary : borderColor },
                 ]}
-                onPress={() => setSelectedFormat(f.format)}
+                onPress={() => {
+                  selectionImpact();
+                  setSelectedFormat(f.format);
+                }}
               >
                 <IconSymbol
                   name={f.icon as any}
@@ -163,7 +171,10 @@ export function ExportModal({
                         { backgroundColor: groupBy === opt.value ? selectedBg : cardBg },
                         { borderColor: groupBy === opt.value ? colors.primary : borderColor },
                       ]}
-                      onPress={() => setGroupBy(opt.value)}
+                      onPress={() => {
+                        selectionImpact();
+                        setGroupBy(opt.value);
+                      }}
                     >
                       <Text
                         style={[
@@ -192,7 +203,10 @@ export function ExportModal({
                         { backgroundColor: vettingFilter === opt.value ? selectedBg : cardBg },
                         { borderColor: vettingFilter === opt.value ? colors.primary : borderColor },
                       ]}
-                      onPress={() => setVettingFilter(opt.value)}
+                      onPress={() => {
+                        selectionImpact();
+                        setVettingFilter(opt.value);
+                      }}
                     >
                       <Text
                         style={[
@@ -218,7 +232,10 @@ export function ExportModal({
               </View>
               <Switch
                 value={includeReplacedQuestions}
-                onValueChange={setIncludeReplacedQuestions}
+                onValueChange={(value) => {
+                  selectionImpact();
+                  setIncludeReplacedQuestions(value);
+                }}
                 trackColor={{ false: cardBg, true: colors.primary }}
                 thumbColor="#fff"
               />

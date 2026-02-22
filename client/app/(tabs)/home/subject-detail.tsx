@@ -30,6 +30,7 @@ import { useToast } from '@/components/toast';
 import { rubricsService, Rubric, RubricCreateData, GenerationProgress } from '@/services/rubrics';
 import { questionsService, GenerationSession, SessionQuestion, Question } from '@/services/questions';
 import { ExportModal } from '@/components/export-modal';
+import { mediumImpact, heavyImpact, selectionImpact } from '@/utils/haptics';
 
 export default function SubjectDetailScreen() {
   const colorScheme = useColorScheme();
@@ -147,6 +148,7 @@ export default function SubjectDetailScreen() {
       return;
     }
 
+    mediumImpact();
     setIsCreatingTopic(true);
     try {
       const data: TopicCreateData = {
@@ -170,6 +172,7 @@ export default function SubjectDetailScreen() {
 
   const handleDeleteTopic = async (topic: Topic) => {
     if (!id) return;
+    mediumImpact();
     Alert.alert(
       'Delete Chapter',
       `Are you sure you want to delete "${topic.name}"? This will also delete all associated questions.`,
@@ -180,6 +183,7 @@ export default function SubjectDetailScreen() {
           style: 'destructive',
           onPress: async () => {
             try {
+              heavyImpact();
               await subjectsService.deleteTopic(id, topic.id);
               loadData();
               showSuccess('Chapter deleted');
@@ -193,6 +197,7 @@ export default function SubjectDetailScreen() {
   };
 
   const handleTopicPress = (topic: Topic) => {
+    mediumImpact();
     setSelectedTopic(topic);
     setSyllabusContent(topic.syllabus_content || '');
     setShowTopicDetailModal(true);
@@ -200,6 +205,7 @@ export default function SubjectDetailScreen() {
 
   // ---- Chapter Generation ----
   const openGenerateModal = async (topic: Topic) => {
+    mediumImpact();
     setGenerateTopic(topic);
     setGenTab('quick');
     setGenProgress(null);
@@ -331,6 +337,7 @@ export default function SubjectDetailScreen() {
   const handleUploadSyllabus = async () => {
     if (!selectedTopic || !id) return;
 
+    mediumImpact();
     setIsUploadingDoc(true);
     setUploadStatus('Selecting file...');
     try {
@@ -380,6 +387,7 @@ export default function SubjectDetailScreen() {
   const handleSaveSyllabus = async () => {
     if (!selectedTopic || !id) return;
 
+    mediumImpact();
     try {
       await subjectsService.updateTopic(id, selectedTopic.id, {
         syllabus_content: syllabusContent,
@@ -454,6 +462,7 @@ export default function SubjectDetailScreen() {
 
   // ---- Import Questions ----
   const handleImportQuestions = async (topicId?: string) => {
+    mediumImpact();
     try {
       const result = await DocumentPicker.getDocumentAsync({
         type: [
@@ -500,6 +509,7 @@ export default function SubjectDetailScreen() {
   }, [id]);
 
   const openHistorySession = async (session: GenerationSession) => {
+    mediumImpact();
     setSelectedHistorySession(session);
     setIsLoadingSessionQuestions(true);
     try {
@@ -545,6 +555,7 @@ export default function SubjectDetailScreen() {
           headerRight: () => (
             <TouchableOpacity
               onPress={async () => {
+                mediumImpact();
                 try {
                   // Paginate to load all questions (API max limit is 100)
                   let allQuestions: Question[] = [];
@@ -609,14 +620,20 @@ export default function SubjectDetailScreen() {
           <View style={styles.actionsRow}>
             <TouchableOpacity
               style={[styles.actionButton, { backgroundColor: colors.primary }]}
-              onPress={() => router.push(`/(tabs)/home/generate?subjectId=${id}` as never)}
+              onPress={() => {
+                mediumImpact();
+                router.push(`/(tabs)/home/generate?subjectId=${id}` as never);
+              }}
             >
               <IconSymbol name="sparkles" size={18} color="#FFFFFF" />
               <Text style={styles.actionButtonText}>Generate</Text>
             </TouchableOpacity>
             <TouchableOpacity
               style={[styles.actionButton, { backgroundColor: colors.secondary }]}
-              onPress={() => router.push(`/(tabs)/home/questions?subjectId=${id}` as never)}
+              onPress={() => {
+                mediumImpact();
+                router.push(`/(tabs)/home/questions?subjectId=${id}` as never);
+              }}
             >
               <IconSymbol name="list.bullet" size={18} color="#FFFFFF" />
               <Text style={styles.actionButtonText}>Q&A's</Text>
@@ -642,7 +659,10 @@ export default function SubjectDetailScreen() {
                 styles.tabButton,
                 activeTab === 'chapters' && { backgroundColor: colors.primary },
               ]}
-              onPress={() => setActiveTab('chapters')}
+              onPress={() => {
+                selectionImpact();
+                setActiveTab('chapters');
+              }}
             >
               <IconSymbol
                 name="book.fill"
@@ -663,7 +683,10 @@ export default function SubjectDetailScreen() {
                 styles.tabButton,
                 activeTab === 'references' && { backgroundColor: colors.primary },
               ]}
-              onPress={() => setActiveTab('references')}
+              onPress={() => {
+                selectionImpact();
+                setActiveTab('references');
+              }}
             >
               <IconSymbol
                 name="doc.text.fill"
@@ -685,6 +708,7 @@ export default function SubjectDetailScreen() {
                 activeTab === 'history' && { backgroundColor: colors.primary },
               ]}
               onPress={() => {
+                selectionImpact();
                 setActiveTab('history');
                 loadHistory();
               }}
@@ -715,7 +739,10 @@ export default function SubjectDetailScreen() {
                 <View style={styles.sectionActions}>
                   <TouchableOpacity
                     style={[styles.addButton, { backgroundColor: '#34C759' + '20' }]}
-                    onPress={handleExtractChaptersFromSyllabus}
+                    onPress={() => {
+                      mediumImpact();
+                      handleExtractChaptersFromSyllabus();
+                    }}
                     disabled={isExtractingChapters}
                   >
                     <IconSymbol name="doc.text.magnifyingglass" size={14} color="#34C759" />
@@ -723,7 +750,10 @@ export default function SubjectDetailScreen() {
                   </TouchableOpacity>
                   <TouchableOpacity
                     style={[styles.addButton, { backgroundColor: colors.primary + '15' }]}
-                    onPress={() => setShowAddTopicModal(true)}
+                    onPress={() => {
+                      mediumImpact();
+                      setShowAddTopicModal(true);
+                    }}
                   >
                     <IconSymbol name="plus" size={16} color={colors.primary} />
                     <Text style={[styles.addButtonText, { color: colors.primary }]}>Add</Text>
@@ -931,7 +961,10 @@ export default function SubjectDetailScreen() {
         >
           <View style={[styles.modalContainer, { backgroundColor: colors.background }]}>
             <View style={[styles.modalHeader, { backgroundColor: colors.card, borderBottomColor: colors.border }]}>
-              <TouchableOpacity onPress={() => setShowAddTopicModal(false)}>
+              <TouchableOpacity onPress={() => {
+                mediumImpact();
+                setShowAddTopicModal(false);
+              }}>
                 <Text style={[styles.modalCancel, { color: colors.primary }]}>Cancel</Text>
               </TouchableOpacity>
               <Text style={[styles.modalTitle, { color: colors.text }]}>Add Chapter</Text>
@@ -980,7 +1013,10 @@ export default function SubjectDetailScreen() {
         >
           <View style={[styles.modalContainer, { backgroundColor: colors.background }]}>
             <View style={[styles.modalHeader, { backgroundColor: colors.card, borderBottomColor: colors.border }]}>
-              <TouchableOpacity onPress={() => setShowTopicDetailModal(false)}>
+              <TouchableOpacity onPress={() => {
+                mediumImpact();
+                setShowTopicDetailModal(false);
+              }}>
                 <Text style={[styles.modalCancel, { color: colors.primary }]}>Close</Text>
               </TouchableOpacity>
               <Text style={[styles.modalTitle, { color: colors.text }]} numberOfLines={1}>

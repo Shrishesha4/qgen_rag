@@ -22,6 +22,7 @@ import { questionsService } from '@/services/questions';
 import { subjectsService, Subject, Topic } from '@/services/subjects';
 import { useToast } from '@/components/toast';
 import { extractErrorDetails } from '@/utils/errors';
+import { mediumImpact, selectionImpact } from '@/utils/haptics';
 
 const CO_LEVELS = [
   { level: 1, label: 'Basic', color: '#34C759' },
@@ -628,7 +629,10 @@ export default function VettingScreen() {
               <View style={styles.marksInputWrapper}>
                 <TouchableOpacity
                   style={[styles.marksButton, { backgroundColor: colors.border }]}
-                  onPress={() => setEditMarks(prev => ({ ...prev, [question.id]: Math.max(1, (prev[question.id] || 1) - 1) }))}
+                  onPress={() => {
+                    mediumImpact();
+                    setEditMarks(prev => ({ ...prev, [question.id]: Math.max(1, (prev[question.id] || 1) - 1) }));
+                  }}
                 >
                   <IconSymbol name="minus" size={14} color={colors.text} />
                 </TouchableOpacity>
@@ -640,7 +644,10 @@ export default function VettingScreen() {
                 />
                 <TouchableOpacity
                   style={[styles.marksButton, { backgroundColor: colors.border }]}
-                  onPress={() => setEditMarks(prev => ({ ...prev, [question.id]: (prev[question.id] || 1) + 1 }))}
+                  onPress={() => {
+                    mediumImpact();
+                    setEditMarks(prev => ({ ...prev, [question.id]: (prev[question.id] || 1) + 1 }));
+                  }}
                 >
                   <IconSymbol name="plus" size={14} color={colors.text} />
                 </TouchableOpacity>
@@ -662,7 +669,10 @@ export default function VettingScreen() {
                       { borderColor: color },
                       editDifficulty[question.id] === value && { backgroundColor: color },
                     ]}
-                    onPress={() => setEditDifficulty(prev => ({ ...prev, [question.id]: value }))}
+                    onPress={() => {
+                      selectionImpact();
+                      setEditDifficulty(prev => ({ ...prev, [question.id]: value }));
+                    }}
                   >
                     <Text style={[
                       styles.difficultyButtonText,
@@ -837,7 +847,10 @@ export default function VettingScreen() {
         <View style={styles.actionButtons}>
           <TouchableOpacity
             style={[styles.actionButton, styles.rejectButton, regenerating[question.id] && { opacity: 0.6 }]}
-            onPress={() => handleReject(question.id)}
+            onPress={() => {
+              mediumImpact();
+              handleReject(question.id);
+            }}
             disabled={!!regenerating[question.id]}
           >
             <IconSymbol name="xmark" size={16} color="#FF3B30" />
@@ -845,14 +858,20 @@ export default function VettingScreen() {
           </TouchableOpacity>
           <TouchableOpacity
             style={[styles.actionButton, { backgroundColor: colors.border }]}
-            onPress={() => setExpandedQuestion(isExpanded ? null : question.id)}
+            onPress={() => {
+              mediumImpact();
+              setExpandedQuestion(isExpanded ? null : question.id);
+            }}
           >
             <IconSymbol name="pencil" size={16} color={colors.text} />
             <Text style={[styles.actionButtonText, { color: colors.text }]}>Edit</Text>
           </TouchableOpacity>
           <TouchableOpacity
             style={[styles.actionButton, styles.approveButton]}
-            onPress={() => handleApprove(question.id)}
+            onPress={() => {
+              mediumImpact();
+              handleApprove(question.id);
+            }}
           >
             <IconSymbol name="checkmark" size={16} color="#FFFFFF" />
             <Text style={[styles.actionButtonText, { color: '#FFFFFF' }]}>Approve</Text>

@@ -23,6 +23,7 @@ import { questionsService, QuickGenerateProgress, Question } from '@/services/qu
 import { subjectsService, Subject, Topic } from '@/services/subjects';
 import { useToast } from '@/components/toast';
 import { extractErrorDetails } from '@/utils/errors';
+import { selectionImpact, mediumImpact } from '@/utils/haptics';
 
 type QuestionType = 'mcq' | 'short_answer' | 'long_answer';
 type Difficulty = 'easy' | 'medium' | 'hard';
@@ -119,6 +120,7 @@ export default function QuickGenerateScreen() {
 
   const handlePickDocument = async () => {
     try {
+      mediumImpact();
       const result = await DocumentPicker.getDocumentAsync({
         type: 'application/pdf',
         copyToCacheDirectory: true,
@@ -137,6 +139,7 @@ export default function QuickGenerateScreen() {
   };
 
   const handleGenerate = () => {
+    mediumImpact();
     if (!selectedFile) {
       showWarning('Please upload a PDF document first', 'Missing File');
       return;
@@ -200,6 +203,7 @@ export default function QuickGenerateScreen() {
   };
 
   const toggleType = (type: QuestionType) => {
+    selectionImpact();
     setSelectedTypes(prev => 
       prev.includes(type) 
         ? prev.filter(t => t !== type)
@@ -340,7 +344,10 @@ export default function QuickGenerateScreen() {
                 count === num && { backgroundColor: colors.primary },
                 { borderColor: count === num ? colors.primary : colors.border }
               ]}
-              onPress={() => setCount(num)}
+              onPress={() => {
+                selectionImpact();
+                setCount(num);
+              }}
               disabled={isGenerating}
             >
               <Text style={[
@@ -370,7 +377,10 @@ export default function QuickGenerateScreen() {
                 difficulty === value && { backgroundColor: color, borderColor: color },
                 { borderColor: difficulty === value ? color : colors.border }
               ]}
-              onPress={() => setDifficulty(value)}
+              onPress={() => {
+                selectionImpact();
+                setDifficulty(value);
+              }}
               disabled={isGenerating}
             >
               <Text style={[
@@ -394,7 +404,10 @@ export default function QuickGenerateScreen() {
               <View style={styles.marksInputWrapper}>
                 <TouchableOpacity
                   style={[styles.marksButton, { backgroundColor: colors.border }]}
-                  onPress={() => setMarksMcq(Math.max(1, marksMcq - 1))}
+                  onPress={() => {
+                    mediumImpact();
+                    setMarksMcq(Math.max(1, marksMcq - 1));
+                  }}
                   disabled={isGenerating}
                 >
                   <IconSymbol name="minus" size={14} color={colors.text} />
@@ -408,7 +421,10 @@ export default function QuickGenerateScreen() {
                 />
                 <TouchableOpacity
                   style={[styles.marksButton, { backgroundColor: colors.border }]}
-                  onPress={() => setMarksMcq(marksMcq + 1)}
+                  onPress={() => {
+                    mediumImpact();
+                    setMarksMcq(marksMcq + 1);
+                  }}
                   disabled={isGenerating}
                 >
                   <IconSymbol name="plus" size={14} color={colors.text} />
@@ -422,7 +438,10 @@ export default function QuickGenerateScreen() {
               <View style={styles.marksInputWrapper}>
                 <TouchableOpacity
                   style={[styles.marksButton, { backgroundColor: colors.border }]}
-                  onPress={() => setMarksShort(Math.max(1, marksShort - 1))}
+                  onPress={() => {
+                    mediumImpact();
+                    setMarksShort(Math.max(1, marksShort - 1));
+                  }}
                   disabled={isGenerating}
                 >
                   <IconSymbol name="minus" size={14} color={colors.text} />
@@ -450,7 +469,10 @@ export default function QuickGenerateScreen() {
               <View style={styles.marksInputWrapper}>
                 <TouchableOpacity
                   style={[styles.marksButton, { backgroundColor: colors.border }]}
-                  onPress={() => setMarksLong(Math.max(1, marksLong - 1))}
+                  onPress={() => {
+                    mediumImpact();
+                    setMarksLong(Math.max(1, marksLong - 1));
+                  }}
                   disabled={isGenerating}
                 >
                   <IconSymbol name="minus" size={14} color={colors.text} />
@@ -464,7 +486,10 @@ export default function QuickGenerateScreen() {
                 />
                 <TouchableOpacity
                   style={[styles.marksButton, { backgroundColor: colors.border }]}
-                  onPress={() => setMarksLong(marksLong + 1)}
+                  onPress={() => {
+                    mediumImpact();
+                    setMarksLong(marksLong + 1);
+                  }}
                   disabled={isGenerating}
                 >
                   <IconSymbol name="plus" size={14} color={colors.text} />

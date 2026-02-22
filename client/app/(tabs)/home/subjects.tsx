@@ -17,6 +17,7 @@ import { Colors, Spacing, BorderRadius, FontSizes } from '@/constants/theme';
 import { useColorScheme } from '@/hooks/use-color-scheme';
 import { subjectsService, Subject, SubjectCreateData } from '@/services/subjects';
 import { useToast } from '@/components/toast';
+import { mediumImpact, heavyImpact } from '@/utils/haptics';
 
 export default function SubjectsScreen() {
   const colorScheme = useColorScheme();
@@ -77,6 +78,7 @@ export default function SubjectsScreen() {
   };
 
   const handleDeleteSubject = async (subject: Subject) => {
+    mediumImpact();
     Alert.alert(
       'Delete Subject',
       `Are you sure you want to delete "${subject.name}"? This will also delete all topics and questions.`,
@@ -87,6 +89,7 @@ export default function SubjectsScreen() {
           style: 'destructive',
           onPress: async () => {
             try {
+              heavyImpact();
               await subjectsService.deleteSubject(subject.id);
               loadSubjects();
               showSuccess('Subject deleted');
@@ -184,7 +187,10 @@ export default function SubjectsScreen() {
       {/* Add Button */}
       <TouchableOpacity
         style={[styles.addButton, { backgroundColor: colors.primary }]}
-        onPress={() => setShowAddModal(true)}
+        onPress={() => {
+          mediumImpact();
+          setShowAddModal(true);
+        }}
       >
         <IconSymbol name="plus" size={24} color="#FFFFFF" />
       </TouchableOpacity>
