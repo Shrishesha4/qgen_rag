@@ -1,17 +1,7 @@
-# =============================================================================
-# QuestionGeneration AI - Docker Compose Configuration
-# =============================================================================
-# A stateful RAG-based question generation system for educators
-#
 # Services:
 #   - db: PostgreSQL 16 with pgvector for vector similarity search
 #   - redis: Redis 7 for caching, sessions, and rate limiting
 #   - api: FastAPI backend with ML models
-#
-# LLM Providers:
-#   - Ollama (local): Free, runs on your hardware, recommended for GPU
-#   - Gemini (cloud): Commercial API, faster, better quality
-#
 # Usage:
 #   Development:  docker-compose up -d
 #   Production:   docker-compose -f docker-compose.yml -f docker-compose.prod.yml up -d
@@ -20,11 +10,6 @@
 # ==============================================================================
 
 services:
-  # ===========================================================================
-  # Database Service - PostgreSQL with pgvector
-  # ===========================================================================
-  # Stores all application data including vector embeddings for semantic search
-  # Uses pgvector extension for efficient similarity queries
   db:
     image: pgvector/pgvector:pg16
     container_name: qgen_db
@@ -33,7 +18,6 @@ services:
       POSTGRES_USER: ${POSTGRES_USER:-qgen_user}
       POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-qgen_password}
       POSTGRES_DB: ${POSTGRES_DB:-qgen_db}
-      # Performance tuning for vector workloads
       POSTGRES_INITDB_ARGS: "--encoding=UTF8 --locale=C"
     volumes:
       - postgres_data:/var/lib/postgresql/data
@@ -52,23 +36,12 @@ services:
       timeout: 5s
       retries: 5
       start_period: 10s
-    # Resource limits (adjust based on your system)
     deploy:
       resources:
         limits:
           memory: 2G
         reservations:
           memory: 512M
-
-  # ===========================================================================
-  # Cache & Session Store - Redis
-  # ===========================================================================
-  # Handles:
-  #   - JWT token blacklisting
-  #   - Rate limiting counters
-  #   - Embedding cache (L2 persistent cache)
-  #   - Generation locks
-  #   - Session management
   redis:
     image: redis:7-alpine
     container_name: qgen_redis
@@ -98,29 +71,8 @@ services:
         reservations:
           memory: 128M
 
-  # ===========================================================================
-  # LLM Options
-  # ===========================================================================
-  # Choose one provider below. Set LLM_PROVIDER=ollama or LLM_PROVIDER=gemini in .env
-  #
-  # OLLAMA (Local):
-  #  - Free, privacy-first, runs on your hardware
-  #  - Pros: No API costs, full data privacy, works offline
-  #  - Cons: Requires GPU/CPU compute, need to manage locally
-  #  - Setup: Uncomment ollama service below or use local installation
-  #
-  # GEMINI (Cloud):
-  #  - Commercial API, managed by Google
-  #  - Pros: Better quality, faster, no local setup
-  #  - Cons: API costs (free tier available), requires internet
-  #  - Setup: Set GEMINI_API_KEY in .env (get from aistudio.google.com/apikey)
-
-  # ===========================================================================
-  # Ollama LLM Service (Optional - Docker version)
-  # ===========================================================================
   # Uncomment this section if you prefer running Ollama in Docker
   # NOTE: For GPU acceleration, local installation is recommended
-  #
   # ollama:
   #   image: ollama/ollama:latest
   #   container_name: qgen_ollama
@@ -139,16 +91,6 @@ services:
   #   #         - driver: nvidia
   #   #           count: 1
   #   #           capabilities: [gpu]
-
-  # ===========================================================================
-  # Backend API - FastAPI
-  # ===========================================================================
-  # Main application server with:
-  #   - RAG-based question generation
-  #   - Hybrid search (BM25 + vector)
-  #   - Cross-encoder reranking
-  #   - JWT authentication
-  #   - SSE streaming for real-time updates
   api:
     build:
       context: ./backend
@@ -165,13 +107,10 @@ services:
       --port 8000
       --reload
       --log-level ${LOG_LEVEL:-info}
-    # Enable host.docker.internal for accessing local Ollama
     extra_hosts:
       - "host.docker.internal:host-gateway"
     volumes:
-      # Mount source code for hot-reload in development
       - ./backend:/app
-      # Persistent storage for uploaded documents
       - upload_data:/app/uploads
       # Cache for ML models (sentence-transformers, cross-encoder)
       - model_cache:/root/.cache
@@ -246,23 +185,16 @@ services:
         reservations:
           memory: 1G
 
-# =============================================================================
-# Volumes
-# =============================================================================
 volumes:
-  # PostgreSQL data persistence
   postgres_data:
     name: qgen_postgres_data
 
-  # Redis data persistence (AOF + RDB)
   redis_data:
     name: qgen_redis_data
 
-  # Uploaded documents storage
   upload_data:
     name: qgen_upload_data
 
-  # ML model cache (sentence-transformers, cross-encoder)
   model_cache:
     name: qgen_model_cache
 
@@ -270,9 +202,6 @@ volumes:
   # ollama_data:
   #   name: qgen_ollama_data
 
-# =============================================================================
-# Networks
-# =============================================================================
 networks:
   qgen_net:
     name: qgen_network
