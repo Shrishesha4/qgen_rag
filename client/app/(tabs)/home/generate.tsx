@@ -87,6 +87,7 @@ export default function GenerateScreen() {
         rubricsService.listRubrics(1, 50),
         subjectsService.listSubjects(1, 100),
       ]);
+      console.log('[Generate] Loaded rubrics:', rubricsResponse.rubrics.length);
       console.log('[Generate] Loaded subjects:', subjectsResponse.subjects.length);
       setRubrics(rubricsResponse.rubrics);
       setSubjects(subjectsResponse.subjects);
@@ -235,6 +236,7 @@ export default function GenerateScreen() {
   };
 
   const handleStartGeneration = (rubric: Rubric) => {
+    console.log('[Generate] Starting generation for rubric:', rubric.id, rubric.name);
     setSelectedRubric(rubric);
     setGeneratedQuestions([]);
     setGenerationProgress(null);
@@ -242,15 +244,22 @@ export default function GenerateScreen() {
   };
 
   const handleGenerate = () => {
-    if (!selectedRubric) return;
+    console.log('[Generate] handleGenerate called, selectedRubric:', selectedRubric?.id);
+    if (!selectedRubric) {
+      console.log('[Generate] No rubric selected, aborting');
+      return;
+    }
     
+    console.log('[Generate] Starting generation...');
     setIsGenerating(true);
     setGeneratedQuestions([]);
     progressAnim.setValue(0);
     
+    console.log('[Generate] Calling rubricsService.generateFromRubric with rubricId:', selectedRubric.id);
     const cancel = rubricsService.generateFromRubric(
       selectedRubric.id,
       (progress) => {
+        console.log('[Generate] Progress received:', progress.status, progress.message);
         setGenerationProgress(progress);
         
         if (progress.progress) {

@@ -127,7 +127,7 @@ export default function SubjectsScreen() {
       <View style={styles.subjectInfo}>
         <Text style={[styles.subjectName, { color: colors.text }]}>{item.name}</Text>
         <Text style={[styles.subjectCode, { color: colors.textSecondary }]}>
-          {item.code} • {item.total_topics} Chapters
+          {item.code} • {item.total_topics} Topics
         </Text>
       </View>
 

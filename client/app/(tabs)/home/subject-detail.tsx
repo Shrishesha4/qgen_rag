@@ -284,7 +284,11 @@ export default function SubjectDetailScreen() {
   };
 
   const handleQuickGenerate = () => {
-    if (!generateTopic || !id) return;
+    console.log('[SubjectDetail] handleQuickGenerate called, topic:', generateTopic?.name);
+    if (!generateTopic || !id) {
+      console.log('[SubjectDetail] Missing generateTopic or id, aborting');
+      return;
+    }
     const mcq = parseInt(qgMcqCount) || 0;
     const short = parseInt(qgShortCount) || 0;
     const long = parseInt(qgLongCount) || 0;
@@ -302,6 +306,7 @@ export default function SubjectDetailScreen() {
     if (short > 0) dist.short_notes = { count: short, marks_each: parseInt(qgShortMarks) || 5 };
     if (long > 0) dist.essay = { count: long, marks_each: parseInt(qgLongMarks) || 10 };
 
+    console.log('[SubjectDetail] Starting generation with dist:', JSON.stringify(dist));
     const cancel = rubricsService.generateChapter(
       generateTopic.id,
       dist,
@@ -647,7 +652,7 @@ export default function SubjectDetailScreen() {
             <View style={styles.statsRow}>
               <View style={styles.statItem}>
                 <Text style={styles.statValue}>{topics.length}</Text>
-                <Text style={styles.statLabel}>Chapters</Text>
+                <Text style={styles.statLabel}>Topics</Text>
               </View>
               <View style={styles.statDivider} />
               <View style={styles.statItem}>
@@ -721,7 +726,7 @@ export default function SubjectDetailScreen() {
                   { color: activeTab === 'chapters' ? '#FFFFFF' : colors.textSecondary },
                 ]}
               >
-                Chapters
+                Topics
               </Text>
             </TouchableOpacity>
             <TouchableOpacity
@@ -780,7 +785,7 @@ export default function SubjectDetailScreen() {
             <View style={styles.section}>
               <View style={styles.sectionHeader}>
                 <Text style={[styles.sectionTitle, { color: colors.textSecondary }]}>
-                  CHAPTERS ({topics.length})
+                  TOPICS ({topics.length})
                 </Text>
                 <View style={styles.sectionActions}>
                   <TouchableOpacity
@@ -792,7 +797,7 @@ export default function SubjectDetailScreen() {
                     disabled={isExtractingChapters}
                   >
                     <IconSymbol name="doc.text.magnifyingglass" size={14} color="#34C759" />
-                    <Text style={[styles.addButtonText, { color: '#34C759' }]}>Import Syllabus</Text>
+                    <Text style={[styles.addButtonText, { color: '#34C759' }]}>Import</Text>
                   </TouchableOpacity>
                   <TouchableOpacity
                     style={[styles.addButton, { backgroundColor: colors.primary + '15' }]}
@@ -815,7 +820,7 @@ export default function SubjectDetailScreen() {
                     {extractionStatus || 'Processing...'}
                   </Text>
                   <Text style={[styles.extractionHint, { color: colors.textSecondary }]}>
-                    AI is reading your syllabus and identifying chapters...
+                    AI is reading your syllabus and identifying topics...
                   </Text>
                 </View>
               )}
@@ -823,9 +828,9 @@ export default function SubjectDetailScreen() {
               {topics.length === 0 ? (
                 <View style={[styles.emptyCard, { backgroundColor: colors.card }]}>
                   <IconSymbol name="book.closed" size={48} color={colors.textTertiary} />
-                  <Text style={[styles.emptyTitle, { color: colors.text }]}>No Chapters Yet</Text>
+                  <Text style={[styles.emptyTitle, { color: colors.text }]}>No Topics Yet</Text>
                   <Text style={[styles.emptyText, { color: colors.textSecondary }]}>
-                    Add chapters to organize your syllabus and enable question generation.
+                    Add Topics to organize your syllabus and enable question generation.
                   </Text>
                 </View>
               ) : (

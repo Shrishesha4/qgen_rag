@@ -7,7 +7,7 @@ import * as SecureStore from 'expo-secure-store';
 import { Platform } from 'react-native';
 
 // Your machine's local IP address - update this if it changes
-const DEV_MACHINE_IP = '100.64.0.5';
+const DEV_MACHINE_IP = '10.141.7.200';
 
 // Use environment variable to override for simulator testing
 // Set EXPO_PUBLIC_SIMULATOR=true to test with iOS Simulator (uses localhost)

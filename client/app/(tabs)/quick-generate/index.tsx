@@ -655,7 +655,7 @@ export default function QuickGenerateScreen() {
                     <View style={styles.modalItemContent}>
                       <Text style={[styles.modalItemTitle, { color: colors.text }]}>{subject.name}</Text>
                       <Text style={[styles.modalItemSubtitle, { color: colors.textSecondary }]}>
-                        {subject.code} • {subject.total_topics} chapters
+                        {subject.code} • {subject.total_topics} topics
                       </Text>
                     </View>
                     {selectedSubjectId === subject.id && (
@@ -691,7 +691,7 @@ export default function QuickGenerateScreen() {
               {topics.length === 0 ? (
                 <View style={styles.emptyList}>
                   <Text style={[styles.emptyListText, { color: colors.textSecondary }]}>
-                    No chapters available for this subject.
+                    No topics available for this subject.
                   </Text>
                 </View>
               ) : (

@@ -1004,7 +1004,7 @@ export default function VettingScreen() {
                       <View style={styles.modalItemContent}>
                         <Text style={[styles.modalItemTitle, { color: colors.text }]}>{subject.name}</Text>
                         <Text style={[styles.modalItemSubtitle, { color: colors.textSecondary }]}>
-                          {subject.code} • {subject.total_topics} chapters
+                          {subject.code} • {subject.total_topics} topics
                         </Text>
                       </View>
                       {showSubjectPicker && editSubjectId[showSubjectPicker] === subject.id && (
@@ -1082,7 +1082,7 @@ export default function VettingScreen() {
               ) : (
                 <View style={styles.emptyList}>
                   <Text style={[styles.emptyListText, { color: colors.textSecondary }]}>
-                    No chapters available.
+                    No topics available.
                   </Text>
                 </View>
               )}
