@@ -10,7 +10,23 @@ export interface VettingRequest {
   status: 'approved' | 'rejected';
   course_outcome_mapping?: Record<string, number>;
   notes?: string;
+  rejection_reasons?: string[];
 }
+
+// Predefined rejection reasons
+export const REJECTION_REASONS = [
+  { id: 'duplicate', label: 'Duplicate Question', description: 'Similar to an existing question' },
+  { id: 'too_easy', label: 'Too Easy', description: 'Question lacks sufficient challenge' },
+  { id: 'too_hard', label: 'Too Difficult', description: 'Question is overly complex' },
+  { id: 'unclear', label: 'Unclear Wording', description: 'Question is ambiguous or confusing' },
+  { id: 'off_topic', label: 'Off Topic', description: 'Not relevant to the subject matter' },
+  { id: 'incorrect_answer', label: 'Wrong Answer', description: 'The correct answer is inaccurate' },
+  { id: 'poor_options', label: 'Poor MCQ Options', description: 'Options are too obvious or confusing' },
+  { id: 'too_long', label: 'Too Long', description: 'Question is unnecessarily verbose' },
+  { id: 'too_short', label: 'Too Short', description: 'Question lacks sufficient context' },
+] as const;
+
+export type RejectionReasonId = typeof REJECTION_REASONS[number]['id'];
 
 // Alias for Question with vetting-specific fields
 export interface PendingQuestion extends Question {
@@ -81,8 +97,13 @@ export const vettingService = {
   /**
    * Approve or reject a question
    */
-  async vetQuestion(questionId: string, status: 'approved' | 'rejected', notes?: string): Promise<Question> {
-    const data: VettingRequest = { status, notes };
+  async vetQuestion(
+    questionId: string, 
+    status: 'approved' | 'rejected', 
+    notes?: string,
+    rejectionReasons?: string[]
+  ): Promise<Question> {
+    const data: VettingRequest = { status, notes, rejection_reasons: rejectionReasons };
     const response = await apiClient.post<Question>(`/questions/${questionId}/vet`, data, { timeout: 120000 });
     return response.data;
   },

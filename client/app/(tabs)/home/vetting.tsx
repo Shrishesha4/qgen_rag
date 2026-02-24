@@ -17,7 +17,7 @@ import { BlurView } from 'expo-blur';
 import { IconSymbol } from '@/components/ui/icon-symbol';
 import { Colors, Spacing, BorderRadius, FontSizes } from '@/constants/theme';
 import { useColorScheme } from '@/hooks/use-color-scheme';
-import { vettingService, PendingQuestion, VettingStats, CourseOutcomeMapping } from '@/services/vetting';
+import { vettingService, PendingQuestion, VettingStats, CourseOutcomeMapping, REJECTION_REASONS } from '@/services/vetting';
 import { questionsService } from '@/services/questions';
 import { subjectsService, Subject, Topic } from '@/services/subjects';
 import { useToast } from '@/components/toast';
@@ -68,6 +68,10 @@ export default function VettingScreen() {
   const [answerEditMode, setAnswerEditMode] = useState<Record<string, boolean>>({});
   const [answerDraft, setAnswerDraft] = useState<Record<string, string | null>>({});
   const [savingAnswer, setSavingAnswer] = useState<string | null>(null);
+
+  // Rejection reason modal state
+  const [showRejectModal, setShowRejectModal] = useState<string | null>(null);
+  const [selectedRejectReasons, setSelectedRejectReasons] = useState<string[]>([]);
 
   // Subject/Topic picker state
   const [subjects, setSubjects] = useState<Subject[]>([]);
@@ -290,21 +294,37 @@ export default function VettingScreen() {
     }
   };
 
-  const handleReject = async (questionId: string) => {
-    Alert.alert(
-      'Reject Question',
-      'Are you sure you want to reject this question?',
-      [
-        { text: 'Cancel', style: 'cancel' },
-        {
-          text: 'Reject',
-          style: 'destructive',
-          onPress: async () => {
-            try {
-              // show regenerating indicator for this question while backend generates replacement
-              setRegenerating(prev => ({ ...prev, [questionId]: true }));
+  const openRejectModal = (questionId: string) => {
+    setSelectedRejectReasons([]);
+    setShowRejectModal(questionId);
+    selectionImpact();
+  };
 
-              const replacement = await vettingService.vetQuestion(questionId, 'rejected', 'Rejected by reviewer');
+  const toggleRejectReason = (reasonId: string) => {
+    setSelectedRejectReasons(prev => 
+      prev.includes(reasonId) 
+        ? prev.filter(r => r !== reasonId)
+        : [...prev, reasonId]
+    );
+    selectionImpact();
+  };
+
+  const confirmReject = async () => {
+    const questionId = showRejectModal;
+    if (!questionId) return;
+    
+    setShowRejectModal(null);
+    
+    try {
+      // show regenerating indicator for this question while backend generates replacement
+      setRegenerating(prev => ({ ...prev, [questionId]: true }));
+
+      const replacement = await vettingService.vetQuestion(
+        questionId, 
+        'rejected', 
+        'Rejected by reviewer',
+        selectedRejectReasons.length > 0 ? selectedRejectReasons : undefined
+      );
 
               // clear regenerating flag
               setRegenerating(prev => ({ ...prev, [questionId]: false }));
@@ -391,10 +411,6 @@ export default function VettingScreen() {
               setRegenerating(prev => ({ ...prev, [questionId]: false }));
               showError(error, 'Rejection Failed');
             }
-          },
-        },
-      ]
-    );
   };
 
   const updateCoMapping = (questionId: string, co: string, level: number) => {
@@ -849,7 +865,7 @@ export default function VettingScreen() {
             style={[styles.actionButton, styles.rejectButton, regenerating[question.id] && { opacity: 0.6 }]}
             onPress={() => {
               mediumImpact();
-              handleReject(question.id);
+              openRejectModal(question.id);
             }}
             disabled={!!regenerating[question.id]}
           >
@@ -1087,6 +1103,81 @@ export default function VettingScreen() {
                 </View>
               )}
             </ScrollView>
+          </View>
+        </View>
+      </Modal>
+
+      {/* Rejection Reason Modal */}
+      <Modal
+        visible={!!showRejectModal}
+        transparent
+        animationType="fade"
+        onRequestClose={() => setShowRejectModal(null)}
+      >
+        <View style={styles.modalOverlay}>
+          <View style={[styles.modalContent, { backgroundColor: colors.card }]}>
+            <View style={styles.rejectModalHeader}>
+              <Text style={[styles.modalTitle, { color: colors.text }]}>Reject Question</Text>
+              <TouchableOpacity onPress={() => setShowRejectModal(null)}>
+                <IconSymbol name="xmark.circle.fill" size={24} color={colors.textSecondary} />
+              </TouchableOpacity>
+            </View>
+            
+            <Text style={[styles.rejectModalSubtitle, { color: colors.textSecondary }]}>
+              Why are you rejecting this question? (Optional)
+            </Text>
+            
+            <ScrollView style={styles.rejectReasonsList}>
+              {REJECTION_REASONS.map((reason) => {
+                const isSelected = selectedRejectReasons.includes(reason.id);
+                return (
+                  <TouchableOpacity
+                    key={reason.id}
+                    style={[
+                      styles.rejectReasonItem,
+                      { borderColor: isSelected ? colors.primary : colors.border },
+                      isSelected && { backgroundColor: `${colors.primary}15` }
+                    ]}
+                    onPress={() => toggleRejectReason(reason.id)}
+                  >
+                    <View style={[
+                      styles.rejectReasonCheckbox,
+                      { borderColor: isSelected ? colors.primary : colors.border },
+                      isSelected && { backgroundColor: colors.primary }
+                    ]}>
+                      {isSelected && (
+                        <IconSymbol name="checkmark" size={12} color="#fff" />
+                      )}
+                    </View>
+                    <View style={styles.rejectReasonText}>
+                      <Text style={[styles.rejectReasonLabel, { color: colors.text }]}>
+                        {reason.label}
+                      </Text>
+                      <Text style={[styles.rejectReasonDesc, { color: colors.textSecondary }]}>
+                        {reason.description}
+                      </Text>
+                    </View>
+                  </TouchableOpacity>
+                );
+              })}
+            </ScrollView>
+            
+            <View style={styles.rejectModalButtons}>
+              <TouchableOpacity
+                style={[styles.rejectModalButton, { backgroundColor: colors.border }]}
+                onPress={() => setShowRejectModal(null)}
+              >
+                <Text style={[styles.rejectModalButtonText, { color: colors.text }]}>Cancel</Text>
+              </TouchableOpacity>
+              <TouchableOpacity
+                style={[styles.rejectModalButton, styles.rejectConfirmButton]}
+                onPress={confirmReject}
+              >
+                <Text style={[styles.rejectModalButtonText, { color: '#fff' }]}>
+                  Reject & Regenerate
+                </Text>
+              </TouchableOpacity>
+            </View>
           </View>
         </View>
       </Modal>
@@ -1512,5 +1603,72 @@ const styles = StyleSheet.create({
   loadingMore: {
     paddingVertical: Spacing.md,
     alignItems: 'center',
+  },
+  // Rejection modal styles
+  rejectModalHeader: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    padding: Spacing.lg,
+    borderBottomWidth: 1,
+    borderBottomColor: 'rgba(0, 0, 0, 0.1)',
+  },
+  rejectModalSubtitle: {
+    fontSize: FontSizes.sm,
+    paddingHorizontal: Spacing.lg,
+    paddingTop: Spacing.md,
+    paddingBottom: Spacing.sm,
+  },
+  rejectReasonsList: {
+    paddingHorizontal: Spacing.lg,
+    maxHeight: 300,
+  },
+  rejectReasonItem: {
+    flexDirection: 'row',
+    alignItems: 'flex-start',
+    padding: Spacing.md,
+    borderWidth: 1,
+    borderRadius: BorderRadius.md,
+    marginBottom: Spacing.sm,
+  },
+  rejectReasonCheckbox: {
+    width: 22,
+    height: 22,
+    borderRadius: BorderRadius.sm,
+    borderWidth: 2,
+    alignItems: 'center',
+    justifyContent: 'center',
+    marginRight: Spacing.sm,
+    marginTop: 2,
+  },
+  rejectReasonText: {
+    flex: 1,
+  },
+  rejectReasonLabel: {
+    fontSize: FontSizes.md,
+    fontWeight: '500',
+  },
+  rejectReasonDesc: {
+    fontSize: FontSizes.sm,
+    marginTop: 2,
+  },
+  rejectModalButtons: {
+    flexDirection: 'row',
+    padding: Spacing.lg,
+    paddingTop: Spacing.md,
+    gap: Spacing.sm,
+  },
+  rejectModalButton: {
+    flex: 1,
+    paddingVertical: Spacing.md,
+    borderRadius: BorderRadius.md,
+    alignItems: 'center',
+  },
+  rejectConfirmButton: {
+    backgroundColor: '#FF3B30',
+  },
+  rejectModalButtonText: {
+    fontSize: FontSizes.md,
+    fontWeight: '600',
   },
 });

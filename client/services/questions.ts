@@ -313,6 +313,14 @@ export const questionsService = {
   },
 
   /**
+   * Promote an older version to be the current version
+   */
+  async promoteVersion(questionId: string): Promise<Question> {
+    const response = await apiClient.post<Question>(`/questions/${questionId}/promote-version`);
+    return response.data;
+  },
+
+  /**
    * List generation sessions
    */
   async listSessions(

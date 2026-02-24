@@ -10,6 +10,7 @@ import {
     RefreshControl,
     Alert,
     Dimensions,
+    TextInput,
 } from 'react-native';
 import { IconSymbol } from '@/components/ui/icon-symbol';
 import { GlassCard } from '@/components/ui/glass-card';
@@ -17,7 +18,8 @@ import { Colors, Spacing, BorderRadius, FontSizes } from '@/constants/theme';
 import { useColorScheme } from '@/hooks/use-color-scheme';
 import { questionsService, GenerationSession, SessionQuestion, Question } from '@/services/questions';
 import { ExportModal } from '@/components/export-modal';
-import { mediumImpact, heavyImpact } from '@/utils/haptics';
+import { useToast } from '@/components/toast';
+import { mediumImpact, heavyImpact, selectionImpact } from '@/utils/haptics';
 
 // Type for version chain groups
 interface VersionChain {
@@ -70,6 +72,7 @@ function groupIntoVersionChains(questions: SessionQuestion[]): VersionChain[] {
 export default function HistoryScreen() {
     const colorScheme = useColorScheme();
     const colors = Colors[colorScheme ?? 'light'];
+    const { showError, showSuccess } = useToast();
 
     const [sessions, setSessions] = useState<GenerationSession[]>([]);
     const [isLoading, setIsLoading] = useState(true);
@@ -88,6 +91,16 @@ export default function HistoryScreen() {
     // Export modal state
     const [showExportModal, setShowExportModal] = useState(false);
     const [exportQuestions, setExportQuestions] = useState<Question[]>([]);
+
+    // Edit modal state
+    const [editingQuestion, setEditingQuestion] = useState<SessionQuestion | null>(null);
+    const [editMarks, setEditMarks] = useState<string>('');
+    const [editDifficulty, setEditDifficulty] = useState<'easy' | 'medium' | 'hard'>('medium');
+    const [editAnswer, setEditAnswer] = useState<string>('');
+    const [isSavingEdit, setIsSavingEdit] = useState(false);
+
+    // Promote version state
+    const [isPromoting, setIsPromoting] = useState<string | null>(null);
 
     const loadSessions = useCallback(async (pageNum: number = 1, refresh = false) => {
         try {
@@ -152,6 +165,59 @@ export default function HistoryScreen() {
                 },
             ],
         );
+    };
+
+    // Open edit modal for a question
+    const openEditModal = (question: SessionQuestion) => {
+        selectionImpact();
+        setEditingQuestion(question);
+        setEditMarks(String(question.marks ?? ''));
+        setEditDifficulty((question.difficulty_level as 'easy' | 'medium' | 'hard') || 'medium');
+        setEditAnswer(question.correct_answer || '');
+    };
+
+    // Save question edits
+    const handleSaveEdit = async () => {
+        if (!editingQuestion) return;
+        setIsSavingEdit(true);
+        try {
+            await questionsService.updateQuestion(editingQuestion.id, {
+                marks: editMarks ? parseInt(editMarks) : undefined,
+                difficulty_level: editDifficulty,
+                correct_answer: editAnswer || undefined,
+            });
+            // Update local state
+            setSessionQuestions(prev => prev.map(q => 
+                q.id === editingQuestion.id 
+                    ? { ...q, marks: editMarks ? parseInt(editMarks) : q.marks, difficulty_level: editDifficulty, correct_answer: editAnswer || q.correct_answer }
+                    : q
+            ));
+            showSuccess('Question updated');
+            setEditingQuestion(null);
+        } catch (error) {
+            showError(error, 'Failed to save changes');
+        } finally {
+            setIsSavingEdit(false);
+        }
+    };
+
+    // Promote an older version to be the current version
+    const handlePromoteVersion = async (questionId: string) => {
+        mediumImpact();
+        setIsPromoting(questionId);
+        try {
+            const promoted = await questionsService.promoteVersion(questionId);
+            showSuccess('Version promoted successfully');
+            // Reload session questions to get updated version chain
+            if (selectedSession) {
+                const data = await questionsService.getSessionQuestions(selectedSession.id);
+                setSessionQuestions(data.questions);
+            }
+        } catch (error) {
+            showError(error, 'Failed to promote version');
+        } finally {
+            setIsPromoting(null);
+        }
     };
 
     const getMethodInfo = (method: string | null) => {
@@ -634,6 +700,36 @@ export default function HistoryScreen() {
                                                                 ))}
                                                             </View>
                                                         )}
+
+                                                        {/* Action buttons */}
+                                                        <View style={styles.questionActions}>
+                                                            {/* Edit button */}
+                                                            <TouchableOpacity
+                                                                style={[styles.actionButton, { backgroundColor: colors.primary + '15' }]}
+                                                                onPress={() => openEditModal(q)}
+                                                            >
+                                                                <IconSymbol name="pencil" size={14} color={colors.primary} />
+                                                                <Text style={{ fontSize: 11, color: colors.primary, marginLeft: 4 }}>Edit</Text>
+                                                            </TouchableOpacity>
+
+                                                            {/* Promote button (only for old versions) */}
+                                                            {isOldVersion && (
+                                                                <TouchableOpacity
+                                                                    style={[styles.actionButton, { backgroundColor: '#FF9500' + '15' }]}
+                                                                    onPress={() => handlePromoteVersion(q.id)}
+                                                                    disabled={isPromoting === q.id}
+                                                                >
+                                                                    {isPromoting === q.id ? (
+                                                                        <ActivityIndicator size="small" color="#FF9500" />
+                                                                    ) : (
+                                                                        <>
+                                                                            <IconSymbol name="arrow.up.circle" size={14} color="#FF9500" />
+                                                                            <Text style={{ fontSize: 11, color: '#FF9500', marginLeft: 4 }}>Use This</Text>
+                                                                        </>
+                                                                    )}
+                                                                </TouchableOpacity>
+                                                            )}
+                                                        </View>
                                                     </GlassCard>
                                                 );
                                             })}
@@ -670,6 +766,100 @@ export default function HistoryScreen() {
                         questions={exportQuestions}
                         defaultFilename={selectedSession?.subject_code ? `${selectedSession.subject_code}_session_${selectedSession.id.slice(0, 8)}` : `session_${selectedSession?.id.slice(0, 8) || 'export'}`}
                     />
+                </View>
+            </Modal>
+
+            {/* Edit Question Modal */}
+            <Modal
+                visible={editingQuestion !== null}
+                animationType="slide"
+                presentationStyle="pageSheet"
+                onRequestClose={() => setEditingQuestion(null)}
+            >
+                <View style={[styles.modalContainer, { backgroundColor: colors.background }]}>
+                    <View style={[styles.editModalHeader, { borderBottomColor: colors.border }]}>
+                        <TouchableOpacity onPress={() => setEditingQuestion(null)}>
+                            <Text style={{ fontSize: FontSizes.md, color: colors.primary }}>Cancel</Text>
+                        </TouchableOpacity>
+                        <Text style={[styles.editModalTitle, { color: colors.text }]}>Edit Question</Text>
+                        <TouchableOpacity onPress={handleSaveEdit} disabled={isSavingEdit}>
+                            {isSavingEdit ? (
+                                <ActivityIndicator size="small" color={colors.primary} />
+                            ) : (
+                                <Text style={{ fontSize: FontSizes.md, color: colors.primary, fontWeight: '600' }}>Save</Text>
+                            )}
+                        </TouchableOpacity>
+                    </View>
+
+                    <ScrollView style={styles.editModalContent}>
+                        {editingQuestion && (
+                            <>
+                                {/* Question preview */}
+                                <View style={[styles.editSection, { backgroundColor: colors.card }]}>
+                                    <Text style={[styles.editLabel, { color: colors.textSecondary }]}>QUESTION</Text>
+                                    <Text style={[styles.editQuestionText, { color: colors.text }]}>
+                                        {editingQuestion.question_text}
+                                    </Text>
+                                </View>
+
+                                {/* Marks */}
+                                <View style={[styles.editSection, { backgroundColor: colors.card }]}>
+                                    <Text style={[styles.editLabel, { color: colors.textSecondary }]}>MARKS</Text>
+                                    <TextInput
+                                        style={[styles.editInput, { color: colors.text, borderColor: colors.border }]}
+                                        value={editMarks}
+                                        onChangeText={setEditMarks}
+                                        keyboardType="numeric"
+                                        placeholder="Enter marks"
+                                        placeholderTextColor={colors.textTertiary}
+                                    />
+                                </View>
+
+                                {/* Difficulty */}
+                                <View style={[styles.editSection, { backgroundColor: colors.card }]}>
+                                    <Text style={[styles.editLabel, { color: colors.textSecondary }]}>DIFFICULTY</Text>
+                                    <View style={styles.difficultyButtons}>
+                                        {(['easy', 'medium', 'hard'] as const).map(diff => (
+                                            <TouchableOpacity
+                                                key={diff}
+                                                style={[
+                                                    styles.difficultyButton,
+                                                    { borderColor: colors.border },
+                                                    editDifficulty === diff && {
+                                                        backgroundColor: diff === 'easy' ? '#34C759' : diff === 'hard' ? '#FF3B30' : '#FF9500',
+                                                        borderColor: diff === 'easy' ? '#34C759' : diff === 'hard' ? '#FF3B30' : '#FF9500',
+                                                    }
+                                                ]}
+                                                onPress={() => setEditDifficulty(diff)}
+                                            >
+                                                <Text style={{
+                                                    fontSize: FontSizes.sm,
+                                                    fontWeight: '600',
+                                                    color: editDifficulty === diff ? '#FFFFFF' : colors.text,
+                                                }}>
+                                                    {diff.charAt(0).toUpperCase() + diff.slice(1)}
+                                                </Text>
+                                            </TouchableOpacity>
+                                        ))}
+                                    </View>
+                                </View>
+
+                                {/* Answer */}
+                                <View style={[styles.editSection, { backgroundColor: colors.card }]}>
+                                    <Text style={[styles.editLabel, { color: colors.textSecondary }]}>CORRECT ANSWER</Text>
+                                    <TextInput
+                                        style={[styles.editInput, styles.editAnswerInput, { color: colors.text, borderColor: colors.border }]}
+                                        value={editAnswer}
+                                        onChangeText={setEditAnswer}
+                                        placeholder="Enter correct answer"
+                                        placeholderTextColor={colors.textTertiary}
+                                        multiline
+                                    />
+                                </View>
+                            </>
+                        )}
+                        <View style={{ height: 50 }} />
+                    </ScrollView>
                 </View>
             </Modal>
         </View>
@@ -757,4 +947,39 @@ const styles = StyleSheet.create({
     versionIndicator: { flexDirection: 'row', alignItems: 'center' },
     pageDots: { flexDirection: 'row', justifyContent: 'center', gap: 6, marginTop: 8 },
     pageDot: { width: 6, height: 6, borderRadius: 3 },
+
+    // Question action buttons
+    questionActions: { flexDirection: 'row', gap: 8, marginTop: Spacing.sm, justifyContent: 'flex-end' },
+    actionButton: { flexDirection: 'row', alignItems: 'center', paddingHorizontal: 10, paddingVertical: 6, borderRadius: BorderRadius.sm },
+
+    // Edit modal
+    editModalHeader: { 
+        flexDirection: 'row', 
+        justifyContent: 'space-between', 
+        alignItems: 'center', 
+        paddingHorizontal: Spacing.md, 
+        paddingVertical: Spacing.md,
+        borderBottomWidth: StyleSheet.hairlineWidth,
+    },
+    editModalTitle: { fontSize: FontSizes.lg, fontWeight: '600' },
+    editModalContent: { flex: 1, paddingHorizontal: Spacing.md, paddingTop: Spacing.md },
+    editSection: { padding: Spacing.md, borderRadius: BorderRadius.md, marginBottom: Spacing.md },
+    editLabel: { fontSize: FontSizes.xs, fontWeight: '600', marginBottom: Spacing.xs, textTransform: 'uppercase', letterSpacing: 0.5 },
+    editQuestionText: { fontSize: FontSizes.md, lineHeight: 22 },
+    editInput: { 
+        borderWidth: 1, 
+        borderRadius: BorderRadius.sm, 
+        paddingHorizontal: Spacing.sm, 
+        paddingVertical: Spacing.sm,
+        fontSize: FontSizes.md,
+    },
+    editAnswerInput: { minHeight: 80, textAlignVertical: 'top' },
+    difficultyButtons: { flexDirection: 'row', gap: Spacing.sm },
+    difficultyButton: { 
+        flex: 1, 
+        paddingVertical: Spacing.sm, 
+        borderRadius: BorderRadius.sm, 
+        borderWidth: 1, 
+        alignItems: 'center' 
+    },
 });

@@ -542,6 +542,106 @@ async def get_question_versions(
     return [QuestionResponse.model_validate(v) for v in versions]
 
 
+@router.post("/{question_id}/promote-version", response_model=QuestionResponse)
+async def promote_question_version(
+    question_id: uuid.UUID,
+    current_user: User = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+):
+    """
+    Promote an older version of a question to be the current (latest) version.
+    This creates a new version that copies the content from the specified question
+    and marks it as is_latest=True, while setting is_latest=False on the previous current version.
+    """
+    from app.models.question import Question
+    from app.models.document import Document
+    from app.models.subject import Subject
+    from sqlalchemy import or_
+    from datetime import datetime, timezone
+    
+    # Load the question to promote
+    result = await db.execute(
+        select(Question)
+        .outerjoin(Document, Question.document_id == Document.id)
+        .outerjoin(Subject, Question.subject_id == Subject.id)
+        .where(
+            Question.id == question_id,
+            or_(
+                Document.user_id == current_user.id,
+                Subject.user_id == current_user.id,
+            )
+        )
+    )
+    source_question = result.scalar_one_or_none()
+    
+    if not source_question:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="Question not found",
+        )
+    
+    # If this is already the latest version, just return it
+    if source_question.is_latest:
+        return QuestionResponse.model_validate(source_question)
+    
+    # Find the current latest version in the chain by walking forward
+    current_latest = source_question
+    while True:
+        # Find questions that replace the current one
+        next_res = await db.execute(
+            select(Question).where(Question.replaces_id == current_latest.id)
+        )
+        next_q = next_res.scalar_one_or_none()
+        if next_q:
+            current_latest = next_q
+        else:
+            break
+    
+    # Mark the current latest as not latest
+    current_latest.is_latest = False
+    
+    # Determine the next version number
+    next_version = (current_latest.version_number or 1) + 1
+    
+    # Create a new question that copies content from source_question
+    # but is a new version in the chain
+    new_question = Question(
+        document_id=source_question.document_id,
+        subject_id=source_question.subject_id,
+        topic_id=source_question.topic_id,
+        session_id=source_question.session_id,
+        question_text=source_question.question_text,
+        question_embedding=source_question.question_embedding,
+        question_type=source_question.question_type,
+        marks=source_question.marks,
+        difficulty_level=source_question.difficulty_level,
+        bloom_taxonomy_level=source_question.bloom_taxonomy_level,
+        options=source_question.options,
+        correct_answer=source_question.correct_answer,
+        explanation=source_question.explanation,
+        topic_tags=source_question.topic_tags,
+        source_chunk_ids=source_question.source_chunk_ids,
+        learning_outcome_id=source_question.learning_outcome_id,
+        course_outcome_mapping=source_question.course_outcome_mapping,
+        answerability_score=source_question.answerability_score,
+        specificity_score=source_question.specificity_score,
+        generation_confidence=source_question.generation_confidence,
+        generation_metadata={"promoted_from": str(source_question.id)},
+        generated_at=datetime.now(timezone.utc),
+        vetting_status="pending",  # Reset to pending for review
+        is_archived=False,
+        replaces_id=current_latest.id,
+        version_number=next_version,
+        is_latest=True,
+    )
+    
+    db.add(new_question)
+    await db.commit()
+    await db.refresh(new_question)
+    
+    return QuestionResponse.model_validate(new_question)
+
+
 @router.post("/{question_id}/rate", response_model=QuestionResponse)
 async def rate_question(
     question_id: uuid.UUID,
@@ -1191,11 +1291,26 @@ async def get_question_stats(
 
 # ============== Vetting Endpoints ==============
 
+# Predefined rejection reasons that map to regeneration guidance
+REJECTION_REASONS = {
+    "duplicate": "Generate a completely unique question that is entirely different from any previously generated questions",
+    "too_easy": "Generate a more challenging question that requires deeper understanding and critical thinking",
+    "too_hard": "Generate a simpler, more accessible question that tests fundamental understanding",
+    "unclear": "Generate a clear, unambiguous question with precise wording and well-defined expectations",
+    "off_topic": "Generate a question that is directly relevant to the main topic and learning objectives",
+    "incorrect_answer": "Ensure the correct answer is accurate and properly validated",
+    "poor_options": "Generate better quality MCQ options that are plausible but distinguishable",
+    "too_long": "Generate a more concise question that gets to the point directly",
+    "too_short": "Generate a more detailed question with sufficient context for the learner",
+}
+
 class VettingRequest(BaseModel):
     """Schema for vetting a question."""
     status: str  # approved, rejected
     course_outcome_mapping: Optional[dict] = None  # {"CO1": 2, "CO3": 1}
     notes: Optional[str] = None
+    rejection_reasons: Optional[List[str]] = None  # ["duplicate", "too_easy", ...]
+
 
 
 class VettingStatsResponse(BaseModel):
@@ -1341,6 +1456,16 @@ async def vet_question(
         from app.services.document_service import DocumentService
         import random
 
+        # ── Build rejection guidance from reasons ──
+        rejection_reasons = vetting_data.rejection_reasons or []
+        rejection_guidance = []
+        for reason in rejection_reasons:
+            if reason in REJECTION_REASONS:
+                rejection_guidance.append(REJECTION_REASONS[reason])
+        rejection_guidance_str = "\n".join(f"- {g}" for g in rejection_guidance) if rejection_guidance else ""
+        
+        logger.info(f"Rejection reasons: {rejection_reasons}, guidance: {rejection_guidance_str[:200]}...")
+
         # ── Detect original generation method ──
         gen_method = None
         gen_metadata = question_snapshot.get("generation_metadata") or {}
@@ -1419,7 +1544,10 @@ Generate a {q_type.replace('_', ' ')} question based on this content.
 - FORBIDDEN: Do NOT start with "A clinician", "A patient", "A doctor", "A dentist", "A practitioner", "A student", "A researcher", or similar scenario setups.
 - CRITICAL: The question must be FULLY SELF-CONTAINED. NEVER reference the source material in ANY way. Do NOT use ANY of these phrases or similar: "the text", "the reference", "the provided material", "the provided content", "the context", "the passage", "according to", "based on the content", "as stated", "as mentioned", "in the material", "from the content". The question must stand completely alone as if no source was given.
 - IMPORTANT: Generate a DIFFERENT question from: "{question_snapshot["question_text"][:150]}..."
-
+{f'''
+REJECTION FEEDBACK (address these issues in the new question):
+{rejection_guidance_str}
+''' if rejection_guidance_str else ''}
 Output valid JSON only."""
 
                         logger.info(f"Quick regen attempt {attempt + 1}/{max_retries}")
@@ -1552,7 +1680,10 @@ Generate a {q_type.replace('_', ' ')} question based on this chapter content.
 - FORBIDDEN: Do NOT start all the questions with "A clinician", "A patient", "A doctor", "A dentist", "A practitioner", "A student", "A researcher", or similar scenario setups. Also start directly with the required starter word.
 - CRITICAL: The question must be FULLY SELF-CONTAINED. NEVER reference the source material in ANY way. Do NOT use ANY of these phrases or similar: "the text", "the reference", "the provided material", "the provided content", "the context", "the passage", "according to", "based on the content", "as stated", "as mentioned", "in the material", "from the content". The question must stand completely alone as if no source was given.
 - IMPORTANT: Generate a DIFFERENT question from: "{question_snapshot["question_text"][:150]}..."
-
+{f'''
+REJECTION FEEDBACK (address these issues in the new question):
+{rejection_guidance_str}
+''' if rejection_guidance_str else ''}
 Output valid JSON only."""
 
                         logger.info(f"Chapter regen attempt {attempt + 1}/{max_retries}")
@@ -1704,7 +1835,10 @@ Generate a {q_type.replace('_', ' ')} question based on this content.
 - FORBIDDEN: Do NOT start all the questions with "A clinician", "A patient", "A doctor", "A dentist", "A practitioner", "A student", "A researcher", or similar scenario setups. Also start directly with the required starter word.
 - CRITICAL: The question must be FULLY SELF-CONTAINED. NEVER reference the source material in ANY way. Do NOT use ANY of these phrases or similar: "the text", "the reference", "the provided material", "the provided content", "the context", "the passage", "according to", "based on the content", "as stated", "as mentioned", "in the material", "from the content". The question must stand completely alone as if no source was given.
 - IMPORTANT: Generate a DIFFERENT question from: "{question_snapshot["question_text"][:100]}..."
-
+{f'''
+REJECTION FEEDBACK (address these issues in the new question):
+{rejection_guidance_str}
+''' if rejection_guidance_str else ''}
 Output valid JSON only."""
 
                             logger.info(f"Rubric regen attempt {attempt + 1}/{max_retries}")
