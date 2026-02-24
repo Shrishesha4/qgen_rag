@@ -766,100 +766,100 @@ export default function HistoryScreen() {
                         questions={exportQuestions}
                         defaultFilename={selectedSession?.subject_code ? `${selectedSession.subject_code}_session_${selectedSession.id.slice(0, 8)}` : `session_${selectedSession?.id.slice(0, 8) || 'export'}`}
                     />
-                </View>
-            </Modal>
 
-            {/* Edit Question Modal */}
-            <Modal
-                visible={editingQuestion !== null}
-                animationType="slide"
-                presentationStyle="pageSheet"
-                onRequestClose={() => setEditingQuestion(null)}
-            >
-                <View style={[styles.modalContainer, { backgroundColor: colors.background }]}>
-                    <View style={[styles.editModalHeader, { borderBottomColor: colors.border }]}>
-                        <TouchableOpacity onPress={() => setEditingQuestion(null)}>
-                            <Text style={{ fontSize: FontSizes.md, color: colors.primary }}>Cancel</Text>
-                        </TouchableOpacity>
-                        <Text style={[styles.editModalTitle, { color: colors.text }]}>Edit Question</Text>
-                        <TouchableOpacity onPress={handleSaveEdit} disabled={isSavingEdit}>
-                            {isSavingEdit ? (
-                                <ActivityIndicator size="small" color={colors.primary} />
-                            ) : (
-                                <Text style={{ fontSize: FontSizes.md, color: colors.primary, fontWeight: '600' }}>Save</Text>
-                            )}
-                        </TouchableOpacity>
-                    </View>
+                    {/* Edit Question Modal - inside pageSheet modal so it renders on top */}
+                    <Modal
+                        visible={editingQuestion !== null}
+                        animationType="slide"
+                        presentationStyle="pageSheet"
+                        onRequestClose={() => setEditingQuestion(null)}
+                    >
+                        <View style={[styles.modalContainer, { backgroundColor: colors.background }]}>
+                            <View style={[styles.editModalHeader, { borderBottomColor: colors.border }]}>
+                                <TouchableOpacity onPress={() => setEditingQuestion(null)}>
+                                    <Text style={{ fontSize: FontSizes.md, color: colors.primary }}>Cancel</Text>
+                                </TouchableOpacity>
+                                <Text style={[styles.editModalTitle, { color: colors.text }]}>Edit Question</Text>
+                                <TouchableOpacity onPress={handleSaveEdit} disabled={isSavingEdit}>
+                                    {isSavingEdit ? (
+                                        <ActivityIndicator size="small" color={colors.primary} />
+                                    ) : (
+                                        <Text style={{ fontSize: FontSizes.md, color: colors.primary, fontWeight: '600' }}>Save</Text>
+                                    )}
+                                </TouchableOpacity>
+                            </View>
 
-                    <ScrollView style={styles.editModalContent}>
-                        {editingQuestion && (
-                            <>
-                                {/* Question preview */}
-                                <View style={[styles.editSection, { backgroundColor: colors.card }]}>
-                                    <Text style={[styles.editLabel, { color: colors.textSecondary }]}>QUESTION</Text>
-                                    <Text style={[styles.editQuestionText, { color: colors.text }]}>
-                                        {editingQuestion.question_text}
-                                    </Text>
-                                </View>
+                            <ScrollView style={styles.editModalContent}>
+                                {editingQuestion && (
+                                    <>
+                                        {/* Question preview */}
+                                        <View style={[styles.editSection, { backgroundColor: colors.card }]}>
+                                            <Text style={[styles.editLabel, { color: colors.textSecondary }]}>QUESTION</Text>
+                                            <Text style={[styles.editQuestionText, { color: colors.text }]}>
+                                                {editingQuestion.question_text}
+                                            </Text>
+                                        </View>
 
-                                {/* Marks */}
-                                <View style={[styles.editSection, { backgroundColor: colors.card }]}>
-                                    <Text style={[styles.editLabel, { color: colors.textSecondary }]}>MARKS</Text>
-                                    <TextInput
-                                        style={[styles.editInput, { color: colors.text, borderColor: colors.border }]}
-                                        value={editMarks}
-                                        onChangeText={setEditMarks}
-                                        keyboardType="numeric"
-                                        placeholder="Enter marks"
-                                        placeholderTextColor={colors.textTertiary}
-                                    />
-                                </View>
+                                        {/* Marks */}
+                                        <View style={[styles.editSection, { backgroundColor: colors.card }]}>
+                                            <Text style={[styles.editLabel, { color: colors.textSecondary }]}>MARKS</Text>
+                                            <TextInput
+                                                style={[styles.editInput, { color: colors.text, borderColor: colors.border }]}
+                                                value={editMarks}
+                                                onChangeText={setEditMarks}
+                                                keyboardType="numeric"
+                                                placeholder="Enter marks"
+                                                placeholderTextColor={colors.textTertiary}
+                                            />
+                                        </View>
 
-                                {/* Difficulty */}
-                                <View style={[styles.editSection, { backgroundColor: colors.card }]}>
-                                    <Text style={[styles.editLabel, { color: colors.textSecondary }]}>DIFFICULTY</Text>
-                                    <View style={styles.difficultyButtons}>
-                                        {(['easy', 'medium', 'hard'] as const).map(diff => (
-                                            <TouchableOpacity
-                                                key={diff}
-                                                style={[
-                                                    styles.difficultyButton,
-                                                    { borderColor: colors.border },
-                                                    editDifficulty === diff && {
-                                                        backgroundColor: diff === 'easy' ? '#34C759' : diff === 'hard' ? '#FF3B30' : '#FF9500',
-                                                        borderColor: diff === 'easy' ? '#34C759' : diff === 'hard' ? '#FF3B30' : '#FF9500',
-                                                    }
-                                                ]}
-                                                onPress={() => setEditDifficulty(diff)}
-                                            >
-                                                <Text style={{
-                                                    fontSize: FontSizes.sm,
-                                                    fontWeight: '600',
-                                                    color: editDifficulty === diff ? '#FFFFFF' : colors.text,
-                                                }}>
-                                                    {diff.charAt(0).toUpperCase() + diff.slice(1)}
-                                                </Text>
-                                            </TouchableOpacity>
-                                        ))}
-                                    </View>
-                                </View>
+                                        {/* Difficulty */}
+                                        <View style={[styles.editSection, { backgroundColor: colors.card }]}>
+                                            <Text style={[styles.editLabel, { color: colors.textSecondary }]}>DIFFICULTY</Text>
+                                            <View style={styles.difficultyButtons}>
+                                                {(['easy', 'medium', 'hard'] as const).map(diff => (
+                                                    <TouchableOpacity
+                                                        key={diff}
+                                                        style={[
+                                                            styles.difficultyButton,
+                                                            { borderColor: colors.border },
+                                                            editDifficulty === diff && {
+                                                                backgroundColor: diff === 'easy' ? '#34C759' : diff === 'hard' ? '#FF3B30' : '#FF9500',
+                                                                borderColor: diff === 'easy' ? '#34C759' : diff === 'hard' ? '#FF3B30' : '#FF9500',
+                                                            }
+                                                        ]}
+                                                        onPress={() => setEditDifficulty(diff)}
+                                                    >
+                                                        <Text style={{
+                                                            fontSize: FontSizes.sm,
+                                                            fontWeight: '600',
+                                                            color: editDifficulty === diff ? '#FFFFFF' : colors.text,
+                                                        }}>
+                                                            {diff.charAt(0).toUpperCase() + diff.slice(1)}
+                                                        </Text>
+                                                    </TouchableOpacity>
+                                                ))}
+                                            </View>
+                                        </View>
 
-                                {/* Answer */}
-                                <View style={[styles.editSection, { backgroundColor: colors.card }]}>
-                                    <Text style={[styles.editLabel, { color: colors.textSecondary }]}>CORRECT ANSWER</Text>
-                                    <TextInput
-                                        style={[styles.editInput, styles.editAnswerInput, { color: colors.text, borderColor: colors.border }]}
-                                        value={editAnswer}
-                                        onChangeText={setEditAnswer}
-                                        placeholder="Enter correct answer"
-                                        placeholderTextColor={colors.textTertiary}
-                                        multiline
-                                    />
-                                </View>
-                            </>
-                        )}
-                        <View style={{ height: 50 }} />
-                    </ScrollView>
+                                        {/* Answer */}
+                                        <View style={[styles.editSection, { backgroundColor: colors.card }]}>
+                                            <Text style={[styles.editLabel, { color: colors.textSecondary }]}>CORRECT ANSWER</Text>
+                                            <TextInput
+                                                style={[styles.editInput, styles.editAnswerInput, { color: colors.text, borderColor: colors.border }]}
+                                                value={editAnswer}
+                                                onChangeText={setEditAnswer}
+                                                placeholder="Enter correct answer"
+                                                placeholderTextColor={colors.textTertiary}
+                                                multiline
+                                            />
+                                        </View>
+                                    </>
+                                )}
+                                <View style={{ height: 50 }} />
+                            </ScrollView>
+                        </View>
+                    </Modal>
                 </View>
             </Modal>
         </View>

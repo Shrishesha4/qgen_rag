@@ -562,7 +562,7 @@ export default function VettingScreen() {
         {question.question_type !== 'mcq' && question.correct_answer ? (
           <View style={[styles.answerPreview, { backgroundColor: colors.card }]}>
             <Text style={[styles.answerPreviewLabel, { color: colors.textSecondary }]}>Expected answer</Text>
-            <Text style={[styles.answerPreviewText, { color: colors.text }]} numberOfLines={2}>{question.correct_answer}</Text>
+            <Text style={[styles.answerPreviewText, { color: colors.text }]}>{question.correct_answer}</Text>
           </View>
         ) : null}
 
@@ -798,7 +798,7 @@ export default function VettingScreen() {
                 <>
                   <View style={[styles.answerContainer, { backgroundColor: isDark ? 'rgba(255,255,255,0.02)' : 'rgba(0,0,0,0.02)', borderColor: colors.border }]}>
                     <Text style={[styles.answerLabel, { color: colors.textSecondary }]}>Answer</Text>
-                    <Text style={[styles.answerText, { color: colors.text }]} numberOfLines={4}>{answerDraft[question.id] ?? question.correct_answer ?? '—'}</Text>
+                    <Text style={[styles.answerText, { color: colors.text }]}>{answerDraft[question.id] ?? question.correct_answer ?? '—'}</Text>
                     <TouchableOpacity onPress={() => setAnswerEditMode(prev => ({ ...prev, [question.id]: true }))} style={{ marginLeft: Spacing.sm }}>
                       <Text style={{ color: colors.primary, fontWeight: '600' }}>Edit</Text>
                     </TouchableOpacity>
