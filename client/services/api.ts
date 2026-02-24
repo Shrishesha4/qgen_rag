@@ -5,13 +5,7 @@
 import axios, { AxiosError, InternalAxiosRequestConfig } from 'axios';
 import * as SecureStore from 'expo-secure-store';
 import { Platform } from 'react-native';
-
-// Your machine's local IP address - update this if it changes
-const DEV_MACHINE_IP = '10.141.7.200';
-
-// Use environment variable to override for simulator testing
-// Set EXPO_PUBLIC_SIMULATOR=true to test with iOS Simulator (uses localhost)
-const USE_SIMULATOR = process.env.EXPO_PUBLIC_SIMULATOR === 'true';
+import { ENV_CONFIG, isSimulator } from '../config/env';
 
 // Determine API base URL based on environment and platform
 const getApiBaseUrl = (): string => {
@@ -21,26 +15,26 @@ const getApiBaseUrl = (): string => {
 
   if (Platform.OS === 'android') {
     // Android Emulator special host address
-    return `http://${DEV_MACHINE_IP}:8000/api/v1`;
+    return `http://${ENV_CONFIG.DEV_MACHINE_IP}:8000/api/v1`;
   }
 
   if (Platform.OS === 'ios') {
     // iOS: use localhost for simulator (if flag set), otherwise use machine IP for physical device
-    if (USE_SIMULATOR) {
+    if (isSimulator()) {
       return 'http://localhost:8000/api/v1';
     }
-    return `http://${DEV_MACHINE_IP}:8000/api/v1`;
+    return `http://${ENV_CONFIG.DEV_MACHINE_IP}:8000/api/v1`;
   }
 
   // Fallback for web/other platforms
-  return `http://${DEV_MACHINE_IP}:8000/api/v1`;
+  return `http://${ENV_CONFIG.DEV_MACHINE_IP}:8000/api/v1`;
 };
 
 export const API_BASE_URL = getApiBaseUrl();
 
 console.log('[API] Base URL:', API_BASE_URL);
 console.log('[API] Platform:', Platform.OS);
-console.log('[API] USE_SIMULATOR flag:', USE_SIMULATOR);
+console.log('[API] USE_SIMULATOR flag:', isSimulator());
 
 // Token storage keys
 const ACCESS_TOKEN_KEY = 'qgen_access_token';
