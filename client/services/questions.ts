@@ -5,6 +5,25 @@
 import apiClient, { tokenStorage } from './api';
 import EventSource from 'react-native-sse';
 
+// Source reference information showing where content came from
+export interface SourceReference {
+  document_name: string | null;
+  page_number: number | null;
+  page_range: [number, number] | null;
+  position_in_page: 'top' | 'middle' | 'bottom' | null;
+  position_percentage: number | null;
+  section_heading: string | null;
+  content_snippet: string | null;
+  relevance_reason: string | null;
+}
+
+// Complete source information for a question
+export interface QuestionSourceInfo {
+  sources: SourceReference[];
+  generation_reasoning: string | null;
+  content_coverage: string | null;
+}
+
 export interface Question {
   id: string;
   document_id: string;
@@ -21,6 +40,10 @@ export interface Question {
   explanation: string | null;
   topic_tags: string[] | null;
   source_chunk_ids: string[] | null;
+  
+  // Source Attribution
+  source_info: QuestionSourceInfo | null;
+  
   answerability_score: number | null;
   specificity_score: number | null;
   generation_confidence: number | null;
@@ -147,6 +170,8 @@ export interface SessionQuestion {
   version_number?: number;
   replaces_id?: string | null;
   is_latest?: boolean;
+  // Source Attribution
+  source_info?: QuestionSourceInfo | null;
 }
 
 export interface QuestionStats {

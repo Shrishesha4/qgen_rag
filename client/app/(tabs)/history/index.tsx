@@ -20,6 +20,7 @@ import { questionsService, GenerationSession, SessionQuestion, Question } from '
 import { ExportModal } from '@/components/export-modal';
 import { useToast } from '@/components/toast';
 import { mediumImpact, heavyImpact, selectionImpact } from '@/utils/haptics';
+import { QuestionSources } from '@/components/question-sources';
 
 // Type for version chain groups
 interface VersionChain {
@@ -604,6 +605,9 @@ export default function HistoryScreen() {
 
                                                         {/* Question text */}
                                                         <Text style={[styles.questionText, { color: colors.text }]}>{q.question_text}</Text>
+
+                                                        {/* Source References */}
+                                                        {q.source_info && <QuestionSources sourceInfo={q.source_info} compact />}
 
                                                         {/* MCQ Options with correct answer highlighted */}
                                                         {q.options && q.options.length > 0 && (

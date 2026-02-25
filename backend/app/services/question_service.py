@@ -431,6 +431,7 @@ class QuestionGenerationService:
         """Get all chunks for a document."""
         result = await self.db.execute(
             select(DocumentChunk)
+            .options(selectinload(DocumentChunk.document))
             .where(DocumentChunk.document_id == document_id)
             .order_by(DocumentChunk.chunk_index)
         )
@@ -886,6 +887,10 @@ Output valid JSON only."""
         if isinstance(correct_answer, dict):
             correct_answer = correct_answer.get("option") or correct_answer.get("value") or str(correct_answer)
 
+        # Build source information from chunks
+        source_info = self._build_source_info(chunks, question_data)
+        logger.info(f"Built source info with {len(source_info.get('sources', []))} sources for question")
+
         question = Question(
             document_id=document_id,
             session_id=session_id,
@@ -904,12 +909,25 @@ Output valid JSON only."""
             generation_confidence=confidence_score,  # Calculated from validation
             generation_metadata={
                 "raw_response": question_data,
+                "source_info": source_info,
             },
         )
         
         self.db.add(question)
         await self.db.commit()
         await self.db.refresh(question)
+        
+        # Import source info schema
+        from app.schemas.question import QuestionSourceInfo, SourceReference
+        
+        # Build source_info for response
+        source_info_response = None
+        if source_info and source_info.get("sources"):
+            source_info_response = QuestionSourceInfo(
+                sources=[SourceReference(**s) for s in source_info.get("sources", [])],
+                generation_reasoning=source_info.get("generation_reasoning"),
+                content_coverage=source_info.get("content_coverage"),
+            )
         
         # Convert to QuestionResponse immediately while in async context
         # This avoids SQLAlchemy lazy-loading issues when serializing later
@@ -928,6 +946,7 @@ Output valid JSON only."""
             correct_answer=question.correct_answer,
             topic_tags=question.topic_tags,
             source_chunk_ids=question.source_chunk_ids,
+            source_info=source_info_response,
             course_outcome_mapping=question.course_outcome_mapping,
             learning_outcome_id=question.learning_outcome_id,
             vetting_status=question.vetting_status,
@@ -943,6 +962,144 @@ Output valid JSON only."""
         )
         
         return question, question_response
+    
+    def _build_source_info(
+        self,
+        chunks: Optional[List[DocumentChunk]],
+        question_data: Dict[str, Any],
+    ) -> Dict[str, Any]:
+        """
+        Build source information from chunks for question attribution.
+        
+        Returns a dict containing:
+        - sources: List of source references with page/position info
+        - generation_reasoning: Why this question was generated
+        - content_coverage: What aspects are covered
+        """
+        if not chunks:
+            return {"sources": [], "generation_reasoning": None, "content_coverage": None}
+        
+        sources = []
+        for chunk in chunks:
+            # Extract source info from chunk metadata
+            chunk_meta = chunk.chunk_metadata or {}
+            source_info = chunk_meta.get("source_info", {})
+            
+            # Get document name - try multiple sources
+            document_name = source_info.get("document_name")
+            if not document_name and hasattr(chunk, 'document') and chunk.document:
+                document_name = chunk.document.filename
+            if not document_name:
+                document_name = "Unknown Document"
+            
+            # Store full content snippet (frontend will handle truncation and expansion)
+            content_snippet = chunk.chunk_text
+            
+            source = {
+                "document_name": document_name,
+                "page_number": chunk.page_number or source_info.get("page_number"),
+                "page_range": source_info.get("page_range"),
+                "position_in_page": source_info.get("position_in_page"),
+                "position_percentage": source_info.get("position_percentage"),
+                "section_heading": chunk.section_heading,
+                "content_snippet": content_snippet,
+                "relevance_reason": self._generate_relevance_reason(chunk, question_data),
+            }
+            logger.debug(f"Source built: doc={document_name}, page={source['page_number']}, pos={source['position_in_page']}")
+            sources.append(source)
+        
+        # Generate overall reasoning
+        generation_reasoning = self._generate_question_reasoning(chunks, question_data)
+        
+        # Determine content coverage
+        content_coverage = self._determine_content_coverage(chunks, question_data)
+        
+        return {
+            "sources": sources,
+            "generation_reasoning": generation_reasoning,
+            "content_coverage": content_coverage,
+        }
+    
+    def _generate_relevance_reason(
+        self,
+        chunk: DocumentChunk,
+        question_data: Dict[str, Any],
+    ) -> str:
+        """Generate a brief explanation of why this chunk was relevant to the question."""
+        question_text = question_data.get("question_text", "")
+        topic_tags = question_data.get("topic_tags", [])
+        
+        # Simple heuristic-based reasoning
+        reasons = []
+        
+        # Check if section heading matches question topic
+        if chunk.section_heading:
+            reasons.append(f"Contains section on '{chunk.section_heading}'")
+        
+        # Check for topic tag matches
+        chunk_text_lower = chunk.chunk_text.lower()
+        for tag in topic_tags:
+            if tag.lower() in chunk_text_lower:
+                reasons.append(f"Covers topic: {tag}")
+                break
+        
+        # Check metadata for content type
+        chunk_meta = chunk.chunk_metadata or {}
+        if chunk_meta.get("has_definition"):
+            reasons.append("Contains key definitions")
+        if chunk_meta.get("has_math"):
+            reasons.append("Contains mathematical content")
+        if chunk_meta.get("has_code"):
+            reasons.append("Contains code examples")
+        
+        if not reasons:
+            reasons.append("High semantic similarity to question topic")
+        
+        return "; ".join(reasons[:2])  # Limit to 2 reasons
+    
+    def _generate_question_reasoning(
+        self,
+        chunks: List[DocumentChunk],
+        question_data: Dict[str, Any],
+    ) -> str:
+        """Generate an explanation of why this question was created from the sources."""
+        question_type = question_data.get("question_type", "question")
+        topic_tags = question_data.get("topic_tags", [])
+        bloom_level = question_data.get("bloom_taxonomy_level", "understand")
+        
+        # Build reasoning based on question characteristics
+        if topic_tags:
+            topic_str = ", ".join(topic_tags[:3])
+            return f"Generated to assess {bloom_level}-level understanding of {topic_str} based on content from {len(chunks)} source section(s)."
+        else:
+            return f"Generated to test {bloom_level}-level comprehension of key concepts from the source material."
+    
+    def _determine_content_coverage(
+        self,
+        chunks: List[DocumentChunk],
+        question_data: Dict[str, Any],
+    ) -> str:
+        """Determine what aspects of the content the question covers."""
+        aspects = []
+        
+        for chunk in chunks:
+            meta = chunk.chunk_metadata or {}
+            if meta.get("has_definition"):
+                aspects.append("definitions")
+            if meta.get("has_math"):
+                aspects.append("mathematical concepts")
+            if meta.get("has_code"):
+                aspects.append("code/programming")
+            if meta.get("has_list"):
+                aspects.append("key points/lists")
+        
+        # Deduplicate
+        unique_aspects = list(dict.fromkeys(aspects))
+        
+        if unique_aspects:
+            return f"Covers: {', '.join(unique_aspects[:4])}"
+        else:
+            return "Covers core concepts from the source text"
     
     def _normalize_options(self, options: List[Any]) -> List[str]:
         """Normalize options to list of strings in format 'A) text'."""

@@ -20,6 +20,7 @@ import { subjectsService, Topic } from '@/services/subjects';
 import { useToast } from '@/components/toast';
 import { ExportModal } from '@/components/export-modal';
 import { selectionImpact, mediumImpact } from '@/utils/haptics';
+import { QuestionSources } from '@/components/question-sources';
 
 const FILTER_OPTIONS = [
   { label: 'All', value: '' },
@@ -300,6 +301,9 @@ export default function QuestionsScreen() {
       <Text style={[styles.questionText, { color: colors.text }]} numberOfLines={3}>
         {item.question_text}
       </Text>
+
+      {/* Source References */}
+      {item.source_info && <QuestionSources sourceInfo={item.source_info} compact />}
 
       {/* Show correct answer preview for MCQs */}
       {item.question_type === 'mcq' && item.correct_answer && (

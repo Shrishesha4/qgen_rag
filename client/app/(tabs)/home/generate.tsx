@@ -22,6 +22,7 @@ import { rubricsService, Rubric, RubricCreateData, QuestionTypeDistribution, Gen
 import { subjectsService, Subject } from '@/services/subjects';
 import { useToast } from '@/components/toast';
 import { lightImpact, mediumImpact, heavyImpact, selectionImpact } from '@/utils/haptics';
+import { QuestionSources } from '@/components/question-sources';
 
 const EXAM_TYPES = [
   { value: 'final_exam', label: 'Final Exam', icon: 'doc.fill' },
@@ -857,6 +858,8 @@ export default function GenerateScreen() {
                     <Text style={[styles.questionPreviewText, { color: colors.text }]} numberOfLines={2}>
                       {q.question_text}
                     </Text>
+                    {/* Source References */}
+                    {(q as any).source_info && <QuestionSources sourceInfo={(q as any).source_info} compact />}
                     <Text style={[styles.questionMarks, { color: colors.textSecondary }]}>
                       {q.marks} marks
                     </Text>

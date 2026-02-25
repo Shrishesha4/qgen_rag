@@ -49,6 +49,25 @@ class MCQOption(BaseModel):
     is_correct: bool = False
 
 
+class SourceReference(BaseModel):
+    """Schema for source reference information showing where content came from."""
+    document_name: Optional[str] = None
+    page_number: Optional[int] = None
+    page_range: Optional[List[int]] = None  # [start_page, end_page]
+    position_in_page: Optional[str] = None  # "top", "middle", "bottom"
+    position_percentage: Optional[float] = None  # 0-100
+    section_heading: Optional[str] = None
+    content_snippet: Optional[str] = None  # Brief excerpt of the source content
+    relevance_reason: Optional[str] = None  # Why this content was used for the question
+
+
+class QuestionSourceInfo(BaseModel):
+    """Schema for complete source information for a question."""
+    sources: List[SourceReference] = []
+    generation_reasoning: Optional[str] = None  # Why this question was generated from these sources
+    content_coverage: Optional[str] = None  # What aspects of the content are covered
+
+
 class QuestionResponse(BaseModel):
     """Schema for generated question response."""
     id: uuid.UUID
@@ -71,6 +90,9 @@ class QuestionResponse(BaseModel):
     # Context
     topic_tags: Optional[List[str]]
     source_chunk_ids: Optional[List[uuid.UUID]]
+    
+    # Source Attribution (new)
+    source_info: Optional[QuestionSourceInfo] = None
     
     # OBE mappings
     course_outcome_mapping: Optional[dict]
@@ -100,6 +122,59 @@ class QuestionResponse(BaseModel):
     previous_versions: Optional[List["QuestionResponse"]] = None  # For nested version history
 
     model_config = {"from_attributes": True}
+    
+    @classmethod
+    def from_orm_with_sources(cls, question, source_info: Optional[QuestionSourceInfo] = None):
+        """Create response with extracted source info from generation_metadata."""
+        data = {
+            "id": question.id,
+            "document_id": question.document_id,
+            "subject_id": question.subject_id,
+            "topic_id": question.topic_id,
+            "session_id": getattr(question, "session_id", None),
+            "question_text": question.question_text,
+            "question_type": question.question_type,
+            "marks": question.marks,
+            "difficulty_level": question.difficulty_level,
+            "bloom_taxonomy_level": question.bloom_taxonomy_level,
+            "options": question.options,
+            "correct_answer": question.correct_answer,
+            "explanation": question.explanation,
+            "topic_tags": question.topic_tags,
+            "source_chunk_ids": question.source_chunk_ids,
+            "course_outcome_mapping": question.course_outcome_mapping,
+            "learning_outcome_id": question.learning_outcome_id,
+            "vetting_status": question.vetting_status,
+            "vetted_at": question.vetted_at,
+            "vetting_notes": question.vetting_notes,
+            "answerability_score": question.answerability_score,
+            "specificity_score": question.specificity_score,
+            "generation_confidence": question.generation_confidence,
+            "generated_at": question.generated_at,
+            "times_shown": question.times_shown,
+            "user_rating": question.user_rating,
+            "is_archived": question.is_archived,
+            "replaced_by_id": question.replaced_by_id,
+            "replaces_id": question.replaces_id,
+            "version_number": getattr(question, "version_number", 1),
+            "is_latest": getattr(question, "is_latest", True),
+        }
+        
+        # Extract source info from generation_metadata if available
+        if source_info:
+            data["source_info"] = source_info
+        elif hasattr(question, "generation_metadata") and question.generation_metadata:
+            metadata = question.generation_metadata
+            if "source_info" in metadata:
+                data["source_info"] = QuestionSourceInfo(**metadata["source_info"])
+            elif "sources" in metadata:
+                data["source_info"] = QuestionSourceInfo(
+                    sources=[SourceReference(**s) for s in metadata.get("sources", [])],
+                    generation_reasoning=metadata.get("generation_reasoning"),
+                    content_coverage=metadata.get("content_coverage"),
+                )
+        
+        return cls(**data)
 
 
 class QuestionListResponse(BaseModel):

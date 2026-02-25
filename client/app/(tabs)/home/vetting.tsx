@@ -17,12 +17,14 @@ import { BlurView } from 'expo-blur';
 import { IconSymbol } from '@/components/ui/icon-symbol';
 import { Colors, Spacing, BorderRadius, FontSizes } from '@/constants/theme';
 import { useColorScheme } from '@/hooks/use-color-scheme';
-import { vettingService, PendingQuestion, VettingStats, CourseOutcomeMapping, REJECTION_REASONS } from '@/services/vetting';
+import { vettingService, PendingQuestion, VettingStats, CourseOutcomeMapping, REJECTION_REASONS, determineRegenerationMode } from '@/services/vetting';
 import { questionsService } from '@/services/questions';
 import { subjectsService, Subject, Topic } from '@/services/subjects';
 import { useToast } from '@/components/toast';
 import { extractErrorDetails } from '@/utils/errors';
 import { mediumImpact, selectionImpact } from '@/utils/haptics';
+import { QuestionSources } from '@/components/question-sources';
+import { VoiceInput, isSpeechRecognitionAvailable } from '@/components/voice-input';
 
 const CO_LEVELS = [
   { level: 1, label: 'Basic', color: '#34C759' },
@@ -72,6 +74,8 @@ export default function VettingScreen() {
   // Rejection reason modal state
   const [showRejectModal, setShowRejectModal] = useState<string | null>(null);
   const [selectedRejectReasons, setSelectedRejectReasons] = useState<string[]>([]);
+  const [customFeedback, setCustomFeedback] = useState<string>('');
+  const [feedbackInputMode, setFeedbackInputMode] = useState<'text' | 'voice'>('text');
 
   // Subject/Topic picker state
   const [subjects, setSubjects] = useState<Subject[]>([]);
@@ -296,6 +300,8 @@ export default function VettingScreen() {
 
   const openRejectModal = (questionId: string) => {
     setSelectedRejectReasons([]);
+    setCustomFeedback('');
+    setFeedbackInputMode('text');
     setShowRejectModal(questionId);
     selectionImpact();
   };
@@ -319,11 +325,18 @@ export default function VettingScreen() {
       // show regenerating indicator for this question while backend generates replacement
       setRegenerating(prev => ({ ...prev, [questionId]: true }));
 
+      // Determine regeneration mode based on selected reasons
+      const regenerationMode = selectedRejectReasons.length > 0 
+        ? determineRegenerationMode(selectedRejectReasons) 
+        : undefined;
+
       const replacement = await vettingService.vetQuestion(
         questionId, 
         'rejected', 
         'Rejected by reviewer',
-        selectedRejectReasons.length > 0 ? selectedRejectReasons : undefined
+        selectedRejectReasons.length > 0 ? selectedRejectReasons : undefined,
+        customFeedback.trim() || undefined,
+        regenerationMode
       );
 
               // clear regenerating flag
@@ -501,6 +514,13 @@ export default function VettingScreen() {
     const isExpanded = expandedQuestion === question.id;
     const mapping = coMappings[question.id] || {};
 
+    // Debug logging
+    console.log('Rendering question:', question.id);
+    console.log('Question has source_info?', !!(question as any).source_info);
+    if ((question as any).source_info) {
+      console.log('Source info:', JSON.stringify((question as any).source_info, null, 2));
+    }
+
     return (
       <View
         key={question.id}
@@ -550,8 +570,6 @@ export default function VettingScreen() {
             color={colors.textTertiary}
           />
         </TouchableOpacity>
-
-
 
         {/* Question Text */}
         <Text style={[styles.questionText, { color: colors.text }]}>
@@ -893,6 +911,23 @@ export default function VettingScreen() {
             <Text style={[styles.actionButtonText, { color: '#FFFFFF' }]}>Approve</Text>
           </TouchableOpacity>
         </View>
+
+        {/* Source References - shown below action buttons */}
+        {(question as any).source_info && (
+          <View style={{ marginTop: Spacing.md }}>
+            <QuestionSources sourceInfo={(question as any).source_info} />
+          </View>
+        )}
+
+        {/* Debug: Always show a test source to verify component works */}
+        {!((question as any).source_info) && __DEV__ && (
+          <View style={{ marginTop: Spacing.md, padding: Spacing.sm, backgroundColor: '#FFF3CD', borderRadius: BorderRadius.md }}>
+            <Text style={{ fontSize: FontSizes.xs, color: '#856404' }}>
+              ⚠️ No source_info found. This question was likely generated before source tracking was enabled. 
+              Upload a new document and generate questions to see RAG sources.
+            </Text>
+          </View>
+        )}
       </View>
     );
   };
@@ -1161,6 +1196,78 @@ export default function VettingScreen() {
                 );
               })}
             </ScrollView>
+            
+            <View style={styles.customFeedbackSection}>
+              <View style={styles.feedbackHeaderRow}>
+                <Text style={[styles.customFeedbackLabel, { color: colors.text }]}>
+                  Additional feedback (optional)
+                </Text>
+                {isSpeechRecognitionAvailable && (
+                  <View style={[styles.inputModeTabs, { backgroundColor: colors.background }]}>
+                    <TouchableOpacity
+                      style={[
+                        styles.inputModeTab,
+                        feedbackInputMode === 'text' && { backgroundColor: colors.primary }
+                      ]}
+                      onPress={() => setFeedbackInputMode('text')}
+                    >
+                      <IconSymbol 
+                        name="keyboard" 
+                        size={16} 
+                        color={feedbackInputMode === 'text' ? '#fff' : colors.textSecondary} 
+                      />
+                    </TouchableOpacity>
+                    <TouchableOpacity
+                      style={[
+                        styles.inputModeTab,
+                        feedbackInputMode === 'voice' && { backgroundColor: colors.primary }
+                      ]}
+                      onPress={() => setFeedbackInputMode('voice')}
+                    >
+                      <IconSymbol 
+                        name="mic.fill" 
+                        size={16} 
+                        color={feedbackInputMode === 'voice' ? '#fff' : colors.textSecondary} 
+                      />
+                    </TouchableOpacity>
+                  </View>
+                )}
+              </View>
+              
+              {feedbackInputMode === 'text' || !isSpeechRecognitionAvailable ? (
+                <TextInput
+                  style={[
+                    styles.customFeedbackInput,
+                    { 
+                      backgroundColor: colors.background, 
+                      color: colors.text,
+                      borderColor: colors.border
+                    }
+                  ]}
+                  value={customFeedback}
+                  onChangeText={setCustomFeedback}
+                  placeholder="Describe what's wrong or how you'd like this question improved..."
+                  placeholderTextColor={colors.textSecondary}
+                  multiline
+                  numberOfLines={3}
+                  textAlignVertical="top"
+                />
+              ) : (
+                <VoiceInput
+                  value={customFeedback}
+                  onChangeText={setCustomFeedback}
+                  placeholder="Tap mic to speak your feedback..."
+                  colors={{
+                    text: colors.text,
+                    textSecondary: colors.textSecondary,
+                    primary: colors.primary,
+                    background: colors.background,
+                    border: colors.border,
+                    error: colors.error,
+                  }}
+                />
+              )}
+            </View>
             
             <View style={styles.rejectModalButtons}>
               <TouchableOpacity
@@ -1651,6 +1758,40 @@ const styles = StyleSheet.create({
   rejectReasonDesc: {
     fontSize: FontSizes.sm,
     marginTop: 2,
+  },
+  customFeedbackSection: {
+    paddingHorizontal: Spacing.lg,
+    paddingBottom: Spacing.sm,
+  },
+  feedbackHeaderRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    marginBottom: Spacing.sm,
+  },
+  customFeedbackLabel: {
+    fontSize: FontSizes.sm,
+    fontWeight: '500',
+  },
+  inputModeTabs: {
+    flexDirection: 'row',
+    borderRadius: BorderRadius.sm,
+    padding: 2,
+    gap: 2,
+  },
+  inputModeTab: {
+    width: 32,
+    height: 28,
+    borderRadius: BorderRadius.sm - 2,
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  customFeedbackInput: {
+    borderWidth: 1,
+    borderRadius: BorderRadius.md,
+    padding: Spacing.sm,
+    fontSize: FontSizes.sm,
+    minHeight: 80,
   },
   rejectModalButtons: {
     flexDirection: 'row',

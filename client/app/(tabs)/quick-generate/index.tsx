@@ -25,6 +25,7 @@ import { subjectsService, Subject, Topic } from '@/services/subjects';
 import { useToast } from '@/components/toast';
 import { extractErrorDetails } from '@/utils/errors';
 import { selectionImpact, mediumImpact, lightImpact } from '@/utils/haptics';
+import { QuestionSources } from '@/components/question-sources';
 
 type QuestionType = 'mcq' | 'short_answer' | 'long_answer';
 type Difficulty = 'easy' | 'medium' | 'hard';
@@ -781,6 +782,9 @@ export default function QuickGenerateScreen() {
               <Text style={[styles.questionText, { color: colors.text }]}>
                 {q.question_text}
               </Text>
+
+              {/* Source References */}
+              {q.source_info && <QuestionSources sourceInfo={q.source_info} compact />}
 
               {/* Assigned LO / CO / Topic badges (if present) */}
               <View style={styles.generatedMetaRow}>

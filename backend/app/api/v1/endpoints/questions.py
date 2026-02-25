@@ -431,7 +431,7 @@ async def list_questions(
         )
         
         return QuestionListResponse(
-            questions=[QuestionResponse.model_validate(q) for q in questions],
+            questions=[QuestionResponse.from_orm_with_sources(q) for q in questions],
             pagination=pagination,
         )
     
@@ -476,7 +476,7 @@ async def get_question(
             detail="Question not found",
         )
     
-    return QuestionResponse.model_validate(question)
+    return QuestionResponse.from_orm_with_sources(question)
 
 
 @router.get("/{question_id}/versions", response_model=List[QuestionResponse])
@@ -539,7 +539,7 @@ async def get_question_versions(
         else:
             break
     
-    return [QuestionResponse.model_validate(v) for v in versions]
+    return [QuestionResponse.from_orm_with_sources(v) for v in versions]
 
 
 @router.post("/{question_id}/promote-version", response_model=QuestionResponse)
@@ -582,7 +582,7 @@ async def promote_question_version(
     
     # If this is already the latest version, just return it
     if source_question.is_latest:
-        return QuestionResponse.model_validate(source_question)
+        return QuestionResponse.from_orm_with_sources(source_question)
     
     # Find the current latest version in the chain by walking forward
     current_latest = source_question
@@ -639,7 +639,7 @@ async def promote_question_version(
     await db.commit()
     await db.refresh(new_question)
     
-    return QuestionResponse.model_validate(new_question)
+    return QuestionResponse.from_orm_with_sources(new_question)
 
 
 @router.post("/{question_id}/rate", response_model=QuestionResponse)
@@ -662,7 +662,7 @@ async def rate_question(
             difficulty_rating=rating_data.difficulty_rating,
         )
         
-        return QuestionResponse.model_validate(question)
+        return QuestionResponse.from_orm_with_sources(question)
     
     except ValueError as e:
         raise HTTPException(
@@ -1291,18 +1291,25 @@ async def get_question_stats(
 
 # ============== Vetting Endpoints ==============
 
-# Predefined rejection reasons that map to regeneration guidance
-REJECTION_REASONS = {
-    "duplicate": "Generate a completely unique question that is entirely different from any previously generated questions",
-    "too_easy": "Generate a more challenging question that requires deeper understanding and critical thinking",
-    "too_hard": "Generate a simpler, more accessible question that tests fundamental understanding",
-    "unclear": "Generate a clear, unambiguous question with precise wording and well-defined expectations",
-    "off_topic": "Generate a question that is directly relevant to the main topic and learning objectives",
-    "incorrect_answer": "Ensure the correct answer is accurate and properly validated",
-    "poor_options": "Generate better quality MCQ options that are plausible but distinguishable",
-    "too_long": "Generate a more concise question that gets to the point directly",
-    "too_short": "Generate a more detailed question with sufficient context for the learner",
+# Rejection reason categories:
+# - "modify": Keep similar concept but adjust the question (user wants same question modified)
+# - "new": Generate a completely different question
+REJECTION_REASON_CATEGORIES = {
+    "duplicate": {"category": "new", "guidance": "Generate a completely unique question focusing on different aspects of the content"},
+    "too_easy": {"category": "modify", "guidance": "Increase complexity while keeping the same topic focus. Add more analytical depth"},
+    "too_hard": {"category": "modify", "guidance": "Simplify the question while keeping the same concept. Test foundational understanding"},
+    "unclear": {"category": "modify", "guidance": "Rephrase the question clearly while keeping the same intent. Use precise terminology"},
+    "off_topic": {"category": "new", "guidance": "Generate a question that is directly focused on the main subject matter"},
+    "incorrect_answer": {"category": "modify", "guidance": "Keep the question but ensure the answer is factually correct and well-validated"},
+    "poor_options": {"category": "modify", "guidance": "Keep the question but create better MCQ options that are distinct yet plausible"},
+    "too_long": {"category": "modify", "guidance": "Shorten the question while preserving the core concept being tested"},
+    "too_short": {"category": "modify", "guidance": "Expand the question with more context while testing the same concept"},
+    "needs_improvement": {"category": "modify", "guidance": "Improve the question as specified by the user feedback"},
+    "completely_new": {"category": "new", "guidance": "Generate an entirely new question from different source material"},
 }
+
+# Legacy flat mapping for quick lookup
+REJECTION_REASONS = {k: v["guidance"] for k, v in REJECTION_REASON_CATEGORIES.items()}
 
 class VettingRequest(BaseModel):
     """Schema for vetting a question."""
@@ -1310,6 +1317,8 @@ class VettingRequest(BaseModel):
     course_outcome_mapping: Optional[dict] = None  # {"CO1": 2, "CO3": 1}
     notes: Optional[str] = None
     rejection_reasons: Optional[List[str]] = None  # ["duplicate", "too_easy", ...]
+    custom_feedback: Optional[str] = None  # Custom feedback from voice input or text
+    regeneration_mode: Optional[str] = None  # "modify" or "new" - explicit override
 
 
 
@@ -1350,7 +1359,7 @@ async def get_pending_questions(
     )
     
     return QuestionListResponse(
-        questions=[QuestionResponse.model_validate(q) for q in questions],
+        questions=[QuestionResponse.from_orm_with_sources(q) for q in questions],
         pagination=pagination,
     )
 
@@ -1456,15 +1465,45 @@ async def vet_question(
         from app.services.document_service import DocumentService
         import random
 
-        # ── Build rejection guidance from reasons ──
+        # ── Build intelligent rejection guidance from reasons ──
         rejection_reasons = vetting_data.rejection_reasons or []
+        custom_feedback = vetting_data.custom_feedback or vetting_data.notes or ""
+        
+        # Determine regeneration mode: "modify" (same concept, different approach) or "new" (completely different)
+        regeneration_mode = vetting_data.regeneration_mode  # Explicit override
+        
+        if not regeneration_mode:
+            # Auto-determine based on rejection reasons
+            modify_count = 0
+            new_count = 0
+            for reason in rejection_reasons:
+                if reason in REJECTION_REASON_CATEGORIES:
+                    if REJECTION_REASON_CATEGORIES[reason]["category"] == "modify":
+                        modify_count += 1
+                    else:
+                        new_count += 1
+            
+            # Default to "modify" unless there's a clear signal to generate new
+            if new_count > modify_count or "duplicate" in rejection_reasons or "off_topic" in rejection_reasons:
+                regeneration_mode = "new"
+            else:
+                regeneration_mode = "modify"
+        
+        # Build guidance based on mode
         rejection_guidance = []
         for reason in rejection_reasons:
-            if reason in REJECTION_REASONS:
-                rejection_guidance.append(REJECTION_REASONS[reason])
+            if reason in REJECTION_REASON_CATEGORIES:
+                rejection_guidance.append(REJECTION_REASON_CATEGORIES[reason]["guidance"])
+        
+        # Add custom feedback to guidance
+        if custom_feedback:
+            rejection_guidance.append(f"User feedback: {custom_feedback}")
+        
         rejection_guidance_str = "\n".join(f"- {g}" for g in rejection_guidance) if rejection_guidance else ""
         
-        logger.info(f"Rejection reasons: {rejection_reasons}, guidance: {rejection_guidance_str[:200]}...")
+        logger.info(f"Rejection reasons: {rejection_reasons}, mode: {regeneration_mode}, "
+                    f"custom: {custom_feedback[:100] if custom_feedback else 'None'}, "
+                    f"guidance: {rejection_guidance_str[:200]}...")
 
         # ── Detect original generation method ──
         gen_method = None
@@ -1535,22 +1574,56 @@ async def vet_question(
                     try:
                         import random as _r
                         regen_starter = _r.choice(_QUESTION_STARTERS.get(q_type, _QUESTION_STARTERS["default"]))
-                        prompt = f"Content:\n{content_context}\n"
-                        prompt += f"""
-Generate a {q_type.replace('_', ' ')} question based on this content.
+                        
+                        # Build prompt based on regeneration mode
+                        if regeneration_mode == "modify":
+                            # Keep same concept, improve the question based on feedback
+                            prompt = f"""Content:\n{content_context}\n
+
+TASK: Improve the following question based on user feedback.
+
+ORIGINAL QUESTION:
+"{question_snapshot["question_text"]}"
+
+ORIGINAL ANSWER: {question_snapshot["correct_answer"] or "Not specified"}
+
+IMPROVEMENT INSTRUCTIONS:
+{rejection_guidance_str if rejection_guidance_str else "- Improve clarity and quality while keeping the same concept"}
+
+REQUIREMENTS:
+- Generate a {q_type.replace('_', ' ')} question
 - Marks: {marks}
 - Difficulty: {question_snapshot["difficulty_level"] or "medium"}
-- REQUIRED: Your question MUST start with the word/phrase "{regen_starter}" — this is non-negotiable
-- FORBIDDEN: Do NOT start with "A clinician", "A patient", "A doctor", "A dentist", "A practitioner", "A student", "A researcher", or similar scenario setups.
-- CRITICAL: The question must be FULLY SELF-CONTAINED. NEVER reference the source material in ANY way. Do NOT use ANY of these phrases or similar: "the text", "the reference", "the provided material", "the provided content", "the context", "the passage", "according to", "based on the content", "as stated", "as mentioned", "in the material", "from the content". The question must stand completely alone as if no source was given.
-- IMPORTANT: Generate a DIFFERENT question from: "{question_snapshot["question_text"][:150]}..."
+- KEEP the same core concept/topic as the original question
+- APPLY the improvement feedback above
+- Your question MUST start with "{regen_starter}" or a similar interrogative
+- FORBIDDEN: Do NOT start with scenario setups like "A clinician", "A patient", etc.
+- CRITICAL: The question must be FULLY SELF-CONTAINED without referencing source material.
+
+Output valid JSON only."""
+                        else:
+                            # Generate completely new question from different content
+                            prompt = f"""Content:\n{content_context}\n
+
+Generate a COMPLETELY NEW {q_type.replace('_', ' ')} question based on this content.
+
+PREVIOUSLY REJECTED QUESTION (DO NOT regenerate similar):
+"{question_snapshot["question_text"][:200]}..."
+
+REQUIREMENTS:
+- Marks: {marks}
+- Difficulty: {question_snapshot["difficulty_level"] or "medium"}
+- REQUIRED: Your question MUST start with "{regen_starter}" — this is non-negotiable
+- Generate a question about a DIFFERENT TOPIC or ASPECT than the rejected question
+- FORBIDDEN: Do NOT start with "A clinician", "A patient", "A doctor", etc.
+- CRITICAL: The question must be FULLY SELF-CONTAINED. NEVER reference the source material.
 {f'''
-REJECTION FEEDBACK (address these issues in the new question):
+FEEDBACK TO ADDRESS:
 {rejection_guidance_str}
 ''' if rejection_guidance_str else ''}
 Output valid JSON only."""
 
-                        logger.info(f"Quick regen attempt {attempt + 1}/{max_retries}")
+                        logger.info(f"Quick regen attempt {attempt + 1}/{max_retries}, mode={regeneration_mode}")
                         response = await llm_service.generate_json(
                             prompt=prompt, system_prompt=system_prompt, temperature=0.7 + (attempt * 0.1),
                         )
@@ -1969,7 +2042,7 @@ Output valid JSON only."""
     )
     fresh_question = fresh.scalar_one_or_none()
     if fresh_question:
-        return QuestionResponse.model_validate(fresh_question)
+        return QuestionResponse.from_orm_with_sources(fresh_question)
     # Fallback: build response from snapshot dict
     return QuestionResponse(**question_snapshot)
 
@@ -2013,7 +2086,7 @@ async def update_co_mapping(
     await db.commit()
     await db.refresh(question)
     
-    return QuestionResponse.model_validate(question)
+    return QuestionResponse.from_orm_with_sources(question)
 
 
 @router.put("/{question_id}", response_model=QuestionResponse)
@@ -2115,7 +2188,7 @@ async def update_question(
     await db.commit()
     await db.refresh(question)
     
-    return QuestionResponse.model_validate(question)
+    return QuestionResponse.from_orm_with_sources(question)
 
 
 @router.get("/vetting/stats")
@@ -2973,6 +3046,7 @@ async def generate_chapter(
             # ── RAG: fetch reference-book chunks ──
             reference_context = ""
             ref_count = 0
+            ref_chunks = []
             try:
                 doc_service = DocumentService(db, embedding_service)
                 rag_query = f"{topic_name}: {topic_content[:500]}"
@@ -2992,6 +3066,46 @@ async def generate_chapter(
                     logger.info(f"[{request_id}] RAG found {ref_count} reference chunks")
             except Exception as e:
                 logger.warning(f"[{request_id}] RAG lookup failed ({e}); continuing without reference context")
+            
+            # ── Build source_info from RAG chunks ──
+            def build_source_info_from_chunks(chunks):
+                """Build source information for tracking RAG attribution."""
+                if not chunks:
+                    return {"sources": [], "generation_reasoning": None, "content_coverage": None}
+                
+                sources = []
+                for chunk in chunks:
+                    # Get document name
+                    chunk_meta = chunk.chunk_metadata or {}
+                    source_meta = chunk_meta.get("source_info", {})
+                    document_name = source_meta.get("document_name")
+                    if not document_name and hasattr(chunk, 'document') and chunk.document:
+                        document_name = chunk.document.filename
+                    if not document_name:
+                        document_name = "Unknown Document"
+                    
+                    # Store full content snippet (frontend will handle truncation)
+                    content_snippet = chunk.chunk_text
+                    
+                    source = {
+                        "document_name": document_name,
+                        "page_number": chunk.page_number or source_meta.get("page_number"),
+                        "page_range": source_meta.get("page_range"),
+                        "position_in_page": source_meta.get("position_in_page"),
+                        "position_percentage": source_meta.get("position_percentage"),
+                        "section_heading": chunk.section_heading,
+                        "content_snippet": content_snippet,
+                        "relevance_reason": f"Retrieved as reference material for {topic_name}",
+                    }
+                    sources.append(source)
+                
+                return {
+                    "sources": sources,
+                    "generation_reasoning": f"Question generated from chapter '{topic_name}' syllabus content with reference material support",
+                    "content_coverage": f"Chapter-based question covering {topic_name} concepts",
+                }
+            
+            source_info_dict = build_source_info_from_chunks(ref_chunks)
 
             yield f"data: {json.dumps({'status': 'processing', 'progress': 10, 'message': f'Prepared {len(syllabus_chunks)} content sections + {ref_count} reference excerpts'})}\n\n"
 
@@ -3197,6 +3311,8 @@ Output valid JSON only."""
                                     "source": "chapter_generation",
                                     "topic_name": topic_name,
                                     "has_reference_context": bool(reference_context),
+                                    "raw_response": resp,
+                                    "source_info": source_info_dict,
                                 },
                             )
                             db.add(question)

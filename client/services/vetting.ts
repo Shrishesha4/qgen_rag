@@ -11,22 +11,52 @@ export interface VettingRequest {
   course_outcome_mapping?: Record<string, number>;
   notes?: string;
   rejection_reasons?: string[];
+  custom_feedback?: string;  // Custom feedback from voice input or text
+  regeneration_mode?: 'modify' | 'new';  // Explicit regeneration mode
 }
 
-// Predefined rejection reasons
+// Rejection reason categories for intelligent regeneration
+export type RejectionCategory = 'modify' | 'new';
+
+// Predefined rejection reasons with regeneration categories
 export const REJECTION_REASONS = [
-  { id: 'duplicate', label: 'Duplicate Question', description: 'Similar to an existing question' },
-  { id: 'too_easy', label: 'Too Easy', description: 'Question lacks sufficient challenge' },
-  { id: 'too_hard', label: 'Too Difficult', description: 'Question is overly complex' },
-  { id: 'unclear', label: 'Unclear Wording', description: 'Question is ambiguous or confusing' },
-  { id: 'off_topic', label: 'Off Topic', description: 'Not relevant to the subject matter' },
-  { id: 'incorrect_answer', label: 'Wrong Answer', description: 'The correct answer is inaccurate' },
-  { id: 'poor_options', label: 'Poor MCQ Options', description: 'Options are too obvious or confusing' },
-  { id: 'too_long', label: 'Too Long', description: 'Question is unnecessarily verbose' },
-  { id: 'too_short', label: 'Too Short', description: 'Question lacks sufficient context' },
+  { id: 'duplicate', label: 'Duplicate Question', description: 'Similar to an existing question', category: 'new' as RejectionCategory },
+  { id: 'too_easy', label: 'Too Easy', description: 'Question lacks sufficient challenge', category: 'modify' as RejectionCategory },
+  { id: 'too_hard', label: 'Too Difficult', description: 'Question is overly complex', category: 'modify' as RejectionCategory },
+  { id: 'unclear', label: 'Unclear Wording', description: 'Question is ambiguous or confusing', category: 'modify' as RejectionCategory },
+  { id: 'off_topic', label: 'Off Topic', description: 'Not relevant to the subject matter', category: 'new' as RejectionCategory },
+  { id: 'incorrect_answer', label: 'Wrong Answer', description: 'The correct answer is inaccurate', category: 'modify' as RejectionCategory },
+  { id: 'poor_options', label: 'Poor MCQ Options', description: 'Options are too obvious or confusing', category: 'modify' as RejectionCategory },
+  { id: 'too_long', label: 'Too Long', description: 'Question is unnecessarily verbose', category: 'modify' as RejectionCategory },
+  { id: 'too_short', label: 'Too Short', description: 'Question lacks sufficient context', category: 'modify' as RejectionCategory },
+  { id: 'needs_improvement', label: 'Needs Improvement', description: 'Use voice/text to explain what to fix', category: 'modify' as RejectionCategory },
+  { id: 'completely_new', label: 'Generate New', description: 'Replace with entirely different question', category: 'new' as RejectionCategory },
 ] as const;
 
 export type RejectionReasonId = typeof REJECTION_REASONS[number]['id'];
+
+// Helper to determine regeneration mode from selected reasons
+export function determineRegenerationMode(selectedReasons: string[]): 'modify' | 'new' {
+  let modifyCount = 0;
+  let newCount = 0;
+  
+  for (const reasonId of selectedReasons) {
+    const reason = REJECTION_REASONS.find(r => r.id === reasonId);
+    if (reason) {
+      if (reason.category === 'modify') {
+        modifyCount++;
+      } else {
+        newCount++;
+      }
+    }
+  }
+  
+  // Default to modify unless there's a clear signal for new
+  if (newCount > modifyCount || selectedReasons.includes('duplicate') || selectedReasons.includes('off_topic') || selectedReasons.includes('completely_new')) {
+    return 'new';
+  }
+  return 'modify';
+}
 
 // Alias for Question with vetting-specific fields
 export interface PendingQuestion extends Question {
@@ -101,9 +131,17 @@ export const vettingService = {
     questionId: string, 
     status: 'approved' | 'rejected', 
     notes?: string,
-    rejectionReasons?: string[]
+    rejectionReasons?: string[],
+    customFeedback?: string,
+    regenerationMode?: 'modify' | 'new'
   ): Promise<Question> {
-    const data: VettingRequest = { status, notes, rejection_reasons: rejectionReasons };
+    const data: VettingRequest = { 
+      status, 
+      notes, 
+      rejection_reasons: rejectionReasons,
+      custom_feedback: customFeedback,
+      regeneration_mode: regenerationMode,
+    };
     const response = await apiClient.post<Question>(`/questions/${questionId}/vet`, data, { timeout: 120000 });
     return response.data;
   },
