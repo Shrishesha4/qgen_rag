@@ -230,9 +230,30 @@ class DocumentService:
             await self.db.commit()
             raise ValueError(f"Document processing failed: {str(e)}")
 
+    async def _update_progress(self, db, document, step: str, progress: int, detail: str = ""):
+        """Update document processing progress metadata."""
+        import logging
+        logger = logging.getLogger(__name__)
+        document.document_metadata = {
+            **(document.document_metadata or {}),
+            "processing_step": step,
+            "processing_progress": progress,
+            "processing_detail": detail,
+        }
+        await db.commit()
+        logger.info(f"[{document.filename}] {step}: {progress}% - {detail}")
+
     async def _process_document(self, document_id: uuid.UUID):
-        """Process document: extract text with page info, chunk, and create embeddings."""
+        """Process document: extract text with page info, chunk, and create embeddings.
+        
+        Uses batched embedding generation and progress tracking for large files.
+        """
+        import logging
+        logger = logging.getLogger(__name__)
         from app.core.database import AsyncSessionLocal
+        
+        EMBEDDING_BATCH_SIZE = 32  # Process embeddings in batches to avoid OOM
+        DB_INSERT_BATCH_SIZE = 100  # Insert chunks in batches to avoid huge transactions
         
         async with AsyncSessionLocal() as db:
             try:
@@ -245,7 +266,7 @@ class DocumentService:
 
                 # Update status
                 document.processing_status = "processing"
-                await db.commit()
+                await self._update_progress(db, document, "extracting", 5, "Extracting text from document...")
 
                 # Extract text with page-level information
                 pages_data = await self._extract_text_with_pages(document.storage_path, document.mime_type)
@@ -256,54 +277,107 @@ class DocumentService:
                     "total_pages": len(pages_data),
                     "document_name": pages_data[0].get("document_name") if pages_data else document.filename,
                 }
+                await self._update_progress(db, document, "chunking", 15, 
+                    f"Extracted {len(pages_data)} pages. Chunking text...")
 
                 # Chunk the document with page tracking
                 chunks = self._chunk_text_with_pages(pages_data)
-
-                # PERFORMANCE OPTIMIZATION: Batch generate all embeddings at once
-                chunk_texts = [chunk_data["text"] for chunk_data in chunks]
-                embeddings = await self.embedding_service.get_embeddings(chunk_texts, is_query=False)
-
-                # Create chunk objects (batch insert optimization)
-                total_tokens = 0
-                chunk_objects = []
-                for idx, (chunk_data, embedding) in enumerate(zip(chunks, embeddings)):
-                    # Build comprehensive chunk metadata
-                    chunk_metadata = chunk_data.get("metadata", {})
-                    chunk_metadata["source_info"] = {
-                        "document_name": chunk_data.get("document_name", document.filename),
-                        "page_number": chunk_data.get("page_number"),
-                        "page_range": chunk_data.get("page_range"),
-                        "position_in_page": chunk_data.get("position_in_page"),
-                        "position_percentage": chunk_data.get("position_percentage"),
-                    }
-                    
-                    chunk = DocumentChunk(
-                        document_id=document_id,
-                        chunk_index=idx,
-                        chunk_text=chunk_data["text"],
-                        chunk_embedding=embedding,
-                        token_count=chunk_data["token_count"],
-                        page_number=chunk_data.get("page_number"),
-                        section_heading=chunk_data.get("section_heading"),
-                        chunk_metadata=chunk_metadata,
-                    )
-                    chunk_objects.append(chunk)
-                    total_tokens += chunk_data["token_count"]
+                total_chunks = len(chunks)
                 
-                # Bulk insert all chunks at once
-                db.add_all(chunk_objects)
+                if total_chunks == 0:
+                    document.total_chunks = 0
+                    document.total_tokens = 0
+                    document.processing_status = "completed"
+                    document.processed_at = datetime.now(timezone.utc)
+                    await self._update_progress(db, document, "completed", 100, "No content found in document.")
+                    return
+
+                await self._update_progress(db, document, "embedding", 20, 
+                    f"Created {total_chunks} chunks. Generating embeddings...")
+
+                # BATCHED EMBEDDING GENERATION to avoid OOM on large documents
+                chunk_texts = [chunk_data["text"] for chunk_data in chunks]
+                all_embeddings = [None] * total_chunks
+                
+                for batch_start in range(0, total_chunks, EMBEDDING_BATCH_SIZE):
+                    batch_end = min(batch_start + EMBEDDING_BATCH_SIZE, total_chunks)
+                    batch_texts = chunk_texts[batch_start:batch_end]
+                    
+                    batch_embeddings = await self.embedding_service.get_embeddings(batch_texts, is_query=False)
+                    
+                    for i, emb in enumerate(batch_embeddings):
+                        all_embeddings[batch_start + i] = emb
+                    
+                    # Update progress (embedding is 20-80% of total)
+                    embed_progress = 20 + int((batch_end / total_chunks) * 60)
+                    await self._update_progress(db, document, "embedding", embed_progress,
+                        f"Generating embeddings ({batch_end}/{total_chunks} chunks)...")
+                    
+                    # Yield control to allow other tasks to run
+                    await asyncio.sleep(0)
+
+                await self._update_progress(db, document, "storing", 85, 
+                    f"Storing {total_chunks} chunks in database...")
+
+                # BATCHED DB INSERTION to avoid huge transactions
+                total_tokens = 0
+                for batch_start in range(0, total_chunks, DB_INSERT_BATCH_SIZE):
+                    batch_end = min(batch_start + DB_INSERT_BATCH_SIZE, total_chunks)
+                    chunk_objects = []
+                    
+                    for idx in range(batch_start, batch_end):
+                        chunk_data = chunks[idx]
+                        embedding = all_embeddings[idx]
+                        
+                        # Build comprehensive chunk metadata
+                        chunk_metadata = chunk_data.get("metadata", {})
+                        chunk_metadata["source_info"] = {
+                            "document_name": chunk_data.get("document_name", document.filename),
+                            "page_number": chunk_data.get("page_number"),
+                            "page_range": chunk_data.get("page_range"),
+                            "position_in_page": chunk_data.get("position_in_page"),
+                            "position_percentage": chunk_data.get("position_percentage"),
+                        }
+                        
+                        chunk = DocumentChunk(
+                            document_id=document_id,
+                            chunk_index=idx,
+                            chunk_text=chunk_data["text"],
+                            chunk_embedding=embedding,
+                            token_count=chunk_data["token_count"],
+                            page_number=chunk_data.get("page_number"),
+                            section_heading=chunk_data.get("section_heading"),
+                            chunk_metadata=chunk_metadata,
+                        )
+                        chunk_objects.append(chunk)
+                        total_tokens += chunk_data["token_count"]
+                    
+                    db.add_all(chunk_objects)
+                    await db.flush()  # Flush each batch to keep memory low
+                    
+                    store_progress = 85 + int(((batch_end) / total_chunks) * 10)
+                    await self._update_progress(db, document, "storing", store_progress,
+                        f"Stored {batch_end}/{total_chunks} chunks...")
 
                 # Update document
-                document.total_chunks = len(chunks)
+                document.total_chunks = total_chunks
                 document.total_tokens = total_tokens
                 document.processing_status = "completed"
                 document.processed_at = datetime.now(timezone.utc)
-                await db.commit()
+                await self._update_progress(db, document, "completed", 100, 
+                    f"Processing complete. {total_chunks} chunks, {total_tokens} tokens.")
+                
+                logger.info(f"✅ Document '{document.filename}' processed: {total_chunks} chunks, {total_tokens} tokens")
 
             except Exception as e:
+                logger.error(f"❌ Document processing failed for {document_id}: {e}")
                 document.processing_status = "failed"
-                document.document_metadata = {"error": str(e)}
+                document.document_metadata = {
+                    **(document.document_metadata or {}),
+                    "error": str(e),
+                    "processing_step": "failed",
+                    "processing_progress": 0,
+                }
                 await db.commit()
 
     async def _extract_text(self, file_path: str, mime_type: str) -> str:
@@ -494,6 +568,9 @@ class DocumentService:
         """
         Chunk text with page-level tracking for source attribution.
         
+        Uses an efficient range-based approach instead of per-character dicts
+        to keep memory usage low for large documents.
+        
         Each chunk contains:
         - text: The chunk content
         - token_count: Number of tokens
@@ -502,11 +579,10 @@ class DocumentService:
         - position_in_page: "top", "middle", or "bottom" based on vertical position
         - section_heading: Detected section heading if any
         - document_name: Name of the source document
-        - source_blocks: List of block positions this chunk came from
         - metadata: Additional metadata (has_code, has_math, etc.)
         """
         from langchain_text_splitters import RecursiveCharacterTextSplitter
-        import re
+        import bisect
         
         chunk_size = chunk_size or settings.CHUNK_SIZE
         chunk_overlap = chunk_overlap or settings.CHUNK_OVERLAP
@@ -521,42 +597,36 @@ class DocumentService:
         
         chunks = []
         
-        # Build a mapping of character positions to page/block info
+        # Build a lightweight range-based mapping: (start_char, end_char, page_num, doc_name, page_text_length)
+        # This uses O(num_pages) memory instead of O(num_characters)
         full_text = ""
-        char_to_page = []  # List of (char_index, page_num, block_info)
+        page_ranges = []  # List of (start_char_idx, page_num, document_name, page_text_length)
+        page_starts = []  # Just the start indices for binary search
         
         for page in pages_data:
             page_num = page["page_number"]
             page_text = page["text"]
-            page_height = page.get("page_height", 100) or 100
             document_name = page.get("document_name", "Unknown")
             
             start_idx = len(full_text)
             full_text += page_text + "\n\n"
             
-            # Track position within page
-            for i, char in enumerate(page_text):
-                char_to_page.append({
-                    "page_number": page_num,
-                    "document_name": document_name,
-                    "page_height": page_height,
-                    "char_pos_in_page": i,
-                    "page_text_length": len(page_text),
-                })
-            # Add separators
-            for _ in range(2):
-                char_to_page.append({
-                    "page_number": page_num,
-                    "document_name": document_name,
-                    "page_height": page_height,
-                    "char_pos_in_page": len(page_text),
-                    "page_text_length": len(page_text),
-                })
+            page_ranges.append((start_idx, page_num, document_name, len(page_text)))
+            page_starts.append(start_idx)
+        
+        def _get_page_info_at(char_idx: int):
+            """Get page info for a character index using binary search. O(log n)."""
+            idx = bisect.bisect_right(page_starts, char_idx) - 1
+            if idx < 0:
+                idx = 0
+            start, page_num, doc_name, page_len = page_ranges[idx]
+            char_in_page = char_idx - start
+            return page_num, doc_name, char_in_page, page_len
         
         # Split the combined text
         raw_chunks = splitter.split_text(full_text)
         
-        # Map each chunk back to its source pages
+        # Map each chunk back to its source pages using range lookups (not per-char)
         current_pos = 0
         for chunk_text in raw_chunks:
             chunk_text_stripped = chunk_text.strip()
@@ -570,27 +640,21 @@ class DocumentService:
             chunk_end = chunk_start + len(chunk_text)
             current_pos = chunk_start + 1
             
-            # Determine page range and position
-            pages_in_chunk = set()
-            positions_in_page = []
-            document_names = set()
+            # Determine page range using start/end + midpoint sampling
+            start_page, start_doc, start_char_in_page, start_page_len = _get_page_info_at(chunk_start)
+            end_page, end_doc, end_char_in_page, end_page_len = _get_page_info_at(min(chunk_end - 1, len(full_text) - 1))
+            mid_page, _, mid_char_in_page, mid_page_len = _get_page_info_at((chunk_start + chunk_end) // 2)
             
-            for i in range(chunk_start, min(chunk_end, len(char_to_page))):
-                info = char_to_page[i]
-                pages_in_chunk.add(info["page_number"])
-                document_names.add(info["document_name"])
-                
-                # Calculate vertical position (0-100%)
-                if info["page_text_length"] > 0:
-                    pos_pct = (info["char_pos_in_page"] / info["page_text_length"]) * 100
-                    positions_in_page.append(pos_pct)
+            primary_page = start_page
+            page_range = [start_page, end_page]
+            document_name = start_doc
             
-            page_list = sorted(pages_in_chunk)
-            primary_page = page_list[0] if page_list else 1
-            page_range = [page_list[0], page_list[-1]] if page_list else [1, 1]
+            # Estimate position in page from start position
+            if start_page_len > 0:
+                avg_position = (start_char_in_page / start_page_len) * 100
+            else:
+                avg_position = 50.0
             
-            # Determine position in page (top/middle/bottom)
-            avg_position = sum(positions_in_page) / len(positions_in_page) if positions_in_page else 50
             if avg_position < 33:
                 position_label = "top"
             elif avg_position < 66:
@@ -608,7 +672,7 @@ class DocumentService:
                 "page_range": page_range,
                 "position_in_page": position_label,
                 "position_percentage": round(avg_position, 1),
-                "document_name": list(document_names)[0] if document_names else "Unknown",
+                "document_name": document_name,
             }
             
             chunks.append({
@@ -619,7 +683,7 @@ class DocumentService:
                 "position_in_page": position_label,
                 "position_percentage": round(avg_position, 1),
                 "section_heading": section_heading,
-                "document_name": list(document_names)[0] if document_names else "Unknown",
+                "document_name": document_name,
                 "metadata": metadata,
             })
         
@@ -905,6 +969,100 @@ class DocumentService:
         )
         
         return [chunk for chunk, _ in ranked[:top_k]]
+
+    async def hybrid_search_multi_document(
+        self,
+        document_ids: List[uuid.UUID],
+        query: str,
+        query_embedding: List[float],
+        top_k: int = 5,
+        alpha: float = 0.5,
+    ) -> List[DocumentChunk]:
+        """
+        Hybrid search combining vector similarity and BM25 keyword matching
+        across multiple documents (e.g. primary + all reference books).
+        
+        Args:
+            document_ids: List of document IDs to search across
+            query: The text query for BM25 scoring
+            query_embedding: Pre-computed embedding for semantic search
+            top_k: Number of results to return
+            alpha: Balance between semantic (1.0) and keyword (0.0) search
+        
+        Returns:
+            Top-k chunks ranked by combined score across all documents
+        """
+        from rank_bm25 import BM25Okapi
+        
+        if not document_ids:
+            return []
+        
+        # Get all chunks across all documents
+        result = await self.db.execute(
+            select(DocumentChunk)
+            .options(selectinload(DocumentChunk.document))
+            .where(DocumentChunk.document_id.in_(document_ids))
+            .order_by(DocumentChunk.chunk_index)
+        )
+        chunks = list(result.scalars().all())
+        
+        if not chunks:
+            return []
+        
+        # BM25 scoring
+        tokenized_chunks = [c.chunk_text.lower().split() for c in chunks]
+        bm25 = BM25Okapi(tokenized_chunks)
+        bm25_scores = bm25.get_scores(query.lower().split())
+        
+        # Normalize BM25 scores to [0, 1]
+        max_bm25 = max(bm25_scores) if max(bm25_scores) > 0 else 1
+        bm25_scores_normalized = [s / max_bm25 for s in bm25_scores]
+        
+        # Vector similarity scores
+        vector_scores = []
+        for chunk in chunks:
+            if chunk.chunk_embedding is not None and len(chunk.chunk_embedding) > 0:
+                sim = self.embedding_service.compute_similarity(
+                    query_embedding, chunk.chunk_embedding
+                )
+                vector_scores.append((sim + 1) / 2)
+            else:
+                vector_scores.append(0)
+        
+        # Combine scores using weighted sum
+        combined_scores = [
+            alpha * vector_scores[i] + (1 - alpha) * bm25_scores_normalized[i]
+            for i in range(len(chunks))
+        ]
+        
+        # Sort by combined score and return top-k
+        ranked = sorted(
+            zip(chunks, combined_scores),
+            key=lambda x: x[1],
+            reverse=True
+        )
+        
+        return [chunk for chunk, _ in ranked[:top_k]]
+
+    async def get_reference_document_ids(
+        self,
+        user_id: uuid.UUID,
+        subject_id: uuid.UUID,
+        index_type: str = "reference_book",
+    ) -> List[uuid.UUID]:
+        """
+        Get IDs of all completed reference documents for a subject.
+        Used to include reference book chunks in question generation searches.
+        """
+        result = await self.db.execute(
+            select(Document.id).where(
+                Document.user_id == user_id,
+                Document.subject_id == subject_id,
+                Document.index_type == index_type,
+                Document.processing_status == "completed",
+            )
+        )
+        return list(result.scalars().all())
 
     async def get_reference_documents(
         self,

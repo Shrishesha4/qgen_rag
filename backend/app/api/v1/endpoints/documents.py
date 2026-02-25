@@ -232,6 +232,11 @@ async def get_document_status(
         "total_chunks": document.total_chunks,
         "total_tokens": document.total_tokens,
         "processed_at": document.processed_at,
+        "processing_step": (document.document_metadata or {}).get("processing_step"),
+        "processing_progress": (document.document_metadata or {}).get("processing_progress", 0),
+        "processing_detail": (document.document_metadata or {}).get("processing_detail"),
+        "total_pages": (document.document_metadata or {}).get("total_pages"),
+        "error": (document.document_metadata or {}).get("error"),
     }
 
 

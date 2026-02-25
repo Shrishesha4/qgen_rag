@@ -1633,6 +1633,13 @@ Output valid JSON only."""
                         if response and "question_text" in response:
                             question_text = response["question_text"]
                             if len(question_text) >= 15 and question_text.strip() != (question_snapshot["question_text"] or "").strip():
+                                # Validate MCQ has at least 4 options
+                                if q_type == "mcq":
+                                    norm_opts = _normalize_mcq_options(response.get("options"), "mcq")
+                                    if not norm_opts or len(norm_opts) < 4:
+                                        logger.warning(f"Quick regen attempt {attempt + 1}: MCQ has only {len(norm_opts) if norm_opts else 0} options, retrying")
+                                        continue
+
                                 question_embedding = await embedding_service.get_embedding(question_text)
 
                                 _s = _sanitize_question_fields({
@@ -1654,7 +1661,7 @@ Output valid JSON only."""
                                     difficulty_level=_s["difficulty_level"],
                                     bloom_taxonomy_level=_s["bloom_taxonomy_level"],
                                     correct_answer=response.get("correct_answer") or response.get("expected_answer"),
-                                    options=response.get("options"),
+                                    options=_normalize_mcq_options(response.get("options"), q_type),
                                     explanation=response.get("explanation"),
                                     topic_tags=response.get("topic_tags", question_snapshot["topic_tags"]),
                                     learning_outcome_id=_s["learning_outcome_id"],
@@ -1668,6 +1675,10 @@ Output valid JSON only."""
                                     generation_metadata={
                                         "source": "quick_generation",
                                         "regenerated_from": str(question_id),
+                                        "source_info": _build_rubric_source_info(
+                                            doc_chunks,
+                                            question_snapshot.get("topic_tags", ["Document"])[0] if question_snapshot.get("topic_tags") else "Document"
+                                        ),
                                     },
                                 )
                                 db.add(new_question)
@@ -1714,19 +1725,40 @@ Output valid JSON only."""
                 topic_name = topic_obj.name
                 topic_lo_mappings = topic_obj.learning_outcome_mappings or {}
 
-                # RAG: fetch reference-book chunks
+                # RAG: fetch reference-book chunks using hybrid search
                 reference_context = ""
                 try:
                     doc_service = DocumentService(db, embedding_service)
                     rag_query = f"{topic_name}: {syllabus_content[:500]}"
                     query_emb = await embedding_service.get_query_embedding(rag_query)
-                    ref_chunks = await doc_service.get_reference_chunks(
+                    
+                    # Get reference book IDs for hybrid search
+                    ref_doc_ids = await doc_service.get_reference_document_ids(
                         user_id=current_user.id,
                         subject_id=question_snapshot["subject_id"],
                         index_type="reference_book",
-                        query_embedding=query_emb,
-                        top_k=3,
                     )
+                    
+                    ref_chunks = []
+                    if ref_doc_ids:
+                        ref_chunks = await doc_service.hybrid_search_multi_document(
+                            document_ids=ref_doc_ids,
+                            query=rag_query,
+                            query_embedding=query_emb,
+                            top_k=5,
+                            alpha=0.6,
+                        )
+                    
+                    if not ref_chunks:
+                        # Fallback to vector-only search
+                        ref_chunks = await doc_service.get_reference_chunks(
+                            user_id=current_user.id,
+                            subject_id=question_snapshot["subject_id"],
+                            index_type="reference_book",
+                            query_embedding=query_emb,
+                            top_k=3,
+                        )
+                    
                     if ref_chunks:
                         reference_context = "\n\n".join(
                             f"[Reference {i+1}]: {c.chunk_text}" for i, c in enumerate(ref_chunks)
@@ -1810,7 +1842,7 @@ Output valid JSON only."""
                                     difficulty_level=_s["difficulty_level"],
                                     bloom_taxonomy_level=_s["bloom_taxonomy_level"],
                                     correct_answer=response.get("correct_answer") or response.get("expected_answer"),
-                                    options=response.get("options"),
+                                    options=_normalize_mcq_options(response.get("options"), q_type),
                                     explanation=response.get("explanation"),
                                     topic_tags=response.get("topic_tags", [topic_name]),
                                     learning_outcome_id=_s["learning_outcome_id"],
@@ -1826,6 +1858,10 @@ Output valid JSON only."""
                                         "regenerated_from": str(question_id),
                                         "topic_name": topic_name,
                                         "has_reference_context": bool(reference_context),
+                                        "source_info": _build_rubric_source_info(
+                                            ref_chunks if ref_chunks else [],
+                                            topic_name,
+                                        ),
                                     },
                                 )
                                 db.add(new_question)
@@ -1924,6 +1960,13 @@ Output valid JSON only."""
                             if response and "question_text" in response:
                                 question_text = response["question_text"]
                                 if len(question_text) >= 15 and question_text.strip() != (question_snapshot["question_text"] or "").strip():
+                                    # Validate MCQ has at least 4 options
+                                    if q_type == "mcq":
+                                        norm_opts = _normalize_mcq_options(response.get("options"), "mcq")
+                                        if not norm_opts or len(norm_opts) < 4:
+                                            logger.warning(f"Rubric regen attempt {attempt + 1}: MCQ has only {len(norm_opts) if norm_opts else 0} options, retrying")
+                                            continue
+
                                     question_embedding = await embedding_service.get_embedding(question_text)
 
                                     assigned_lo = response.get("learning_outcome_id") or response.get("learning_outcome")
@@ -1974,7 +2017,7 @@ Output valid JSON only."""
                                         difficulty_level=_s["difficulty_level"],
                                         bloom_taxonomy_level=_s["bloom_taxonomy_level"],
                                         correct_answer=response.get("correct_answer") or response.get("expected_answer"),
-                                        options=response.get("options"),
+                                        options=_normalize_mcq_options(response.get("options"), q_type),
                                         explanation=response.get("explanation"),
                                         topic_tags=response.get("topic_tags", [selected_chunk["topic_name"]]),
                                         learning_outcome_id=_s["learning_outcome_id"],
@@ -1988,6 +2031,20 @@ Output valid JSON only."""
                                         generation_metadata={
                                             "regenerated_from": str(question_id),
                                             "topic_name": selected_chunk["topic_name"],
+                                            "source_info": {
+                                                "sources": [{
+                                                    "document_name": f"Syllabus: {selected_chunk['topic_name']}",
+                                                    "page_number": None,
+                                                    "page_range": None,
+                                                    "position_in_page": None,
+                                                    "position_percentage": None,
+                                                    "section_heading": selected_chunk["topic_name"],
+                                                    "content_snippet": selected_chunk["content"][:500],
+                                                    "relevance_reason": f"Syllabus content used for regeneration of {selected_chunk['topic_name']}",
+                                                }],
+                                                "generation_reasoning": f"Question regenerated from '{selected_chunk['topic_name']}' syllabus content",
+                                                "content_coverage": f"Rubric-based regeneration covering {selected_chunk['topic_name']} concepts",
+                                            },
                                         },
                                     )
                                     db.add(new_question)
@@ -2542,29 +2599,71 @@ async def generate_from_rubric(
                 yield f"data: {json.dumps({'status': 'error', 'progress': 0, 'message': 'No syllabus content found in topics'})}\n\n"
                 return
 
-            # ── RAG: fetch reference-book chunks ──
-            reference_context = ""
+            # ── RAG: fetch per-topic reference-book chunks using hybrid search ──
+            # Build a map of topic_id -> reference_context so each question gets
+            # reference material relevant to its specific topic (not a single blob
+            # that may be dominated by one topic).
+            topic_reference_contexts: dict[str, str] = {}  # topic_id -> reference text
+            topic_reference_chunks: dict[str, list] = {}    # topic_id -> list of DocumentChunk objects (for source_info)
             ref_count = 0
+            ref_doc_ids = []
             try:
                 from app.services.document_service import DocumentService
                 doc_service = DocumentService(db, embedding_service)
-                # Build a query from the topic names + first few hundred chars of syllabus
-                rag_query_parts = [td["name"] + ": " + (td["content"] or "")[:200] for td in topic_data if td["content"]]
-                rag_query = " ".join(rag_query_parts)[:1000]
-                query_emb = await embedding_service.get_query_embedding(rag_query)
-                ref_chunks = await doc_service.get_reference_chunks(
+                
+                # Get reference book IDs once
+                ref_doc_ids = await doc_service.get_reference_document_ids(
                     user_id=current_user.id,
                     subject_id=uuid.UUID(subject_id_str),
                     index_type="reference_book",
-                    query_embedding=query_emb,
-                    top_k=5,
                 )
-                if ref_chunks:
-                    reference_context = "\n\n".join(
-                        f"[Reference {i+1}]: {c.chunk_text}" for i, c in enumerate(ref_chunks)
+                
+                if ref_doc_ids:
+                    for td in topic_data:
+                        if not td["content"]:
+                            continue
+                        topic_rag_query = f"{td['name']}: {td['content'][:400]}"
+                        topic_query_emb = await embedding_service.get_query_embedding(topic_rag_query)
+                        
+                        topic_ref_chunks = await doc_service.hybrid_search_multi_document(
+                            document_ids=ref_doc_ids,
+                            query=topic_rag_query,
+                            query_embedding=topic_query_emb,
+                            top_k=3,
+                            alpha=0.6,
+                        )
+                        
+                        if topic_ref_chunks:
+                            topic_reference_contexts[td["id"]] = "\n\n".join(
+                                f"[Reference {i+1}]: {c.chunk_text}" for i, c in enumerate(topic_ref_chunks)
+                            )
+                            topic_reference_chunks[td["id"]] = topic_ref_chunks
+                            ref_count += len(topic_ref_chunks)
+                    
+                    if topic_reference_contexts:
+                        logger.info(f"[{request_id}] RAG found {ref_count} reference chunks across {len(topic_reference_contexts)} topics for rubric generation")
+                
+                if not topic_reference_contexts and ref_doc_ids:
+                    # Fallback: single combined query if per-topic failed
+                    rag_query_parts = [td["name"] + ": " + (td["content"] or "")[:200] for td in topic_data if td["content"]]
+                    rag_query = " ".join(rag_query_parts)[:1000]
+                    query_emb = await embedding_service.get_query_embedding(rag_query)
+                    fallback_chunks = await doc_service.get_reference_chunks(
+                        user_id=current_user.id,
+                        subject_id=uuid.UUID(subject_id_str),
+                        index_type="reference_book",
+                        query_embedding=query_emb,
+                        top_k=5,
                     )
-                    ref_count = len(ref_chunks)
-                    logger.info(f"[{request_id}] RAG found {ref_count} reference chunks for rubric generation")
+                    if fallback_chunks:
+                        fallback_ctx = "\n\n".join(
+                            f"[Reference {i+1}]: {c.chunk_text}" for i, c in enumerate(fallback_chunks)
+                        )
+                        for td in topic_data:
+                            topic_reference_contexts[td["id"]] = fallback_ctx
+                            topic_reference_chunks[td["id"]] = fallback_chunks
+                        ref_count = len(fallback_chunks)
+                        logger.info(f"[{request_id}] RAG fallback: {ref_count} reference chunks shared across all topics")
             except Exception as e:
                 logger.warning(f"[{request_id}] RAG lookup failed ({e}); continuing without reference context")
 
@@ -2658,9 +2757,16 @@ async def generate_from_rubric(
                 
                 logger.info(f"[{request_id}] Generating {count} {mapped_type} questions")
                 
-                # Distribute across chunks evenly
-                chunks_per_question = max(1, len(all_chunks) // count)
-                chunk_index = 0
+                # ── Topic-aware round-robin distribution ──
+                # Group chunks by topic for even distribution across ALL topics
+                topic_ids_ordered = list(dict.fromkeys(c["topic_id"] for c in all_chunks))  # preserve order, dedupe
+                chunks_by_topic: dict[str, list] = {tid: [] for tid in topic_ids_ordered}
+                for c in all_chunks:
+                    chunks_by_topic[c["topic_id"]].append(c)
+                
+                # Each topic gets a rotating index so consecutive questions
+                # from the same topic use different chunks
+                topic_chunk_cursors: dict[str, int] = {tid: 0 for tid in topic_ids_ordered}
                 
                 for i in range(count):
                     # Get a fresh session connection for each question
@@ -2671,10 +2777,13 @@ async def generate_from_rubric(
                         break
 
                     try:
-                        # Select chunk (round-robin with some randomization)
-                        selected_idx = (chunk_index + random.randint(0, min(2, len(all_chunks)-1))) % len(all_chunks)
-                        selected_chunk = all_chunks[selected_idx]
-                        chunk_index = (chunk_index + chunks_per_question) % len(all_chunks)
+                        # Round-robin across topics to ensure even coverage
+                        topic_idx = i % len(topic_ids_ordered)
+                        selected_topic_id = topic_ids_ordered[topic_idx]
+                        topic_chunks = chunks_by_topic[selected_topic_id]
+                        cursor = topic_chunk_cursors[selected_topic_id]
+                        selected_chunk = topic_chunks[cursor % len(topic_chunks)]
+                        topic_chunk_cursors[selected_topic_id] = cursor + 1
                         
                         # Pick a unique starter for this question
                         starter = _pick_starter(mapped_type, used_starters_rubric)
@@ -2685,10 +2794,12 @@ async def generate_from_rubric(
                         prompt = f"""Context from "{selected_chunk['topic_name']}":
 {selected_chunk['content']}
 """
-                        if reference_context:
+                        # Use topic-specific reference context (not a single blob)
+                        chunk_ref_context = topic_reference_contexts.get(selected_chunk["topic_id"], "")
+                        if chunk_ref_context:
                             prompt += f"""
 Background knowledge (use to inform the question, do NOT cite or reference it):
-{reference_context}
+{chunk_ref_context}
 """
                         prompt += f"""
 Generate a {mapped_type.replace('_', ' ')} question based on this content.
@@ -2741,6 +2852,16 @@ Output valid JSON only."""
                                 if attempt == RETRY_LIMIT - 1:
                                     questions_failed += 1
                                 continue
+
+                            # Validate MCQ has at least 4 options
+                            if mapped_type == "mcq":
+                                raw_opts = resp.get("options")
+                                normalized_opts = _normalize_mcq_options(raw_opts, "mcq")
+                                if not normalized_opts or len(normalized_opts) < 4:
+                                    logger.debug(f"[{request_id}] MCQ has only {len(normalized_opts) if normalized_opts else 0} options (attempt {attempt+1}), retrying")
+                                    if attempt == RETRY_LIMIT - 1:
+                                        questions_failed += 1
+                                    continue
 
                             # Accepted candidate
                             question_text = candidate_text
@@ -2822,7 +2943,7 @@ Output valid JSON only."""
                             difficulty_level=_s["difficulty_level"],
                             bloom_taxonomy_level=_s["bloom_taxonomy_level"],
                             correct_answer=(response_obj.get("correct_answer") or (response_obj.get("expected_answer") if response_obj else None)),
-                            options=(response_obj.get("options") if response_obj else None),
+                            options=_normalize_mcq_options(response_obj.get("options"), mapped_type) if response_obj else None,
                             explanation=(response_obj.get("explanation") if response_obj else None),
                             topic_tags=(response_obj.get("topic_tags", [selected_chunk["topic_name"]]) if response_obj else [selected_chunk["topic_name"]]),
                             learning_outcome_id=assigned_lo,
@@ -2835,6 +2956,10 @@ Output valid JSON only."""
                                 "lo_mappings": selected_chunk["lo_mappings"],
                                 "assigned_learning_outcome": assigned_lo,
                                 "assigned_course_outcome_mapping": assigned_co_map,
+                                "source_info": _build_rubric_source_info(
+                                    topic_reference_chunks.get(selected_chunk["topic_id"], []),
+                                    selected_chunk["topic_name"],
+                                ),
                             },
                         )
                         db.add(question)
@@ -3043,7 +3168,7 @@ async def generate_chapter(
         try:
             yield f"data: {json.dumps({'status': 'processing', 'progress': 5, 'message': 'Analyzing chapter content...'})}\n\n"
 
-            # ── RAG: fetch reference-book chunks ──
+            # ── RAG: fetch reference-book chunks using hybrid search ──
             reference_context = ""
             ref_count = 0
             ref_chunks = []
@@ -3051,13 +3176,33 @@ async def generate_chapter(
                 doc_service = DocumentService(db, embedding_service)
                 rag_query = f"{topic_name}: {topic_content[:500]}"
                 query_emb = await embedding_service.get_query_embedding(rag_query)
-                ref_chunks = await doc_service.get_reference_chunks(
+                
+                # Get reference book IDs for hybrid search
+                ref_doc_ids = await doc_service.get_reference_document_ids(
                     user_id=user_id,
                     subject_id=uuid.UUID(subject_id_str),
                     index_type="reference_book",
-                    query_embedding=query_emb,
-                    top_k=5,
                 )
+                
+                if ref_doc_ids:
+                    ref_chunks = await doc_service.hybrid_search_multi_document(
+                        document_ids=ref_doc_ids,
+                        query=rag_query,
+                        query_embedding=query_emb,
+                        top_k=8,
+                        alpha=0.6,
+                    )
+                
+                if not ref_chunks:
+                    # Fallback to vector-only search
+                    ref_chunks = await doc_service.get_reference_chunks(
+                        user_id=user_id,
+                        subject_id=uuid.UUID(subject_id_str),
+                        index_type="reference_book",
+                        query_embedding=query_emb,
+                        top_k=5,
+                    )
+                
                 if ref_chunks:
                     reference_context = "\n\n".join(
                         f"[Reference {i+1}]: {c.chunk_text}" for i, c in enumerate(ref_chunks)
@@ -3248,6 +3393,16 @@ Output valid JSON only."""
                                     questions_failed += 1
                                 continue
 
+                            # Validate MCQ has at least 4 options
+                            if q_type == "mcq":
+                                raw_opts = resp.get("options")
+                                normalized_opts = _normalize_mcq_options(raw_opts, "mcq")
+                                if not normalized_opts or len(normalized_opts) < 4:
+                                    logger.debug(f"[{request_id}] Chapter MCQ has only {len(normalized_opts) if normalized_opts else 0} options (attempt {attempt+1}), retrying")
+                                    if attempt == RETRY_LIMIT - 1:
+                                        questions_failed += 1
+                                    continue
+
                             accepted = True
 
                             # LO / CO assignment — use LLM response, then fallback to topic data
@@ -3300,7 +3455,7 @@ Output valid JSON only."""
                                 difficulty_level=_s["difficulty_level"],
                                 bloom_taxonomy_level=_s["bloom_taxonomy_level"],
                                 correct_answer=(resp.get("correct_answer") or resp.get("expected_answer")),
-                                options=resp.get("options"),
+                                options=_normalize_mcq_options(resp.get("options"), q_type),
                                 explanation=resp.get("explanation"),
                                 topic_tags=resp.get("topic_tags", [topic_name]),
                                 learning_outcome_id=assigned_lo,
@@ -3378,19 +3533,97 @@ Output valid JSON only."""
     )
 
 
+def _build_rubric_source_info(ref_chunks: list, topic_name: str) -> dict:
+    """Build source_info dict from reference chunks for rubric-generated questions."""
+    if not ref_chunks:
+        return {"sources": [], "generation_reasoning": None, "content_coverage": None}
+    
+    sources = []
+    for chunk in ref_chunks:
+        chunk_meta = getattr(chunk, "chunk_metadata", None) or {}
+        source_meta = chunk_meta.get("source_info", {})
+        document_name = source_meta.get("document_name")
+        if not document_name and hasattr(chunk, 'document') and chunk.document:
+            document_name = chunk.document.filename
+        if not document_name:
+            document_name = "Unknown Document"
+        
+        source = {
+            "document_name": document_name,
+            "page_number": getattr(chunk, "page_number", None) or source_meta.get("page_number"),
+            "page_range": source_meta.get("page_range"),
+            "position_in_page": source_meta.get("position_in_page"),
+            "position_percentage": source_meta.get("position_percentage"),
+            "section_heading": getattr(chunk, "section_heading", None),
+            "content_snippet": chunk.chunk_text,
+            "relevance_reason": f"Retrieved as reference material for {topic_name}",
+        }
+        sources.append(source)
+    
+    return {
+        "sources": sources,
+        "generation_reasoning": f"Question generated from '{topic_name}' syllabus content with reference material support",
+        "content_coverage": f"Rubric-based question covering {topic_name} concepts",
+    }
+
+
+def _normalize_mcq_options(options, question_type: str = "mcq"):
+    """
+    Normalize and validate MCQ options.
+    Ensures options are a list of properly formatted strings like 'A) text'.
+    Returns None for non-MCQ types.
+    """
+    if question_type != "mcq" or not options:
+        return options
+    
+    labels = ['A', 'B', 'C', 'D', 'E', 'F']
+    normalized = []
+    
+    if isinstance(options, list):
+        for i, opt in enumerate(options):
+            label = labels[i] if i < len(labels) else str(i + 1)
+            if isinstance(opt, str):
+                opt = opt.strip()
+                if not opt:
+                    continue
+                # Check if it already has a label prefix (e.g. "A) ..." or "A. ...")
+                if len(opt) > 1 and opt[0].isalpha() and opt[1] in ').:':
+                    normalized.append(opt)
+                else:
+                    normalized.append(f"{label}) {opt}")
+            elif isinstance(opt, dict):
+                text = opt.get("text") or opt.get("description") or opt.get("option") or opt.get("value") or str(opt)
+                normalized.append(f"{label}) {text}")
+            else:
+                normalized.append(f"{label}) {str(opt)}")
+    elif isinstance(options, dict):
+        # Handle dict format like {"A": "text", "B": "text", ...}
+        for key, val in options.items():
+            label = str(key).strip().rstrip(').:')
+            text = str(val).strip() if val else ""
+            if text:
+                normalized.append(f"{label}) {text}")
+    
+    return normalized if normalized else options
+
+
 def _get_rubric_system_prompt(question_type: str) -> str:
     """Get system prompt for rubric-based question generation."""
     if question_type == "mcq":
-        return """You are an expert educator creating examination questions.
-Generate a high-quality multiple-choice question (MCQ) based on the given context.
+        return """You are an expert educator creating CHALLENGING examination questions.
+Generate a high-quality multiple-choice question (MCQ) that tests APPLICATION or ANALYSIS, not just recall.
 
-Guidelines:
-- The question must be clear, specific, and test understanding of the material
-- Start with an interrogative word (What, Which, How, When, etc.) or imperative (Calculate, Find, Determine)
-- All options should be plausible but only one correct
-- Avoid "all of the above" or "none of the above"
-- FORBIDDEN: Do NOT start all the questions with scenario setups like "A clinician", "A patient", "A doctor", "A dentist", "A practitioner", "A student", "A researcher", "An engineer", etc. Also start directly with the required starter word.
-- CRITICAL: The question text must be fully self-contained. NEVER mention, cite, or reference the source material, context, references, or any provided text. Do NOT use phrases like "According to the text", "As discussed in the reference", "Based on the provided material", "As mentioned in reference", "According to reference [N]", "As stated in the context", or any similar phrasing. The question must stand alone as if no source was provided.
+Critical Guidelines:
+- COGNITIVE DEPTH: Focus on applying concepts, analyzing scenarios, or evaluating options - avoid simple recall
+- Use question patterns like:
+  * "Which approach would be MOST effective when..."
+  * "What would be the PRIMARY consequence of..."
+  * "Which statement BEST explains the relationship between..."
+  * "What distinguishes X from Y in terms of..."
+- Start with interrogative words (What, Which, How, When, Why) or imperative (Calculate, Find, Determine, Identify)
+- All 4 options must be plausible and challenging - avoid obviously wrong distractors
+- FORBIDDEN: Do NOT start with scenario setups like "A clinician", "A patient", "A doctor", "A dentist", "A practitioner", "A student", "A researcher", "An engineer", etc. Start directly with interrogatives.
+- CRITICAL: The question text must be fully self-contained. NEVER mention, cite, or reference the source material, context, references, or any provided text. Do NOT use phrases like "According to the text", "As discussed in the reference", "Based on the provided material", "As mentioned in reference", "According to reference [N]", "As stated in the context", or any similar phrasing. Write it as a standalone exam question.
 
 Output format (JSON):
 {
@@ -3399,48 +3632,56 @@ Output format (JSON):
     "correct_answer": "A",
     "explanation": "Brief explanation of why A is correct",
     "topic_tags": ["topic1"],
-    "bloom_level": "understand",
-    "learning_outcome": "LO1",
-    "course_outcome": "CO1"
-}"""
-    elif question_type == "short_answer":
-        return """You are an expert educator creating examination questions.
-Generate a short-answer question requiring a 2-4 sentence response.
-
-Guidelines:
-- The question should require application or analysis of concepts
-- Start with action verbs like Explain, Describe, Compare, Define
-- Be specific about what is expected in the answer
-- FORBIDDEN: Do NOT start all the questions with scenario setups like "A clinician", "A patient", "A doctor", "A dentist", "A practitioner", "A student", "A researcher", "An engineer", etc. Also start directly with the required starter word.
-- CRITICAL: Both the question AND expected_answer must be fully self-contained. NEVER mention, cite, or reference the source material, context, references, or any provided text. Do NOT use phrases like "According to the text", "As discussed in the reference", "Based on the provided material", "As mentioned in reference", "According to reference [N]", "As stated in the context", "According to the provided content", or any similar phrasing. Both must stand alone as professional exam content.
-
-Output format (JSON):
-{
-    "question_text": "The question text",
-    "expected_answer": "Model answer (2-4 sentences) - written as a direct answer without referencing any source",
-    "key_points": ["point1", "point2"],
-    "topic_tags": ["topic1"],
     "bloom_level": "apply",
     "learning_outcome": "LO1",
     "course_outcome": "CO1"
 }"""
-    else:
-        return """You are an expert educator creating examination questions.
-Generate a long-answer question requiring a detailed response.
+    elif question_type == "short_answer":
+        return """You are an expert educator creating THOUGHT-PROVOKING examination questions.
+Generate a short-answer question requiring ANALYSIS or EVALUATION, not just description.
 
-Guidelines:
-- The question should require analysis, evaluation, or synthesis
-- Start with higher-order verbs like Analyze, Evaluate, Discuss, Compare and contrast
-- Clearly state what aspects should be covered
-- FORBIDDEN: Do NOT start all the questions with scenario setups like "A clinician", "A patient", "A doctor", "A dentist", "A practitioner", "A student", "A researcher", "An engineer", etc. Also start directly with the required starter word.
-- CRITICAL: Both the question AND expected_answer must be fully self-contained. NEVER mention, cite, or reference the source material, context, references, or any provided text. Do NOT use phrases like "According to the text", "As discussed in the reference", "Based on the provided material", "As mentioned in reference", "According to reference [N]", "As stated in the context", "According to the provided content", or any similar phrasing. Both must stand alone as professional exam content.
+Critical Guidelines:
+- COGNITIVE DEPTH: Questions should require reasoning, comparison, or justification
+- Use higher-order starters:
+  * "Explain WHY... rather than just..."
+  * "Compare and contrast..."
+  * "Analyze the relationship between..."
+  * "Justify the use of... in..."
+- Expected answers should demonstrate reasoning and understanding, not just list facts
+- FORBIDDEN: Do NOT start with scenario setups like "A clinician", "A patient", "A doctor", "A dentist", "A practitioner", "A student", "A researcher", "An engineer", etc. Start with action verbs.
+- CRITICAL: Both the question AND expected_answer must be fully self-contained. NEVER mention, cite, or reference the source material, context, references, or any provided text. Do NOT use phrases like "According to the text", "As discussed in the reference", "Based on the provided material", "As mentioned in reference", "According to reference [N]", "As stated in the context", or any similar phrasing. Write as standalone exam content.
 
 Output format (JSON):
 {
     "question_text": "The question text",
-    "expected_answer": "Model answer outline with key points - written as a direct answer without referencing any source",
+    "expected_answer": "Model answer (3-5 sentences) - demonstrating reasoning and analysis",
+    "key_points": ["point1", "point2"],
     "topic_tags": ["topic1"],
     "bloom_level": "analyze",
+    "learning_outcome": "LO1",
+    "course_outcome": "CO1"
+}"""
+    else:
+        return """You are an expert educator creating ANALYTICALLY RIGOROUS examination questions.
+Generate a long-answer question requiring CRITICAL ANALYSIS or EVALUATION.
+
+Critical Guidelines:
+- HIGHEST COGNITIVE LEVEL: Questions must require synthesis, evaluation, or critical thinking
+- Use analytical prompts:
+  * "Critically evaluate the advantages and limitations of..."
+  * "Analyze how... differs from... in terms of..."
+  * "Discuss the implications of... on..."
+  * "Assess the effectiveness of..."
+- Expected answers should include structured argumentation and justification
+- FORBIDDEN: Do NOT start with scenario setups like "A clinician", "A patient", "A doctor", "A dentist", "A practitioner", "A student", "A researcher", "An engineer", etc. Start with analytical verbs.
+- CRITICAL: Both the question AND expected_answer must be fully self-contained. NEVER mention, cite, or reference the source material, context, references, or any provided text. Do NOT use phrases like "According to the text", "As discussed in the reference", "Based on the provided material", "As mentioned in reference", "According to reference [N]", "As stated in the context", or any similar phrasing. Write as standalone professional exam content.
+
+Output format (JSON):
+{
+    "question_text": "The question text",
+    "expected_answer": "Model answer outline covering key arguments and analysis",
+    "topic_tags": ["topic1"],
+    "bloom_level": "evaluate",
     "learning_outcome": "LO1",
     "course_outcome": "CO1"
 }"""

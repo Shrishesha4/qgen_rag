@@ -157,8 +157,9 @@ export function QuestionSources({ sourceInfo, compact = false }: QuestionSources
     },
     sourceHeader: {
       flexDirection: 'row',
-      alignItems: 'center',
+      alignItems: 'flex-start',
       marginBottom: Spacing.xs,
+      flexWrap: 'wrap',
     },
     sourceIcon: {
       marginRight: Spacing.xs,
@@ -168,6 +169,7 @@ export function QuestionSources({ sourceInfo, compact = false }: QuestionSources
       fontWeight: '600',
       color: colors.text,
       flex: 1,
+      flexWrap: 'wrap',
     },
     sourceDetails: {
       flexDirection: 'row',
@@ -289,7 +291,7 @@ export function QuestionSources({ sourceInfo, compact = false }: QuestionSources
                   color={colors.primary}
                   style={styles.sourceIcon}
                 />
-                <Text style={styles.documentName} numberOfLines={1}>
+                <Text style={styles.documentName}>
                   {source.document_name || 'Unknown Document'}
                 </Text>
               </View>

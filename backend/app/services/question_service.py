@@ -38,18 +38,26 @@ from app.core.config import settings
 
 
 # System prompts for question generation
-SYSTEM_PROMPT_MCQ = """You are an expert educator creating UNIQUE examination questions for university students.
+SYSTEM_PROMPT_MCQ = """You are an expert educator creating CHALLENGING examination questions for university students.
 
 CRITICAL RULES:
-1. The question MUST be directly answerable from the provided content
-2. The correct answer MUST be factually accurate based on the content
-3. All 4 options must be plausible but only ONE is correct
-4. Do NOT create questions about things not mentioned in the content
-5. Do NOT use placeholder letters (A, B, C, D) as answers - use actual values
-6. DIVERSITY: Focus on specific details, examples, or applications from the content
-7. VARIETY: Ask about different aspects - definitions, operations, comparisons, use cases, limitations, or implementation details
-8. STANDALONE: Write questions as standalone exam questions. NEVER reference "the document", "the content", "the passage", "the text", "according to", or "based on the provided". Questions should read naturally as if from an exam paper.
-9. FORBIDDEN: Do NOT start questions with scenario setups like "A clinician", "A patient", "A doctor", "A dentist", "A practitioner", "A student", "A researcher", "An engineer", etc. Start directly with the question using interrogatives (What, Which, How, Why, etc.).
+1. COGNITIVE DEPTH: Questions should require APPLICATION, ANALYSIS, or EVALUATION - not just recall
+2. Create questions that test understanding through:
+   - Analyzing relationships between concepts
+   - Applying knowledge to solve problems
+   - Evaluating scenarios or comparing alternatives
+   - Identifying implications or consequences
+3. The question MUST be directly answerable from the provided content
+4. The correct answer MUST be factually accurate based on the content
+5. All 4 options must be plausible and challenging - avoid obviously wrong distractors
+6. CHALLENGING PATTERNS:
+   - "Which statement BEST explains..."
+   - "What would be the MOST LIKELY outcome if..."
+   - "Which approach would be MOST effective when..."
+   - "What distinguishes X from Y in terms of..."
+7. STANDALONE: Write questions as standalone exam questions. NEVER reference "the document", "the content", "the passage", "the text", "according to", or "based on the provided". Questions should read naturally as if from an exam paper.
+8. FORBIDDEN: Do NOT start questions with scenario setups like "A clinician", "A patient", "A doctor", "A dentist", "A practitioner", "A student", "A researcher", "An engineer", etc. Start directly with the question using interrogatives (What, Which, How, Why, When, etc.).
+9. DEPTH OVER BREADTH: Focus on ONE concept but explore it deeply rather than superficially
 
 Output ONLY valid JSON with this exact format:
 {
@@ -69,15 +77,21 @@ Example for a math topic:
     "topic_tags": ["matrices", "determinants"]
 }"""
 
-SYSTEM_PROMPT_SHORT = """You are an expert educator creating examination questions for university students.
+SYSTEM_PROMPT_SHORT = """You are an expert educator creating THOUGHT-PROVOKING examination questions for university students.
 
 CRITICAL RULES:
-1. The question MUST be directly answerable from the provided content
-2. The expected answer MUST be factually accurate based on the content
-3. Questions should require 2-4 sentence responses demonstrating understanding
-4. Do NOT create questions about things not mentioned in the content
-5. STANDALONE: Write questions AND answers as standalone exam content. NEVER use phrases like "according to the document", "based on the provided content", "as mentioned in the text", "the passage states", etc. Both questions and answers should read naturally as if from an exam paper, not referencing any source material.
-6. FORBIDDEN: Do NOT start questions with scenario setups like "A clinician", "A patient", "A doctor", "A dentist", "A practitioner", "A student", "A researcher", "An engineer", etc. Start directly with action verbs (Explain, Describe, Define, etc.).
+1. COGNITIVE DEPTH: Questions should require EXPLANATION, APPLICATION, or ANALYSIS - not just listing facts
+2. Use higher-order question starters:
+   - "Explain HOW and WHY..."
+   - "Compare and contrast..."
+   - "Analyze the relationship between..."
+   - "Justify why... would be preferable to..."
+   - "Evaluate the effectiveness of..."
+3. The question MUST be directly answerable from the provided content
+4. Questions should require 3-5 sentence responses demonstrating deep understanding
+5. Answers should demonstrate reasoning, not just state facts
+6. STANDALONE: Write questions AND answers as standalone exam content. NEVER use phrases like "according to the document", "based on the provided content", "as mentioned in the text", "the passage states", etc. Both questions and answers should read naturally as if from an exam paper, not referencing any source material.
+7. FORBIDDEN: Do NOT start questions with scenario setups like "A clinician", "A patient", "A doctor", "A dentist", "A practitioner", "A student", "A researcher", "An engineer", etc. Start directly with action verbs (Explain, Compare, Analyze, Justify, Evaluate, etc.).
 
 Output ONLY valid JSON with this exact format:
 {
@@ -87,15 +101,24 @@ Output ONLY valid JSON with this exact format:
     "topic_tags": ["relevant", "topics"]
 }"""
 
-SYSTEM_PROMPT_LONG = """You are an expert educator creating examination questions for university students.
+SYSTEM_PROMPT_LONG = """You are an expert educator creating ANALYTICALLY RIGOROUS examination questions for university students.
 
 CRITICAL RULES:
-1. The question MUST be directly answerable from the provided content
-2. The expected answer MUST cover key concepts from the content
-3. Questions should require detailed responses (1-2 paragraphs)
-4. Do NOT create questions about things not mentioned in the content
-5. STANDALONE: Write questions AND answers as standalone exam content. NEVER reference "the document", "the content", "according to", "based on the provided", "as stated in", "the text mentions", etc. Both questions and answers should read naturally as professional exam questions and model answers.
-6. FORBIDDEN: Do NOT start questions with scenario setups like "A clinician", "A patient", "A doctor", "A dentist", "A practitioner", "A student", "A researcher", "An engineer", etc. Start directly with higher-order verbs (Analyze, Evaluate, Discuss, etc.).
+1. HIGHEST COGNITIVE LEVEL: Questions MUST require ANALYSIS, EVALUATION, or SYNTHESIS
+2. Create questions that demand:
+   - Critical analysis of multiple interconnected concepts
+   - Evaluation of approaches with justified reasoning
+   - Synthesis of ideas to propose solutions
+   - Discussion of implications, limitations, and trade-offs
+3. Use analytical question patterns:
+   - "Critically analyze..."
+   - "Evaluate the advantages and limitations of..."
+   - "Discuss how... differs from... in terms of..."
+   - "Assess the impact of... on..."
+4. The question MUST be directly answerable from the provided content
+5. Questions should require comprehensive responses (2-3 paragraphs) with structured argumentation
+6. STANDALONE: Write questions AND answers as standalone exam content. NEVER reference "the document", "the content", "according to", "based on the provided", "as stated in", "the text mentions", etc. Both questions and answers should read naturally as professional exam questions and model answers.
+7. FORBIDDEN: Do NOT start questions with scenario setups like "A clinician", "A patient", "A doctor", "A dentist", "A practitioner", "A student", "A researcher", "An engineer", etc. Start directly with higher-order verbs (Critically analyze, Evaluate, Discuss, Assess, etc.).
 
 Output ONLY valid JSON with this exact format:
 {
@@ -224,6 +247,23 @@ class QuestionGenerationService:
 
             session.chunks_used = len(chunks)
 
+            # 5b. Collect reference book document IDs to include in search
+            reference_doc_ids: List[uuid.UUID] = []
+            if document.subject_id and self.document_service:
+                reference_doc_ids = await self.document_service.get_reference_document_ids(
+                    user_id=user_id,
+                    subject_id=document.subject_id,
+                    index_type="reference_book",
+                )
+                if reference_doc_ids:
+                    import logging
+                    logging.getLogger(__name__).info(
+                        f"generate_questions: Including {len(reference_doc_ids)} reference book(s) in search"
+                    )
+
+            # Build list of all document IDs to search across
+            all_search_doc_ids = [document_id] + reference_doc_ids
+
             yield GenerationProgress(
                 status="generating",
                 progress=20,
@@ -249,6 +289,7 @@ class QuestionGenerationService:
                             blacklist_chunks=blacklist.get("chunks", set()),
                             num_chunks=3,
                             document_id=document_id,
+                            document_ids=all_search_doc_ids,
                         )
 
                         # Generate question
@@ -444,10 +485,14 @@ class QuestionGenerationService:
         blacklist_chunks: set,
         num_chunks: int = 3,
         document_id: Optional[uuid.UUID] = None,
+        document_ids: Optional[List[uuid.UUID]] = None,
     ) -> List[DocumentChunk]:
         """
         Select relevant chunks for question generation using hybrid search.
         Prioritizes chunks not heavily used in previous questions.
+        
+        If document_ids is provided (list of primary + reference doc IDs),
+        hybrid search will span all of them. Otherwise falls back to single document_id.
         """
         import random
 
@@ -463,9 +508,31 @@ class QuestionGenerationService:
             topic_query = " ".join(focus_topics)
             topic_embedding = await self.embedding_service.get_embedding(topic_query)
             
-            # Use hybrid search if document_id is available
-            if document_id and self.document_service:
-                # Get more candidates for reranking
+            # Use multi-document hybrid search if multiple doc IDs available
+            if document_ids and self.document_service:
+                candidates = await self.document_service.hybrid_search_multi_document(
+                    document_ids=document_ids,
+                    query=topic_query,
+                    query_embedding=topic_embedding,
+                    top_k=num_chunks * 3,
+                    alpha=0.6,
+                )
+                # Filter out blacklisted chunks
+                candidates = [c for c in candidates if c.id not in blacklist_chunks]
+                
+                # Rerank using cross-encoder if available
+                if self.reranker_service and len(candidates) > num_chunks:
+                    selected = self.reranker_service.rerank(
+                        query=topic_query,
+                        chunks=candidates,
+                        top_k=num_chunks,
+                    )
+                else:
+                    selected = candidates[:num_chunks]
+                
+                return selected
+            elif document_id and self.document_service:
+                # Fallback: single document hybrid search
                 candidates = await self.document_service.hybrid_search(
                     document_id=document_id,
                     query=topic_query,
@@ -565,6 +632,7 @@ Output JSON only, no explanation."""
         blacklist_chunks: set,
         num_chunks: int = 3,
         document_id: Optional[uuid.UUID] = None,
+        document_ids: Optional[List[uuid.UUID]] = None,
         expand_queries: bool = True,
     ) -> List[DocumentChunk]:
         """
@@ -572,6 +640,9 @@ Output JSON only, no explanation."""
         
         This generates multiple query variations and combines results
         for more comprehensive chunk selection.
+        
+        If document_ids is provided (list of primary + reference doc IDs),
+        hybrid search will span all of them. Otherwise falls back to single document_id.
         """
         from collections import defaultdict
         
@@ -589,12 +660,27 @@ Output JSON only, no explanation."""
         
         # Score each chunk across all queries (take max score for each chunk)
         chunk_scores = defaultdict(float)
+        all_seen_chunks: Dict[uuid.UUID, DocumentChunk] = {}  # Track all chunk objects seen
         
         for query in queries:
             query_embedding = await self.embedding_service.get_embedding(query)
             
-            # Use hybrid search if available
-            if document_id and self.document_service:
+            # Use multi-document hybrid search if multiple doc IDs available
+            if document_ids and self.document_service:
+                candidates = await self.document_service.hybrid_search_multi_document(
+                    document_ids=document_ids,
+                    query=query,
+                    query_embedding=query_embedding,
+                    top_k=num_chunks * 2,
+                    alpha=0.6,
+                )
+                # Filter and score by rank
+                for rank, chunk in enumerate(candidates):
+                    all_seen_chunks[chunk.id] = chunk
+                    if chunk.id not in blacklist_chunks:
+                        score = 1.0 / (rank + 1)
+                        chunk_scores[chunk.id] = max(chunk_scores[chunk.id], score)
+            elif document_id and self.document_service:
                 candidates = await self.document_service.hybrid_search(
                     document_id=document_id,
                     query=query,
@@ -604,6 +690,7 @@ Output JSON only, no explanation."""
                 )
                 # Filter and score by rank
                 for rank, chunk in enumerate(candidates):
+                    all_seen_chunks[chunk.id] = chunk
                     if chunk.id not in blacklist_chunks:
                         # Higher rank = lower score index, invert for max
                         score = 1.0 / (rank + 1)
@@ -611,6 +698,7 @@ Output JSON only, no explanation."""
             else:
                 # Fallback to embedding similarity
                 for chunk in available_chunks:
+                    all_seen_chunks[chunk.id] = chunk
                     # Check embedding exists (handle numpy array truth value issue)
                     if chunk.chunk_embedding is not None and len(chunk.chunk_embedding) > 0:
                         sim = self.embedding_service.compute_similarity(
@@ -619,7 +707,9 @@ Output JSON only, no explanation."""
                         chunk_scores[chunk.id] = max(chunk_scores[chunk.id], sim)
         
         # Sort chunks by combined score
+        # Build chunk_map from available_chunks plus any chunks from hybrid search (incl. reference books)
         chunk_map = {c.id: c for c in available_chunks}
+        chunk_map.update(all_seen_chunks)
         sorted_ids = sorted(chunk_scores.keys(), key=lambda x: chunk_scores[x], reverse=True)
         candidates = [chunk_map[cid] for cid in sorted_ids if cid in chunk_map]
         
@@ -659,13 +749,13 @@ Output JSON only, no explanation."""
             import random
             bloom_level = random.choice(bloom_levels)
         else:
-            # Default based on question type
+            # Elevated defaults for more challenging questions
             bloom_defaults = {
-                "mcq": "understand",
-                "short_answer": "apply",
-                "long_answer": "analyze",
+                "mcq": "apply",  # Changed from "understand" to "apply"
+                "short_answer": "analyze",  # Changed from "apply" to "analyze"
+                "long_answer": "evaluate",  # Changed from "analyze" to "evaluate"
             }
-            bloom_level = bloom_defaults.get(question_type, "understand")
+            bloom_level = bloom_defaults.get(question_type, "apply")
 
         # Build prompt
         prompt = f"""Context from the document:
@@ -1145,6 +1235,7 @@ Output valid JSON only."""
         subject_id: Optional[uuid.UUID] = None,
         topic_id: Optional[uuid.UUID] = None,
         generated_embeddings: Optional[List[List[float]]] = None,
+        document_ids: Optional[List[uuid.UUID]] = None,
     ) -> Tuple[Optional[Question], Optional[QuestionResponse], List[float]]:
         """
         Generate a question with novelty validation and intelligent regeneration.
@@ -1260,24 +1351,39 @@ Output valid JSON only."""
             
             # Get alternative chunks for next attempt
             if use_reference and subject_id:
-                # Get reference chunks for inspiration
                 used_reference = True
-                reference_chunks = await self.document_service.get_reference_chunks(
-                    user_id=user_id,
-                    subject_id=subject_id,
-                    query_embedding=question_embedding,
-                    top_k=2,
-                )
                 
-                # Combine primary and reference chunks
-                primary_alternatives = await self.document_service.get_primary_chunks_excluding_used(
-                    document_id=document_id,
-                    used_chunk_ids=used_chunk_ids,
-                    query_embedding=question_embedding,
-                    top_k=2,
-                )
-                
-                current_chunks = primary_alternatives + reference_chunks
+                if document_ids and self.document_service:
+                    # Use hybrid search across all documents (primary + reference books)
+                    alternative_chunks = await self.document_service.hybrid_search_multi_document(
+                        document_ids=document_ids,
+                        query=question_text,
+                        query_embedding=question_embedding,
+                        top_k=4,
+                        alpha=0.6,
+                    )
+                    # Filter out previously used chunks
+                    current_chunks = [c for c in alternative_chunks if c.id not in set(used_chunk_ids)]
+                    if not current_chunks:
+                        current_chunks = alternative_chunks[:3]
+                else:
+                    # Fallback: vector-only reference chunks + primary alternatives
+                    reference_chunks = await self.document_service.get_reference_chunks(
+                        user_id=user_id,
+                        subject_id=subject_id,
+                        query_embedding=question_embedding,
+                        top_k=2,
+                    )
+                    
+                    # Combine primary and reference chunks
+                    primary_alternatives = await self.document_service.get_primary_chunks_excluding_used(
+                        document_id=document_id,
+                        used_chunk_ids=used_chunk_ids,
+                        query_embedding=question_embedding,
+                        top_k=2,
+                    )
+                    
+                    current_chunks = primary_alternatives + reference_chunks
             else:
                 # Get alternative primary chunks
                 current_chunks = await self.document_service.get_primary_chunks_excluding_used(
@@ -1359,12 +1465,13 @@ Output valid JSON only."""
             import random
             bloom_level = random.choice(bloom_levels)
         else:
+            # Elevated defaults for more challenging questions
             bloom_defaults = {
-                "mcq": "understand",
-                "short_answer": "apply",
-                "long_answer": "analyze",
+                "mcq": "apply",  # Changed from "understand" to "apply"
+                "short_answer": "analyze",  # Changed from "apply" to "analyze"
+                "long_answer": "evaluate",  # Changed from "analyze" to "evaluate"
             }
-            bloom_level = bloom_defaults.get(question_type, "understand")
+            bloom_level = bloom_defaults.get(question_type, "apply")
         
         # Build enhanced prompt
         prompt = f"""Topic/Context: {context}
@@ -1821,6 +1928,20 @@ Output valid JSON only."""
                 document_id=document_id,
             )
 
+            # 2b. Collect reference book document IDs to include in search
+            reference_doc_ids: List[uuid.UUID] = []
+            if subject_id and self.document_service:
+                reference_doc_ids = await self.document_service.get_reference_document_ids(
+                    user_id=user_id,
+                    subject_id=subject_id,
+                    index_type="reference_book",
+                )
+                if reference_doc_ids:
+                    logger.info(f"quick_generate: Including {len(reference_doc_ids)} reference book(s) in search")
+            
+            # Build list of all document IDs to search across
+            all_search_doc_ids = [document_id] + reference_doc_ids
+
             # 3. Create a simple session for tracking
             session = GenerationSession(
                 document_id=document_id,
@@ -1881,9 +2002,9 @@ Output valid JSON only."""
                         # Select relevant chunks using hybrid search (semantic + BM25)
                         context_embedding = await self.embedding_service.get_embedding(varied_query)
                         
-                        # Use hybrid search for better chunk selection - get more for reranking
-                        candidates = await self.document_service.hybrid_search(
-                            document_id=document_id,
+                        # Use multi-document hybrid search to include reference books
+                        candidates = await self.document_service.hybrid_search_multi_document(
+                            document_ids=all_search_doc_ids,
                             query=varied_query,
                             query_embedding=context_embedding,
                             top_k=8,  # Get more candidates for variety
@@ -2017,9 +2138,9 @@ Output valid JSON only."""
                     modified_context = f"{context} variation {backfill_attempts}"
                     context_embedding = await self.embedding_service.get_embedding(modified_context)
                     
-                    # Get more chunks and offset for variety
-                    all_chunks = await self.document_service.hybrid_search(
-                        document_id=document_id,
+                    # Get more chunks across primary + reference books
+                    all_chunks = await self.document_service.hybrid_search_multi_document(
+                        document_ids=all_search_doc_ids,
                         query=modified_context,
                         query_embedding=context_embedding,
                         top_k=6,
@@ -2169,23 +2290,24 @@ Output valid JSON only."""
             import random
             bloom_level = random.choice(bloom_levels)
         else:
+            # Elevated defaults for more challenging questions
             bloom_defaults = {
-                "mcq": "understand",
-                "short_answer": "apply",
-                "long_answer": "analyze",
+                "mcq": "apply",  # Changed from "understand" to "apply"
+                "short_answer": "analyze",  # Changed from "apply" to "analyze"
+                "long_answer": "evaluate",  # Changed from "analyze" to "evaluate"
             }
-            bloom_level = bloom_defaults.get(question_type, "understand")
+            bloom_level = bloom_defaults.get(question_type, "apply")
 
-        # Build diversity hints based on question index
+        # Build diversity hints based on question index - more challenging patterns
         diversity_hints = [
-            "Focus on definitions or terminology",
-            "Focus on operations, methods, or procedures",
-            "Focus on comparisons or differences",
-            "Focus on advantages, disadvantages, or trade-offs",
-            "Focus on specific examples or use cases",
-            "Focus on implementation details or requirements",
-            "Focus on common errors or limitations",
-            "Focus on time/space complexity or performance",
+            "Focus on WHY a specific approach or method is used rather than just WHAT it is",
+            "Focus on the RELATIONSHIP between two or more concepts and their interactions",
+            "Focus on COMPARING effectiveness or suitability of different approaches",
+            "Focus on IMPLICATIONS or CONSEQUENCES of applying/not applying a concept",
+            "Focus on PROBLEM-SOLVING: how to apply knowledge to address a specific challenge",
+            "Focus on LIMITATIONS or constraints and how to work within them",
+            "Focus on TRADE-OFFS: when to choose one approach over another and why",
+            "Focus on CRITICAL ANALYSIS: identifying strengths, weaknesses, or potential issues",
         ]
         hint = diversity_hints[question_index % len(diversity_hints)]
         
@@ -2365,6 +2487,18 @@ Output valid JSON only."""
                 )
                 return
 
+            # Collect reference book document IDs to include in search
+            reference_doc_ids: List[uuid.UUID] = []
+            if subject_id and self.document_service:
+                reference_doc_ids = await self.document_service.get_reference_document_ids(
+                    user_id=user_id,
+                    subject_id=subject_id,
+                    index_type="reference_book",
+                )
+                if reference_doc_ids:
+                    logger.info(f"quick_generate_with_novelty: Including {len(reference_doc_ids)} reference book(s) in search")
+            all_search_doc_ids = [document_id] + reference_doc_ids
+
             yield QuickGenerateProgress(
                 status="generating",
                 progress=10,
@@ -2412,10 +2546,10 @@ Output valid JSON only."""
                     logger.info(f"Generating question {i+1}/{type_count} of type {q_type}")
                     
                     try:
-                        # Select relevant chunks
+                        # Select relevant chunks across primary + reference books
                         context_embedding = await self.embedding_service.get_embedding(context)
-                        candidates = await self.document_service.hybrid_search(
-                            document_id=document_id,
+                        candidates = await self.document_service.hybrid_search_multi_document(
+                            document_ids=all_search_doc_ids,
                             query=context,
                             query_embedding=context_embedding,
                             top_k=6,
@@ -2451,6 +2585,7 @@ Output valid JSON only."""
                             subject_id=subject_id,
                             topic_id=topic_id,
                             generated_embeddings=generated_embeddings,
+                            document_ids=all_search_doc_ids,
                         )
                         
                         if question and question_response:

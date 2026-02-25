@@ -3,7 +3,7 @@
  * Allows users to upload reference books and template papers for a subject
  */
 
-import React, { useState, useCallback } from 'react';
+import React, { useState, useCallback, useRef, useEffect } from 'react';
 import {
   View,
   Text,
@@ -11,13 +11,14 @@ import {
   TouchableOpacity,
   ActivityIndicator,
   Alert,
+  Animated,
 } from 'react-native';
 import * as DocumentPicker from 'expo-document-picker';
 import { IconSymbol } from '@/components/ui/icon-symbol';
 import { Colors, Spacing, BorderRadius, FontSizes } from '@/constants/theme';
 import { useColorScheme } from '@/hooks/use-color-scheme';
 import { useToast } from '@/components/toast';
-import { referencesService, ReferenceDocument } from '@/services/references';
+import { referencesService, ReferenceDocument, DocumentStatus } from '@/services/references';
 
 interface ReferenceMaterialsProps {
   subjectId: string;
@@ -44,8 +45,77 @@ export function ReferenceMaterials({
   const [isUploadingPaper, setIsUploadingPaper] = useState(false);
   const [isUploadingQuestions, setIsUploadingQuestions] = useState(false);
   const [uploadProgress, setUploadProgress] = useState('');
+  const [uploadPercent, setUploadPercent] = useState(0);
+  const [processingStatus, setProcessingStatus] = useState<DocumentStatus | null>(null);
   const [deletingId, setDeletingId] = useState<string | null>(null);
   const [isPickingDocument, setIsPickingDocument] = useState(false);
+  
+  const pollingRef = useRef<ReturnType<typeof setInterval> | null>(null);
+  const progressAnim = useRef(new Animated.Value(0)).current;
+
+  // Clean up polling on unmount
+  useEffect(() => {
+    return () => {
+      if (pollingRef.current) clearInterval(pollingRef.current);
+    };
+  }, []);
+
+  // Animate progress bar
+  useEffect(() => {
+    const targetValue = processingStatus
+      ? processingStatus.processing_progress / 100
+      : uploadPercent / 100;
+    Animated.timing(progressAnim, {
+      toValue: targetValue,
+      duration: 300,
+      useNativeDriver: false,
+    }).start();
+  }, [uploadPercent, processingStatus?.processing_progress]);
+
+  const resetUploadState = useCallback(() => {
+    setIsUploadingBook(false);
+    setIsUploadingPaper(false);
+    setIsUploadingQuestions(false);
+    setUploadProgress('');
+    setUploadPercent(0);
+    setProcessingStatus(null);
+    progressAnim.setValue(0);
+  }, []);
+
+  const pollProcessingStatus = useCallback(
+    (documentId: string) => {
+      if (pollingRef.current) clearInterval(pollingRef.current);
+      
+      pollingRef.current = setInterval(async () => {
+        try {
+          const status = await referencesService.getDocumentStatus(documentId);
+          setProcessingStatus(status);
+
+          if (status.status === 'completed') {
+            if (pollingRef.current) clearInterval(pollingRef.current);
+            pollingRef.current = null;
+            resetUploadState();
+            showSuccess('Document processed successfully');
+            onRefresh();
+          } else if (status.status === 'failed') {
+            if (pollingRef.current) clearInterval(pollingRef.current);
+            pollingRef.current = null;
+            resetUploadState();
+            showError(
+              new Error(status.error || 'Processing failed'),
+              'Processing Failed'
+            );
+            onRefresh();
+          }
+        } catch {
+          // Silently retry on network blips
+        }
+      }, 2000);
+    },
+    [onRefresh, showSuccess, showError, resetUploadState]
+  );
+
+  const isAnyUploading = isUploadingBook || isUploadingPaper || isUploadingQuestions;
 
   const handleUploadReferenceBook = useCallback(async () => {
     if (isPickingDocument) {
@@ -56,6 +126,8 @@ export function ReferenceMaterials({
     setIsUploadingBook(true);
     setIsPickingDocument(true);
     setUploadProgress('Selecting file...');
+    setUploadPercent(0);
+    progressAnim.setValue(0);
     try {
       const result = await DocumentPicker.getDocumentAsync({
         type: ['application/pdf'],
@@ -65,6 +137,7 @@ export function ReferenceMaterials({
       if (result.canceled || !result.assets || result.assets.length === 0) {
         setIsUploadingBook(false);
         setUploadProgress('');
+        setUploadPercent(0);
         return;
       }
 
@@ -76,21 +149,34 @@ export function ReferenceMaterials({
         showError(new Error('File size must be less than 500MB'), 'File Too Large');
         setIsUploadingBook(false);
         setUploadProgress('');
+        setUploadPercent(0);
         return;
       }
 
       setUploadProgress(`Uploading ${file.name} (${fileSizeMB}MB)...`);
 
-      await referencesService.uploadReferenceBook(
+      const response = await referencesService.uploadReferenceBook(
         subjectId,
         file.uri,
         file.name,
-        file.mimeType || 'application/pdf'
+        file.mimeType || 'application/pdf',
+        (pct) => {
+          setUploadPercent(pct);
+          setUploadProgress(`Uploading ${file.name} — ${pct}%`);
+        }
       );
 
-      showSuccess('Reference book uploaded successfully');
-      // Wait a moment for backend to process, then refresh
-      setTimeout(() => onRefresh(), 500);
+      // Upload done, now poll for processing status
+      setUploadProgress('Processing document...');
+      setUploadPercent(0);
+      
+      if (response.status === 'completed') {
+        showSuccess('Reference book uploaded and processed');
+        onRefresh();
+      } else {
+        // Start polling for processing progress
+        pollProcessingStatus(response.document_id);
+      }
     } catch (error) {
       const errorMessage = error instanceof Error ? error.message : String(error);
       if (errorMessage.includes('document picking in progress') || errorMessage.includes('Different document picking')) {
@@ -98,12 +184,20 @@ export function ReferenceMaterials({
       } else {
         showError(error, 'Upload Failed');
       }
-    } finally {
       setIsUploadingBook(false);
-      setIsPickingDocument(false);
       setUploadProgress('');
+      setUploadPercent(0);
+      setProcessingStatus(null);
+    } finally {
+      setIsPickingDocument(false);
+      // Only clear uploading state if not polling (polling will clear it)
+      if (!pollingRef.current) {
+        setIsUploadingBook(false);
+        setUploadProgress('');
+        setUploadPercent(0);
+      }
     }
-  }, [subjectId, onRefresh, showError, showSuccess, showWarning, isPickingDocument]);
+  }, [subjectId, onRefresh, showError, showSuccess, showWarning, isPickingDocument, pollProcessingStatus]);
 
   const handleUploadTemplatePaper = useCallback(async () => {
     if (isPickingDocument) {
@@ -114,6 +208,8 @@ export function ReferenceMaterials({
     setIsUploadingPaper(true);
     setIsPickingDocument(true);
     setUploadProgress('Selecting file...');
+    setUploadPercent(0);
+    progressAnim.setValue(0);
     try {
       const result = await DocumentPicker.getDocumentAsync({
         type: ['application/pdf'],
@@ -123,6 +219,7 @@ export function ReferenceMaterials({
       if (result.canceled || !result.assets || result.assets.length === 0) {
         setIsUploadingPaper(false);
         setUploadProgress('');
+        setUploadPercent(0);
         return;
       }
 
@@ -134,21 +231,32 @@ export function ReferenceMaterials({
         showError(new Error('File size must be less than 500MB'), 'File Too Large');
         setIsUploadingPaper(false);
         setUploadProgress('');
+        setUploadPercent(0);
         return;
       }
 
       setUploadProgress(`Uploading ${file.name} (${fileSizeMB}MB)...`);
 
-      await referencesService.uploadTemplatePaper(
+      const response = await referencesService.uploadTemplatePaper(
         subjectId,
         file.uri,
         file.name,
-        file.mimeType || 'application/pdf'
+        file.mimeType || 'application/pdf',
+        (pct) => {
+          setUploadPercent(pct);
+          setUploadProgress(`Uploading ${file.name} — ${pct}%`);
+        }
       );
 
-      showSuccess('Template paper uploaded successfully');
-      // Wait a moment for backend to process, then refresh
-      setTimeout(() => onRefresh(), 500);
+      setUploadProgress('Processing document...');
+      setUploadPercent(0);
+      
+      if (response.status === 'completed') {
+        showSuccess('Template paper uploaded and processed');
+        onRefresh();
+      } else {
+        pollProcessingStatus(response.document_id);
+      }
     } catch (error) {
       const errorMessage = error instanceof Error ? error.message : String(error);
       if (errorMessage.includes('document picking in progress') || errorMessage.includes('Different document picking')) {
@@ -156,12 +264,19 @@ export function ReferenceMaterials({
       } else {
         showError(error, 'Upload Failed');
       }
-    } finally {
       setIsUploadingPaper(false);
-      setIsPickingDocument(false);
       setUploadProgress('');
+      setUploadPercent(0);
+      setProcessingStatus(null);
+    } finally {
+      setIsPickingDocument(false);
+      if (!pollingRef.current) {
+        setIsUploadingPaper(false);
+        setUploadProgress('');
+        setUploadPercent(0);
+      }
     }
-  }, [subjectId, onRefresh, showError, showSuccess, showWarning, isPickingDocument]);
+  }, [subjectId, onRefresh, showError, showSuccess, showWarning, isPickingDocument, pollProcessingStatus]);
 
   const handleDeleteReference = useCallback((doc: ReferenceDocument) => {
     Alert.alert(
@@ -199,6 +314,8 @@ export function ReferenceMaterials({
     setIsUploadingQuestions(true);
     setIsPickingDocument(true);
     setUploadProgress('Selecting file...');
+    setUploadPercent(0);
+    progressAnim.setValue(0);
     try {
       const result = await DocumentPicker.getDocumentAsync({
         type: [
@@ -212,6 +329,7 @@ export function ReferenceMaterials({
       if (result.canceled || !result.assets || result.assets.length === 0) {
         setIsUploadingQuestions(false);
         setUploadProgress('');
+        setUploadPercent(0);
         return;
       }
 
@@ -222,20 +340,31 @@ export function ReferenceMaterials({
         showError(new Error('File size must be less than 500MB'), 'File Too Large');
         setIsUploadingQuestions(false);
         setUploadProgress('');
+        setUploadPercent(0);
         return;
       }
 
       setUploadProgress(`Uploading ${file.name} (${fileSizeMB}MB)...`);
 
-      await referencesService.uploadReferenceQuestions(
+      const response = await referencesService.uploadReferenceQuestions(
         subjectId,
         file.uri,
         file.name,
-        file.mimeType || 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet'
+        file.mimeType || 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
+        (pct) => {
+          setUploadPercent(pct);
+          setUploadProgress(`Uploading ${file.name} — ${pct}%`);
+        }
       );
 
-      showSuccess('Reference questions uploaded successfully');
-      setTimeout(() => onRefresh(), 500);
+      if (response.status === 'completed') {
+        showSuccess(response.message || 'Reference questions uploaded');
+        onRefresh();
+      } else {
+        setUploadProgress('Processing document...');
+        setUploadPercent(0);
+        pollProcessingStatus(response.document_id);
+      }
     } catch (error) {
       const errorMessage = error instanceof Error ? error.message : String(error);
       if (errorMessage.includes('document picking in progress') || errorMessage.includes('Different document picking')) {
@@ -243,12 +372,19 @@ export function ReferenceMaterials({
       } else {
         showError(error, 'Upload Failed');
       }
-    } finally {
       setIsUploadingQuestions(false);
-      setIsPickingDocument(false);
       setUploadProgress('');
+      setUploadPercent(0);
+      setProcessingStatus(null);
+    } finally {
+      setIsPickingDocument(false);
+      if (!pollingRef.current) {
+        setIsUploadingQuestions(false);
+        setUploadProgress('');
+        setUploadPercent(0);
+      }
     }
-  }, [subjectId, onRefresh, showError, showSuccess, showWarning, isPickingDocument]);
+  }, [subjectId, onRefresh, showError, showSuccess, showWarning, isPickingDocument, pollProcessingStatus]);
 
   const formatDate = (dateString: string) => {
     const date = new Date(dateString);
@@ -343,6 +479,41 @@ export function ReferenceMaterials({
         </Text>
       </View>
 
+      {/* Upload Progress Bar */}
+      {isAnyUploading && (
+        <View style={[styles.progressContainer, { backgroundColor: colors.card }]}>
+          <View style={styles.progressHeader}>
+            <ActivityIndicator size="small" color={colors.primary} />
+            <Text style={[styles.progressText, { color: colors.text }]}>
+              {processingStatus
+                ? processingStatus.processing_detail || processingStatus.processing_step || 'Processing...'
+                : uploadProgress || 'Preparing...'}
+            </Text>
+          </View>
+          <View style={[styles.progressBarTrack, { backgroundColor: colors.border }]}>
+            <Animated.View
+              style={[
+                styles.progressBarFill,
+                {
+                  backgroundColor: colors.primary,
+                  width: progressAnim.interpolate({
+                    inputRange: [0, 1],
+                    outputRange: ['0%', '100%'],
+                  }),
+                },
+              ]}
+            />
+          </View>
+          <Text style={[styles.progressPercent, { color: colors.textSecondary }]}>
+            {processingStatus
+              ? `${processingStatus.processing_progress}%${processingStatus.total_pages ? ` • ${processingStatus.total_pages} pages` : ''}`
+              : uploadPercent > 0
+              ? `${uploadPercent}%`
+              : ''}
+          </Text>
+        </View>
+      )}
+
       {/* Reference Books Section */}
       <View style={[styles.section, { backgroundColor: colors.card }]}>
         <View style={styles.sectionHeader}>
@@ -359,7 +530,7 @@ export function ReferenceMaterials({
               isUploadingBook && { opacity: 0.6 },
             ]}
             onPress={handleUploadReferenceBook}
-            disabled={isUploadingBook || isUploadingPaper}
+            disabled={isAnyUploading}
           >
             {isUploadingBook ? (
               <>
@@ -408,7 +579,7 @@ export function ReferenceMaterials({
               isUploadingPaper && { opacity: 0.6 },
             ]}
             onPress={handleUploadTemplatePaper}
-            disabled={isUploadingBook || isUploadingPaper}
+            disabled={isAnyUploading}
           >
             {isUploadingPaper ? (
               <>
@@ -457,7 +628,7 @@ export function ReferenceMaterials({
               isUploadingQuestions && { opacity: 0.6 },
             ]}
             onPress={handleUploadReferenceQuestions}
-            disabled={isUploadingBook || isUploadingPaper || isUploadingQuestions}
+            disabled={isAnyUploading}
           >
             {isUploadingQuestions ? (
               <>
@@ -703,6 +874,36 @@ const styles = StyleSheet.create({
   infoText: {
     fontSize: FontSizes.sm,
     lineHeight: 18,
+  },
+  progressContainer: {
+    borderRadius: BorderRadius.lg,
+    padding: Spacing.md,
+    marginBottom: Spacing.md,
+  },
+  progressHeader: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: Spacing.sm,
+    marginBottom: Spacing.sm,
+  },
+  progressText: {
+    fontSize: FontSizes.sm,
+    fontWeight: '500',
+    flex: 1,
+  },
+  progressBarTrack: {
+    height: 6,
+    borderRadius: 3,
+    overflow: 'hidden',
+  },
+  progressBarFill: {
+    height: '100%',
+    borderRadius: 3,
+  },
+  progressPercent: {
+    fontSize: FontSizes.xs,
+    marginTop: 4,
+    textAlign: 'right',
   },
 });
 

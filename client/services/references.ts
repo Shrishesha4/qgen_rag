@@ -25,6 +25,22 @@ export interface ReferenceMaterialsResponse {
   reference_questions: ReferenceDocument[];
 }
 
+export interface DocumentStatus {
+  document_id: string;
+  filename: string;
+  status: 'pending' | 'processing' | 'completed' | 'failed';
+  total_chunks: number | null;
+  total_tokens: number | null;
+  processed_at: string | null;
+  processing_step: string | null;
+  processing_progress: number;
+  processing_detail: string | null;
+  total_pages: number | null;
+  error: string | null;
+}
+
+export type ProgressCallback = (progress: number) => void;
+
 
 export const referencesService = {
   /**
@@ -38,13 +54,24 @@ export const referencesService = {
   },
 
   /**
+   * Get document processing status (for polling)
+   */
+  async getDocumentStatus(documentId: string): Promise<DocumentStatus> {
+    const response = await apiClient.get<DocumentStatus>(
+      `/documents/${documentId}/status`
+    );
+    return response.data;
+  },
+
+  /**
    * Upload a reference book PDF
    */
   async uploadReferenceBook(
     subjectId: string,
     uri: string,
     filename: string,
-    mimeType: string
+    mimeType: string,
+    onUploadProgress?: ProgressCallback
   ): Promise<{ document_id: string; status: string }> {
     const formData = new FormData();
 
@@ -60,7 +87,15 @@ export const referencesService = {
       headers: {
         'Content-Type': 'multipart/form-data',
       },
-      timeout: 600000, // 10 minutes for large file upload
+      timeout: 600000,
+      onUploadProgress: onUploadProgress
+        ? (progressEvent) => {
+            if (progressEvent.total) {
+              const pct = Math.round((progressEvent.loaded * 100) / progressEvent.total);
+              onUploadProgress(pct);
+            }
+          }
+        : undefined,
     });
 
     return response.data;
@@ -73,7 +108,8 @@ export const referencesService = {
     subjectId: string,
     uri: string,
     filename: string,
-    mimeType: string
+    mimeType: string,
+    onUploadProgress?: ProgressCallback
   ): Promise<{ document_id: string; status: string }> {
     const formData = new FormData();
 
@@ -89,7 +125,15 @@ export const referencesService = {
       headers: {
         'Content-Type': 'multipart/form-data',
       },
-      timeout: 600000, // 10 minutes for large file upload
+      timeout: 600000,
+      onUploadProgress: onUploadProgress
+        ? (progressEvent) => {
+            if (progressEvent.total) {
+              const pct = Math.round((progressEvent.loaded * 100) / progressEvent.total);
+              onUploadProgress(pct);
+            }
+          }
+        : undefined,
     });
 
     return response.data;
@@ -102,7 +146,8 @@ export const referencesService = {
     subjectId: string,
     uri: string,
     filename: string,
-    mimeType: string
+    mimeType: string,
+    onUploadProgress?: ProgressCallback
   ): Promise<{ document_id: string; status: string; message: string }> {
     const formData = new FormData();
 
@@ -118,7 +163,15 @@ export const referencesService = {
       headers: {
         'Content-Type': 'multipart/form-data',
       },
-      timeout: 600000, // 10 minutes for large file upload
+      timeout: 600000,
+      onUploadProgress: onUploadProgress
+        ? (progressEvent) => {
+            if (progressEvent.total) {
+              const pct = Math.round((progressEvent.loaded * 100) / progressEvent.total);
+              onUploadProgress(pct);
+            }
+          }
+        : undefined,
     });
 
     return response.data;
