@@ -180,11 +180,14 @@ class DocumentService:
             # Chunk the document with page tracking
             chunks = self._chunk_text_with_pages(pages_data)
 
-            # Create embeddings and store chunks
+            # PERFORMANCE OPTIMIZATION: Batch generate all embeddings at once
+            chunk_texts = [chunk_data["text"] for chunk_data in chunks]
+            embeddings = await self.embedding_service.get_embeddings(chunk_texts, is_query=False)
+
+            # Create chunk objects (batch insert optimization)
             total_tokens = 0
-            for idx, chunk_data in enumerate(chunks):
-                embedding = await self.embedding_service.get_embedding(chunk_data["text"])
-                
+            chunk_objects = []
+            for idx, (chunk_data, embedding) in enumerate(zip(chunks, embeddings)):
                 # Build comprehensive chunk metadata
                 chunk_metadata = chunk_data.get("metadata", {})
                 chunk_metadata["source_info"] = {
@@ -205,8 +208,11 @@ class DocumentService:
                     section_heading=chunk_data.get("section_heading"),
                     chunk_metadata=chunk_metadata,
                 )
-                self.db.add(chunk)
+                chunk_objects.append(chunk)
                 total_tokens += chunk_data["token_count"]
+            
+            # Bulk insert all chunks at once
+            self.db.add_all(chunk_objects)
 
             # Update document
             document.total_chunks = len(chunks)
@@ -254,11 +260,14 @@ class DocumentService:
                 # Chunk the document with page tracking
                 chunks = self._chunk_text_with_pages(pages_data)
 
-                # Create embeddings and store chunks
+                # PERFORMANCE OPTIMIZATION: Batch generate all embeddings at once
+                chunk_texts = [chunk_data["text"] for chunk_data in chunks]
+                embeddings = await self.embedding_service.get_embeddings(chunk_texts, is_query=False)
+
+                # Create chunk objects (batch insert optimization)
                 total_tokens = 0
-                for idx, chunk_data in enumerate(chunks):
-                    embedding = await self.embedding_service.get_embedding(chunk_data["text"])
-                    
+                chunk_objects = []
+                for idx, (chunk_data, embedding) in enumerate(zip(chunks, embeddings)):
                     # Build comprehensive chunk metadata
                     chunk_metadata = chunk_data.get("metadata", {})
                     chunk_metadata["source_info"] = {
@@ -279,8 +288,11 @@ class DocumentService:
                         section_heading=chunk_data.get("section_heading"),
                         chunk_metadata=chunk_metadata,
                     )
-                    db.add(chunk)
+                    chunk_objects.append(chunk)
                     total_tokens += chunk_data["token_count"]
+                
+                # Bulk insert all chunks at once
+                db.add_all(chunk_objects)
 
                 # Update document
                 document.total_chunks = len(chunks)
