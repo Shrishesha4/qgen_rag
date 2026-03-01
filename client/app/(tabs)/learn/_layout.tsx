@@ -7,6 +7,8 @@ export default function LearnLayout() {
       <Stack.Screen name="lesson" />
       <Stack.Screen name="result" />
       <Stack.Screen name="subject-detail" />
+      <Stack.Screen name="topic-content" />
+      <Stack.Screen name="pdf-viewer" />
     </Stack>
   );
 }

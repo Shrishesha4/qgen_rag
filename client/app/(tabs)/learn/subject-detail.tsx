@@ -249,7 +249,14 @@ export default function SubjectDetailScreen() {
                         key={doc.id}
                         style={[styles.materialCard, { backgroundColor: colors.backgroundSecondary }]}
                         onPress={() => {
-                          // Open the document / show preview
+                          const url = `http://10.0.0.3:8000/api/v1/documents/${doc.id}/content`;
+                          router.push({
+                            pathname: '/(tabs)/learn/pdf-viewer',
+                            params: {
+                              url,
+                              title: doc.filename
+                            }
+                          });
                         }}
                         activeOpacity={0.7}
                       >
@@ -277,7 +284,16 @@ export default function SubjectDetailScreen() {
                       <TouchableOpacity
                         key={doc.id}
                         style={[styles.materialCard, { backgroundColor: colors.backgroundSecondary }]}
-                        onPress={() => { }}
+                        onPress={() => {
+                          const url = `http://10.0.0.3:8000/api/v1/documents/${doc.id}/content`;
+                          router.push({
+                            pathname: '/(tabs)/learn/pdf-viewer',
+                            params: {
+                              url,
+                              title: doc.filename
+                            }
+                          });
+                        }}
                         activeOpacity={0.7}
                       >
                         <Text style={styles.materialIcon}>{getFileIcon(doc.filename)}</Text>
