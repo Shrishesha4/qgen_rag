@@ -24,6 +24,7 @@ import {
   TopicCreateData,
   PendingEnrollment,
   generateLearningContent,
+  generateTopicContent,
 } from '@/services/subjects';
 import { referencesService, ReferenceDocument } from '@/services/references';
 import { ReferenceMaterials } from '@/components/reference-materials';
@@ -59,6 +60,14 @@ export default function SubjectDetailScreen() {
   const [extractionStatus, setExtractionStatus] = useState('');
   const [isGeneratingContent, setIsGeneratingContent] = useState(false);
   const [generationStatus, setGenerationStatus] = useState('');
+  const [generatingContentTopicId, setGeneratingContentTopicId] = useState<string | null>(null);
+
+  // Subject edit modal state
+  const [showEditSubjectModal, setShowEditSubjectModal] = useState(false);
+  const [editSubjectName, setEditSubjectName] = useState('');
+  const [editSubjectCode, setEditSubjectCode] = useState('');
+  const [editSubjectDescription, setEditSubjectDescription] = useState('');
+  const [isSavingSubject, setIsSavingSubject] = useState(false);
 
   // Tab state for switching between chapters, references, and history
   const [activeTab, setActiveTab] = useState<'chapters' | 'references' | 'history' | 'enrollments'>('chapters');
@@ -1044,15 +1053,42 @@ export default function SubjectDetailScreen() {
                         <IconSymbol name="chevron.right" size={14} color={colors.textTertiary} />
                       </TouchableOpacity>
 
-                      {/* Right side: generate button */}
-                      <TouchableOpacity
-                        style={[styles.topicGenerateButton, { backgroundColor: colors.primary + '12' }]}
-                        onPress={() => openGenerateModal(topic)}
-                        activeOpacity={0.7}
-                      >
-                        <IconSymbol name="sparkles" size={18} color={colors.primary} />
-                        <Text style={[styles.topicGenerateLabel, { color: colors.primary }]}>Generate</Text>
-                      </TouchableOpacity>
+                      {/* Right side: generate buttons */}
+                      <View style={{ flexDirection: 'row', alignItems: 'center', gap: 4 }}>
+                        <TouchableOpacity
+                          style={[styles.topicGenerateButton, { backgroundColor: '#AF52DE' + '12', paddingHorizontal: 8 }]}
+                          onPress={async () => {
+                            mediumImpact();
+                            setGeneratingContentTopicId(topic.id);
+                            try {
+                              await generateTopicContent(id!, topic.id);
+                              showSuccess(`Content generated for ${topic.name}`);
+                              loadData();
+                            } catch (err: any) {
+                              showError(err?.response?.data?.detail || 'Content generation failed');
+                            } finally {
+                              setGeneratingContentTopicId(null);
+                            }
+                          }}
+                          disabled={generatingContentTopicId === topic.id}
+                          activeOpacity={0.7}
+                        >
+                          {generatingContentTopicId === topic.id ? (
+                            <ActivityIndicator size="small" color="#AF52DE" />
+                          ) : (
+                            <IconSymbol name="doc.text" size={16} color="#AF52DE" />
+                          )}
+                          <Text style={[styles.topicGenerateLabel, { color: '#AF52DE', fontSize: 11 }]}>Content</Text>
+                        </TouchableOpacity>
+                        <TouchableOpacity
+                          style={[styles.topicGenerateButton, { backgroundColor: colors.primary + '12' }]}
+                          onPress={() => openGenerateModal(topic)}
+                          activeOpacity={0.7}
+                        >
+                          <IconSymbol name="sparkles" size={18} color={colors.primary} />
+                          <Text style={[styles.topicGenerateLabel, { color: colors.primary }]}>Generate</Text>
+                        </TouchableOpacity>
+                      </View>
                     </View>
                   ))}
                 </View>

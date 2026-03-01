@@ -282,10 +282,21 @@ export const generateLearningContent = async (subjectId: string): Promise<{
   message: string;
   generated: { topic_id: string; topic_name: string; status: string; content_length?: number; reason?: string }[];
   errors: { topic_id: string; topic_name: string; error: string }[];
-  subject_overview_generated: boolean;
   syllabus_coverage: number;
 }> => {
   const response = await apiClient.post(`/subjects/${subjectId}/generate-learning-content`);
+  return response.data;
+};
+
+export const generateTopicContent = async (subjectId: string, topicId: string): Promise<{
+  topic_id: string;
+  topic_name: string;
+  status: string;
+  content_length: number;
+  content_preview: string;
+  syllabus_coverage: number;
+}> => {
+  const response = await apiClient.post(`/subjects/${subjectId}/topics/${topicId}/generate-content`);
   return response.data;
 };
 

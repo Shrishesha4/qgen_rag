@@ -870,10 +870,9 @@ async def generate_learning_content(
     db: AsyncSession = Depends(get_db),
 ):
     """
-    Generate learning content (.md) for each topic in a subject using LLM.
-    Also generates an overall subject summary.
-    Uses the configured LLM provider (Ollama or Gemini).
-    Reference documents are used as context if available.
+    Generate learning content (.md) for ALL topics using LLM + RAG.
+    Uses hybrid_search + embeddings + cosine similarity from reference documents.
+    Processes topics sequentially.
     """
     import logging
     logger = logging.getLogger(__name__)
@@ -906,33 +905,25 @@ async def generate_learning_content(
             detail="No topics found. Add topics before generating content.",
         )
 
-    # Gather reference document context (first 2000 chars per doc)
-    from app.models.document import Document, DocumentChunk
+    # Gather reference document IDs for RAG
+    from app.models.document import Document
     ref_result = await db.execute(
-        select(Document).where(
+        select(Document.id).where(
             Document.subject_id == subject_id,
-            Document.index_type.in_(["reference_book", "template_paper"]),
+            Document.index_type.in_(["primary", "reference_book", "template_paper"]),
             Document.processing_status == "completed",
-        ).limit(5)
-    )
-    ref_docs = ref_result.scalars().all()
-
-    reference_context = ""
-    for doc in ref_docs:
-        chunk_result = await db.execute(
-            select(DocumentChunk)
-            .where(DocumentChunk.document_id == doc.id)
-            .order_by(DocumentChunk.chunk_index)
-            .limit(3)
         )
-        chunks = chunk_result.scalars().all()
-        if chunks:
-            doc_text = "\n".join(c.chunk_text[:1500] for c in chunks)
-            reference_context += f"\n--- Reference: {doc.filename} ---\n{doc_text}\n"
+    )
+    doc_ids = [row[0] for row in ref_result.all()]
 
-    # Initialize LLM
+    # Initialize services for RAG
     from app.services.llm_service import LLMService
+    from app.services.document_service import DocumentService
+    from app.services.embedding_service import EmbeddingService
+
     llm = LLMService()
+    doc_service = DocumentService(db)
+    embedding_service = EmbeddingService()
 
     topic_names = [t.name for t in topics]
     topic_list_str = "\n".join(f"{i+1}. {name}" for i, name in enumerate(topic_names))
@@ -940,7 +931,7 @@ async def generate_learning_content(
     system_prompt = f"""You are an expert educational content writer creating comprehensive learning materials for a university-level subject.
 
 Subject: {subject.name} ({subject.code})
-Description: {subject.description or 'N/A'}
+All topics: {topic_list_str}
 
 Write in clear, well-structured Markdown format suitable for students to study from.
 Include:
@@ -950,35 +941,49 @@ Include:
 - Summary points at the end
 
 Write content that is educational, accurate, and student-friendly.
-Do NOT use any references to source material. Write as standalone educational content."""
+Do NOT mention source documents or references. Write as standalone educational content."""
 
     generated_topics = []
     errors = []
 
-    # Generate content for each topic
+    # Generate content for each topic sequentially using RAG
     for topic in topics:
-        if topic.has_syllabus and topic.syllabus_content:
-            # Skip topics that already have content
+        if topic.has_syllabus and topic.syllabus_content and len(topic.syllabus_content) > 100:
             generated_topics.append({
-                "topic_id": str(topic.id),
-                "topic_name": topic.name,
-                "status": "skipped",
-                "reason": "Already has content",
+                "topic_id": str(topic.id), "topic_name": topic.name,
+                "status": "skipped", "reason": "Already has content",
             })
             continue
 
-        prompt = f"""Generate comprehensive learning content for the following topic:
+        # --- RAG: Retrieve relevant context using hybrid search ---
+        rag_context = ""
+        if doc_ids:
+            try:
+                query = f"{topic.name} {topic.description or ''} {subject.name}"
+                query_embedding = await embedding_service.get_embedding(query)
+                relevant_chunks = await doc_service.hybrid_search_multi_document(
+                    document_ids=doc_ids,
+                    query=query,
+                    query_embedding=query_embedding,
+                    top_k=8,
+                    alpha=0.6,
+                )
+                if relevant_chunks:
+                    rag_context = "\n\n".join([
+                        f"[Source: {c.document.filename if c.document else 'unknown'}, Page {c.page_number or '?'}]\n{c.chunk_text}"
+                        for c in relevant_chunks
+                    ])
+            except Exception as e:
+                logger.warning(f"RAG retrieval failed for topic {topic.name}: {e}")
 
-Topic: {topic.name}
+        prompt = f"""Generate comprehensive learning content for this topic:
+
+**Topic: {topic.name}**
 {f'Description: {topic.description}' if topic.description else ''}
-Subject: {subject.name}
 
-All topics in this subject:
-{topic_list_str}
+{f'--- Relevant Reference Material ---{chr(10)}{rag_context}' if rag_context else ''}
 
-{f'Reference material context:{reference_context[:3000]}' if reference_context else ''}
-
-Write a comprehensive study guide for this topic in Markdown format.
+Write a comprehensive study guide for "{topic.name}" in Markdown format.
 Include headings, bullet points, and clear explanations.
 The content should be 800-1500 words, thorough enough for a student to learn the topic."""
 
@@ -989,56 +994,15 @@ The content should be 800-1500 words, thorough enough for a student to learn the
                 temperature=0.5,
                 max_tokens=4000,
             )
-
-            # Save to topic
             topic.syllabus_content = content.strip()
             topic.has_syllabus = True
             generated_topics.append({
-                "topic_id": str(topic.id),
-                "topic_name": topic.name,
-                "status": "generated",
-                "content_length": len(content),
+                "topic_id": str(topic.id), "topic_name": topic.name,
+                "status": "generated", "content_length": len(content),
             })
         except Exception as e:
             logger.error(f"Failed to generate content for topic {topic.name}: {e}")
-            errors.append({
-                "topic_id": str(topic.id),
-                "topic_name": topic.name,
-                "error": str(e),
-            })
-
-    # Generate overall subject overview
-    subject_overview = None
-    try:
-        overview_prompt = f"""Generate a comprehensive subject overview/introduction for:
-
-Subject: {subject.name} ({subject.code})
-Description: {subject.description or 'N/A'}
-
-Topics covered:
-{topic_list_str}
-
-{f'Reference material context:{reference_context[:2000]}' if reference_context else ''}
-
-Write an overall subject overview in Markdown format that:
-1. Introduces the subject and its importance
-2. Lists all topics with a brief 1-2 line description of each
-3. Explains how the topics connect to each other
-4. Provides study tips for this subject
-
-The overview should be 500-800 words."""
-
-        subject_overview = await llm.generate(
-            prompt=overview_prompt,
-            system_prompt=system_prompt,
-            temperature=0.5,
-            max_tokens=3000,
-        )
-
-        # Save overview to subject description (or a metadata field)
-        subject.description = subject_overview.strip()
-    except Exception as e:
-        logger.error(f"Failed to generate subject overview: {e}")
+            errors.append({"topic_id": str(topic.id), "topic_name": topic.name, "error": str(e)})
 
     # Update syllabus coverage
     topics_with_syllabus = sum(1 for t in topics if t.has_syllabus)
@@ -1048,9 +1012,147 @@ The overview should be 500-800 words."""
     await db.commit()
 
     return {
-        "message": f"Generated learning content for {len([t for t in generated_topics if t['status'] == 'generated'])} topics",
+        "message": f"Generated content for {len([t for t in generated_topics if t['status'] == 'generated'])} topics",
         "generated": generated_topics,
         "errors": errors,
-        "subject_overview_generated": subject_overview is not None,
         "syllabus_coverage": subject.syllabus_coverage,
     }
+
+
+@router.post("/{subject_id}/topics/{topic_id}/generate-content")
+async def generate_topic_content(
+    subject_id: uuid.UUID,
+    topic_id: uuid.UUID,
+    current_user: User = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+):
+    """
+    Generate learning content (.md) for a SINGLE topic using LLM + RAG pipeline.
+    Uses hybrid_search + embeddings + cosine similarity from reference documents.
+    """
+    import logging
+    logger = logging.getLogger(__name__)
+
+    # Verify subject ownership
+    result = await db.execute(
+        select(Subject).where(Subject.id == subject_id, Subject.user_id == current_user.id)
+    )
+    subject = result.scalar_one_or_none()
+    if not subject:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Subject not found")
+
+    # Get the topic
+    result = await db.execute(
+        select(Topic).where(Topic.id == topic_id, Topic.subject_id == subject_id)
+    )
+    topic = result.scalar_one_or_none()
+    if not topic:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Topic not found")
+
+    # Get all topic names for context
+    all_topics_result = await db.execute(
+        select(Topic.name).where(Topic.subject_id == subject_id).order_by(Topic.order_index)
+    )
+    all_topic_names = [row[0] for row in all_topics_result.all()]
+    topic_list_str = "\n".join(f"{i+1}. {name}" for i, name in enumerate(all_topic_names))
+
+    # Gather reference document IDs for RAG
+    from app.models.document import Document
+    ref_result = await db.execute(
+        select(Document.id).where(
+            Document.subject_id == subject_id,
+            Document.index_type.in_(["primary", "reference_book", "template_paper"]),
+            Document.processing_status == "completed",
+        )
+    )
+    doc_ids = [row[0] for row in ref_result.all()]
+
+    # Initialize services
+    from app.services.llm_service import LLMService
+    from app.services.document_service import DocumentService
+    from app.services.embedding_service import EmbeddingService
+
+    llm = LLMService()
+    doc_service = DocumentService(db)
+    embedding_service = EmbeddingService()
+
+    # --- RAG: Retrieve relevant context ---
+    rag_context = ""
+    if doc_ids:
+        try:
+            query = f"{topic.name} {topic.description or ''} {subject.name}"
+            query_embedding = await embedding_service.get_embedding(query)
+            relevant_chunks = await doc_service.hybrid_search_multi_document(
+                document_ids=doc_ids,
+                query=query,
+                query_embedding=query_embedding,
+                top_k=10,
+                alpha=0.6,
+            )
+            if relevant_chunks:
+                rag_context = "\n\n".join([
+                    f"[Source: {c.document.filename if c.document else 'unknown'}, Page {c.page_number or '?'}]\n{c.chunk_text}"
+                    for c in relevant_chunks
+                ])
+        except Exception as e:
+            logger.warning(f"RAG retrieval failed for topic {topic.name}: {e}")
+
+    system_prompt = f"""You are an expert educational content writer. Create comprehensive, well-structured learning materials in Markdown format.
+
+Subject: {subject.name} ({subject.code})
+All topics: {topic_list_str}
+
+Guidelines:
+- Use clear headings (## and ###), bullet points, and numbered lists
+- Include key concepts, definitions, formulas (if applicable), and examples
+- Add a summary section at the end
+- Write 800-1500 words of thorough, student-friendly educational content
+- Do NOT mention source documents or references"""
+
+    prompt = f"""Generate comprehensive learning content for this topic:
+
+**Topic: {topic.name}**
+{f'Description: {topic.description}' if topic.description else ''}
+
+{f'--- Relevant Reference Material ---{chr(10)}{rag_context}' if rag_context else ''}
+
+Write a comprehensive study guide for "{topic.name}" in Markdown format."""
+
+    try:
+        content = await llm.generate(
+            prompt=prompt,
+            system_prompt=system_prompt,
+            temperature=0.5,
+            max_tokens=4000,
+        )
+        topic.syllabus_content = content.strip()
+        topic.has_syllabus = True
+
+        # Update syllabus coverage
+        total_topics_result = await db.execute(
+            select(func.count()).where(Topic.subject_id == subject_id)
+        )
+        total_topics = total_topics_result.scalar_one()
+        with_syllabus_result = await db.execute(
+            select(func.count()).where(Topic.subject_id == subject_id, Topic.has_syllabus == True)
+        )
+        with_syllabus = with_syllabus_result.scalar_one()
+        if total_topics > 0:
+            subject.syllabus_coverage = int((with_syllabus / total_topics) * 100)
+
+        await db.commit()
+
+        return {
+            "topic_id": str(topic.id),
+            "topic_name": topic.name,
+            "status": "generated",
+            "content_length": len(content),
+            "content_preview": content[:300],
+            "syllabus_coverage": subject.syllabus_coverage,
+        }
+    except Exception as e:
+        logger.error(f"Failed to generate content for topic {topic.name}: {e}")
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail=f"Content generation failed: {str(e)}",
+        )
