@@ -9,8 +9,14 @@ import { ENV_CONFIG, isSimulator } from '../config/env';
 
 // Determine API base URL based on environment and platform
 const getApiBaseUrl = (): string => {
+  // Always use production URL for release builds
   if (!__DEV__) {
-    return 'https://your-production-api.com/api/v1';
+    return ENV_CONFIG.PRODUCTION_API_URL;
+  }
+
+  // In dev, allow override via env variable to use production URL
+  if (ENV_CONFIG.USE_PRODUCTION_API === 'true') {
+    return ENV_CONFIG.PRODUCTION_API_URL;
   }
 
   if (Platform.OS === 'android') {

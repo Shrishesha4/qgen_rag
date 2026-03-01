@@ -20,6 +20,12 @@ export const ENV_CONFIG = {
   // Use iOS Simulator (set to 'true' for simulator, 'false' for physical device)
   // Default: false
   USE_SIMULATOR: process.env.EXPO_PUBLIC_USE_SIMULATOR || 'true',
+
+  // Production API URL (configurable via .env)
+  PRODUCTION_API_URL: process.env.EXPO_PUBLIC_PRODUCTION_API_URL || 'https://qglm.shrishesha.space/api/v1',
+
+  // Set to 'true' to use production API even in dev mode
+  USE_PRODUCTION_API: process.env.EXPO_PUBLIC_USE_PRODUCTION_API || 'false',
 };
 
 // Utility function to check if simulator is enabled

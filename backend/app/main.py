@@ -89,7 +89,7 @@ app = FastAPI(
 # CORS Middleware - allow_credentials must be False when using wildcard origin
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["*"],  # Allow all origins for React Native
+    allow_origins=settings.cors_origins_list,  # Configurable via CORS_ORIGINS env var
     allow_credentials=False,  # Must be False with wildcard
     allow_methods=["*"],
     allow_headers=["*"],

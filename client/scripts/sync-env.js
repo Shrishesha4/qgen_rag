@@ -16,7 +16,7 @@ const CLIENT_DIR = path.join(WORKSPACE_ROOT, 'client');
 const CLIENT_ENV_LOCAL_PATH = path.join(CLIENT_DIR, '.env.local');
 
 // Variables to sync from root .env to client (with EXPO_PUBLIC_ prefix)
-const SYNC_VARIABLES = ['DEV_MACHINE_IP', 'USE_SIMULATOR'];
+const SYNC_VARIABLES = ['DEV_MACHINE_IP', 'USE_SIMULATOR', 'PRODUCTION_API_URL', 'USE_PRODUCTION_API'];
 
 try {
   // Read root .env file

@@ -7,6 +7,12 @@
 #   Production:   docker-compose -f docker-compose.yml -f docker-compose.prod.yml up -d
 #   Logs:         docker-compose logs -f api
 #   Rebuild:      docker-compose up -d --build
+#
+# Production Deployment (Cloudflare Tunnel):
+#   1. Set PRODUCTION_API_URL in .env (e.g., https://qglm.shrishesha.space/api/v1)
+#   2. Configure Cloudflare tunnel to route subdomain to localhost:8000
+#   3. Update CORS_ORIGINS in .env if needed (default: * allows all)
+#   4. Rebuild mobile apps: ./client/build-ipa.sh and ./client/build-apk.sh
 # ==============================================================================
 
 services:
@@ -169,6 +175,9 @@ services:
       # Rate Limiting
       - RATE_LIMIT_REQUESTS=${RATE_LIMIT_REQUESTS:-100}
       - RATE_LIMIT_WINDOW_SECONDS=${RATE_LIMIT_WINDOW_SECONDS:-3600}
+
+      # CORS
+      - CORS_ORIGINS=${CORS_ORIGINS:-*}
     ports:
       - "${API_PORT:-8000}:8000"
     depends_on:

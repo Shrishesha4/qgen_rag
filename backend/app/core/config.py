@@ -47,10 +47,19 @@ class Settings(BaseSettings):
     RATE_LIMIT_REQUESTS: int = Field(default=100)
     RATE_LIMIT_WINDOW_SECONDS: int = Field(default=3600)
 
-    # CORS - React Native apps don't send Origin header, so allow all for dev
-    CORS_ORIGINS: List[str] = Field(
-        default=["*"]  # Allow all origins in dev - restrict in production
-    )
+    # CORS - Allow the mobile app and tunnel domain
+    # React Native apps don't send Origin header, so "*" is needed
+    # Comma-separated list: "*,https://yourdomain.com,https://app.example.com"
+    CORS_ORIGINS: List[str] = Field(default=["*"])
+
+    @property
+    def cors_origins_list(self) -> List[str]:
+        """Parse CORS_ORIGINS from comma-separated string or list."""
+        if isinstance(self.CORS_ORIGINS, list):
+            return self.CORS_ORIGINS
+        if isinstance(self.CORS_ORIGINS, str):
+            return [origin.strip() for origin in self.CORS_ORIGINS.split(",") if origin.strip()]
+        return ["*"]
 
     # Embedding Model
     # Options: 
