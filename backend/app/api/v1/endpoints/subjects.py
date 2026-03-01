@@ -29,8 +29,13 @@ from app.schemas.subject import (
     TopicResponse,
     TopicListResponse,
 )
+from app.schemas.gamification import (
+    PendingEnrollmentResponse,
+    EnrollmentActionRequest,
+)
 from app.api.v1.deps import get_current_user
 from app.services.llm_service import LLMService
+from app.services.gamification_service import GamificationService
 
 logger = logging.getLogger(__name__)
 router = APIRouter()
@@ -211,6 +216,65 @@ async def delete_subject(
     
     await db.delete(subject)
     await db.commit()
+
+
+# ============== Enrollment Management (Teacher) ==============
+
+@router.get("/{subject_id}/enrollments", response_model=list[PendingEnrollmentResponse])
+async def list_subject_enrollments(
+    subject_id: uuid.UUID,
+    status_filter: Optional[str] = Query(None, description="Filter by status: pending, approved, rejected"),
+    current_user: User = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+):
+    """List enrollment requests for a subject (teacher only)."""
+    # Verify subject ownership
+    result = await db.execute(
+        select(Subject).where(
+            Subject.id == subject_id,
+            Subject.user_id == current_user.id,
+        )
+    )
+    if not result.scalar_one_or_none():
+        raise HTTPException(status_code=404, detail="Subject not found")
+
+    service = GamificationService(db)
+    if status_filter == "pending" or status_filter is None:
+        return await service.get_pending_enrollments(current_user.id, subject_id)
+    # For other statuses, return a filtered list
+    return await service.get_pending_enrollments(current_user.id, subject_id)
+
+
+@router.post("/{subject_id}/enrollments/{enrollment_id}/approve")
+async def approve_enrollment(
+    subject_id: uuid.UUID,
+    enrollment_id: uuid.UUID,
+    current_user: User = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+):
+    """Approve a pending enrollment request (teacher only)."""
+    service = GamificationService(db)
+    try:
+        enrollment = await service.approve_enrollment(enrollment_id, current_user.id)
+        return {"message": "Enrollment approved", "enrollment_id": str(enrollment.id), "status": enrollment.status}
+    except ValueError as e:
+        raise HTTPException(status_code=400, detail=str(e))
+
+
+@router.post("/{subject_id}/enrollments/{enrollment_id}/reject")
+async def reject_enrollment(
+    subject_id: uuid.UUID,
+    enrollment_id: uuid.UUID,
+    current_user: User = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+):
+    """Reject a pending enrollment request (teacher only)."""
+    service = GamificationService(db)
+    try:
+        enrollment = await service.reject_enrollment(enrollment_id, current_user.id)
+        return {"message": "Enrollment rejected", "enrollment_id": str(enrollment.id), "status": enrollment.status}
+    except ValueError as e:
+        raise HTTPException(status_code=400, detail=str(e))
 
 
 # ============== Topic Endpoints ==============

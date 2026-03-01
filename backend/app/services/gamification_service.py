@@ -90,27 +90,46 @@ class GamificationService:
     # --- Enrollment ---
 
     async def enroll_student(self, student_id: UUID, subject_id: UUID) -> Enrollment:
-        """Enroll a student in a subject."""
+        """Request enrollment in a subject (creates a pending enrollment)."""
         existing = await self.db.execute(
             select(Enrollment).where(
                 and_(Enrollment.student_id == student_id, Enrollment.subject_id == subject_id)
             )
         )
-        if existing.scalar_one_or_none():
-            raise ValueError("Already enrolled in this subject")
+        existing_enrollment = existing.scalar_one_or_none()
+        if existing_enrollment:
+            if existing_enrollment.status == "rejected":
+                # Allow re-requesting after rejection
+                existing_enrollment.status = "pending"
+                existing_enrollment.reviewed_at = None
+                await self.db.commit()
+                await self.db.refresh(existing_enrollment)
+                return existing_enrollment
+            raise ValueError("Already enrolled or enrollment pending for this subject")
         
-        enrollment = Enrollment(student_id=student_id, subject_id=subject_id)
+        enrollment = Enrollment(
+            student_id=student_id,
+            subject_id=subject_id,
+            status="pending",
+            is_active=False,
+        )
         self.db.add(enrollment)
         await self.db.commit()
         await self.db.refresh(enrollment)
         return enrollment
 
     async def get_enrollments(self, student_id: UUID) -> List[dict]:
-        """Get all enrollments for a student."""
+        """Get all approved enrollments for a student."""
         result = await self.db.execute(
             select(Enrollment, Subject)
             .join(Subject, Enrollment.subject_id == Subject.id)
-            .where(and_(Enrollment.student_id == student_id, Enrollment.is_active == True))
+            .where(
+                and_(
+                    Enrollment.student_id == student_id,
+                    Enrollment.status == "approved",
+                    Enrollment.is_active == True,
+                )
+            )
         )
         rows = result.all()
         return [
@@ -120,11 +139,120 @@ class GamificationService:
                 "subject_id": e.subject_id,
                 "enrolled_at": e.enrolled_at,
                 "is_active": e.is_active,
+                "status": e.status,
                 "subject_name": s.name,
                 "subject_code": s.code,
             }
             for e, s in rows
         ]
+
+    async def get_all_enrollments(self, student_id: UUID) -> List[dict]:
+        """Get all enrollments for a student (including pending/rejected)."""
+        result = await self.db.execute(
+            select(Enrollment, Subject)
+            .join(Subject, Enrollment.subject_id == Subject.id)
+            .where(Enrollment.student_id == student_id)
+            .order_by(Enrollment.enrolled_at.desc())
+        )
+        rows = result.all()
+        return [
+            {
+                "id": e.id,
+                "student_id": e.student_id,
+                "subject_id": e.subject_id,
+                "enrolled_at": e.enrolled_at,
+                "is_active": e.is_active,
+                "status": e.status,
+                "subject_name": s.name,
+                "subject_code": s.code,
+            }
+            for e, s in rows
+        ]
+
+    async def get_pending_enrollments(self, teacher_id: UUID, subject_id: Optional[UUID] = None) -> List[dict]:
+        """Get pending enrollment requests for a teacher's subjects."""
+        query = (
+            select(Enrollment, User.full_name, User.email, Subject.name)
+            .join(Subject, Enrollment.subject_id == Subject.id)
+            .join(User, Enrollment.student_id == User.id)
+            .where(
+                and_(
+                    Subject.user_id == teacher_id,
+                    Enrollment.status == "pending",
+                )
+            )
+        )
+        if subject_id:
+            query = query.where(Enrollment.subject_id == subject_id)
+        query = query.order_by(Enrollment.enrolled_at.asc())
+
+        result = await self.db.execute(query)
+        rows = result.all()
+        return [
+            {
+                "id": e.id,
+                "student_id": e.student_id,
+                "student_name": full_name or "Unknown",
+                "student_email": email,
+                "subject_id": e.subject_id,
+                "subject_name": subj_name,
+                "enrolled_at": e.enrolled_at,
+                "status": e.status,
+            }
+            for e, full_name, email, subj_name in rows
+        ]
+
+    async def approve_enrollment(self, enrollment_id: UUID, teacher_id: UUID) -> Enrollment:
+        """Approve a pending enrollment request."""
+        result = await self.db.execute(
+            select(Enrollment)
+            .join(Subject, Enrollment.subject_id == Subject.id)
+            .where(
+                and_(
+                    Enrollment.id == enrollment_id,
+                    Subject.user_id == teacher_id,
+                )
+            )
+        )
+        enrollment = result.scalar_one_or_none()
+        if not enrollment:
+            raise ValueError("Enrollment not found or unauthorized")
+        if enrollment.status != "pending":
+            raise ValueError(f"Enrollment is already {enrollment.status}")
+        
+        enrollment.status = "approved"
+        enrollment.is_active = True
+        enrollment.reviewed_at = datetime.now(timezone.utc)
+        await self.db.commit()
+        await self.db.refresh(enrollment)
+        logger.info(f"Enrollment {enrollment_id} approved by teacher {teacher_id}")
+        return enrollment
+
+    async def reject_enrollment(self, enrollment_id: UUID, teacher_id: UUID) -> Enrollment:
+        """Reject a pending enrollment request."""
+        result = await self.db.execute(
+            select(Enrollment)
+            .join(Subject, Enrollment.subject_id == Subject.id)
+            .where(
+                and_(
+                    Enrollment.id == enrollment_id,
+                    Subject.user_id == teacher_id,
+                )
+            )
+        )
+        enrollment = result.scalar_one_or_none()
+        if not enrollment:
+            raise ValueError("Enrollment not found or unauthorized")
+        if enrollment.status != "pending":
+            raise ValueError(f"Enrollment is already {enrollment.status}")
+        
+        enrollment.status = "rejected"
+        enrollment.is_active = False
+        enrollment.reviewed_at = datetime.now(timezone.utc)
+        await self.db.commit()
+        await self.db.refresh(enrollment)
+        logger.info(f"Enrollment {enrollment_id} rejected by teacher {teacher_id}")
+        return enrollment
 
     # --- Available Subjects ---
 
@@ -137,13 +265,13 @@ class GamificationService:
         )
         subjects = result.all()
         
-        # Get enrolled subject IDs
-        enrolled_result = await self.db.execute(
-            select(Enrollment.subject_id).where(
-                and_(Enrollment.student_id == student_id, Enrollment.is_active == True)
+        # Get enrollment status per subject
+        enroll_result = await self.db.execute(
+            select(Enrollment.subject_id, Enrollment.status).where(
+                Enrollment.student_id == student_id
             )
         )
-        enrolled_ids = {row[0] for row in enrolled_result.all()}
+        enrollment_map = {row[0]: row[1] for row in enroll_result.all()}
         
         # Get progress per subject
         progress_result = await self.db.execute(
@@ -166,7 +294,8 @@ class GamificationService:
                 "teacher_name": full_name or username,
                 "total_topics": s.total_topics,
                 "total_questions": s.total_questions,
-                "is_enrolled": s.id in enrolled_ids,
+                "is_enrolled": enrollment_map.get(s.id) == "approved",
+                "enrollment_status": enrollment_map.get(s.id),
                 "mastery": progress_map.get(s.id, {}).get("mastery", 0.0),
                 "xp_earned": progress_map.get(s.id, {}).get("xp", 0),
             }

@@ -14,6 +14,7 @@ export interface SubjectStudent {
   total_topics: number;
   total_questions: number;
   is_enrolled: boolean;
+  enrollment_status?: string; // pending, approved, rejected, or null
   mastery: number;
   xp_earned: number;
 }
@@ -24,6 +25,7 @@ export interface Enrollment {
   subject_id: string;
   enrolled_at: string;
   is_active: boolean;
+  status: string;
   subject_name?: string;
   subject_code?: string;
 }
@@ -177,6 +179,11 @@ const learnService = {
 
   async getEnrollments(): Promise<Enrollment[]> {
     const { data } = await api.get('/learn/enrollments');
+    return data;
+  },
+
+  async getAllEnrollments(): Promise<Enrollment[]> {
+    const { data } = await api.get('/learn/enrollments/all');
     return data;
   },
 

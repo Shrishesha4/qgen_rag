@@ -22,6 +22,7 @@ import {
   Subject,
   Topic,
   TopicCreateData,
+  PendingEnrollment,
 } from '@/services/subjects';
 import { referencesService, ReferenceDocument } from '@/services/references';
 import { ReferenceMaterials } from '@/components/reference-materials';
@@ -57,7 +58,12 @@ export default function SubjectDetailScreen() {
   const [extractionStatus, setExtractionStatus] = useState('');
 
   // Tab state for switching between chapters, references, and history
-  const [activeTab, setActiveTab] = useState<'chapters' | 'references' | 'history'>('chapters');
+  const [activeTab, setActiveTab] = useState<'chapters' | 'references' | 'history' | 'enrollments'>('chapters');
+
+  // Enrollment management state
+  const [pendingEnrollments, setPendingEnrollments] = useState<PendingEnrollment[]>([]);
+  const [isLoadingEnrollments, setIsLoadingEnrollments] = useState(false);
+  const [processingEnrollmentId, setProcessingEnrollmentId] = useState<string | null>(null);
 
   // Reference materials state
   const [referenceBooks, setReferenceBooks] = useState<ReferenceDocument[]>([]);
@@ -110,6 +116,11 @@ export default function SubjectDetailScreen() {
       ]);
       setSubject(subjectData);
       setTopics(topicsData.topics);
+      // Also load enrollment requests
+      try {
+        const enrollments = await subjectsService.getEnrollmentRequests(id);
+        setPendingEnrollments(enrollments);
+      } catch { /* enrollment API may not exist yet */ }
     } catch (error) {
       console.error('Error loading subject:', error);
       showError(error, 'Failed to Load');
@@ -118,6 +129,60 @@ export default function SubjectDetailScreen() {
       setIsRefreshing(false);
     }
   }, [id]);
+
+  const loadEnrollments = useCallback(async () => {
+    if (!id) return;
+    setIsLoadingEnrollments(true);
+    try {
+      const enrollments = await subjectsService.getEnrollmentRequests(id);
+      setPendingEnrollments(enrollments);
+    } catch (error) {
+      console.error('Error loading enrollments:', error);
+    } finally {
+      setIsLoadingEnrollments(false);
+    }
+  }, [id]);
+
+  const handleApproveEnrollment = async (enrollmentId: string) => {
+    if (!id) return;
+    setProcessingEnrollmentId(enrollmentId);
+    try {
+      await subjectsService.approveEnrollment(id, enrollmentId);
+      showSuccess('Student enrollment approved');
+      await loadEnrollments();
+    } catch (error) {
+      showError(error, 'Failed to Approve');
+    } finally {
+      setProcessingEnrollmentId(null);
+    }
+  };
+
+  const handleRejectEnrollment = async (enrollmentId: string) => {
+    if (!id) return;
+    Alert.alert(
+      'Reject Enrollment',
+      'Are you sure you want to reject this enrollment request?',
+      [
+        { text: 'Cancel', style: 'cancel' },
+        {
+          text: 'Reject',
+          style: 'destructive',
+          onPress: async () => {
+            setProcessingEnrollmentId(enrollmentId);
+            try {
+              await subjectsService.rejectEnrollment(id, enrollmentId);
+              showSuccess('Enrollment request rejected');
+              await loadEnrollments();
+            } catch (error) {
+              showError(error, 'Failed to Reject');
+            } finally {
+              setProcessingEnrollmentId(null);
+            }
+          },
+        },
+      ]
+    );
+  };
 
   const loadReferences = useCallback(async () => {
     if (!id) return;
@@ -778,6 +843,31 @@ export default function SubjectDetailScreen() {
                 History
               </Text>
             </TouchableOpacity>
+            <TouchableOpacity
+              style={[
+                styles.tabButton,
+                activeTab === 'enrollments' && { backgroundColor: colors.primary },
+              ]}
+              onPress={() => {
+                selectionImpact();
+                setActiveTab('enrollments');
+                loadEnrollments();
+              }}
+            >
+              <IconSymbol
+                name="person.badge.plus"
+                size={16}
+                color={activeTab === 'enrollments' ? '#FFFFFF' : colors.textSecondary}
+              />
+              <Text
+                style={[
+                  styles.tabButtonText,
+                  { color: activeTab === 'enrollments' ? '#FFFFFF' : colors.textSecondary },
+                ]}
+              >
+                Enroll{pendingEnrollments.length > 0 ? ` (${pendingEnrollments.length})` : ''}
+              </Text>
+            </TouchableOpacity>
           </View>
 
           {/* Chapters Section */}
@@ -965,6 +1055,87 @@ export default function SubjectDetailScreen() {
                       </TouchableOpacity>
                     );
                   })}
+                </View>
+              )}
+            </View>
+          )}
+
+          {/* Enrollment Requests Section */}
+          {activeTab === 'enrollments' && (
+            <View style={styles.section}>
+              <Text style={[styles.sectionTitle, { color: colors.textSecondary }]}>
+                ENROLLMENT REQUESTS ({pendingEnrollments.length})
+              </Text>
+              {isLoadingEnrollments ? (
+                <View style={{ padding: 40, alignItems: 'center' }}>
+                  <ActivityIndicator size="large" color={colors.primary} />
+                </View>
+              ) : pendingEnrollments.length === 0 ? (
+                <View style={[styles.emptyCard, { backgroundColor: colors.card }]}>
+                  <IconSymbol name="person.badge.plus" size={48} color={colors.textTertiary} />
+                  <Text style={[styles.emptyTitle, { color: colors.text }]}>No Pending Requests</Text>
+                  <Text style={[styles.emptyText, { color: colors.textSecondary }]}>
+                    Students who request enrollment in this subject will appear here.
+                  </Text>
+                </View>
+              ) : (
+                <View style={{ gap: Spacing.sm }}>
+                  {pendingEnrollments.map((enrollment) => (
+                    <View
+                      key={enrollment.id}
+                      style={[styles.historyCard, { backgroundColor: colors.card, borderColor: colors.border }]}
+                    >
+                      <View style={{ flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center' }}>
+                        <View style={{ flex: 1 }}>
+                          <Text style={{ fontSize: FontSizes.md, fontWeight: '600', color: colors.text }}>
+                            {enrollment.student_name || 'Unknown Student'}
+                          </Text>
+                          <Text style={{ fontSize: FontSizes.xs, color: colors.textSecondary, marginTop: 2 }}>
+                            {enrollment.student_email}
+                          </Text>
+                          <Text style={{ fontSize: FontSizes.xs, color: colors.textTertiary, marginTop: 2 }}>
+                            Requested {new Date(enrollment.enrolled_at).toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' })}
+                          </Text>
+                        </View>
+                      </View>
+                      <View style={{ flexDirection: 'row', gap: Spacing.sm, marginTop: Spacing.sm }}>
+                        <TouchableOpacity
+                          style={{
+                            flex: 1,
+                            backgroundColor: '#34C75920',
+                            paddingVertical: Spacing.sm,
+                            borderRadius: BorderRadius.md,
+                            alignItems: 'center',
+                          }}
+                          onPress={() => handleApproveEnrollment(enrollment.id)}
+                          disabled={processingEnrollmentId === enrollment.id}
+                        >
+                          {processingEnrollmentId === enrollment.id ? (
+                            <ActivityIndicator size="small" color="#34C759" />
+                          ) : (
+                            <Text style={{ color: '#34C759', fontWeight: '700', fontSize: FontSizes.sm }}>
+                              ✅ Approve
+                            </Text>
+                          )}
+                        </TouchableOpacity>
+                        <TouchableOpacity
+                          style={{
+                            flex: 1,
+                            backgroundColor: '#FF3B3020',
+                            paddingVertical: Spacing.sm,
+                            borderRadius: BorderRadius.md,
+                            alignItems: 'center',
+                          }}
+                          onPress={() => handleRejectEnrollment(enrollment.id)}
+                          disabled={processingEnrollmentId === enrollment.id}
+                        >
+                          <Text style={{ color: '#FF3B30', fontWeight: '700', fontSize: FontSizes.sm }}>
+                            ❌ Reject
+                          </Text>
+                        </TouchableOpacity>
+                      </View>
+                    </View>
+                  ))}
                 </View>
               )}
             </View>

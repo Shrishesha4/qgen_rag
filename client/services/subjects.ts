@@ -184,7 +184,7 @@ export const subjectsService = {
     mimeType: string
   ): Promise<Topic> {
     const formData = new FormData();
-    
+
     // For React Native, we need to create a proper file object
     formData.append('file', {
       uri,
@@ -221,7 +221,7 @@ export const subjectsService = {
     topics: Topic[];
   }> {
     const formData = new FormData();
-    
+
     formData.append('file', {
       uri,
       name: filename,
@@ -245,6 +245,32 @@ export const subjectsService = {
 
     return response.data;
   },
+
+  // === Enrollment Management (Teacher) ===
+
+  async getEnrollmentRequests(subjectId: string): Promise<PendingEnrollment[]> {
+    const response = await apiClient.get(`/subjects/${subjectId}/enrollments`);
+    return response.data;
+  },
+
+  async approveEnrollment(subjectId: string, enrollmentId: string): Promise<void> {
+    await apiClient.post(`/subjects/${subjectId}/enrollments/${enrollmentId}/approve`);
+  },
+
+  async rejectEnrollment(subjectId: string, enrollmentId: string): Promise<void> {
+    await apiClient.post(`/subjects/${subjectId}/enrollments/${enrollmentId}/reject`);
+  },
 };
+
+export interface PendingEnrollment {
+  id: string;
+  student_id: string;
+  student_name?: string;
+  student_email?: string;
+  subject_id: string;
+  subject_name?: string;
+  enrolled_at: string;
+  status: string;
+}
 
 export default subjectsService;

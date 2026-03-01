@@ -48,13 +48,13 @@ async def enroll_in_subject(
     db: AsyncSession = Depends(get_db),
     current_user: User = Depends(get_current_active_user),
 ):
-    """Enroll current student in a subject."""
+    """Request enrollment in a subject (creates pending enrollment)."""
     service = GamificationService(db)
     try:
         enrollment = await service.enroll_student(current_user.id, data.subject_id)
-        # Fetch subject info for response
-        enrollments = await service.get_enrollments(current_user.id)
-        for e in enrollments:
+        # Get subject info for response
+        all_enrollments = await service.get_all_enrollments(current_user.id)
+        for e in all_enrollments:
             if e["id"] == enrollment.id:
                 return e
         return enrollment
@@ -67,9 +67,19 @@ async def list_enrollments(
     db: AsyncSession = Depends(get_db),
     current_user: User = Depends(get_current_active_user),
 ):
-    """List current student's enrollments."""
+    """List current student's approved enrollments."""
     service = GamificationService(db)
     return await service.get_enrollments(current_user.id)
+
+
+@router.get("/enrollments/all", response_model=list[EnrollmentResponse])
+async def list_all_enrollments(
+    db: AsyncSession = Depends(get_db),
+    current_user: User = Depends(get_current_active_user),
+):
+    """List all enrollments (including pending/rejected)."""
+    service = GamificationService(db)
+    return await service.get_all_enrollments(current_user.id)
 
 
 # --- Lessons ---

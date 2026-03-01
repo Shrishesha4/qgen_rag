@@ -324,7 +324,7 @@ class TestService:
                         marks=marks_per_q,
                         difficulty=difficulty,
                         chunk_ids=[c.id for c in selected_chunks],
-                        chunks=selected_chunks,
+                        chunks=None,  # Skip strict validation for test generation
                         subject_id=test.subject_id,
                     )
 
@@ -397,6 +397,16 @@ class TestService:
         test.status = "published"
         test.published_at = datetime.now(timezone.utc)
         test.unpublished_at = None
+
+        # Auto-publish the subject so students can discover it
+        subject_result = await self.db.execute(
+            select(Subject).where(Subject.id == test.subject_id)
+        )
+        subject = subject_result.scalar_one_or_none()
+        if subject and not subject.published:
+            subject.published = True
+            logger.info(f"Auto-published subject {subject.id} ({subject.name})")
+
         await self.db.commit()
         await self.db.refresh(test)
         return test

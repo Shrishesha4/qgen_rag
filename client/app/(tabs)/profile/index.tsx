@@ -13,6 +13,7 @@ import {
 } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { LinearGradient } from 'expo-linear-gradient';
+import { useRouter } from 'expo-router';
 import { useColorScheme } from '@/hooks/use-color-scheme';
 import { Colors, Spacing, FontSizes, BorderRadius } from '@/constants/theme';
 import { useLearningStore } from '@/stores/learningStore';
@@ -23,6 +24,7 @@ export default function ProfileScreen() {
   const colorScheme = useColorScheme() ?? 'light';
   const colors = Colors[colorScheme];
   const [refreshing, setRefreshing] = useState(false);
+  const router = useRouter();
 
   const { user, logout } = useAuthStore();
   const { profile, testHistory, dailyActivity, isLoading, loadProfile, loadTestHistory, loadDailyActivity } =
@@ -139,6 +141,14 @@ export default function ProfileScreen() {
             </View>
           </View>
         )}
+
+        {/* Browse & Enroll */}
+        <TouchableOpacity
+          style={[styles.enrollNavButton, { backgroundColor: colors.primary }]}
+          onPress={() => router.push('/(tabs)/profile/enroll')}
+        >
+          <Text style={styles.enrollNavText}>📚 Browse Subjects & Enroll</Text>
+        </TouchableOpacity>
 
         {/* Badges */}
         {profile && profile.badges.length > 0 && (
@@ -315,4 +325,12 @@ const styles = StyleSheet.create({
     alignItems: 'center',
   },
   logoutText: { color: '#FF3B30', fontSize: FontSizes.md, fontWeight: '600' },
+  enrollNavButton: {
+    marginHorizontal: Spacing.lg,
+    marginTop: Spacing.md,
+    paddingVertical: Spacing.md,
+    borderRadius: BorderRadius.lg,
+    alignItems: 'center',
+  },
+  enrollNavText: { color: '#fff', fontSize: FontSizes.md, fontWeight: '700' },
 });
