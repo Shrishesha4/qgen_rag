@@ -758,53 +758,37 @@ export default function CreateTestScreen() {
         {/* Bottom Actions */}
         <View style={[styles.bottomBar, { backgroundColor: colors.card, borderTopColor: colors.border }]}>
           {step !== 'basics' && (
-            <TouchableOpacity
-              style={[styles.backButton, { borderColor: colors.border }]}
+            <NativeButton
+              title="Back"
+              variant="outline"
+              size="medium"
+              icon="chevron.left"
+              iconPosition="left"
               onPress={prevStep}
-            >
-              <IconSymbol name="chevron.left" size={16} color={colors.text} />
-              <Text style={[styles.backButtonText, { color: colors.text }]}>Back</Text>
-            </TouchableOpacity>
+            />
           )}
           <View style={styles.flex} />
           {step === 'review' ? (
-            <TouchableOpacity
-              style={[
-                styles.generateButton,
-                { backgroundColor: colors.primary, opacity: isCreating ? 0.6 : 1 },
-              ]}
+            <NativeButton
+              title="Generate Test"
+              variant="primary"
+              size="large"
+              icon="sparkles"
+              iconPosition="left"
               onPress={handleCreateAndGenerate}
+              loading={isCreating}
               disabled={isCreating}
-            >
-              {isCreating ? (
-                <ActivityIndicator size="small" color="#FFFFFF" />
-              ) : (
-                <>
-                  <IconSymbol name="sparkles" size={18} color="#FFFFFF" />
-                  <Text style={styles.generateButtonText}>Generate Test</Text>
-                </>
-              )}
-            </TouchableOpacity>
+            />
           ) : (
-            <TouchableOpacity
-              style={[
-                styles.nextButton,
-                { backgroundColor: canProceed() ? colors.primary : colors.border },
-              ]}
+            <NativeButton
+              title="Next"
+              variant="primary"
+              size="medium"
+              icon="chevron.right"
+              iconPosition="right"
               onPress={nextStep}
               disabled={!canProceed()}
-            >
-              <Text
-                style={[styles.nextButtonText, { color: canProceed() ? '#FFFFFF' : colors.textTertiary }]}
-              >
-                Next
-              </Text>
-              <IconSymbol
-                name="chevron.right"
-                size={16}
-                color={canProceed() ? '#FFFFFF' : colors.textTertiary}
-              />
-            </TouchableOpacity>
+            />
           )}
         </View>
       </KeyboardAvoidingView>
@@ -820,7 +804,8 @@ const styles = StyleSheet.create({
     alignItems: 'center',
     justifyContent: 'center',
     paddingHorizontal: Spacing.xl,
-    paddingVertical: Spacing.sm,
+    paddingTop: Spacing.md,
+    paddingBottom: Spacing.sm,
   },
   progressItem: {
     flexDirection: 'row',
@@ -837,11 +822,12 @@ const styles = StyleSheet.create({
     marginHorizontal: 2,
   },
   scrollContent: {
-    padding: Spacing.md,
+    paddingHorizontal: Spacing.lg,
+    paddingTop: Spacing.sm,
     paddingBottom: 120,
   },
   stepContent: {
-    gap: Spacing.md,
+    gap: Spacing.lg,
   },
   stepTitle: {
     fontSize: FontSizes.xl,
@@ -852,7 +838,7 @@ const styles = StyleSheet.create({
     marginBottom: Spacing.sm,
   },
   field: {
-    gap: 6,
+    gap: Spacing.sm,
   },
   label: {
     fontSize: FontSizes.sm,
@@ -1058,45 +1044,9 @@ const styles = StyleSheet.create({
   bottomBar: {
     flexDirection: 'row',
     alignItems: 'center',
-    padding: Spacing.md,
+    paddingHorizontal: Spacing.lg,
+    paddingVertical: Spacing.md,
     borderTopWidth: 1,
-  },
-  backButton: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    gap: 4,
-    paddingHorizontal: Spacing.md,
-    paddingVertical: 10,
-    borderRadius: BorderRadius.md,
-    borderWidth: 1,
-  },
-  backButtonText: {
-    fontSize: FontSizes.sm,
-    fontWeight: '500',
-  },
-  nextButton: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    gap: 4,
-    paddingHorizontal: Spacing.lg,
-    paddingVertical: 10,
-    borderRadius: BorderRadius.md,
-  },
-  nextButtonText: {
-    fontSize: FontSizes.sm,
-    fontWeight: '600',
-  },
-  generateButton: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    gap: 8,
-    paddingHorizontal: Spacing.lg,
-    paddingVertical: 12,
-    borderRadius: BorderRadius.md,
-  },
-  generateButtonText: {
-    color: '#FFFFFF',
-    fontSize: FontSizes.sm,
-    fontWeight: '700',
+    paddingBottom: 60, // Extra space for iOS safe area
   },
 });
