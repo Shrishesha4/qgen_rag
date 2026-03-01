@@ -17,7 +17,7 @@ import { useColorScheme } from '@/hooks/use-color-scheme';
 import { Colors, Spacing, FontSizes, BorderRadius } from '@/constants/theme';
 import { MasteryRing } from '@/components/gamification';
 import learnService from '@/services/learn';
-import { subjectsService } from '@/services/subjects';
+import subjectsService from '@/services/subjects';
 
 interface TopicWithProgress {
   id: string;
@@ -61,8 +61,8 @@ export default function SubjectDetailScreen() {
         };
       });
       setTopics(merged);
-    } catch {
-      // Ignore errors, show empty
+    } catch (err) {
+      console.warn('Failed to load subject detail:', err);
     } finally {
       setLoading(false);
     }

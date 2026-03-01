@@ -182,7 +182,10 @@ class GamificationService:
             return MAX_HEARTS
         
         if user.hearts < MAX_HEARTS and user.hearts_updated_at:
-            elapsed = datetime.now(timezone.utc) - user.hearts_updated_at.replace(tzinfo=timezone.utc)
+            last_updated = user.hearts_updated_at
+            if last_updated.tzinfo is None:
+                last_updated = last_updated.replace(tzinfo=timezone.utc)
+            elapsed = datetime.now(timezone.utc) - last_updated
             regen = int(elapsed.total_seconds() // (HEART_REGEN_MINUTES * 60))
             if regen > 0:
                 user.hearts = min(MAX_HEARTS, user.hearts + regen)
@@ -279,15 +282,17 @@ class GamificationService:
         
         # If not enough questions at current difficulty, fill with others
         if len(questions) < count:
+            existing_ids = [qq.id for qq in questions]
             fill_q = select(Question).where(
                 and_(
                     Question.subject_id == subject_id,
                     Question.vetting_status == "approved",
                     Question.is_archived == False,
                     Question.is_latest == True,
-                    Question.id.notin_({qq.id for qq in questions}),
                 )
             )
+            if existing_ids:
+                fill_q = fill_q.where(Question.id.notin_(existing_ids))
             if topic_id:
                 fill_q = fill_q.where(Question.topic_id == topic_id)
             fill_q = fill_q.order_by(func.random()).limit(count - len(questions))

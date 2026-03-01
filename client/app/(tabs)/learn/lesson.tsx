@@ -30,10 +30,9 @@ export default function LessonScreen() {
   const [currentIndex, setCurrentIndex] = useState(0);
   const [selectedAnswer, setSelectedAnswer] = useState<string | null>(null);
   const [showResult, setShowResult] = useState(false);
-  const [isCorrect, setIsCorrect] = useState(false);
   const [answers, setAnswers] = useState<AnswerSubmission[]>([]);
   const [hearts, setHearts] = useState(5);
-  const [startTime] = useState(Date.now());
+  const [lessonStartTime, setLessonStartTime] = useState<number | null>(null);
 
   useEffect(() => {
     if (params.subjectId) {
@@ -44,6 +43,7 @@ export default function LessonScreen() {
   useEffect(() => {
     if (currentLesson) {
       setHearts(currentLesson.hearts_remaining);
+      setLessonStartTime(Date.now());
     }
   }, [currentLesson]);
 
@@ -59,15 +59,9 @@ export default function LessonScreen() {
   const handleCheckAnswer = () => {
     if (!selectedAnswer || !currentQuestion) return;
 
-    // Client-side feedback is approximate; the backend validates actual correctness on submission.
-    // Options may be shuffled, so we record the answer and let the server determine the score.
-    const correct = false;
-
-    setIsCorrect(correct);
+    // Don't validate client-side - the backend validates actual correctness on submission.
+    // Just record the answer and move to next question.
     setShowResult(true);
-    if (!correct) {
-      setHearts((h) => Math.max(0, h - 1));
-    }
 
     setAnswers((prev) => [
       ...prev,
@@ -84,7 +78,7 @@ export default function LessonScreen() {
       setSelectedAnswer(null);
       setShowResult(false);
     } else {
-      const totalTime = Math.round((Date.now() - startTime) / 1000);
+      const totalTime = lessonStartTime ? Math.round((Date.now() - lessonStartTime) / 1000) : 0;
       await submitLesson(
         params.subjectId,
         params.topicId,
@@ -201,14 +195,9 @@ export default function LessonScreen() {
             let optionStyle = {};
             let textColor = colors.text;
 
-            if (showResult) {
-              if (isSelected && isCorrect) {
-                optionStyle = { backgroundColor: '#34C75920', borderColor: '#34C759' };
-                textColor = '#34C759';
-              } else if (isSelected && !isCorrect) {
-                optionStyle = { backgroundColor: '#FF3B3020', borderColor: '#FF3B30' };
-                textColor = '#FF3B30';
-              }
+            if (showResult && isSelected) {
+              optionStyle = { backgroundColor: `${colors.primary}15`, borderColor: colors.primary };
+              textColor = colors.primary;
             } else if (isSelected) {
               optionStyle = { backgroundColor: `${colors.primary}15`, borderColor: colors.primary };
               textColor = colors.primary;
@@ -256,14 +245,14 @@ export default function LessonScreen() {
           <View
             style={[
               styles.feedback,
-              { backgroundColor: isCorrect ? '#34C75920' : '#FF3B3020' },
+              { backgroundColor: `${colors.primary}15` },
             ]}
           >
-            <Text style={styles.feedbackEmoji}>{isCorrect ? '🎉' : '💡'}</Text>
+            <Text style={styles.feedbackEmoji}>✅</Text>
             <Text
-              style={[styles.feedbackText, { color: isCorrect ? '#34C759' : '#FF3B30' }]}
+              style={[styles.feedbackText, { color: colors.primary }]}
             >
-              {isCorrect ? 'Correct!' : 'Not quite...'}
+              Answer recorded
             </Text>
           </View>
         )}
