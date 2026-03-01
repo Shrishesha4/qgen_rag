@@ -59,15 +59,17 @@ export default function LessonScreen() {
   const handleCheckAnswer = () => {
     if (!selectedAnswer || !currentQuestion) return;
 
-    // Don't validate client-side - the backend validates actual correctness on submission.
-    // Just record the answer and move to next question.
+    // Extract just the option letter (e.g. "A" from "A) Some answer text...")
+    // The backend stores correct_answer as just the letter (A, B, C, D)
+    const answerLetter = selectedAnswer.charAt(0).toUpperCase();
+
     setShowResult(true);
 
     setAnswers((prev) => [
       ...prev,
       {
         question_id: currentQuestion.id,
-        selected_answer: selectedAnswer,
+        selected_answer: answerLetter,
       },
     ]);
   };
@@ -159,8 +161,8 @@ export default function LessonScreen() {
                   currentQuestion.difficulty_level === 'hard'
                     ? '#FF3B3020'
                     : currentQuestion.difficulty_level === 'medium'
-                    ? '#FF950020'
-                    : '#34C75920',
+                      ? '#FF950020'
+                      : '#34C75920',
               },
             ]}
           >
@@ -172,8 +174,8 @@ export default function LessonScreen() {
                     currentQuestion.difficulty_level === 'hard'
                       ? '#FF3B30'
                       : currentQuestion.difficulty_level === 'medium'
-                      ? '#FF9500'
-                      : '#34C759',
+                        ? '#FF9500'
+                        : '#34C759',
                 },
               ]}
             >

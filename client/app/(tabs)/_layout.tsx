@@ -54,13 +54,6 @@ export default function TabLayout() {
           </NativeTabs.Trigger>
         )}
 
-        {isTeacher && (
-          <NativeTabs.Trigger name="tests">
-            <Label>Tests</Label>
-            <Icon sf="doc.text.fill" />
-          </NativeTabs.Trigger>
-        )}
-
         {/* Student tabs */}
         {isStudent && (
           <NativeTabs.Trigger name="learn">
@@ -68,6 +61,11 @@ export default function TabLayout() {
             <Icon sf="book.fill" />
           </NativeTabs.Trigger>
         )}
+
+        <NativeTabs.Trigger name="tests">
+          <Label>Tests</Label>
+          <Icon sf="doc.text.fill" />
+        </NativeTabs.Trigger>
 
         {isStudent && (
           <NativeTabs.Trigger name="leaderboard">
@@ -161,7 +159,6 @@ export default function TabLayout() {
         name="tests"
         options={{
           title: 'Tests',
-          href: isTeacher ? undefined : null,
           tabBarIcon: ({ color }) => (
             <IconSymbol size={26} name="doc.text.fill" color={color} />
           ),

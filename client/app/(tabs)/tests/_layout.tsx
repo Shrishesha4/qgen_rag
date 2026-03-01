@@ -52,6 +52,13 @@ export default function TestsLayout() {
           title: 'Performance',
         }}
       />
+      <Stack.Screen
+        name="take-test"
+        options={{
+          headerShown: false,
+          gestureEnabled: false,
+        }}
+      />
     </Stack>
   );
 }

@@ -31,8 +31,10 @@ export default function ProfileScreen() {
     useLearningStore();
 
   const loadData = useCallback(async () => {
-    await Promise.all([loadProfile(), loadTestHistory(), loadDailyActivity(7)]);
-  }, [loadProfile, loadTestHistory, loadDailyActivity]);
+    if (user?.role === 'student') {
+      await Promise.all([loadProfile(), loadTestHistory(), loadDailyActivity(7)]);
+    }
+  }, [user?.role, loadProfile, loadTestHistory, loadDailyActivity]);
 
   useEffect(() => {
     loadData();
@@ -52,6 +54,8 @@ export default function ProfileScreen() {
     };
     return labels[badge] || badge;
   };
+
+  const isStudent = user?.role === 'student';
 
   return (
     <SafeAreaView style={[styles.safeArea, { backgroundColor: colors.background }]}>
@@ -75,137 +79,149 @@ export default function ProfileScreen() {
           <Text style={[styles.email, { color: colors.textSecondary }]}>
             {user?.email}
           </Text>
+          {!isStudent && (
+            <View style={[styles.roleBadge, { backgroundColor: '#AF52DE20' }]}>
+              <Text style={{ color: '#AF52DE', fontWeight: '600', fontSize: 13 }}>
+                👨‍🏫 Teacher
+              </Text>
+            </View>
+          )}
         </View>
 
-        {/* XP and Level */}
-        {profile && (
-          <View style={[styles.card, { backgroundColor: colors.backgroundSecondary }]}>
-            <XPBar xpTotal={profile.xp_total} level={profile.current_level} />
-          </View>
-        )}
+        {/* Student-only gamification UI */}
+        {isStudent && (
+          <>
+            {/* XP and Level */}
+            {profile && (
+              <View style={[styles.card, { backgroundColor: colors.backgroundSecondary }]}>
+                <XPBar xpTotal={profile.xp_total} level={profile.current_level} />
+              </View>
+            )}
 
-        {/* Streak & Hearts Row */}
-        {profile && (
-          <View style={styles.gamificationRow}>
-            <View style={[styles.gamificationCard, { backgroundColor: colors.backgroundSecondary }]}>
-              <StreakCounter streak={profile.streak_count} />
-            </View>
-            <View style={[styles.gamificationCard, { backgroundColor: colors.backgroundSecondary }]}>
-              <View style={{ alignItems: 'center', padding: Spacing.md }}>
-                <HeartsDisplay hearts={profile.hearts} />
-                <Text style={[styles.heartsLabel, { color: colors.textSecondary }]}>
-                  Lives
-                </Text>
-              </View>
-            </View>
-          </View>
-        )}
-
-        {/* Stats */}
-        {profile && (
-          <View style={[styles.statsCard, { backgroundColor: colors.backgroundSecondary }]}>
-            <Text style={[styles.statsTitle, { color: colors.text }]}>📊 Statistics</Text>
-            <View style={styles.statsGrid}>
-              <View style={styles.statItem}>
-                <Text style={[styles.statValue, { color: colors.text }]}>
-                  {profile.subjects_enrolled}
-                </Text>
-                <Text style={[styles.statLabel, { color: colors.textSecondary }]}>
-                  Subjects
-                </Text>
-              </View>
-              <View style={styles.statItem}>
-                <Text style={[styles.statValue, { color: colors.text }]}>
-                  {profile.total_lessons_completed}
-                </Text>
-                <Text style={[styles.statLabel, { color: colors.textSecondary }]}>
-                  Lessons
-                </Text>
-              </View>
-              <View style={styles.statItem}>
-                <Text style={[styles.statValue, { color: colors.text }]}>
-                  {profile.total_questions_answered}
-                </Text>
-                <Text style={[styles.statLabel, { color: colors.textSecondary }]}>
-                  Questions
-                </Text>
-              </View>
-              <View style={styles.statItem}>
-                <Text style={[styles.statValue, { color: colors.text }]}>
-                  {Math.round(profile.overall_accuracy)}%
-                </Text>
-                <Text style={[styles.statLabel, { color: colors.textSecondary }]}>
-                  Accuracy
-                </Text>
-              </View>
-            </View>
-          </View>
-        )}
-
-        {/* Browse & Enroll */}
-        <TouchableOpacity
-          style={[styles.enrollNavButton, { backgroundColor: colors.primary }]}
-          onPress={() => router.push('/(tabs)/profile/enroll')}
-        >
-          <Text style={styles.enrollNavText}>📚 Browse Subjects & Enroll</Text>
-        </TouchableOpacity>
-
-        {/* Badges */}
-        {profile && profile.badges.length > 0 && (
-          <View style={[styles.badgesCard, { backgroundColor: colors.backgroundSecondary }]}>
-            <Text style={[styles.statsTitle, { color: colors.text }]}>🏅 Badges</Text>
-            <View style={styles.badgesList}>
-              {profile.badges.map((badge) => (
-                <View key={badge} style={[styles.badge, { backgroundColor: colors.glassTertiary }]}>
-                  <Text style={[styles.badgeText, { color: colors.text }]}>
-                    {getBadgeLabel(badge)}
-                  </Text>
+            {/* Streak & Hearts Row */}
+            {profile && (
+              <View style={styles.gamificationRow}>
+                <View style={[styles.gamificationCard, { backgroundColor: colors.backgroundSecondary }]}>
+                  <StreakCounter streak={profile.streak_count} />
                 </View>
-              ))}
-            </View>
-          </View>
-        )}
-
-        {/* Recent Activity */}
-        {dailyActivity.length > 0 && (
-          <View style={[styles.activityCard, { backgroundColor: colors.backgroundSecondary }]}>
-            <Text style={[styles.statsTitle, { color: colors.text }]}>📅 This Week</Text>
-            {dailyActivity.slice(0, 7).map((day) => (
-              <View key={day.id} style={styles.activityRow}>
-                <Text style={[styles.activityDate, { color: colors.textSecondary }]}>
-                  {new Date(day.activity_date).toLocaleDateString('en-US', { weekday: 'short', month: 'short', day: 'numeric' })}
-                </Text>
-                <Text style={[styles.activityXP, { color: '#007AFF' }]}>
-                  +{day.xp_earned} XP
-                </Text>
-                <Text style={[styles.activityQuestions, { color: colors.textSecondary }]}>
-                  {day.questions_answered} Q · {day.lessons_completed} lessons
-                </Text>
-              </View>
-            ))}
-          </View>
-        )}
-
-        {/* Recent Tests */}
-        {testHistory.length > 0 && (
-          <View style={[styles.historyCard, { backgroundColor: colors.backgroundSecondary }]}>
-            <Text style={[styles.statsTitle, { color: colors.text }]}>📝 Recent Tests</Text>
-            {testHistory.slice(0, 5).map((test) => (
-              <View key={test.id} style={styles.testRow}>
-                <View style={styles.testInfo}>
-                  <Text style={[styles.testScore, { color: colors.text }]}>
-                    {test.correct_answers}/{test.total_questions}
-                  </Text>
-                  <Text style={[styles.testMeta, { color: colors.textSecondary }]}>
-                    {test.difficulty} · +{test.xp_earned} XP
-                  </Text>
+                <View style={[styles.gamificationCard, { backgroundColor: colors.backgroundSecondary }]}>
+                  <View style={{ alignItems: 'center', padding: Spacing.md }}>
+                    <HeartsDisplay hearts={profile.hearts} />
+                    <Text style={[styles.heartsLabel, { color: colors.textSecondary }]}>
+                      Lives
+                    </Text>
+                  </View>
                 </View>
-                <Text style={[styles.testDate, { color: colors.textSecondary }]}>
-                  {new Date(test.created_at).toLocaleDateString()}
-                </Text>
               </View>
-            ))}
-          </View>
+            )}
+
+            {/* Stats */}
+            {profile && (
+              <View style={[styles.statsCard, { backgroundColor: colors.backgroundSecondary }]}>
+                <Text style={[styles.statsTitle, { color: colors.text }]}>📊 Statistics</Text>
+                <View style={styles.statsGrid}>
+                  <View style={styles.statItem}>
+                    <Text style={[styles.statValue, { color: colors.text }]}>
+                      {profile.subjects_enrolled}
+                    </Text>
+                    <Text style={[styles.statLabel, { color: colors.textSecondary }]}>
+                      Subjects
+                    </Text>
+                  </View>
+                  <View style={styles.statItem}>
+                    <Text style={[styles.statValue, { color: colors.text }]}>
+                      {profile.total_lessons_completed}
+                    </Text>
+                    <Text style={[styles.statLabel, { color: colors.textSecondary }]}>
+                      Lessons
+                    </Text>
+                  </View>
+                  <View style={styles.statItem}>
+                    <Text style={[styles.statValue, { color: colors.text }]}>
+                      {profile.total_questions_answered}
+                    </Text>
+                    <Text style={[styles.statLabel, { color: colors.textSecondary }]}>
+                      Questions
+                    </Text>
+                  </View>
+                  <View style={styles.statItem}>
+                    <Text style={[styles.statValue, { color: colors.text }]}>
+                      {Math.round(profile.overall_accuracy)}%
+                    </Text>
+                    <Text style={[styles.statLabel, { color: colors.textSecondary }]}>
+                      Accuracy
+                    </Text>
+                  </View>
+                </View>
+              </View>
+            )}
+
+            {/* Browse & Enroll */}
+            <TouchableOpacity
+              style={[styles.enrollNavButton, { backgroundColor: colors.primary }]}
+              onPress={() => router.push('/(tabs)/profile/enroll')}
+            >
+              <Text style={styles.enrollNavText}>📚 Browse Subjects & Enroll</Text>
+            </TouchableOpacity>
+
+            {/* Badges */}
+            {profile && profile.badges.length > 0 && (
+              <View style={[styles.badgesCard, { backgroundColor: colors.backgroundSecondary }]}>
+                <Text style={[styles.statsTitle, { color: colors.text }]}>🏅 Badges</Text>
+                <View style={styles.badgesList}>
+                  {profile.badges.map((badge) => (
+                    <View key={badge} style={[styles.badge, { backgroundColor: colors.glassTertiary }]}>
+                      <Text style={[styles.badgeText, { color: colors.text }]}>
+                        {getBadgeLabel(badge)}
+                      </Text>
+                    </View>
+                  ))}
+                </View>
+              </View>
+            )}
+
+            {/* Recent Activity */}
+            {dailyActivity.length > 0 && (
+              <View style={[styles.activityCard, { backgroundColor: colors.backgroundSecondary }]}>
+                <Text style={[styles.statsTitle, { color: colors.text }]}>📅 This Week</Text>
+                {dailyActivity.slice(0, 7).map((day) => (
+                  <View key={day.id} style={styles.activityRow}>
+                    <Text style={[styles.activityDate, { color: colors.textSecondary }]}>
+                      {new Date(day.activity_date).toLocaleDateString('en-US', { weekday: 'short', month: 'short', day: 'numeric' })}
+                    </Text>
+                    <Text style={[styles.activityXP, { color: '#007AFF' }]}>
+                      +{day.xp_earned} XP
+                    </Text>
+                    <Text style={[styles.activityQuestions, { color: colors.textSecondary }]}>
+                      {day.questions_answered} Q · {day.lessons_completed} lessons
+                    </Text>
+                  </View>
+                ))}
+              </View>
+            )}
+
+            {/* Recent Tests */}
+            {testHistory.length > 0 && (
+              <View style={[styles.historyCard, { backgroundColor: colors.backgroundSecondary }]}>
+                <Text style={[styles.statsTitle, { color: colors.text }]}>📝 Recent Tests</Text>
+                {testHistory.slice(0, 5).map((test) => (
+                  <View key={test.id} style={styles.testRow}>
+                    <View style={styles.testInfo}>
+                      <Text style={[styles.testScore, { color: colors.text }]}>
+                        {test.correct_answers}/{test.total_questions}
+                      </Text>
+                      <Text style={[styles.testMeta, { color: colors.textSecondary }]}>
+                        {test.difficulty} · +{test.xp_earned} XP
+                      </Text>
+                    </View>
+                    <Text style={[styles.testDate, { color: colors.textSecondary }]}>
+                      {new Date(test.created_at).toLocaleDateString()}
+                    </Text>
+                  </View>
+                ))}
+              </View>
+            )}
+          </>
         )}
 
         {/* Logout */}
@@ -333,4 +349,10 @@ const styles = StyleSheet.create({
     alignItems: 'center',
   },
   enrollNavText: { color: '#fff', fontSize: FontSizes.md, fontWeight: '700' },
+  roleBadge: {
+    marginTop: Spacing.sm,
+    paddingHorizontal: Spacing.md,
+    paddingVertical: 6,
+    borderRadius: BorderRadius.md,
+  },
 });

@@ -760,7 +760,7 @@ export default function CreateTestScreen() {
           {step !== 'basics' && (
             <NativeButton
               title="Back"
-              variant="outline"
+              variant="glass"
               size="medium"
               icon="chevron.left"
               iconPosition="left"
@@ -771,8 +771,8 @@ export default function CreateTestScreen() {
           {step === 'review' ? (
             <NativeButton
               title="Generate Test"
-              variant="primary"
-              size="large"
+              variant="glass"
+              size="medium"
               icon="sparkles"
               iconPosition="left"
               onPress={handleCreateAndGenerate}
@@ -782,7 +782,7 @@ export default function CreateTestScreen() {
           ) : (
             <NativeButton
               title="Next"
-              variant="primary"
+              variant="glass"
               size="medium"
               icon="chevron.right"
               iconPosition="right"
@@ -1047,6 +1047,7 @@ const styles = StyleSheet.create({
     paddingHorizontal: Spacing.lg,
     paddingVertical: Spacing.md,
     borderTopWidth: 1,
-    paddingBottom: 60, // Extra space for iOS safe area
+    paddingBottom: 100,
+    backgroundColor: '#000000',
   },
 });

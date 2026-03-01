@@ -30,23 +30,31 @@ export default function TestsDashboard() {
   const router = useRouter();
   const { user } = useAuthStore();
 
+  const isStudent = user?.role === 'student';
+
   const [tests, setTests] = useState<TestResponse[]>([]);
+  const [studentTests, setStudentTests] = useState<any[]>([]);
   const [isLoading, setIsLoading] = useState(true);
   const [refreshing, setRefreshing] = useState(false);
   const [filter, setFilter] = useState<StatusFilter>('all');
 
   const loadTests = useCallback(async () => {
     try {
-      const status = filter === 'all' ? undefined : filter;
-      const data = await testsService.listTests(status);
-      setTests(data);
+      if (isStudent) {
+        const data = await testsService.getStudentTests();
+        setStudentTests(data);
+      } else {
+        const status = filter === 'all' ? undefined : filter;
+        const data = await testsService.listTests(status);
+        setTests(data);
+      }
     } catch (error: any) {
       console.error('Failed to load tests:', error);
     } finally {
       setIsLoading(false);
       setRefreshing(false);
     }
-  }, [filter]);
+  }, [filter, isStudent]);
 
   useEffect(() => {
     loadTests();
@@ -118,6 +126,108 @@ export default function TestsDashboard() {
     );
   }
 
+  // ====== Student View ======
+  if (isStudent) {
+    return (
+      <SafeAreaView style={[styles.container, { backgroundColor: colors.background }]}>
+        <ScrollView
+          contentContainerStyle={styles.content}
+          refreshControl={<RefreshControl refreshing={refreshing} onRefresh={onRefresh} />}
+        >
+          <View style={styles.header}>
+            <View>
+              <Text style={[styles.title, { color: colors.text }]}>My Tests</Text>
+              <Text style={[styles.subtitle, { color: colors.textSecondary }]}>
+                Take tests assigned by your teachers
+              </Text>
+            </View>
+          </View>
+
+          {studentTests.length === 0 ? (
+            <View style={styles.emptyState}>
+              <IconSymbol name="doc.text.fill" size={48} color={colors.textTertiary} />
+              <Text style={[styles.emptyTitle, { color: colors.text }]}>No tests available</Text>
+              <Text style={[styles.emptySubtitle, { color: colors.textSecondary }]}>
+                Tests published by your teachers will appear here once you're enrolled and approved.
+              </Text>
+            </View>
+          ) : (
+            studentTests.map((test) => (
+              <TouchableOpacity
+                key={test.id}
+                onPress={() =>
+                  router.push({
+                    pathname: '/(tabs)/tests/detail',
+                    params: { testId: test.id },
+                  })
+                }
+              >
+                <GlassCard style={styles.testCard}>
+                  <View style={styles.testHeader}>
+                    <Text style={[styles.testTitle, { color: colors.text, flex: 1 }]} numberOfLines={1}>
+                      {test.title}
+                    </Text>
+                    {test.has_submitted ? (
+                      <View style={[styles.statusBadge, { backgroundColor: '#34C75920' }]}>
+                        <Text style={{ fontSize: FontSizes.xs, fontWeight: '600', color: '#34C759' }}>
+                          ✅ Submitted
+                        </Text>
+                      </View>
+                    ) : (
+                      <View style={[styles.statusBadge, { backgroundColor: colors.primary + '20' }]}>
+                        <Text style={{ fontSize: FontSizes.xs, fontWeight: '600', color: colors.primary }}>
+                          📝 Available
+                        </Text>
+                      </View>
+                    )}
+                  </View>
+
+                  {test.subject_name && (
+                    <Text style={[styles.testSubject, { color: colors.textSecondary, marginLeft: 0 }]}>
+                      {test.subject_code} - {test.subject_name}
+                    </Text>
+                  )}
+
+                  <View style={[styles.testMeta, { marginLeft: 0 }]}>
+                    <View style={styles.metaItem}>
+                      <IconSymbol name="doc.text" size={14} color={colors.textTertiary} />
+                      <Text style={[styles.metaText, { color: colors.textTertiary }]}>
+                        {test.total_questions} questions
+                      </Text>
+                    </View>
+                    <View style={styles.metaItem}>
+                      <IconSymbol name="star.fill" size={14} color={colors.textTertiary} />
+                      <Text style={[styles.metaText, { color: colors.textTertiary }]}>
+                        {test.total_marks} marks
+                      </Text>
+                    </View>
+                    {test.duration_minutes && (
+                      <View style={styles.metaItem}>
+                        <IconSymbol name="clock" size={14} color={colors.textTertiary} />
+                        <Text style={[styles.metaText, { color: colors.textTertiary }]}>
+                          {test.duration_minutes} min
+                        </Text>
+                      </View>
+                    )}
+                  </View>
+
+                  {test.has_submitted && test.submission_percentage !== null && (
+                    <View style={[styles.avgScoreBar, { backgroundColor: colors.backgroundSecondary, marginLeft: 0 }]}>
+                      <Text style={[styles.avgScoreText, { color: colors.textSecondary }]}>
+                        Your Score: {Math.round(test.submission_percentage)}%
+                      </Text>
+                    </View>
+                  )}
+                </GlassCard>
+              </TouchableOpacity>
+            ))
+          )}
+        </ScrollView>
+      </SafeAreaView>
+    );
+  }
+
+  // ====== Teacher View ======
   return (
     <SafeAreaView style={[styles.container, { backgroundColor: colors.background }]}>
       <ScrollView

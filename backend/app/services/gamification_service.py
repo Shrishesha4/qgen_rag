@@ -484,7 +484,11 @@ class GamificationService:
             
             is_correct = False
             if question.correct_answer:
-                is_correct = ans["selected_answer"].strip().lower() == question.correct_answer.strip().lower()
+                # Compare just the option letter (first char) to handle format variations
+                # e.g. selected might be "A" or "A) text", correct might be "A" or "a"
+                selected = ans["selected_answer"].strip()
+                correct = question.correct_answer.strip()
+                is_correct = selected[0:1].upper() == correct[0:1].upper()
             
             difficulty = question.difficulty_level or "easy"
             xp = calculate_xp(difficulty, user.streak_count, is_correct)
