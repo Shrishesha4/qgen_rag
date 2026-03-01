@@ -16,3 +16,4 @@ export { referencesService } from './references';
 export type { ReferenceDocument, ReferenceMaterialsResponse } from './references';
 export { exportQuestions, exportReport } from './export';
 export type { ExportFormat, ExportOptions, ExportResult, ReportData } from './export';
+export { default as learnService } from './learn';
