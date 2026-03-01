@@ -79,6 +79,8 @@ class User(Base):
     test_history = relationship("TestHistory", back_populates="student", cascade="all, delete-orphan")
     daily_activities = relationship("DailyActivity", back_populates="student", cascade="all, delete-orphan")
     enrollments = relationship("Enrollment", back_populates="student", cascade="all, delete-orphan")
+    created_tests = relationship("Test", back_populates="teacher", cascade="all, delete-orphan")
+    test_submissions = relationship("TestSubmission", back_populates="student", cascade="all, delete-orphan")
     
     def __repr__(self) -> str:
         return f"<User {self.username}>"

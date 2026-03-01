@@ -17,3 +17,5 @@ export type { ReferenceDocument, ReferenceMaterialsResponse } from './references
 export { exportQuestions, exportReport } from './export';
 export type { ExportFormat, ExportOptions, ExportResult, ReportData } from './export';
 export { default as learnService } from './learn';
+export { testsService } from './tests';
+export type { TestResponse, TestDetailResponse, TestQuestion, TestCreateData, TestPerformanceResponse } from './tests';

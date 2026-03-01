@@ -4,7 +4,7 @@ API v1 Router - combines all endpoint routers.
 
 from fastapi import APIRouter
 
-from app.api.v1.endpoints import auth, documents, questions, subjects, rubrics, learn
+from app.api.v1.endpoints import auth, documents, questions, subjects, rubrics, learn, tests
 
 api_router = APIRouter()
 
@@ -14,3 +14,4 @@ api_router.include_router(questions.router, prefix="/questions", tags=["Question
 api_router.include_router(subjects.router, prefix="/subjects", tags=["Subjects"])
 api_router.include_router(rubrics.router, prefix="/rubrics", tags=["Rubrics"])
 api_router.include_router(learn.router, prefix="/learn", tags=["Learning & Gamification"])
+api_router.include_router(tests.router, prefix="/tests", tags=["Tests"])

@@ -56,6 +56,7 @@ class Subject(Base):
     topics = relationship("Topic", back_populates="subject", cascade="all, delete-orphan")
     rubrics = relationship("Rubric", back_populates="subject", cascade="all, delete-orphan")
     questions = relationship("Question", back_populates="subject")
+    tests = relationship("Test", back_populates="subject", cascade="all, delete-orphan")
     
     def __repr__(self) -> str:
         return f"<Subject {self.code}: {self.name}>"
