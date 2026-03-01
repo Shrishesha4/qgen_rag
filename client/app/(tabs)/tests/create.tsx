@@ -16,7 +16,7 @@ import {
   Platform,
 } from 'react-native';
 import { useRouter } from 'expo-router';
-import { SafeAreaView } from 'react-native-safe-area-context';
+
 import { useColorScheme } from '@/hooks/use-color-scheme';
 import { Colors, Spacing, FontSizes, BorderRadius } from '@/constants/theme';
 import { IconSymbol } from '@/components/ui/icon-symbol';
@@ -204,10 +204,10 @@ export default function CreateTestScreen() {
       const topicConfig: TopicSelection[] | undefined =
         generationType !== 'subject_wise' && selectedTopics.length > 0
           ? selectedTopics.map((t) => ({
-              topic_id: t.topic_id,
-              count: parseInt(t.count) || 5,
-              topic_name: t.topic_name,
-            }))
+            topic_id: t.topic_id,
+            count: parseInt(t.count) || 5,
+            topic_name: t.topic_name,
+          }))
           : undefined;
 
       // 1. Create the test
@@ -222,12 +222,12 @@ export default function CreateTestScreen() {
         duration_minutes: durationMinutes ? parseInt(durationMinutes) : undefined,
       });
 
-      // 2. Generate questions from approved pool
+      // 2. Generate questions via AI (this may take a while)
       const result = await testsService.generateQuestions(test.id);
 
       Alert.alert(
         'Test Created!',
-        `${result.questions_added} questions selected (${result.total_marks} marks total). You can review and edit before publishing.`,
+        `${result.questions_added} questions generated via AI (${result.total_marks} marks total). You can review and edit before publishing.`,
         [
           {
             text: 'Review Test',
@@ -454,8 +454,8 @@ export default function CreateTestScreen() {
                     level === 'easy'
                       ? colors.success + '20'
                       : level === 'medium'
-                      ? colors.warning + '20'
-                      : colors.error + '20',
+                        ? colors.warning + '20'
+                        : colors.error + '20',
                 },
               ]}
             >
@@ -467,8 +467,8 @@ export default function CreateTestScreen() {
                       level === 'easy'
                         ? colors.success
                         : level === 'medium'
-                        ? colors.warning
-                        : colors.error,
+                          ? colors.warning
+                          : colors.error,
                   },
                 ]}
               >
@@ -712,7 +712,7 @@ export default function CreateTestScreen() {
   );
 
   return (
-    <SafeAreaView style={[styles.container, { backgroundColor: colors.background }]} edges={['bottom']}>
+    <View style={[styles.container, { backgroundColor: colors.background }]}>
       <KeyboardAvoidingView
         style={styles.flex}
         behavior={Platform.OS === 'ios' ? 'padding' : undefined}
@@ -792,7 +792,7 @@ export default function CreateTestScreen() {
           )}
         </View>
       </KeyboardAvoidingView>
-    </SafeAreaView>
+    </View>
   );
 }
 

@@ -140,9 +140,20 @@ class TestService:
 
     async def generate_test_questions(self, test_id: UUID, teacher_id: UUID) -> dict:
         """
-        Generate questions for a test from the approved questions pool.
-        Uses the test's difficulty_config and topic_config to select questions.
+        Generate NEW questions for a test using the LLM RAG pipeline.
+        Creates fresh questions from the subject's uploaded documents,
+        saves them to the question bank, and links them to the test.
+        Questions follow pedagogical progression: easy → medium → hard.
         """
+        from app.models.document import Document, DocumentChunk
+        from app.services.question_service import QuestionGenerationService
+        from app.services.embedding_service import EmbeddingService
+        from app.services.llm_service import LLMService
+        from app.services.redis_service import RedisService
+        from app.services.document_service import DocumentService
+        from app.services.reranker_service import RerankerService
+        from app.core.config import settings
+
         test = await self.get_test(test_id, teacher_id)
         if not test:
             raise ValueError("Test not found")
@@ -155,134 +166,217 @@ class TestService:
         )
         for tq in existing.scalars().all():
             await self.db.delete(tq)
+        await self.db.flush()
 
-        selected_questions = []
+        # Find completed documents for this subject
+        doc_result = await self.db.execute(
+            select(Document).where(
+                and_(
+                    Document.subject_id == test.subject_id,
+                    Document.processing_status == "completed",
+                )
+            ).order_by(Document.upload_timestamp.desc())
+        )
+        documents = doc_result.scalars().all()
+        if not documents:
+            raise ValueError(
+                "No processed documents found for this subject. "
+                "Please upload and process documents first."
+            )
+
+        primary_doc = documents[0]
+        logger.info(
+            f"Generating test questions for test {test_id} using document "
+            f"'{primary_doc.filename}' (subject={test.subject_id})"
+        )
+
+        # Get document chunks
+        chunk_result = await self.db.execute(
+            select(DocumentChunk)
+            .where(DocumentChunk.document_id == primary_doc.id)
+            .order_by(DocumentChunk.chunk_index)
+        )
+        chunks = chunk_result.scalars().all()
+        if not chunks:
+            raise ValueError("Document has no content chunks. Please re-upload.")
+
+        # Initialize the question generation service
+        embedding_service = EmbeddingService()
+        llm_service = LLMService()
+        redis_service = RedisService()
+        document_service = DocumentService(self.db, embedding_service)
+
+        reranker_service = None
+        if settings.RERANKER_ENABLED:
+            reranker_service = RerankerService()
+
+        qgen_service = QuestionGenerationService(
+            db=self.db,
+            embedding_service=embedding_service,
+            llm_service=llm_service,
+            redis_service=redis_service,
+            document_service=document_service,
+            reranker_service=reranker_service,
+        )
+
+        # Build difficulty plan — pedagogical order: easy → medium → hard
         difficulty_config = test.difficulty_config or {}
+        generation_plan: List[Dict[str, Any]] = []
+        # Ordered pedagogically
+        for level in ["easy", "medium", "hard"]:
+            cfg = difficulty_config.get(level)
+            if isinstance(cfg, dict) and cfg.get("count", 0) > 0:
+                generation_plan.append({
+                    "difficulty": level,
+                    "count": cfg["count"],
+                    "focus_topics": cfg.get("lo_mapping") or None,
+                })
+
+        # If no difficulty config, default to balanced 10 questions
+        if not generation_plan:
+            generation_plan = [
+                {"difficulty": "easy", "count": 4, "focus_topics": None},
+                {"difficulty": "medium", "count": 3, "focus_topics": None},
+                {"difficulty": "hard", "count": 3, "focus_topics": None},
+            ]
+
+        # Handle topic-wise generation — use topic names as focus
         topic_config = test.topic_config or []
+        topic_focus = None
+        if test.generation_type in ("topic_wise", "multi_topic") and topic_config:
+            topic_focus = [t.get("topic_name", "") for t in topic_config if t.get("topic_name")]
 
-        if test.generation_type == "topic_wise" and topic_config:
-            # Topic-wise generation: select questions per topic
-            for topic_entry in topic_config:
-                topic_id = topic_entry.get("topic_id")
-                count = topic_entry.get("count", 5)
-                questions = await self._select_questions(
-                    subject_id=test.subject_id,
-                    topic_id=UUID(topic_id) if isinstance(topic_id, str) else topic_id,
-                    difficulty_config=difficulty_config,
-                    count=count,
+        # Build blacklist from existing questions for this subject (deduplication)
+        blacklist_result = await self.db.execute(
+            select(Question).where(
+                and_(
+                    Question.subject_id == test.subject_id,
+                    Question.is_archived == False,
                 )
-                selected_questions.extend(questions)
-
-        elif test.generation_type == "multi_topic" and topic_config:
-            # Multi-topic: select from multiple topics with individual configs
-            for topic_entry in topic_config:
-                topic_id = topic_entry.get("topic_id")
-                count = topic_entry.get("count", 5)
-                questions = await self._select_questions(
-                    subject_id=test.subject_id,
-                    topic_id=UUID(topic_id) if isinstance(topic_id, str) else topic_id,
-                    difficulty_config=difficulty_config,
-                    count=count,
-                )
-                selected_questions.extend(questions)
-
-        else:
-            # Subject-wise: select from whole subject
-            total_count = sum(
-                cfg.get("count", 0) if isinstance(cfg, dict) else 0
-                for cfg in difficulty_config.values()
-            ) if difficulty_config else 10
-            selected_questions = await self._select_questions(
-                subject_id=test.subject_id,
-                difficulty_config=difficulty_config,
-                count=total_count,
             )
+        )
+        existing_questions = blacklist_result.scalars().all()
+        blacklist_embeddings = []
+        for q in existing_questions:
+            if q.question_embedding is not None and len(q.question_embedding) > 0:
+                blacklist_embeddings.append(q.question_embedding)
 
-        # Create TestQuestion entries
+        # Reference book doc IDs for expanded search
+        all_doc_ids = [d.id for d in documents]
+
+        # Generate questions per difficulty level
+        generated_questions: List[Question] = []
         total_marks = 0
-        for idx, q in enumerate(selected_questions):
-            marks = self._get_marks_for_difficulty(q.difficulty_level)
-            tq = TestQuestion(
-                test_id=test_id,
-                question_id=q.id,
-                order_index=idx,
-                marks=marks,
+        order_index = 0
+
+        for plan in generation_plan:
+            difficulty = plan["difficulty"]
+            count = plan["count"]
+            marks_per_q = self._get_marks_for_difficulty(difficulty)
+            focus = topic_focus or plan.get("focus_topics")
+
+            logger.info(
+                f"Generating {count} {difficulty} questions for test {test_id}"
             )
-            self.db.add(tq)
-            total_marks += marks
+
+            for i in range(count):
+                try:
+                    # Select relevant chunks
+                    focus_topics_for_chunk = focus
+                    selected_chunks = await qgen_service._select_chunks(
+                        chunks=chunks,
+                        focus_topics=focus_topics_for_chunk,
+                        blacklist_chunks=set(),
+                        num_chunks=3,
+                        document_id=primary_doc.id,
+                        document_ids=all_doc_ids,
+                    )
+
+                    # Generate a single MCQ question
+                    question_data = await qgen_service._generate_single_question(
+                        chunks=selected_chunks,
+                        question_type="mcq",
+                        difficulty=difficulty,
+                        marks=marks_per_q,
+                        bloom_levels=None,
+                    )
+
+                    if not question_data:
+                        logger.warning(f"LLM returned no data for question {i+1} ({difficulty})")
+                        continue
+
+                    # Check for duplicates against existing + newly generated
+                    is_duplicate = await qgen_service._check_duplicate(
+                        question_text=question_data["question_text"],
+                        blacklist_embeddings=blacklist_embeddings,
+                        threshold=0.85,
+                    )
+                    if is_duplicate:
+                        logger.info(f"Skipping duplicate question ({difficulty} #{i+1})")
+                        continue
+
+                    # Save question to the question bank
+                    question_obj, _ = await qgen_service._save_question(
+                        document_id=primary_doc.id,
+                        session_id=uuid.uuid4(),  # standalone session
+                        question_data=question_data,
+                        question_type="mcq",
+                        marks=marks_per_q,
+                        difficulty=difficulty,
+                        chunk_ids=[c.id for c in selected_chunks],
+                        chunks=selected_chunks,
+                        subject_id=test.subject_id,
+                    )
+
+                    # Add to blacklist for future dedup within this batch
+                    if question_obj.question_embedding is not None:
+                        blacklist_embeddings.append(question_obj.question_embedding)
+
+                    # Link to test
+                    tq = TestQuestion(
+                        test_id=test_id,
+                        question_id=question_obj.id,
+                        order_index=order_index,
+                        marks=marks_per_q,
+                    )
+                    self.db.add(tq)
+                    total_marks += marks_per_q
+                    order_index += 1
+                    generated_questions.append(question_obj)
+
+                    logger.info(
+                        f"Generated {difficulty} question {i+1}/{count} for test {test_id}"
+                    )
+
+                except Exception as e:
+                    logger.error(
+                        f"Failed to generate {difficulty} question {i+1}: {e}"
+                    )
+                    continue
+
+        if not generated_questions:
+            raise ValueError(
+                "Failed to generate any questions. Please check that the subject "
+                "has uploaded documents with sufficient content."
+            )
 
         # Update test totals
-        test.total_questions = len(selected_questions)
+        test.total_questions = len(generated_questions)
         test.total_marks = total_marks
 
         await self.db.commit()
         await self.db.refresh(test)
 
+        logger.info(
+            f"✅ Test {test_id}: generated {len(generated_questions)} questions "
+            f"({total_marks} marks) via LLM"
+        )
+
         return {
             "test_id": test.id,
-            "questions_added": len(selected_questions),
+            "questions_added": len(generated_questions),
             "total_marks": total_marks,
         }
-
-    async def _select_questions(
-        self,
-        subject_id: UUID,
-        topic_id: Optional[UUID] = None,
-        difficulty_config: Optional[dict] = None,
-        count: int = 10,
-    ) -> List[Question]:
-        """Select approved questions from the pool based on criteria."""
-        all_questions = []
-
-        if difficulty_config:
-            for difficulty, config in difficulty_config.items():
-                if not isinstance(config, dict):
-                    continue
-                diff_count = config.get("count", 0)
-                if diff_count <= 0:
-                    continue
-
-                query = (
-                    select(Question)
-                    .where(
-                        and_(
-                            Question.subject_id == subject_id,
-                            Question.vetting_status == "approved",
-                            Question.is_archived == False,
-                            Question.difficulty_level == difficulty,
-                        )
-                    )
-                )
-                if topic_id:
-                    query = query.where(Question.topic_id == topic_id)
-                
-                # Filter by LO mapping if specified
-                lo_mapping = config.get("lo_mapping", [])
-                if lo_mapping:
-                    query = query.where(Question.learning_outcome_id.in_(lo_mapping))
-
-                query = query.order_by(func.random()).limit(diff_count)
-                result = await self.db.execute(query)
-                all_questions.extend(result.scalars().all())
-        else:
-            # No difficulty config, just select randomly
-            query = (
-                select(Question)
-                .where(
-                    and_(
-                        Question.subject_id == subject_id,
-                        Question.vetting_status == "approved",
-                        Question.is_archived == False,
-                    )
-                )
-            )
-            if topic_id:
-                query = query.where(Question.topic_id == topic_id)
-            query = query.order_by(func.random()).limit(count)
-            result = await self.db.execute(query)
-            all_questions.extend(result.scalars().all())
-
-        return all_questions
 
     def _get_marks_for_difficulty(self, difficulty: Optional[str]) -> int:
         """Assign default marks based on difficulty."""
