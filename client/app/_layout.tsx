@@ -17,7 +17,7 @@ export const unstable_settings = {
 function AuthGuard({ children }: { children: React.ReactNode }) {
   const segments = useSegments();
   const router = useRouter();
-  const { isAuthenticated, isLoading, checkAuth } = useAuthStore();
+  const { user, isAuthenticated, isLoading, checkAuth } = useAuthStore();
 
   useEffect(() => {
     checkAuth();
@@ -27,15 +27,20 @@ function AuthGuard({ children }: { children: React.ReactNode }) {
     if (isLoading) return;
 
     const inAuthGroup = segments[0] === '(auth)';
-    
+
     if (!isAuthenticated && !inAuthGroup) {
       // Redirect to login
       router.replace('/(auth)/login');
     } else if (isAuthenticated && inAuthGroup) {
-      // Redirect to home
-      router.replace('/(tabs)/home');
+      // Redirect to correct home based on role
+      const isTeacher = user?.role === 'teacher' || user?.role === 'admin';
+      if (isTeacher) {
+        router.replace('/(tabs)/home');
+      } else {
+        router.replace('/(tabs)/learn');
+      }
     }
-  }, [isAuthenticated, isLoading, segments]);
+  }, [isAuthenticated, isLoading, segments, user]);
 
   if (isLoading) {
     return (

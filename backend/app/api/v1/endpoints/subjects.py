@@ -18,6 +18,7 @@ from app.core.config import settings
 from app.models.subject import Subject, Topic
 from app.models.question import Question
 from app.models.user import User
+from app.models.gamification import Enrollment
 from app.schemas.subject import (
     SubjectCreate,
     SubjectUpdate,
@@ -219,6 +220,43 @@ async def delete_subject(
 
 
 # ============== Enrollment Management (Teacher) ==============
+
+@router.get("/enrollments/all", response_model=list[PendingEnrollmentResponse])
+async def list_all_enrollments(
+    status_filter: Optional[str] = Query(None, description="Filter: pending, approved, rejected"),
+    current_user: User = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+):
+    """List all enrollment requests across all teacher's subjects."""
+    service = GamificationService(db)
+    filter_status = status_filter or "pending"
+    
+    # Reuse get_pending_enrollments but with extended status support
+    query = (
+        select(Enrollment, User, Subject.name, Subject.code)
+        .join(Subject, Enrollment.subject_id == Subject.id)
+        .join(User, Enrollment.student_id == User.id)
+        .where(Subject.user_id == current_user.id)
+    )
+    if filter_status != "all":
+        query = query.where(Enrollment.status == filter_status)
+    query = query.order_by(Enrollment.enrolled_at.desc())
+    
+    result = await db.execute(query)
+    rows = result.all()
+    return [
+        {
+            "id": e.id,
+            "student_id": e.student_id,
+            "student_name": u.full_name or u.username or "Unknown",
+            "student_email": u.email,
+            "subject_id": e.subject_id,
+            "subject_name": subj_name,
+            "enrolled_at": e.enrolled_at,
+            "status": e.status,
+        }
+        for e, u, subj_name, _code in rows
+    ]
 
 @router.get("/{subject_id}/enrollments", response_model=list[PendingEnrollmentResponse])
 async def list_subject_enrollments(

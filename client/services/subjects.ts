@@ -260,6 +260,11 @@ export const subjectsService = {
   async rejectEnrollment(subjectId: string, enrollmentId: string): Promise<void> {
     await apiClient.post(`/subjects/${subjectId}/enrollments/${enrollmentId}/reject`);
   },
+
+  async getAllEnrollments(statusFilter: string = 'pending'): Promise<PendingEnrollment[]> {
+    const response = await apiClient.get(`/subjects/enrollments/all`, { params: { status_filter: statusFilter } });
+    return response.data;
+  },
 };
 
 export interface PendingEnrollment {

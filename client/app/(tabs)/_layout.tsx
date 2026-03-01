@@ -47,13 +47,6 @@ export default function TabLayout() {
           </NativeTabs.Trigger>
         )}
 
-        {isTeacher && (
-          <NativeTabs.Trigger name="history">
-            <Label>History</Label>
-            <Icon sf="clock.arrow.circlepath" />
-          </NativeTabs.Trigger>
-        )}
-
         {/* Student tabs */}
         {isStudent && (
           <NativeTabs.Trigger name="learn">
@@ -67,6 +60,13 @@ export default function TabLayout() {
           <Icon sf="doc.text.fill" />
         </NativeTabs.Trigger>
 
+        {isTeacher && (
+          <NativeTabs.Trigger name="history">
+            <Label>History</Label>
+            <Icon sf="clock.arrow.circlepath" />
+          </NativeTabs.Trigger>
+        )}
+
         {isStudent && (
           <NativeTabs.Trigger name="leaderboard">
             <Label>Ranks</Label>
@@ -74,10 +74,12 @@ export default function TabLayout() {
           </NativeTabs.Trigger>
         )}
 
-        <NativeTabs.Trigger name="profile">
-          <Label>Profile</Label>
-          <Icon sf="person.fill" />
-        </NativeTabs.Trigger>
+        {isStudent && (
+          <NativeTabs.Trigger name="profile">
+            <Label>Profile</Label>
+            <Icon sf="person.fill" />
+          </NativeTabs.Trigger>
+        )}
       </NativeTabs>
     );
   }
@@ -93,6 +95,7 @@ export default function TabLayout() {
 
   return (
     <Tabs
+      initialRouteName={isStudent ? 'learn' : 'home'}
       screenOptions={{
         tabBarActiveTintColor: colors.primary,
         tabBarInactiveTintColor: colors.textTertiary,
@@ -155,15 +158,6 @@ export default function TabLayout() {
           ),
         }}
       />
-      <Tabs.Screen
-        name="tests"
-        options={{
-          title: 'Tests',
-          tabBarIcon: ({ color }) => (
-            <IconSymbol size={26} name="doc.text.fill" color={color} />
-          ),
-        }}
-      />
       {/* Student & shared tabs */}
       <Tabs.Screen
         name="learn"
@@ -172,6 +166,15 @@ export default function TabLayout() {
           href: isStudent ? undefined : null,
           tabBarIcon: ({ color }) => (
             <IconSymbol size={26} name="book.fill" color={color} />
+          ),
+        }}
+      />
+      <Tabs.Screen
+        name="tests"
+        options={{
+          title: 'Tests',
+          tabBarIcon: ({ color }) => (
+            <IconSymbol size={26} name="doc.text.fill" color={color} />
           ),
         }}
       />

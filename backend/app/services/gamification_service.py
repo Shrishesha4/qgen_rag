@@ -626,6 +626,68 @@ class GamificationService:
             "accuracy": accuracy,
         }
 
+    async def process_test_submission(
+        self, student_id: UUID, subject_id: UUID, title: str, 
+        correct_count: int, total_marks: int, total_questions: int, 
+        total_time_seconds: int, results: list
+    ) -> dict:
+        """Process a teacher test submission to grant XP and update gamification state."""
+        user = await self.db.get(User, student_id)
+        if not user:
+            return {}
+
+        total_xp = 0
+        for r in results:
+            if r["is_correct"]:
+                # Award XP based on question difficulty, if available. For tests, default to medium
+                # We could pull difficulty from the question, but for simplicity:
+                xp = calculate_xp("medium", user.streak_count, True)
+                total_xp += xp
+
+        if correct_count == total_questions and total_questions > 0:
+            total_xp += XP_PERFECT_BONUS
+
+        user.xp_total += total_xp
+
+        # Save test history so it appears in profile 
+        test = TestHistory(
+            student_id=student_id,
+            subject_id=subject_id,
+            score=correct_count,
+            total_marks=total_marks,
+            total_questions=total_questions,
+            correct_answers=correct_count,
+            xp_earned=total_xp,
+            time_taken_seconds=total_time_seconds,
+            difficulty="test",  # Special marker for teacher tests
+            answers=[
+                {"question_id": r["question_id"], "correct": r["is_correct"], "xp": 0}
+                for r in results
+            ],
+        )
+        self.db.add(test)
+        
+        # Update daily activity
+        today = date.today()
+        daily = await self.db.execute(
+            select(DailyActivity).where(
+                and_(DailyActivity.student_id == student_id, DailyActivity.activity_date == today)
+            )
+        )
+        d = daily.scalar_one_or_none()
+        if not d:
+            d = DailyActivity(student_id=student_id, activity_date=today)
+            self.db.add(d)
+            await self.db.flush()
+        
+        d.xp_earned += total_xp
+        d.questions_answered += total_questions
+        d.correct_answers += correct_count
+        d.time_spent_seconds += total_time_seconds or 0
+        
+        await self.db.commit()
+        return {"xp_earned": total_xp}
+
     # --- Profile ---
 
     async def get_profile(self, student_id: UUID) -> dict:

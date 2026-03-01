@@ -13,7 +13,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import selectinload
 
 from app.models.test import Test, TestQuestion, TestSubmission
-from app.models.question import Question
+from app.models.question import Question, GenerationSession
 from app.models.subject import Subject, Topic
 from app.models.user import User
 from app.core.logging import logger
@@ -269,6 +269,24 @@ class TestService:
         total_marks = 0
         order_index = 0
 
+        # Create a proper GenerationSession so questions appear in History
+        total_requested = sum(p["count"] for p in generation_plan)
+        session = GenerationSession(
+            user_id=teacher_id,
+            document_id=primary_doc.id,
+            subject_id=test.subject_id,
+            generation_method="quick",
+            requested_count=total_requested,
+            requested_types=["mcq"],
+            status="in_progress",
+            generation_config={"test_id": str(test_id), "test_title": test.title},
+        )
+        self.db.add(session)
+        await self.db.flush()
+        session_id = session.id
+
+        questions_failed = 0
+
         for plan in generation_plan:
             difficulty = plan["difficulty"]
             count = plan["count"]
@@ -318,7 +336,7 @@ class TestService:
                     # Save question to the question bank
                     question_obj, _ = await qgen_service._save_question(
                         document_id=primary_doc.id,
-                        session_id=uuid.uuid4(),  # standalone session
+                        session_id=session_id,
                         question_data=question_data,
                         question_type="mcq",
                         marks=marks_per_q,
@@ -352,6 +370,7 @@ class TestService:
                     logger.error(
                         f"Failed to generate {difficulty} question {i+1}: {e}"
                     )
+                    questions_failed += 1
                     continue
 
         if not generated_questions:
@@ -363,6 +382,12 @@ class TestService:
         # Update test totals
         test.total_questions = len(generated_questions)
         test.total_marks = total_marks
+
+        # Update the generation session
+        session.status = "completed"
+        session.questions_generated = len(generated_questions)
+        session.questions_failed = questions_failed
+        session.completed_at = datetime.now(timezone.utc)
 
         await self.db.commit()
         await self.db.refresh(test)
@@ -681,6 +706,23 @@ class TestService:
         await self.db.commit()
         await self.db.refresh(submission)
 
+        # Award XP and gamification stats
+        try:
+            from app.services.gamification_service import GamificationService
+            gamification = GamificationService(self.db)
+            gamification_result = await gamification.process_test_submission(
+                student_id=student_id,
+                subject_id=test.subject_id,
+                title=test.title,
+                correct_count=sum(1 for r in answer_results if r["is_correct"]),
+                total_marks=total_marks,
+                total_questions=len(questions),
+                total_time_seconds=data.get("total_time_seconds", 0),
+                results=answer_results
+            )
+        except Exception as e:
+            logger.error(f"Failed to record gamification for test: {e}")
+
         return {
             "id": submission.id,
             "test_id": test_id,
@@ -699,8 +741,15 @@ class TestService:
         """Check if selected answer matches correct answer."""
         if not selected or not correct:
             return False
-        # Normalize: strip whitespace, compare case-insensitively
-        return selected.strip().upper() == correct.strip().upper()
+        # Compare just the first character (the option letter) to handle format variations
+        s = selected.strip().upper()
+        c = correct.strip().upper()
+        if s == c:
+            return True
+        # First-character comparison (e.g. "A" vs "A) Option text")
+        if s and c and s[0] == c[0] and s[0] in 'ABCDEFGHIJ':
+            return True
+        return False
 
     # ========================
     # Performance Analytics

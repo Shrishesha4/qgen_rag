@@ -201,17 +201,17 @@ export default function ProfileScreen() {
             )}
 
             {/* Recent Tests */}
-            {testHistory.length > 0 && (
+            {testHistory.filter(t => t.difficulty === 'test').length > 0 && (
               <View style={[styles.historyCard, { backgroundColor: colors.backgroundSecondary }]}>
                 <Text style={[styles.statsTitle, { color: colors.text }]}>📝 Recent Tests</Text>
-                {testHistory.slice(0, 5).map((test) => (
+                {testHistory.filter(t => t.difficulty === 'test').slice(0, 5).map((test) => (
                   <View key={test.id} style={styles.testRow}>
                     <View style={styles.testInfo}>
                       <Text style={[styles.testScore, { color: colors.text }]}>
                         {test.correct_answers}/{test.total_questions}
                       </Text>
                       <Text style={[styles.testMeta, { color: colors.textSecondary }]}>
-                        {test.difficulty} · +{test.xp_earned} XP
+                        Test · +{test.xp_earned} XP
                       </Text>
                     </View>
                     <Text style={[styles.testDate, { color: colors.textSecondary }]}>
