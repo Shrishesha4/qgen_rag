@@ -513,7 +513,7 @@ async def toggle_document_visibility(
     Toggle the student visibility (is_public) of a reference document.
     Only the document owner can toggle this.
     """
-    from sqlalchemy import update
+    from sqlalchemy import update, select
     from app.models.document import Document
     
     # Verify ownership

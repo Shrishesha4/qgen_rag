@@ -228,6 +228,30 @@ export default function SubjectDetailScreen() {
     loadData();
   };
 
+  // Edit subject
+  const handleEditSubject = async () => {
+    if (!editSubjectName.trim() || !editSubjectCode.trim()) {
+      showError('Please enter subject name and code');
+      return;
+    }
+
+    setIsSavingSubject(true);
+    try {
+      await subjectsService.updateSubject(id as string, {
+        name: editSubjectName.trim(),
+        code: editSubjectCode.trim(),
+        description: editSubjectDescription.trim(),
+      });
+      showSuccess(`Subject ${editSubjectCode} updated successfully`);
+      setShowEditSubjectModal(false);
+      loadData();
+    } catch (err: any) {
+      showError(err?.response?.data?.detail || 'Failed to update subject');
+    } finally {
+      setIsSavingSubject(false);
+    }
+  };
+
   const handleCreateTopic = async () => {
     if (!newTopicName.trim() || !id) {
       showWarning('Please enter a topic name', 'Missing Information');
@@ -751,8 +775,23 @@ export default function SubjectDetailScreen() {
             style={styles.headerCard}
           >
             <View style={styles.headerContent}>
-              <Text style={styles.subjectCode}>{subject.code}</Text>
-              <Text style={styles.subjectName}>{subject.name}</Text>
+              <View style={{ flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between' }}>
+                <View>
+                  <Text style={styles.subjectCode}>{subject.code}</Text>
+                  <Text style={styles.subjectName}>{subject.name}</Text>
+                </View>
+                <TouchableOpacity
+                  style={{ padding: 8, backgroundColor: 'rgba(255,255,255,0.2)', borderRadius: 20 }}
+                  onPress={() => {
+                    setEditSubjectName(subject.name);
+                    setEditSubjectCode(subject.code);
+                    setEditSubjectDescription(subject.description || '');
+                    setShowEditSubjectModal(true);
+                  }}
+                >
+                  <IconSymbol name="pencil" size={20} color="#FFFFFF" />
+                </TouchableOpacity>
+              </View>
               {subject.description && (
                 <Text style={styles.subjectDescription}>{subject.description}</Text>
               )}
@@ -947,21 +986,35 @@ export default function SubjectDetailScreen() {
                     onPress={async () => {
                       mediumImpact();
                       setIsGeneratingContent(true);
-                      setGenerationStatus('Generating learning content...');
-                      try {
-                        const result = await generateLearningContent(id!);
-                        const genCount = result.generated.filter((t: any) => t.status === 'generated').length;
-                        const skipCount = result.generated.filter((t: any) => t.status === 'skipped').length;
-                        setGenerationStatus(`✅ Generated content for ${genCount} topics (${skipCount} skipped)`);
-                        showSuccess(`Learning content generated for ${genCount} topics`);
-                        loadData();
-                        setTimeout(() => setGenerationStatus(''), 5000);
-                      } catch (err: any) {
-                        setGenerationStatus(`❌ Generation failed: ${err?.message || 'Unknown error'}`);
-                        showError('Failed to generate content');
-                      } finally {
-                        setIsGeneratingContent(false);
+
+                      let genCount = 0;
+                      let skipCount = 0;
+                      let errorCount = 0;
+
+                      for (let i = 0; i < topics.length; i++) {
+                        const topic = topics[i];
+                        if (topic.has_syllabus && topic.syllabus_content && topic.syllabus_content.length > 100) {
+                          skipCount++;
+                          continue;
+                        }
+
+                        setGenerationStatus(`Generating topic ${i + 1} of ${topics.length}: ${topic.name}...`);
+                        try {
+                          await generateTopicContent(id!, topic.id);
+                          genCount++;
+                        } catch (err) {
+                          console.error(`Failed to generate content for ${topic.name}:`, err);
+                          errorCount++;
+                        }
                       }
+
+                      setGenerationStatus(`✅ Generated: ${genCount} | Skipped: ${skipCount} | Failed: ${errorCount}`);
+                      if (genCount > 0) showSuccess(`Learning content generated for ${genCount} topics`);
+                      else if (errorCount > 0) showError(`Failed to generate content for ${errorCount} topics`);
+
+                      loadData();
+                      setTimeout(() => setGenerationStatus(''), 5000);
+                      setIsGeneratingContent(false);
                     }}
                     disabled={isGeneratingContent || topics.length === 0}
                   >
@@ -1373,6 +1426,69 @@ export default function SubjectDetailScreen() {
             </View>
           )}
         </ScrollView>
+
+        {/* Edit Subject Modal */}
+        <Modal
+          visible={showEditSubjectModal}
+          animationType="slide"
+          presentationStyle="pageSheet"
+          onRequestClose={() => setShowEditSubjectModal(false)}
+        >
+          <View style={[styles.modalContainer, { backgroundColor: colors.background }]}>
+            <View style={[styles.modalHeader, { backgroundColor: colors.card, borderBottomColor: colors.border }]}>
+              <TouchableOpacity onPress={() => {
+                mediumImpact();
+                setShowEditSubjectModal(false);
+              }}>
+                <Text style={[styles.modalCancel, { color: colors.primary }]}>Cancel</Text>
+              </TouchableOpacity>
+              <Text style={[styles.modalTitle, { color: colors.text }]}>Edit Subject</Text>
+              <TouchableOpacity onPress={handleEditSubject} disabled={isSavingSubject}>
+                {isSavingSubject ? (
+                  <ActivityIndicator size="small" color={colors.primary} />
+                ) : (
+                  <Text style={[styles.modalDone, { color: colors.primary }]}>Save</Text>
+                )}
+              </TouchableOpacity>
+            </View>
+            <ScrollView style={styles.modalContent}>
+              <View style={[styles.formSection, { backgroundColor: colors.card }]}>
+                <Text style={[styles.formLabel, { color: colors.textSecondary }]}>SUBJECT CODE *</Text>
+                <TextInput
+                  style={[styles.textInput, { color: colors.text, borderColor: colors.border }]}
+                  placeholder="e.g., CS101"
+                  placeholderTextColor={colors.textTertiary}
+                  value={editSubjectCode}
+                  onChangeText={setEditSubjectCode}
+                  autoCapitalize="characters"
+                />
+
+                <Text style={[styles.formLabel, { color: colors.textSecondary, marginTop: Spacing.md }]}>SUBJECT NAME *</Text>
+                <TextInput
+                  style={[styles.textInput, { color: colors.text, borderColor: colors.border }]}
+                  placeholder="e.g., Introduction to Computer Science"
+                  placeholderTextColor={colors.textTertiary}
+                  value={editSubjectName}
+                  onChangeText={setEditSubjectName}
+                />
+
+                <Text style={[styles.formLabel, { color: colors.textSecondary, marginTop: Spacing.md }]}>
+                  DESCRIPTION (OPTIONAL)
+                </Text>
+                <TextInput
+                  style={[styles.textArea, { color: colors.text, borderColor: colors.border }]}
+                  placeholder="Brief description of the subject..."
+                  placeholderTextColor={colors.textTertiary}
+                  value={editSubjectDescription}
+                  onChangeText={setEditSubjectDescription}
+                  multiline
+                  numberOfLines={4}
+                  textAlignVertical="top"
+                />
+              </View>
+            </ScrollView>
+          </View>
+        </Modal>
 
         {/* Add Topic Modal */}
         <Modal
@@ -2135,6 +2251,15 @@ const styles = StyleSheet.create({
     paddingHorizontal: Spacing.md,
     paddingVertical: Spacing.sm,
     fontSize: FontSizes.md,
+  },
+  textArea: {
+    borderWidth: 1,
+    borderRadius: BorderRadius.md,
+    paddingHorizontal: Spacing.md,
+    paddingVertical: Spacing.sm,
+    fontSize: FontSizes.md,
+    minHeight: 100,
+    textAlignVertical: 'top',
   },
   textAreaInput: {
     borderWidth: 1,
