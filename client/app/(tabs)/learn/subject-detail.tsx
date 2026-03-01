@@ -20,7 +20,6 @@ import { Colors, Spacing, FontSizes, BorderRadius } from '@/constants/theme';
 import { MasteryRing } from '@/components/gamification';
 import { IconSymbol } from '@/components/ui/icon-symbol';
 import learnService from '@/services/learn';
-import { referencesService, ReferenceDocument } from '@/services/references';
 import type { LeaderboardEntry } from '@/services/learn';
 
 interface TopicWithProgress {
@@ -48,8 +47,8 @@ export default function SubjectDetailScreen() {
   const [refreshing, setRefreshing] = useState(false);
 
   // Materials
-  const [referenceBooks, setReferenceBooks] = useState<ReferenceDocument[]>([]);
-  const [templatePapers, setTemplatePapers] = useState<ReferenceDocument[]>([]);
+  const [referenceBooks, setReferenceBooks] = useState<any[]>([]);
+  const [templatePapers, setTemplatePapers] = useState<any[]>([]);
   const [loadingMaterials, setLoadingMaterials] = useState(true);
 
   // Leaderboard
@@ -92,7 +91,7 @@ export default function SubjectDetailScreen() {
   const loadMaterials = useCallback(async () => {
     setLoadingMaterials(true);
     try {
-      const data = await referencesService.listReferences(params.subjectId);
+      const data = await learnService.getStudentReferences(params.subjectId);
       setReferenceBooks(data.reference_books || []);
       setTemplatePapers(data.template_papers || []);
     } catch {

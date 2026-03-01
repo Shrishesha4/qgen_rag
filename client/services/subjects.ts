@@ -278,4 +278,15 @@ export interface PendingEnrollment {
   status: string;
 }
 
+export const generateLearningContent = async (subjectId: string): Promise<{
+  message: string;
+  generated: { topic_id: string; topic_name: string; status: string; content_length?: number; reason?: string }[];
+  errors: { topic_id: string; topic_name: string; error: string }[];
+  subject_overview_generated: boolean;
+  syllabus_coverage: number;
+}> => {
+  const response = await apiClient.post(`/subjects/${subjectId}/generate-learning-content`);
+  return response.data;
+};
+
 export default subjectsService;

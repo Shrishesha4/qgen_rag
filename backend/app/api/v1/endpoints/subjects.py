@@ -861,3 +861,196 @@ async def extract_chapters_from_syllabus(
         "chapters_created": len(created_topics),
         "topics": [TopicResponse.model_validate(t) for t in created_topics],
     }
+
+
+@router.post("/{subject_id}/generate-learning-content")
+async def generate_learning_content(
+    subject_id: uuid.UUID,
+    current_user: User = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+):
+    """
+    Generate learning content (.md) for each topic in a subject using LLM.
+    Also generates an overall subject summary.
+    Uses the configured LLM provider (Ollama or Gemini).
+    Reference documents are used as context if available.
+    """
+    import logging
+    logger = logging.getLogger(__name__)
+
+    # Verify subject ownership
+    result = await db.execute(
+        select(Subject).where(
+            Subject.id == subject_id,
+            Subject.user_id == current_user.id,
+        )
+    )
+    subject = result.scalar_one_or_none()
+    if not subject:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="Subject not found",
+        )
+
+    # Get all topics
+    result = await db.execute(
+        select(Topic)
+        .where(Topic.subject_id == subject_id)
+        .order_by(Topic.order_index)
+    )
+    topics = result.scalars().all()
+
+    if not topics:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="No topics found. Add topics before generating content.",
+        )
+
+    # Gather reference document context (first 2000 chars per doc)
+    from app.models.document import Document, DocumentChunk
+    ref_result = await db.execute(
+        select(Document).where(
+            Document.subject_id == subject_id,
+            Document.index_type.in_(["reference_book", "template_paper"]),
+            Document.processing_status == "completed",
+        ).limit(5)
+    )
+    ref_docs = ref_result.scalars().all()
+
+    reference_context = ""
+    for doc in ref_docs:
+        chunk_result = await db.execute(
+            select(DocumentChunk)
+            .where(DocumentChunk.document_id == doc.id)
+            .order_by(DocumentChunk.chunk_index)
+            .limit(3)
+        )
+        chunks = chunk_result.scalars().all()
+        if chunks:
+            doc_text = "\n".join(c.chunk_text[:1500] for c in chunks)
+            reference_context += f"\n--- Reference: {doc.filename} ---\n{doc_text}\n"
+
+    # Initialize LLM
+    from app.services.llm_service import LLMService
+    llm = LLMService()
+
+    topic_names = [t.name for t in topics]
+    topic_list_str = "\n".join(f"{i+1}. {name}" for i, name in enumerate(topic_names))
+
+    system_prompt = f"""You are an expert educational content writer creating comprehensive learning materials for a university-level subject.
+
+Subject: {subject.name} ({subject.code})
+Description: {subject.description or 'N/A'}
+
+Write in clear, well-structured Markdown format suitable for students to study from.
+Include:
+- Key concepts and definitions
+- Important formulas or principles (if applicable)
+- Examples where helpful
+- Summary points at the end
+
+Write content that is educational, accurate, and student-friendly.
+Do NOT use any references to source material. Write as standalone educational content."""
+
+    generated_topics = []
+    errors = []
+
+    # Generate content for each topic
+    for topic in topics:
+        if topic.has_syllabus and topic.syllabus_content:
+            # Skip topics that already have content
+            generated_topics.append({
+                "topic_id": str(topic.id),
+                "topic_name": topic.name,
+                "status": "skipped",
+                "reason": "Already has content",
+            })
+            continue
+
+        prompt = f"""Generate comprehensive learning content for the following topic:
+
+Topic: {topic.name}
+{f'Description: {topic.description}' if topic.description else ''}
+Subject: {subject.name}
+
+All topics in this subject:
+{topic_list_str}
+
+{f'Reference material context:{reference_context[:3000]}' if reference_context else ''}
+
+Write a comprehensive study guide for this topic in Markdown format.
+Include headings, bullet points, and clear explanations.
+The content should be 800-1500 words, thorough enough for a student to learn the topic."""
+
+        try:
+            content = await llm.generate(
+                prompt=prompt,
+                system_prompt=system_prompt,
+                temperature=0.5,
+                max_tokens=4000,
+            )
+
+            # Save to topic
+            topic.syllabus_content = content.strip()
+            topic.has_syllabus = True
+            generated_topics.append({
+                "topic_id": str(topic.id),
+                "topic_name": topic.name,
+                "status": "generated",
+                "content_length": len(content),
+            })
+        except Exception as e:
+            logger.error(f"Failed to generate content for topic {topic.name}: {e}")
+            errors.append({
+                "topic_id": str(topic.id),
+                "topic_name": topic.name,
+                "error": str(e),
+            })
+
+    # Generate overall subject overview
+    subject_overview = None
+    try:
+        overview_prompt = f"""Generate a comprehensive subject overview/introduction for:
+
+Subject: {subject.name} ({subject.code})
+Description: {subject.description or 'N/A'}
+
+Topics covered:
+{topic_list_str}
+
+{f'Reference material context:{reference_context[:2000]}' if reference_context else ''}
+
+Write an overall subject overview in Markdown format that:
+1. Introduces the subject and its importance
+2. Lists all topics with a brief 1-2 line description of each
+3. Explains how the topics connect to each other
+4. Provides study tips for this subject
+
+The overview should be 500-800 words."""
+
+        subject_overview = await llm.generate(
+            prompt=overview_prompt,
+            system_prompt=system_prompt,
+            temperature=0.5,
+            max_tokens=3000,
+        )
+
+        # Save overview to subject description (or a metadata field)
+        subject.description = subject_overview.strip()
+    except Exception as e:
+        logger.error(f"Failed to generate subject overview: {e}")
+
+    # Update syllabus coverage
+    topics_with_syllabus = sum(1 for t in topics if t.has_syllabus)
+    if len(topics) > 0:
+        subject.syllabus_coverage = int((topics_with_syllabus / len(topics)) * 100)
+
+    await db.commit()
+
+    return {
+        "message": f"Generated learning content for {len([t for t in generated_topics if t['status'] == 'generated'])} topics",
+        "generated": generated_topics,
+        "errors": errors,
+        "subject_overview_generated": subject_overview is not None,
+        "syllabus_coverage": subject.syllabus_coverage,
+    }

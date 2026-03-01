@@ -743,21 +743,21 @@ class GamificationService:
 
     async def get_leaderboard(self, student_id: UUID, limit: int = 20, subject_id: Optional[UUID] = None) -> dict:
         """Get XP leaderboard. If subject_id is provided, returns class-wise leaderboard."""
-        from app.models.subject import SubjectEnrollment
+        from app.models.gamification import Enrollment
         
         if subject_id:
             # Class-wise leaderboard: only students enrolled in this subject
             # Calculate XP from their progress in this subject
             result = await self.db.execute(
                 select(User, StudentProgress)
-                .join(SubjectEnrollment, User.id == SubjectEnrollment.student_id)
+                .join(Enrollment, User.id == Enrollment.student_id)
                 .outerjoin(
                     StudentProgress,
                     (User.id == StudentProgress.student_id) & (StudentProgress.subject_id == subject_id)
                 )
                 .where(User.role == "student")
-                .where(SubjectEnrollment.subject_id == subject_id)
-                .where(SubjectEnrollment.status == "approved")
+                .where(Enrollment.subject_id == subject_id)
+                .where(Enrollment.status == "approved")
                 .distinct()
             )
             rows = result.all()
@@ -795,9 +795,9 @@ class GamificationService:
             
             # Count total students in this subject
             total = await self.db.execute(
-                select(func.count(SubjectEnrollment.id))
-                .where(SubjectEnrollment.subject_id == subject_id)
-                .where(SubjectEnrollment.status == "approved")
+                select(func.count(Enrollment.id))
+                .where(Enrollment.subject_id == subject_id)
+                .where(Enrollment.status == "approved")
             )
             total_students = total.scalar() or 0
             

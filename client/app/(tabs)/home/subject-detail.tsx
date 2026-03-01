@@ -23,6 +23,7 @@ import {
   Topic,
   TopicCreateData,
   PendingEnrollment,
+  generateLearningContent,
 } from '@/services/subjects';
 import { referencesService, ReferenceDocument } from '@/services/references';
 import { ReferenceMaterials } from '@/components/reference-materials';
@@ -56,6 +57,8 @@ export default function SubjectDetailScreen() {
   // New state for syllabus chapter extraction
   const [isExtractingChapters, setIsExtractingChapters] = useState(false);
   const [extractionStatus, setExtractionStatus] = useState('');
+  const [isGeneratingContent, setIsGeneratingContent] = useState(false);
+  const [generationStatus, setGenerationStatus] = useState('');
 
   // Tab state for switching between chapters, references, and history
   const [activeTab, setActiveTab] = useState<'chapters' | 'references' | 'history' | 'enrollments'>('chapters');
@@ -930,6 +933,36 @@ export default function SubjectDetailScreen() {
                     <IconSymbol name="plus" size={16} color={colors.primary} />
                     <Text style={[styles.addButtonText, { color: colors.primary }]}>Add</Text>
                   </TouchableOpacity>
+                  <TouchableOpacity
+                    style={[styles.addButton, { backgroundColor: '#AF52DE' + '20' }]}
+                    onPress={async () => {
+                      mediumImpact();
+                      setIsGeneratingContent(true);
+                      setGenerationStatus('Generating learning content...');
+                      try {
+                        const result = await generateLearningContent(id!);
+                        const genCount = result.generated.filter((t: any) => t.status === 'generated').length;
+                        const skipCount = result.generated.filter((t: any) => t.status === 'skipped').length;
+                        setGenerationStatus(`✅ Generated content for ${genCount} topics (${skipCount} skipped)`);
+                        showSuccess(`Learning content generated for ${genCount} topics`);
+                        loadData();
+                        setTimeout(() => setGenerationStatus(''), 5000);
+                      } catch (err: any) {
+                        setGenerationStatus(`❌ Generation failed: ${err?.message || 'Unknown error'}`);
+                        showError('Failed to generate content');
+                      } finally {
+                        setIsGeneratingContent(false);
+                      }
+                    }}
+                    disabled={isGeneratingContent || topics.length === 0}
+                  >
+                    {isGeneratingContent ? (
+                      <ActivityIndicator size="small" color="#AF52DE" />
+                    ) : (
+                      <IconSymbol name="sparkles" size={14} color="#AF52DE" />
+                    )}
+                    <Text style={[styles.addButtonText, { color: '#AF52DE' }]}>Generate</Text>
+                  </TouchableOpacity>
                 </View>
               </View>
 
@@ -943,6 +976,21 @@ export default function SubjectDetailScreen() {
                   <Text style={[styles.extractionHint, { color: colors.textSecondary }]}>
                     AI is reading your syllabus and identifying topics...
                   </Text>
+                </View>
+              )}
+
+              {/* LLM Content Generation Progress */}
+              {(isGeneratingContent || generationStatus) && (
+                <View style={[styles.extractionProgress, { backgroundColor: colors.card, borderLeftColor: '#AF52DE', borderLeftWidth: 3 }]}>
+                  {isGeneratingContent && <ActivityIndicator size="small" color="#AF52DE" />}
+                  <Text style={[styles.extractionText, { color: colors.text }]}>
+                    {generationStatus || 'Generating learning content with AI...'}
+                  </Text>
+                  {isGeneratingContent && (
+                    <Text style={[styles.extractionHint, { color: colors.textSecondary }]}>
+                      This may take a few minutes for all topics...
+                    </Text>
+                  )}
                 </View>
               )}
 

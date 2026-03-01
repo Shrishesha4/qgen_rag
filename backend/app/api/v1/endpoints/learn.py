@@ -13,6 +13,7 @@ from app.api.v1.deps import get_current_active_user
 from app.models.user import User
 from app.models.subject import Topic
 from app.models.gamification import Enrollment
+from app.models.document import Document
 from app.services.gamification_service import GamificationService
 from app.schemas.gamification import (
     EnrollmentCreate,
@@ -87,7 +88,58 @@ async def list_student_topics(
     }
 
 
-# --- Enrollment ---
+@router.get("/references/{subject_id}")
+async def list_student_references(
+    subject_id: UUID,
+    db: AsyncSession = Depends(get_db),
+    current_user: User = Depends(get_current_active_user),
+):
+    """List reference documents shared by the teacher for an enrolled subject.
+    Only returns documents where is_public=True.
+    """
+    # Verify enrollment
+    enrollment = await db.execute(
+        select(Enrollment).where(
+            Enrollment.student_id == current_user.id,
+            Enrollment.subject_id == subject_id,
+            Enrollment.status == "approved",
+        )
+    )
+    if not enrollment.scalar_one_or_none():
+        raise HTTPException(status_code=403, detail="Not enrolled in this subject")
+
+    # Get public reference documents for this subject
+    result = await db.execute(
+        select(Document).where(
+            Document.subject_id == subject_id,
+            Document.is_public == True,
+            Document.index_type.in_(["reference_book", "template_paper"]),
+            Document.processing_status == "completed",
+        ).order_by(Document.upload_timestamp.desc())
+    )
+    docs = result.scalars().all()
+
+    doc_responses = [
+        {
+            "id": str(doc.id),
+            "filename": doc.filename,
+            "file_size_bytes": doc.file_size_bytes,
+            "mime_type": doc.mime_type,
+            "index_type": doc.index_type,
+            "subject_id": str(doc.subject_id) if doc.subject_id else None,
+            "processing_status": doc.processing_status,
+            "upload_timestamp": doc.upload_timestamp.isoformat() if doc.upload_timestamp else None,
+        }
+        for doc in docs
+    ]
+
+    return {
+        "reference_books": [d for d in doc_responses if d["index_type"] == "reference_book"],
+        "template_papers": [d for d in doc_responses if d["index_type"] == "template_paper"],
+        "reference_questions": [],
+    }
+
+
 
 @router.post("/enroll", response_model=EnrollmentResponse)
 async def enroll_in_subject(

@@ -177,6 +177,12 @@ const learnService = {
     return data;
   },
 
+  // Student-accessible reference materials (only is_public=true docs)
+  async getStudentReferences(subjectId: string): Promise<{ reference_books: any[]; template_papers: any[]; reference_questions: any[] }> {
+    const { data } = await api.get(`/learn/references/${subjectId}`);
+    return data;
+  },
+
   // Enrollment
   async enrollInSubject(subjectId: string): Promise<Enrollment> {
     const { data } = await api.post('/learn/enroll', { subject_id: subjectId });
