@@ -1,6 +1,6 @@
 import React, { useEffect, useState } from 'react';
 import { View, Text, StyleSheet, ScrollView, ActivityIndicator, TouchableOpacity, useWindowDimensions, Platform } from 'react-native';
-import { useLocalSearchParams, useRouter } from 'expo-router';
+import { useLocalSearchParams, useRouter, Stack } from 'expo-router';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import Markdown, { MarkdownIt } from 'react-native-markdown-display';
 import { useColorScheme } from '@/hooks/use-color-scheme';
@@ -131,67 +131,82 @@ export default function TopicContentScreen() {
 
   if (loading) {
     return (
-      <SafeAreaView style={[styles.container, { backgroundColor: colors.background }]} edges={['top']}>
-        <View style={styles.header}>
-          <TouchableOpacity onPress={() => router.back()} style={styles.backButton}>
-            <IconSymbol name="chevron.left" size={24} color={colors.text} />
-          </TouchableOpacity>
-        </View>
-        <View style={styles.centerContainer}>
-          <ActivityIndicator size="large" color={colors.primary} />
-          <Text style={[styles.loadingText, { color: colors.textSecondary }]}>Loading Content...</Text>
-        </View>
-      </SafeAreaView>
+      <>
+        <Stack.Screen
+          options={{
+            headerShown: true,
+            title: topicName || 'Loading...',
+            headerBackTitle: 'Back',
+            headerShadowVisible: false,
+            headerStyle: { backgroundColor: colors.background },
+            headerTintColor: colors.primary,
+            headerTitleStyle: { color: colors.text, fontWeight: '600' },
+          }}
+        />
+        <SafeAreaView style={[styles.container, { backgroundColor: colors.background }]} edges={['bottom']}>
+          <View style={styles.centerContainer}>
+            <ActivityIndicator size="large" color={colors.primary} />
+            <Text style={[styles.loadingText, { color: colors.textSecondary }]}>Loading Content...</Text>
+          </View>
+        </SafeAreaView>
+      </>
     );
   }
 
   if (error || !content) {
     return (
-      <SafeAreaView style={[styles.container, { backgroundColor: colors.background }]} edges={['top']}>
-        <View style={styles.header}>
-          <TouchableOpacity onPress={() => router.back()} style={styles.backButton}>
-            <IconSymbol name="chevron.left" size={24} color={colors.text} />
-          </TouchableOpacity>
-        </View>
-        <View style={styles.centerContainer}>
-          <IconSymbol name="doc.text.magnifyingglass" size={48} color={colors.textTertiary} />
-          <Text style={[styles.errorText, { color: colors.textSecondary }]}>{error || 'Content not found'}</Text>
-          <TouchableOpacity style={[styles.retryButton, { backgroundColor: colors.primary }]} onPress={() => router.back()}>
-            <Text style={styles.retryButtonText}>Go Back</Text>
-          </TouchableOpacity>
-        </View>
-      </SafeAreaView>
+      <>
+        <Stack.Screen
+          options={{
+            headerShown: true,
+            title: 'Error',
+            headerBackTitle: 'Back',
+            headerShadowVisible: false,
+            headerStyle: { backgroundColor: colors.background },
+            headerTintColor: colors.primary,
+            headerTitleStyle: { color: colors.text, fontWeight: '600' },
+          }}
+        />
+        <SafeAreaView style={[styles.container, { backgroundColor: colors.background }]} edges={['bottom']}>
+          <View style={styles.centerContainer}>
+            <IconSymbol name="doc.text.magnifyingglass" size={48} color={colors.textTertiary} />
+            <Text style={[styles.errorText, { color: colors.textSecondary }]}>{error || 'Content not found'}</Text>
+            <TouchableOpacity style={[styles.retryButton, { backgroundColor: colors.primary }]} onPress={() => router.back()}>
+              <Text style={styles.retryButtonText}>Go Back</Text>
+            </TouchableOpacity>
+          </View>
+        </SafeAreaView>
+      </>
     );
   }
 
   return (
-    <SafeAreaView style={[styles.container, { backgroundColor: colors.background }]} edges={['top', 'bottom']}>
-      {/* Header */}
-      <View style={[styles.header, { borderBottomColor: colors.border, backgroundColor: isDark ? '#1C1C1E' : '#FFFFFF' }]}>
-        <TouchableOpacity onPress={() => router.back()} style={styles.backButton}>
-          <IconSymbol name="chevron.left" size={24} color={colors.text} />
-        </TouchableOpacity>
-        <View style={styles.headerTitleContainer}>
-          <Text style={[styles.headerTitle, { color: colors.text }]} numberOfLines={1}>
-            {topicName || 'Chapter Details'}
-          </Text>
-          <Text style={[styles.headerSubtitle, { color: colors.primary }]}>Learning Material</Text>
-        </View>
-        <View style={{ width: 40 }} />
-      </View>
-
-      <ScrollView
-        style={styles.scrollView}
-        contentContainerStyle={styles.scrollContent}
-        showsVerticalScrollIndicator={true}
-      >
-        <Markdown
-          style={markdownStyles}
+    <>
+      <Stack.Screen
+        options={{
+          headerShown: true,
+          title: topicName || 'Chapter Details',
+          headerBackTitle: 'Back',
+          headerShadowVisible: false,
+          headerStyle: { backgroundColor: colors.background },
+          headerTintColor: colors.primary,
+          headerTitleStyle: { color: colors.text, fontWeight: '600' },
+        }}
+      />
+      <SafeAreaView style={[styles.container, { backgroundColor: colors.background }]} edges={['bottom']}>
+        <ScrollView
+          style={styles.scrollView}
+          contentContainerStyle={styles.scrollContent}
+          showsVerticalScrollIndicator={true}
         >
-          {content}
-        </Markdown>
-      </ScrollView>
-    </SafeAreaView>
+          <Markdown
+            style={markdownStyles}
+          >
+            {content}
+          </Markdown>
+        </ScrollView>
+      </SafeAreaView>
+    </>
   );
 }
 
@@ -199,37 +214,11 @@ const styles = StyleSheet.create({
   container: {
     flex: 1,
   },
-  header: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    paddingHorizontal: Spacing.sm,
-    paddingVertical: Spacing.sm,
-    borderBottomWidth: StyleSheet.hairlineWidth,
-    elevation: 2,
-    shadowColor: '#000',
-    shadowOffset: { width: 0, height: 2 },
-    shadowOpacity: 0.1,
-    shadowRadius: 2,
-    zIndex: 10,
-  },
-  backButton: {
-    padding: Spacing.sm,
-    width: 40,
-  },
-  headerTitleContainer: {
-    flex: 1,
-    alignItems: 'center',
-  },
-  headerTitle: {
-    fontSize: FontSizes.md,
-    fontWeight: '600',
-    textAlign: 'center',
-  },
-  headerSubtitle: {
-    fontSize: FontSizes.xs,
-    fontWeight: '500',
-    marginTop: 2,
-  },
+  header: { display: 'none' }, // legacy, kept around just in case
+  backButton: { display: 'none' },
+  headerTitleContainer: { display: 'none' },
+  headerTitle: { display: 'none' },
+  headerSubtitle: { display: 'none' },
   scrollView: {
     flex: 1,
   },

@@ -747,31 +747,31 @@ class GamificationService:
         
         if subject_id:
             # Class-wise leaderboard: only students enrolled in this subject
-            # Calculate XP from their progress in this subject
+            # Calculate XP from their test history in this subject
+            from app.models.gamification import TestHistory
             result = await self.db.execute(
-                select(User, StudentProgress)
+                select(User, TestHistory)
                 .join(Enrollment, User.id == Enrollment.student_id)
                 .outerjoin(
-                    StudentProgress,
-                    (User.id == StudentProgress.student_id) & (StudentProgress.subject_id == subject_id)
+                    TestHistory,
+                    (User.id == TestHistory.student_id) & (TestHistory.subject_id == subject_id)
                 )
                 .where(User.role == "student")
                 .where(Enrollment.subject_id == subject_id)
                 .where(Enrollment.status == "approved")
-                .distinct()
             )
             rows = result.all()
             
             # Aggregate XP per user for this subject
             user_xp: dict = {}
-            for user, progress in rows:
+            for user, history in rows:
                 if user.id not in user_xp:
                     user_xp[user.id] = {
                         "user": user,
                         "xp": 0
                     }
-                if progress:
-                    user_xp[user.id]["xp"] += progress.xp_earned
+                if history:
+                    user_xp[user.id]["xp"] += history.xp_earned
             
             # Sort by XP descending
             sorted_users = sorted(user_xp.values(), key=lambda x: x["xp"], reverse=True)[:limit]
