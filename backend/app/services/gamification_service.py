@@ -38,6 +38,10 @@ MASTERY_MAX = 100.0
 # Levels
 XP_PER_LEVEL = 100
 
+# Adaptive difficulty thresholds (accuracy %)
+DIFFICULTY_EASY_THRESHOLD = 60
+DIFFICULTY_HARD_THRESHOLD = 85
+
 
 def calculate_xp(difficulty: str, streak_count: int, is_correct: bool, is_first_attempt: bool = True, is_practice: bool = False) -> int:
     """Calculate XP for a single answer."""
@@ -281,7 +285,7 @@ class GamificationService:
                     Question.vetting_status == "approved",
                     Question.is_archived == False,
                     Question.is_latest == True,
-                    Question.id.notin_([qq.id for qq in questions]),
+                    Question.id.notin_({qq.id for qq in questions}),
                 )
             )
             if topic_id:
@@ -418,9 +422,9 @@ class GamificationService:
             new_mastery = p.topic_mastery
             
             # Adaptive difficulty
-            if p.accuracy_percentage < 60:
+            if p.accuracy_percentage < DIFFICULTY_EASY_THRESHOLD:
                 p.current_difficulty = "easy"
-            elif p.accuracy_percentage > 85:
+            elif p.accuracy_percentage > DIFFICULTY_HARD_THRESHOLD:
                 p.current_difficulty = "hard"
             else:
                 p.current_difficulty = "medium"
