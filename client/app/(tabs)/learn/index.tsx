@@ -52,10 +52,10 @@ export default function LearnDashboard() {
     setRefreshing(false);
   }, [loadData]);
 
-  const handleSubjectPress = (subject: SubjectStudent) => {
+  const handleSubjectPress = async (subject: SubjectStudent) => {
     if (!subject.is_enrolled) {
-      enrollInSubject(subject.id);
-      return;
+      const success = await enrollInSubject(subject.id);
+      if (!success) return;
     }
     router.push({
       pathname: '/(tabs)/learn/subject-detail',

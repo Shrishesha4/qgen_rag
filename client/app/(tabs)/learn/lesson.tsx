@@ -59,9 +59,9 @@ export default function LessonScreen() {
   const handleCheckAnswer = () => {
     if (!selectedAnswer || !currentQuestion) return;
 
-    const correct = currentQuestion.options
-      ? selectedAnswer === currentQuestion.options[0]
-      : false;
+    // Client-side feedback is approximate; the backend validates actual correctness on submission.
+    // Options may be shuffled, so we record the answer and let the server determine the score.
+    const correct = false;
 
     setIsCorrect(correct);
     setShowResult(true);
