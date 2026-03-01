@@ -82,8 +82,12 @@ async def get_lesson(
     db: AsyncSession = Depends(get_db),
     current_user: User = Depends(get_current_active_user),
 ):
-    """Get a lesson (set of questions) for a subject/topic."""
+    """Get a lesson (set of questions) for a subject/topic. Requires enrollment."""
     service = GamificationService(db)
+    # Verify enrollment
+    enrollments = await service.get_enrollments(current_user.id)
+    if not any(e["subject_id"] == subject_id for e in enrollments):
+        raise HTTPException(status_code=403, detail="Not enrolled in this subject")
     return await service.get_lesson_questions(current_user.id, subject_id, topic_id, count)
 
 
@@ -95,6 +99,10 @@ async def submit_lesson(
 ):
     """Submit lesson answers and get results with XP/streak updates."""
     service = GamificationService(db)
+    # Verify enrollment
+    enrollments = await service.get_enrollments(current_user.id)
+    if not any(e["subject_id"] == submission.subject_id for e in enrollments):
+        raise HTTPException(status_code=403, detail="Not enrolled in this subject")
     try:
         return await service.submit_lesson(current_user.id, submission.model_dump())
     except ValueError as e:

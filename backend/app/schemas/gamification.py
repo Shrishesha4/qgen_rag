@@ -70,8 +70,8 @@ class LessonResponse(BaseModel):
 
 class AnswerSubmission(BaseModel):
     question_id: UUID
-    selected_answer: str
-    time_taken_seconds: Optional[int] = None
+    selected_answer: str = Field(..., min_length=1, max_length=5000)
+    time_taken_seconds: Optional[int] = Field(None, ge=0, le=36000)
 
 
 class AnswerResult(BaseModel):
@@ -85,8 +85,8 @@ class AnswerResult(BaseModel):
 class LessonSubmission(BaseModel):
     subject_id: UUID
     topic_id: Optional[UUID] = None
-    answers: List[AnswerSubmission]
-    total_time_seconds: Optional[int] = None
+    answers: List[AnswerSubmission] = Field(..., min_length=1, max_length=100)
+    total_time_seconds: Optional[int] = Field(None, ge=0, le=36000)
 
 
 class LessonResult(BaseModel):
