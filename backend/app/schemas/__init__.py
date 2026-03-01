@@ -41,6 +41,23 @@ from app.schemas.rubric import (
     RubricListResponse,
     RubricDetailResponse,
 )
+from app.schemas.gamification import (
+    EnrollmentCreate,
+    EnrollmentResponse,
+    StudentProgressResponse,
+    LessonQuestion,
+    LessonResponse,
+    AnswerSubmission,
+    AnswerResult,
+    LessonSubmission,
+    LessonResult,
+    TestHistoryResponse,
+    DailyActivityResponse,
+    GamificationProfile,
+    LeaderboardEntry,
+    LeaderboardResponse,
+    SubjectListStudent,
+)
 
 __all__ = [
     "UserCreate",
@@ -73,4 +90,19 @@ __all__ = [
     "RubricResponse",
     "RubricListResponse",
     "RubricDetailResponse",
+    "EnrollmentCreate",
+    "EnrollmentResponse",
+    "StudentProgressResponse",
+    "LessonQuestion",
+    "LessonResponse",
+    "AnswerSubmission",
+    "AnswerResult",
+    "LessonSubmission",
+    "LessonResult",
+    "TestHistoryResponse",
+    "DailyActivityResponse",
+    "GamificationProfile",
+    "LeaderboardEntry",
+    "LeaderboardResponse",
+    "SubjectListStudent",
 ]
