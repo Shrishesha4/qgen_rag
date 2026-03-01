@@ -101,7 +101,7 @@ export default function LeaderboardScreen() {
                     >
                       {entry.username}
                     </Text>
-                    <Text style={[styles.podiumXP, { color: colors.secondaryText }]}>
+                    <Text style={[styles.podiumXP, { color: colors.textSecondary }]}>
                       {entry.xp_total} XP
                     </Text>
                   </View>
@@ -120,11 +120,11 @@ export default function LeaderboardScreen() {
                   backgroundColor:
                     entry.user_id === user?.id
                       ? `${colors.primary}10`
-                      : colors.secondaryBackground,
+                      : colors.backgroundSecondary,
                 },
               ]}
             >
-              <Text style={[styles.rankNumber, { color: entry.rank <= 3 ? '#FF9500' : colors.secondaryText }]}>
+              <Text style={[styles.rankNumber, { color: entry.rank <= 3 ? '#FF9500' : colors.textSecondary }]}>
                 {getMedalEmoji(entry.rank)}
               </Text>
               <View
@@ -147,7 +147,7 @@ export default function LeaderboardScreen() {
                   {entry.username}
                   {entry.user_id === user?.id ? ' (You)' : ''}
                 </Text>
-                <Text style={[styles.listMeta, { color: colors.secondaryText }]}>
+                <Text style={[styles.listMeta, { color: colors.textSecondary }]}>
                   Level {entry.level} · 🔥 {entry.streak_count}
                 </Text>
               </View>
@@ -160,7 +160,7 @@ export default function LeaderboardScreen() {
           {(!leaderboard || leaderboard.entries.length === 0) && (
             <View style={styles.empty}>
               <Text style={styles.emptyEmoji}>🏅</Text>
-              <Text style={[styles.emptyText, { color: colors.secondaryText }]}>
+              <Text style={[styles.emptyText, { color: colors.textSecondary }]}>
                 No students on the leaderboard yet. Be the first!
               </Text>
             </View>

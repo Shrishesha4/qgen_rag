@@ -70,14 +70,14 @@ export default function ProfileScreen() {
           <Text style={[styles.name, { color: colors.text }]}>
             {user?.full_name || user?.username}
           </Text>
-          <Text style={[styles.email, { color: colors.secondaryText }]}>
+          <Text style={[styles.email, { color: colors.textSecondary }]}>
             {user?.email}
           </Text>
         </View>
 
         {/* XP and Level */}
         {profile && (
-          <View style={[styles.card, { backgroundColor: colors.secondaryBackground }]}>
+          <View style={[styles.card, { backgroundColor: colors.backgroundSecondary }]}>
             <XPBar xpTotal={profile.xp_total} level={profile.current_level} />
           </View>
         )}
@@ -85,13 +85,13 @@ export default function ProfileScreen() {
         {/* Streak & Hearts Row */}
         {profile && (
           <View style={styles.gamificationRow}>
-            <View style={[styles.gamificationCard, { backgroundColor: colors.secondaryBackground }]}>
+            <View style={[styles.gamificationCard, { backgroundColor: colors.backgroundSecondary }]}>
               <StreakCounter streak={profile.streak_count} />
             </View>
-            <View style={[styles.gamificationCard, { backgroundColor: colors.secondaryBackground }]}>
+            <View style={[styles.gamificationCard, { backgroundColor: colors.backgroundSecondary }]}>
               <View style={{ alignItems: 'center', padding: Spacing.md }}>
                 <HeartsDisplay hearts={profile.hearts} />
-                <Text style={[styles.heartsLabel, { color: colors.secondaryText }]}>
+                <Text style={[styles.heartsLabel, { color: colors.textSecondary }]}>
                   Lives
                 </Text>
               </View>
@@ -101,14 +101,14 @@ export default function ProfileScreen() {
 
         {/* Stats */}
         {profile && (
-          <View style={[styles.statsCard, { backgroundColor: colors.secondaryBackground }]}>
+          <View style={[styles.statsCard, { backgroundColor: colors.backgroundSecondary }]}>
             <Text style={[styles.statsTitle, { color: colors.text }]}>📊 Statistics</Text>
             <View style={styles.statsGrid}>
               <View style={styles.statItem}>
                 <Text style={[styles.statValue, { color: colors.text }]}>
                   {profile.subjects_enrolled}
                 </Text>
-                <Text style={[styles.statLabel, { color: colors.secondaryText }]}>
+                <Text style={[styles.statLabel, { color: colors.textSecondary }]}>
                   Subjects
                 </Text>
               </View>
@@ -116,7 +116,7 @@ export default function ProfileScreen() {
                 <Text style={[styles.statValue, { color: colors.text }]}>
                   {profile.total_lessons_completed}
                 </Text>
-                <Text style={[styles.statLabel, { color: colors.secondaryText }]}>
+                <Text style={[styles.statLabel, { color: colors.textSecondary }]}>
                   Lessons
                 </Text>
               </View>
@@ -124,7 +124,7 @@ export default function ProfileScreen() {
                 <Text style={[styles.statValue, { color: colors.text }]}>
                   {profile.total_questions_answered}
                 </Text>
-                <Text style={[styles.statLabel, { color: colors.secondaryText }]}>
+                <Text style={[styles.statLabel, { color: colors.textSecondary }]}>
                   Questions
                 </Text>
               </View>
@@ -132,7 +132,7 @@ export default function ProfileScreen() {
                 <Text style={[styles.statValue, { color: colors.text }]}>
                   {Math.round(profile.overall_accuracy)}%
                 </Text>
-                <Text style={[styles.statLabel, { color: colors.secondaryText }]}>
+                <Text style={[styles.statLabel, { color: colors.textSecondary }]}>
                   Accuracy
                 </Text>
               </View>
@@ -142,11 +142,11 @@ export default function ProfileScreen() {
 
         {/* Badges */}
         {profile && profile.badges.length > 0 && (
-          <View style={[styles.badgesCard, { backgroundColor: colors.secondaryBackground }]}>
+          <View style={[styles.badgesCard, { backgroundColor: colors.backgroundSecondary }]}>
             <Text style={[styles.statsTitle, { color: colors.text }]}>🏅 Badges</Text>
             <View style={styles.badgesList}>
               {profile.badges.map((badge) => (
-                <View key={badge} style={[styles.badge, { backgroundColor: colors.tertiaryBackground }]}>
+                <View key={badge} style={[styles.badge, { backgroundColor: colors.glassTertiary }]}>
                   <Text style={[styles.badgeText, { color: colors.text }]}>
                     {getBadgeLabel(badge)}
                   </Text>
@@ -158,17 +158,17 @@ export default function ProfileScreen() {
 
         {/* Recent Activity */}
         {dailyActivity.length > 0 && (
-          <View style={[styles.activityCard, { backgroundColor: colors.secondaryBackground }]}>
+          <View style={[styles.activityCard, { backgroundColor: colors.backgroundSecondary }]}>
             <Text style={[styles.statsTitle, { color: colors.text }]}>📅 This Week</Text>
             {dailyActivity.slice(0, 7).map((day) => (
               <View key={day.id} style={styles.activityRow}>
-                <Text style={[styles.activityDate, { color: colors.secondaryText }]}>
+                <Text style={[styles.activityDate, { color: colors.textSecondary }]}>
                   {new Date(day.activity_date).toLocaleDateString('en-US', { weekday: 'short', month: 'short', day: 'numeric' })}
                 </Text>
                 <Text style={[styles.activityXP, { color: '#007AFF' }]}>
                   +{day.xp_earned} XP
                 </Text>
-                <Text style={[styles.activityQuestions, { color: colors.secondaryText }]}>
+                <Text style={[styles.activityQuestions, { color: colors.textSecondary }]}>
                   {day.questions_answered} Q · {day.lessons_completed} lessons
                 </Text>
               </View>
@@ -178,7 +178,7 @@ export default function ProfileScreen() {
 
         {/* Recent Tests */}
         {testHistory.length > 0 && (
-          <View style={[styles.historyCard, { backgroundColor: colors.secondaryBackground }]}>
+          <View style={[styles.historyCard, { backgroundColor: colors.backgroundSecondary }]}>
             <Text style={[styles.statsTitle, { color: colors.text }]}>📝 Recent Tests</Text>
             {testHistory.slice(0, 5).map((test) => (
               <View key={test.id} style={styles.testRow}>
@@ -186,11 +186,11 @@ export default function ProfileScreen() {
                   <Text style={[styles.testScore, { color: colors.text }]}>
                     {test.correct_answers}/{test.total_questions}
                   </Text>
-                  <Text style={[styles.testMeta, { color: colors.secondaryText }]}>
+                  <Text style={[styles.testMeta, { color: colors.textSecondary }]}>
                     {test.difficulty} · +{test.xp_earned} XP
                   </Text>
                 </View>
-                <Text style={[styles.testDate, { color: colors.secondaryText }]}>
+                <Text style={[styles.testDate, { color: colors.textSecondary }]}>
                   {new Date(test.created_at).toLocaleDateString()}
                 </Text>
               </View>
