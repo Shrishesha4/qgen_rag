@@ -50,16 +50,14 @@ class Settings(BaseSettings):
     # CORS - Allow the mobile app and tunnel domain
     # React Native apps don't send Origin header, so "*" is needed
     # Comma-separated list: "*,https://yourdomain.com,https://app.example.com"
-    CORS_ORIGINS: List[str] = Field(default=["*"])
+    CORS_ORIGINS: str = Field(default="*")
 
     @property
     def cors_origins_list(self) -> List[str]:
-        """Parse CORS_ORIGINS from comma-separated string or list."""
-        if isinstance(self.CORS_ORIGINS, list):
-            return self.CORS_ORIGINS
-        if isinstance(self.CORS_ORIGINS, str):
-            return [origin.strip() for origin in self.CORS_ORIGINS.split(",") if origin.strip()]
-        return ["*"]
+        """Parse CORS_ORIGINS from comma-separated string to list."""
+        if not self.CORS_ORIGINS:
+            return ["*"]
+        return [origin.strip() for origin in self.CORS_ORIGINS.split(",") if origin.strip()]
 
     # Embedding Model
     # Options: 
