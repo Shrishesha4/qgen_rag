@@ -5,6 +5,7 @@ from app.models.question import Question, GenerationSession
 from app.models.auth import RefreshToken, AuditLog
 from app.models.subject import Subject, Topic
 from app.models.rubric import Rubric
+from app.models.gamification import Enrollment, StudentProgress, TestHistory, DailyActivity
 
 __all__ = [
     "User",
@@ -17,4 +18,8 @@ __all__ = [
     "Subject",
     "Topic",
     "Rubric",
+    "Enrollment",
+    "StudentProgress",
+    "TestHistory",
+    "DailyActivity",
 ]

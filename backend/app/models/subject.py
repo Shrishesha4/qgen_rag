@@ -40,6 +40,9 @@ class Subject(Base):
     total_topics: Mapped[int] = mapped_column(Integer, default=0)
     syllabus_coverage: Mapped[int] = mapped_column(Integer, default=0)  # percentage
     
+    # Publishing
+    published: Mapped[bool] = mapped_column(Boolean, default=False)
+    
     # Timestamps
     created_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), server_default=func.now()

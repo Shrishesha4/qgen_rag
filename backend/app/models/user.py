@@ -30,6 +30,16 @@ class User(Base):
     timezone: Mapped[str] = mapped_column(String(50), default="UTC")
     language: Mapped[str] = mapped_column(String(10), default="en")
     
+    # Role
+    role: Mapped[str] = mapped_column(String(20), default="student")  # student, teacher, admin
+    
+    # Gamification
+    xp_total: Mapped[int] = mapped_column(Integer, default=0)
+    streak_count: Mapped[int] = mapped_column(Integer, default=0)
+    last_active_date: Mapped[Optional[datetime]] = mapped_column(DateTime(timezone=True))
+    hearts: Mapped[int] = mapped_column(Integer, default=5)
+    hearts_updated_at: Mapped[Optional[datetime]] = mapped_column(DateTime(timezone=True))
+    
     # Status
     is_active: Mapped[bool] = mapped_column(Boolean, default=True)
     is_superuser: Mapped[bool] = mapped_column(Boolean, default=False)
@@ -65,6 +75,10 @@ class User(Base):
     generation_sessions = relationship("GenerationSession", back_populates="user", cascade="all, delete-orphan")
     subjects = relationship("Subject", back_populates="user", cascade="all, delete-orphan")
     rubrics = relationship("Rubric", back_populates="user", cascade="all, delete-orphan")
+    student_progress = relationship("StudentProgress", back_populates="student", cascade="all, delete-orphan")
+    test_history = relationship("TestHistory", back_populates="student", cascade="all, delete-orphan")
+    daily_activities = relationship("DailyActivity", back_populates="student", cascade="all, delete-orphan")
+    enrollments = relationship("Enrollment", back_populates="student", cascade="all, delete-orphan")
     
     def __repr__(self) -> str:
         return f"<User {self.username}>"
