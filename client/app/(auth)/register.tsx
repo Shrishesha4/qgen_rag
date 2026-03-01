@@ -22,6 +22,7 @@ export default function RegisterScreen() {
   const [fullName, setFullName] = useState('');
   const [password, setPassword] = useState('');
   const [confirmPassword, setConfirmPassword] = useState('');
+  const [role, setRole] = useState<'student' | 'teacher'>('student');
   const [localError, setLocalError] = useState<string | null>(null);
   
   const { register, isLoading, error, clearError } = useAuthStore();
@@ -47,7 +48,7 @@ export default function RegisterScreen() {
       return;
     }
 
-    await register(email, username, password, fullName || undefined);
+    await register(email, username, password, fullName || undefined, role);
   };
 
   const displayError = localError || error;
@@ -115,6 +116,34 @@ export default function RegisterScreen() {
               onChangeText={setFullName}
               autoComplete="name"
             />
+          </View>
+
+          <View style={styles.inputContainer}>
+            <Text style={[styles.label, { color: colors.text }]}>I am a</Text>
+            <View style={styles.roleSelector}>
+              <TouchableOpacity
+                style={[
+                  styles.roleOption,
+                  { borderColor: role === 'student' ? colors.primary : colors.border },
+                  role === 'student' && { backgroundColor: colors.primary + '15' },
+                ]}
+                onPress={() => setRole('student')}
+              >
+                <Text style={styles.roleEmoji}>🎓</Text>
+                <Text style={[styles.roleText, { color: role === 'student' ? colors.primary : colors.text }]}>Student</Text>
+              </TouchableOpacity>
+              <TouchableOpacity
+                style={[
+                  styles.roleOption,
+                  { borderColor: role === 'teacher' ? colors.primary : colors.border },
+                  role === 'teacher' && { backgroundColor: colors.primary + '15' },
+                ]}
+                onPress={() => setRole('teacher')}
+              >
+                <Text style={styles.roleEmoji}>👩‍🏫</Text>
+                <Text style={[styles.roleText, { color: role === 'teacher' ? colors.primary : colors.text }]}>Teacher</Text>
+              </TouchableOpacity>
+            </View>
           </View>
 
           <View style={styles.inputContainer}>
@@ -232,6 +261,27 @@ const styles = StyleSheet.create({
   hint: {
     fontSize: FontSizes.xs,
     marginTop: Spacing.xs,
+  },
+  roleSelector: {
+    flexDirection: 'row',
+    gap: Spacing.sm,
+  },
+  roleOption: {
+    flex: 1,
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'center',
+    padding: Spacing.md,
+    borderRadius: BorderRadius.md,
+    borderWidth: 2,
+    gap: Spacing.xs,
+  },
+  roleEmoji: {
+    fontSize: 20,
+  },
+  roleText: {
+    fontSize: FontSizes.md,
+    fontWeight: '600',
   },
   footer: {
     flexDirection: 'row',

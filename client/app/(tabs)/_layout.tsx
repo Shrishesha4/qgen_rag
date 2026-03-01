@@ -8,11 +8,17 @@ import { HapticTab } from '@/components/haptic-tab';
 import { IconSymbol } from '@/components/ui/icon-symbol';
 import { Colors } from '@/constants/theme';
 import { useColorScheme } from '@/hooks/use-color-scheme';
+import { useAuthStore } from '@/stores/authStore';
 
 export default function TabLayout() {
   const colorScheme = useColorScheme();
   const colors = Colors[colorScheme ?? 'light'];
   const isDark = colorScheme === 'dark';
+  const { user } = useAuthStore();
+
+  // Role-based tab visibility
+  const isStudent = user?.role === 'student' || (!user?.role);
+  const isTeacher = user?.role === 'teacher' || user?.role === 'admin';
 
   // Use native iOS 26 tabs on iOS - provides Liquid Glass automatically
   // Each tab now uses nested Stack navigators for sub-screens
@@ -26,24 +32,44 @@ export default function TabLayout() {
           fontWeight: '600',
         }}
       >
-        <NativeTabs.Trigger name="home">
-          <Label>Home</Label>
-          <Icon sf="house.fill" />
-        </NativeTabs.Trigger>
+        {/* Teacher tabs */}
+        {isTeacher && (
+          <NativeTabs.Trigger name="home">
+            <Label>Home</Label>
+            <Icon sf="house.fill" />
+          </NativeTabs.Trigger>
+        )}
 
-        <NativeTabs.Trigger name="quick-generate">
-          <Label>Generate</Label>
-          <Icon sf="sparkles" />
-        </NativeTabs.Trigger>
+        {isTeacher && (
+          <NativeTabs.Trigger name="quick-generate">
+            <Label>Generate</Label>
+            <Icon sf="sparkles" />
+          </NativeTabs.Trigger>
+        )}
 
+        {isTeacher && (
+          <NativeTabs.Trigger name="history">
+            <Label>History</Label>
+            <Icon sf="clock.arrow.circlepath" />
+          </NativeTabs.Trigger>
+        )}
+
+        {/* Student tabs */}
         <NativeTabs.Trigger name="learn">
           <Label>Learn</Label>
           <Icon sf="book.fill" />
         </NativeTabs.Trigger>
 
-        <NativeTabs.Trigger name="history">
-          <Label>History</Label>
-          <Icon sf="clock.arrow.circlepath" />
+        {isStudent && (
+          <NativeTabs.Trigger name="leaderboard">
+            <Label>Ranks</Label>
+            <Icon sf="trophy.fill" />
+          </NativeTabs.Trigger>
+        )}
+
+        <NativeTabs.Trigger name="profile">
+          <Label>Profile</Label>
+          <Icon sf="person.fill" />
         </NativeTabs.Trigger>
       </NativeTabs>
     );
@@ -91,10 +117,12 @@ export default function TabLayout() {
           href: null, // Hide from tab bar
         }}
       />
+      {/* Teacher tabs */}
       <Tabs.Screen
         name="home"
         options={{
           title: 'Home',
+          href: isTeacher ? undefined : null,
           tabBarIcon: ({ color }) => (
             <IconSymbol size={26} name="house.fill" color={color} />
           ),
@@ -104,11 +132,23 @@ export default function TabLayout() {
         name="quick-generate"
         options={{
           title: 'Generate',
+          href: isTeacher ? undefined : null,
           tabBarIcon: ({ color }) => (
             <IconSymbol size={28} name="sparkles" color={color} />
           ),
         }}
       />
+      <Tabs.Screen
+        name="history"
+        options={{
+          title: 'History',
+          href: isTeacher ? undefined : null,
+          tabBarIcon: ({ color }) => (
+            <IconSymbol size={26} name="clock.arrow.circlepath" color={color} />
+          ),
+        }}
+      />
+      {/* Student & shared tabs */}
       <Tabs.Screen
         name="learn"
         options={{
@@ -119,11 +159,21 @@ export default function TabLayout() {
         }}
       />
       <Tabs.Screen
-        name="history"
+        name="leaderboard"
         options={{
-          title: 'History',
+          title: 'Ranks',
+          href: isStudent ? undefined : null,
           tabBarIcon: ({ color }) => (
-            <IconSymbol size={26} name="clock.arrow.circlepath" color={color} />
+            <IconSymbol size={26} name="trophy.fill" color={color} />
+          ),
+        }}
+      />
+      <Tabs.Screen
+        name="profile"
+        options={{
+          title: 'Profile',
+          tabBarIcon: ({ color }) => (
+            <IconSymbol size={26} name="person.fill" color={color} />
           ),
         }}
       />

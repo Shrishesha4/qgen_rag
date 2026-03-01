@@ -12,6 +12,7 @@ export interface User {
   avatar_url: string | null;
   timezone: string;
   language: string;
+  role: string;
   is_active: boolean;
   created_at: string;
   last_login_at: string | null;
@@ -29,6 +30,7 @@ export interface RegisterData {
   username: string;
   password: string;
   full_name?: string;
+  role?: string;
 }
 
 export interface TokenResponse {

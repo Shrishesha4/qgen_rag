@@ -51,6 +51,7 @@ class UserService:
             username=user_data.username.lower(),
             password_hash=hash_password(user_data.password),
             full_name=user_data.full_name,
+            role=getattr(user_data, 'role', 'student') or 'student',
         )
         self.db.add(user)
         await self.db.commit()

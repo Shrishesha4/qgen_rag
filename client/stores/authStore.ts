@@ -14,7 +14,7 @@ interface AuthState {
 
   // Actions
   login: (email: string, password: string) => Promise<boolean>;
-  register: (email: string, username: string, password: string, fullName?: string) => Promise<boolean>;
+  register: (email: string, username: string, password: string, fullName?: string, role?: string) => Promise<boolean>;
   logout: () => Promise<void>;
   logoutAll: () => Promise<void>;
   checkAuth: () => Promise<boolean>;
@@ -50,7 +50,7 @@ export const useAuthStore = create<AuthState>((set, get) => ({
     }
   },
 
-  register: async (email: string, username: string, password: string, fullName?: string): Promise<boolean> => {
+  register: async (email: string, username: string, password: string, fullName?: string, role?: string): Promise<boolean> => {
     set({ isLoading: true, error: null });
     try {
       const response = await authService.register({
@@ -58,6 +58,7 @@ export const useAuthStore = create<AuthState>((set, get) => ({
         username,
         password,
         full_name: fullName,
+        role: role || 'student',
       });
       set({
         user: response.user,

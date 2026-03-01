@@ -1,9 +1,16 @@
 import { Redirect } from 'expo-router';
+import { useAuthStore } from '@/stores/authStore';
 
 /**
  * Index route for (tabs) group.
- * Redirects to the home tab's index screen.
+ * Redirects based on user role.
  */
 export default function TabsIndex() {
-  return <Redirect href="/(tabs)/home" />;
+  const { user } = useAuthStore();
+  const isTeacher = user?.role === 'teacher' || user?.role === 'admin';
+  
+  if (isTeacher) {
+    return <Redirect href="/(tabs)/home" />;
+  }
+  return <Redirect href="/(tabs)/learn" />;
 }

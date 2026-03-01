@@ -26,6 +26,7 @@ class UserBase(BaseModel):
 class UserCreate(UserBase):
     """Schema for user registration."""
     password: str = Field(..., min_length=8, max_length=128)
+    role: Optional[str] = Field("student", pattern=r"^(student|teacher|admin)$")
 
     @field_validator("password")
     @classmethod
@@ -71,6 +72,7 @@ class UserResponse(BaseModel):
     avatar_url: Optional[str]
     timezone: str
     language: str
+    role: str = "student"
     is_active: bool
     created_at: datetime
     last_login_at: Optional[datetime]
