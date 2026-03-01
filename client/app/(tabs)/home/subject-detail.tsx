@@ -62,6 +62,7 @@ export default function SubjectDetailScreen() {
 
   // Enrollment management state
   const [pendingEnrollments, setPendingEnrollments] = useState<PendingEnrollment[]>([]);
+  const [approvedStudents, setApprovedStudents] = useState<PendingEnrollment[]>([]);
   const [isLoadingEnrollments, setIsLoadingEnrollments] = useState(false);
   const [processingEnrollmentId, setProcessingEnrollmentId] = useState<string | null>(null);
 
@@ -134,8 +135,12 @@ export default function SubjectDetailScreen() {
     if (!id) return;
     setIsLoadingEnrollments(true);
     try {
-      const enrollments = await subjectsService.getEnrollmentRequests(id);
-      setPendingEnrollments(enrollments);
+      const [pending, approved] = await Promise.all([
+        subjectsService.getEnrollmentRequests(id),
+        subjectsService.getAllEnrollments('approved').then(all => all.filter(e => e.subject_id === id)).catch(() => []),
+      ]);
+      setPendingEnrollments(pending);
+      setApprovedStudents(approved);
     } catch (error) {
       console.error('Error loading enrollments:', error);
     } finally {
@@ -203,7 +208,8 @@ export default function SubjectDetailScreen() {
   useEffect(() => {
     loadData();
     loadReferences();
-  }, [loadData, loadReferences]);
+    loadEnrollments();
+  }, [loadData, loadReferences, loadEnrollments]);
 
   const handleRefresh = () => {
     setIsRefreshing(true);
@@ -639,6 +645,31 @@ export default function SubjectDetailScreen() {
     }
   };
 
+  const handleDeleteHistorySession = (session: GenerationSession) => {
+    heavyImpact();
+    Alert.alert(
+      'Delete Generation History',
+      `Delete this session with ${session.questions_generated} questions? This will also delete all the questions generated in this session.`,
+      [
+        { text: 'Cancel', style: 'cancel' },
+        {
+          text: 'Delete',
+          style: 'destructive',
+          onPress: async () => {
+            try {
+              await questionsService.deleteSession(session.id);
+              showSuccess('Generation history deleted');
+              // Refresh both history and subject data to update stats
+              await Promise.all([loadHistory(), loadData()]);
+            } catch (error) {
+              showError(error, 'Failed to delete');
+            }
+          },
+        },
+      ]
+    );
+  };
+
   if (isLoading) {
     return (
       <View style={[styles.loadingContainer, { backgroundColor: colors.background }]}>
@@ -725,10 +756,10 @@ export default function SubjectDetailScreen() {
                 <Text style={styles.statLabel}>Questions</Text>
               </View>
               <View style={styles.statDivider} />
-              <View style={styles.statItem}>
-                <Text style={styles.statValue}>{Math.round(subject.syllabus_coverage)}%</Text>
-                <Text style={styles.statLabel}>Coverage</Text>
-              </View>
+              <TouchableOpacity style={styles.statItem} onPress={() => { setActiveTab('enrollments'); loadEnrollments(); }}>
+                <Text style={styles.statValue}>{approvedStudents.length}</Text>
+                <Text style={styles.statLabel}>Students</Text>
+              </TouchableOpacity>
             </View>
           </LinearGradient>
 
@@ -1029,17 +1060,28 @@ export default function SubjectDetailScreen() {
                       : '';
 
                     return (
-                      <TouchableOpacity
+                      <View
                         key={session.id}
-                        activeOpacity={0.7}
-                        onPress={() => openHistorySession(session)}
                         style={[styles.historyCard, { backgroundColor: colors.card, borderColor: colors.border }]}
                       >
                         <View style={{ flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center' }}>
                           <View style={[styles.historyBadge, { backgroundColor: mColor + '20' }]}>
                             <Text style={{ fontSize: FontSizes.xs, fontWeight: '600', color: mColor }}>{mLabel}</Text>
                           </View>
-                          <Text style={{ fontSize: FontSizes.xs, color: colors.textTertiary }}>{time}</Text>
+                          <View style={{ flexDirection: 'row', alignItems: 'center', gap: Spacing.sm }}>
+                            <Text style={{ fontSize: FontSizes.xs, color: colors.textTertiary }}>{time}</Text>
+                            <TouchableOpacity
+                              onPress={() => handleDeleteHistorySession(session)}
+                              hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}
+                              style={{
+                                padding: 4,
+                                backgroundColor: '#FF3B3015',
+                                borderRadius: BorderRadius.sm,
+                              }}
+                            >
+                              <IconSymbol name="trash" size={14} color="#FF3B30" />
+                            </TouchableOpacity>
+                          </View>
                         </View>
                         <View style={{ flexDirection: 'row', alignItems: 'center', marginTop: 8, gap: 12 }}>
                           <Text style={{ fontSize: FontSizes.lg, fontWeight: '700', color: colors.primary }}>
@@ -1052,7 +1094,7 @@ export default function SubjectDetailScreen() {
                             </Text>
                           ) : null}
                         </View>
-                      </TouchableOpacity>
+                      </View>
                     );
                   })}
                 </View>
@@ -1064,7 +1106,7 @@ export default function SubjectDetailScreen() {
           {activeTab === 'enrollments' && (
             <View style={styles.section}>
               <Text style={[styles.sectionTitle, { color: colors.textSecondary }]}>
-                ENROLLMENT REQUESTS ({pendingEnrollments.length})
+                PENDING REQUESTS ({pendingEnrollments.length})
               </Text>
               {isLoadingEnrollments ? (
                 <View style={{ padding: 40, alignItems: 'center' }}>
@@ -1132,6 +1174,80 @@ export default function SubjectDetailScreen() {
                           <Text style={{ color: '#FF3B30', fontWeight: '700', fontSize: FontSizes.sm }}>
                             ❌ Reject
                           </Text>
+                        </TouchableOpacity>
+                      </View>
+                    </View>
+                  ))}
+                </View>
+              )}
+
+              {/* Approved Students */}
+              <Text style={[styles.sectionTitle, { color: colors.textSecondary, marginTop: Spacing.lg }]}>
+                ENROLLED STUDENTS ({approvedStudents.length})
+              </Text>
+              {approvedStudents.length === 0 ? (
+                <View style={[styles.emptyCard, { backgroundColor: colors.card }]}>
+                  <IconSymbol name="person.2.fill" size={40} color={colors.textTertiary} />
+                  <Text style={[styles.emptyTitle, { color: colors.text }]}>No Students Yet</Text>
+                  <Text style={[styles.emptyText, { color: colors.textSecondary }]}>
+                    Students will appear here after their enrollment is approved.
+                  </Text>
+                </View>
+              ) : (
+                <View style={{ gap: Spacing.sm }}>
+                  {approvedStudents.map((student) => (
+                    <View
+                      key={student.id}
+                      style={[styles.historyCard, { backgroundColor: colors.card, borderColor: colors.border }]}
+                    >
+                      <View style={{ flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center' }}>
+                        <View style={{ flex: 1 }}>
+                          <Text style={{ fontSize: FontSizes.md, fontWeight: '600', color: colors.text }}>
+                            {student.student_name || 'Unknown Student'}
+                          </Text>
+                          <Text style={{ fontSize: FontSizes.xs, color: colors.textSecondary, marginTop: 2 }}>
+                            {student.student_email}
+                          </Text>
+                        </View>
+                        <TouchableOpacity
+                          style={{
+                            backgroundColor: '#FF3B3015',
+                            paddingHorizontal: Spacing.md,
+                            paddingVertical: 6,
+                            borderRadius: BorderRadius.md,
+                            borderWidth: 1,
+                            borderColor: '#FF3B3030',
+                          }}
+                          onPress={() => {
+                            Alert.alert(
+                              'Revoke Access',
+                              `Remove ${student.student_name} from this subject?`,
+                              [
+                                { text: 'Cancel', style: 'cancel' },
+                                {
+                                  text: 'Revoke', style: 'destructive', onPress: async () => {
+                                    setProcessingEnrollmentId(student.id);
+                                    try {
+                                      await subjectsService.rejectEnrollment(id, student.id);
+                                      showSuccess('Student access revoked');
+                                      await loadEnrollments();
+                                    } catch (error) {
+                                      showError(error, 'Failed to revoke');
+                                    } finally {
+                                      setProcessingEnrollmentId(null);
+                                    }
+                                  }
+                                },
+                              ]
+                            );
+                          }}
+                          disabled={processingEnrollmentId === student.id}
+                        >
+                          {processingEnrollmentId === student.id ? (
+                            <ActivityIndicator size="small" color="#FF3B30" />
+                          ) : (
+                            <Text style={{ color: '#FF3B30', fontWeight: '600', fontSize: FontSizes.xs }}>Revoke</Text>
+                          )}
                         </TouchableOpacity>
                       </View>
                     </View>

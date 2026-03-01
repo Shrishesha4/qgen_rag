@@ -12,9 +12,11 @@ import {
   Alert,
   RefreshControl,
   TextInput,
+  Platform,
+  Modal,
 } from 'react-native';
 import { useRouter, useLocalSearchParams } from 'expo-router';
-import { SafeAreaView } from 'react-native-safe-area-context';
+import { SafeAreaView, useSafeAreaInsets } from 'react-native-safe-area-context';
 import { useColorScheme } from '@/hooks/use-color-scheme';
 import { Colors, Spacing, FontSizes, BorderRadius } from '@/constants/theme';
 import { useAuthStore } from '@/stores/authStore';
@@ -26,6 +28,7 @@ import {
   TestDetailResponse,
   TestQuestion,
 } from '@/services/tests';
+import { subjectsService } from '@/services/subjects';
 
 export default function TestDetailScreen() {
   const colorScheme = useColorScheme() ?? 'light';
@@ -34,6 +37,11 @@ export default function TestDetailScreen() {
   const { testId } = useLocalSearchParams<{ testId: string }>();
   const { user } = useAuthStore();
   const isStudent = user?.role === 'student';
+  const insets = useSafeAreaInsets();
+  
+  // Calculate bottom padding for floating bar (accounts for tab bar + safe area)
+  const TAB_BAR_HEIGHT = Platform.OS === 'ios' ? 49 : 60;
+  const floatingBarBottom = TAB_BAR_HEIGHT + insets.bottom;
 
   const [test, setTest] = useState<TestDetailResponse | null>(null);
   const [studentTest, setStudentTest] = useState<any>(null);
@@ -48,6 +56,18 @@ export default function TestDetailScreen() {
   const [editDesc, setEditDesc] = useState('');
   const [editingInstructions, setEditingInstructions] = useState(false);
   const [editInstructions, setEditInstructions] = useState('');
+
+  // Edit config modal
+  const [showEditConfig, setShowEditConfig] = useState(false);
+  const [cfgEasyCount, setCfgEasyCount] = useState('4');
+  const [cfgMediumCount, setCfgMediumCount] = useState('3');
+  const [cfgHardCount, setCfgHardCount] = useState('3');
+  const [cfgEasyLO, setCfgEasyLO] = useState<string[]>([]);
+  const [cfgMediumLO, setCfgMediumLO] = useState<string[]>([]);
+  const [cfgHardLO, setCfgHardLO] = useState<string[]>([]);
+  const [subjectLOs, setSubjectLOs] = useState<{ id: string; name: string }[]>([]);
+  const [loadingSubjectLOs, setLoadingSubjectLOs] = useState(false);
+  const [isSavingConfig, setIsSavingConfig] = useState(false);
 
   const loadTest = useCallback(async () => {
     if (!testId) return;
@@ -159,6 +179,91 @@ export default function TestDetailScreen() {
         }
       },
     ]);
+  };
+
+  const handleDeleteTest = () => {
+    if (!testId) return;
+    Alert.alert('Delete Test', 'This will permanently delete this test and all its questions. This cannot be undone.', [
+      { text: 'Cancel', style: 'cancel' },
+      {
+        text: 'Delete', style: 'destructive', onPress: async () => {
+          setActionLoading('delete');
+          try {
+            await testsService.deleteTest(testId);
+            router.back();
+          } catch (e: any) {
+            Alert.alert('Error', e?.response?.data?.detail || 'Failed to delete');
+          } finally {
+            setActionLoading('');
+          }
+        }
+      },
+    ]);
+  };
+
+  const handleOpenEditConfig = async () => {
+    if (!test) return;
+    const dc = (test as any).difficulty_config || {};
+    setCfgEasyCount(String(dc.easy?.count || 4));
+    setCfgMediumCount(String(dc.medium?.count || 3));
+    setCfgHardCount(String(dc.hard?.count || 3));
+    setCfgEasyLO(dc.easy?.lo_mapping || []);
+    setCfgMediumLO(dc.medium?.lo_mapping || []);
+    setCfgHardLO(dc.hard?.lo_mapping || []);
+    setShowEditConfig(true);
+    
+    // Load subject LOs if not already loaded
+    if (test.subject_id && subjectLOs.length === 0) {
+      setLoadingSubjectLOs(true);
+      try {
+        const subjectDetail = await subjectsService.getSubject(test.subject_id);
+        const los: { id: string; name: string }[] = [];
+        if (subjectDetail.learning_outcomes?.outcomes) {
+          subjectDetail.learning_outcomes.outcomes.forEach((lo: any) => {
+            los.push({ id: lo.id, name: lo.name });
+          });
+        }
+        setSubjectLOs(los);
+      } catch (e) {
+        console.error('Failed to load subject LOs:', e);
+      } finally {
+        setLoadingSubjectLOs(false);
+      }
+    }
+  };
+
+  const toggleLOMapping = (level: 'easy' | 'medium' | 'hard', loId: string) => {
+    const setters = { easy: setCfgEasyLO, medium: setCfgMediumLO, hard: setCfgHardLO };
+    const getters = { easy: cfgEasyLO, medium: cfgMediumLO, hard: cfgHardLO };
+    const current = getters[level];
+    if (current.includes(loId)) {
+      setters[level](current.filter((id) => id !== loId));
+    } else {
+      setters[level]([...current, loId]);
+    }
+  };
+
+  const handleSaveConfig = async () => {
+    if (!testId) return;
+    setIsSavingConfig(true);
+    try {
+      const easyCount = parseInt(cfgEasyCount) || 0;
+      const mediumCount = parseInt(cfgMediumCount) || 0;
+      const hardCount = parseInt(cfgHardCount) || 0;
+      await testsService.updateTest(testId, {
+        difficulty_config: {
+          easy: { count: easyCount, lo_mapping: cfgEasyLO },
+          medium: { count: mediumCount, lo_mapping: cfgMediumLO },
+          hard: { count: hardCount, lo_mapping: cfgHardLO },
+        },
+      } as any);
+      setShowEditConfig(false);
+      await loadTest();
+    } catch (e: any) {
+      Alert.alert('Error', e?.response?.data?.detail || 'Failed to save config');
+    } finally {
+      setIsSavingConfig(false);
+    }
   };
 
   const getDifficultyColor = (l?: string | null) => {
@@ -322,9 +427,9 @@ export default function TestDetailScreen() {
   }
 
   return (
-    <SafeAreaView style={[styles.container, { backgroundColor: colors.background }]} edges={['bottom']}>
+    <SafeAreaView style={[styles.container, { backgroundColor: colors.background }]} edges={[]}>
       <ScrollView
-        contentContainerStyle={styles.content}
+        contentContainerStyle={[styles.content, { paddingBottom: floatingBarBottom + 70 }]}
         refreshControl={<RefreshControl refreshing={refreshing} onRefresh={onRefresh} />}
       >
         {/* Status Banner */}
@@ -421,7 +526,7 @@ export default function TestDetailScreen() {
 
         {/* Actions */}
         <View style={styles.actionsRow}>
-          {test.status === 'draft' && (
+          {test.status !== 'published' && (
             <TouchableOpacity style={[styles.actionButton, { backgroundColor: colors.success }]} onPress={handlePublish} disabled={!!actionLoading}>
               {actionLoading === 'publish' ? <ActivityIndicator size="small" color="#FFF" /> : <><IconSymbol name="paperplane.fill" size={16} color="#FFF" /><Text style={styles.actionText}>Publish</Text></>}
             </TouchableOpacity>
@@ -489,6 +594,137 @@ export default function TestDetailScreen() {
           ))
         )}
       </ScrollView>
+
+      {/* ===== Floating Action Bar ===== */}
+      <View style={[styles.floatingBar, { backgroundColor: colors.card, borderTopColor: colors.border, bottom: floatingBarBottom }]}>
+        <ScrollView horizontal showsHorizontalScrollIndicator={false} contentContainerStyle={styles.floatingBarContent}>
+          {test.status !== 'published' && (
+            <TouchableOpacity style={[styles.fabButton, { backgroundColor: colors.success }]} onPress={handlePublish} disabled={!!actionLoading}>
+              {actionLoading === 'publish' ? <ActivityIndicator size="small" color="#FFF" /> : (
+                <><IconSymbol name="paperplane.fill" size={16} color="#FFF" /><Text style={styles.fabText}>Publish</Text></>
+              )}
+            </TouchableOpacity>
+          )}
+          {test.status === 'published' && (
+            <TouchableOpacity style={[styles.fabButton, { backgroundColor: colors.error }]} onPress={handleUnpublish} disabled={!!actionLoading}>
+              {actionLoading === 'unpublish' ? <ActivityIndicator size="small" color="#FFF" /> : (
+                <><IconSymbol name="xmark.circle.fill" size={16} color="#FFF" /><Text style={styles.fabText}>Unpublish</Text></>
+              )}
+            </TouchableOpacity>
+          )}
+          {test.status !== 'published' && (
+            <TouchableOpacity style={[styles.fabButton, { backgroundColor: colors.secondary }]} onPress={handleRegenerate} disabled={!!actionLoading}>
+              {actionLoading === 'regenerate' ? <ActivityIndicator size="small" color="#FFF" /> : (
+                <><IconSymbol name="arrow.triangle.2.circlepath" size={16} color="#FFF" /><Text style={styles.fabText}>Regen</Text></>
+              )}
+            </TouchableOpacity>
+          )}
+          {test.status !== 'published' && (
+            <TouchableOpacity style={[styles.fabButton, { backgroundColor: colors.primary }]} onPress={handleOpenEditConfig}>
+              <IconSymbol name="slider.horizontal.3" size={16} color="#FFF" /><Text style={styles.fabText}>Config</Text>
+            </TouchableOpacity>
+          )}
+          {test.status === 'published' && test.submissions_count > 0 && (
+            <TouchableOpacity style={[styles.fabButton, { backgroundColor: colors.primary }]}
+              onPress={() => router.push({ pathname: '/(tabs)/tests/performance', params: { testId: test.id } })}>
+              <IconSymbol name="chart.bar.fill" size={16} color="#FFF" /><Text style={styles.fabText}>Stats</Text>
+            </TouchableOpacity>
+          )}
+          {test.status !== 'published' && (
+            <TouchableOpacity style={[styles.fabButton, { backgroundColor: '#FF3B30' }]} onPress={handleDeleteTest} disabled={!!actionLoading}>
+              {actionLoading === 'delete' ? <ActivityIndicator size="small" color="#FFF" /> : (
+                <><IconSymbol name="trash.fill" size={16} color="#FFF" /><Text style={styles.fabText}>Delete</Text></>
+              )}
+            </TouchableOpacity>
+          )}
+        </ScrollView>
+      </View>
+
+      {/* ===== Edit Config Modal ===== */}
+      <Modal visible={showEditConfig} animationType="slide" presentationStyle="pageSheet" onRequestClose={() => setShowEditConfig(false)}>
+        <SafeAreaView style={[styles.container, { backgroundColor: colors.background }]} edges={['top', 'bottom']}>
+          <View style={styles.configModalHeader}>
+            <TouchableOpacity onPress={() => setShowEditConfig(false)}>
+              <Text style={{ fontSize: FontSizes.md, color: colors.primary }}>Cancel</Text>
+            </TouchableOpacity>
+            <Text style={[styles.configModalTitle, { color: colors.text }]}>Question Config</Text>
+            <TouchableOpacity onPress={handleSaveConfig} disabled={isSavingConfig}>
+              {isSavingConfig ? <ActivityIndicator size="small" color={colors.primary} /> : (
+                <Text style={{ fontSize: FontSizes.md, color: colors.primary, fontWeight: '600' }}>Save</Text>
+              )}
+            </TouchableOpacity>
+          </View>
+          <ScrollView style={{ padding: Spacing.lg }}>
+            <Text style={[styles.configSectionTitle, { color: colors.text }]}>Difficulty Distribution</Text>
+            <Text style={{ fontSize: FontSizes.xs, color: colors.textSecondary, marginBottom: Spacing.md }}>
+              Total: {(parseInt(cfgEasyCount) || 0) + (parseInt(cfgMediumCount) || 0) + (parseInt(cfgHardCount) || 0)} questions
+            </Text>
+            {[
+              { label: 'Easy', value: cfgEasyCount, setter: setCfgEasyCount, color: '#34C759', loState: cfgEasyLO, level: 'easy' as const },
+              { label: 'Medium', value: cfgMediumCount, setter: setCfgMediumCount, color: '#FF9500', loState: cfgMediumLO, level: 'medium' as const },
+              { label: 'Hard', value: cfgHardCount, setter: setCfgHardCount, color: '#FF3B30', loState: cfgHardLO, level: 'hard' as const },
+            ].map(({ label, value, setter, color, loState, level }) => (
+              <View key={label} style={[styles.configRow, { flexDirection: 'column', alignItems: 'stretch' }]}>
+                <View style={{ flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center' }}>
+                  <View style={styles.configLabelRow}>
+                    <View style={[styles.configDot, { backgroundColor: color }]} />
+                    <Text style={[styles.configLabel, { color: colors.text }]}>{label}</Text>
+                  </View>
+                  <View style={styles.configCountRow}>
+                    <TouchableOpacity style={[styles.configCountBtn, { borderColor: colors.border }]} onPress={() => setter(String(Math.max(0, (parseInt(value) || 0) - 1)))}>
+                      <Text style={{ fontSize: 18, color: colors.primary, fontWeight: '700' }}>−</Text>
+                    </TouchableOpacity>
+                    <TextInput
+                      style={[styles.configInput, { color: colors.text, borderColor: colors.border }]}
+                      value={value}
+                      onChangeText={setter}
+                      keyboardType="number-pad"
+                      textAlign="center"
+                    />
+                    <TouchableOpacity style={[styles.configCountBtn, { borderColor: colors.border }]} onPress={() => setter(String((parseInt(value) || 0) + 1))}>
+                      <Text style={{ fontSize: 18, color: colors.primary, fontWeight: '700' }}>+</Text>
+                    </TouchableOpacity>
+                  </View>
+                </View>
+                {/* LO Mapping */}
+                {subjectLOs.length > 0 && (
+                  <View style={{ marginTop: Spacing.sm }}>
+                    <Text style={{ fontSize: FontSizes.xs, color: colors.textSecondary, marginBottom: 4 }}>
+                      LO Mapping (optional)
+                    </Text>
+                    <View style={{ flexDirection: 'row', flexWrap: 'wrap', gap: 6 }}>
+                      {subjectLOs.map((lo) => (
+                        <TouchableOpacity
+                          key={lo.id}
+                          style={{
+                            paddingHorizontal: 10,
+                            paddingVertical: 5,
+                            borderRadius: BorderRadius.full,
+                            borderWidth: 1,
+                            backgroundColor: loState.includes(lo.id) ? color + '20' : 'transparent',
+                            borderColor: loState.includes(lo.id) ? color : colors.border,
+                          }}
+                          onPress={() => toggleLOMapping(level, lo.id)}
+                        >
+                          <Text style={{ fontSize: FontSizes.xs, fontWeight: '500', color: loState.includes(lo.id) ? color : colors.textSecondary }}>
+                            {lo.id}
+                          </Text>
+                        </TouchableOpacity>
+                      ))}
+                    </View>
+                  </View>
+                )}
+              </View>
+            ))}
+            {loadingSubjectLOs && (
+              <View style={{ alignItems: 'center', paddingVertical: Spacing.md }}>
+                <ActivityIndicator size="small" color={colors.primary} />
+                <Text style={{ fontSize: FontSizes.xs, color: colors.textSecondary, marginTop: 4 }}>Loading Learning Outcomes...</Text>
+              </View>
+            )}
+          </ScrollView>
+        </SafeAreaView>
+      </Modal>
     </SafeAreaView>
   );
 }
@@ -496,7 +732,7 @@ export default function TestDetailScreen() {
 const styles = StyleSheet.create({
   container: { flex: 1 },
   centered: { flex: 1, justifyContent: 'center', alignItems: 'center' },
-  content: { padding: Spacing.md, paddingBottom: 100 },
+  content: { padding: Spacing.md },
   statusBanner: { flexDirection: 'row', alignItems: 'center', gap: Spacing.sm, padding: Spacing.md, borderRadius: BorderRadius.md, borderWidth: 1, marginBottom: Spacing.md },
   statusBannerText: { fontSize: FontSizes.sm, fontWeight: '500', flex: 1 },
   infoCard: { padding: Spacing.md, marginBottom: Spacing.md, gap: Spacing.sm },
@@ -534,4 +770,20 @@ const styles = StyleSheet.create({
   questionActions: { flexDirection: 'row', gap: Spacing.sm, marginTop: 4 },
   qAction: { flexDirection: 'row', alignItems: 'center', gap: 4, paddingHorizontal: 10, paddingVertical: 5, borderRadius: BorderRadius.md, borderWidth: 1 },
   qActionText: { fontSize: FontSizes.xs, fontWeight: '500' },
+  // Floating action bar
+  floatingBar: { position: 'absolute', left: 0, right: 0, borderTopWidth: 1, paddingVertical: 12 },
+  floatingBarContent: { flexDirection: 'row', gap: Spacing.sm, paddingHorizontal: Spacing.md },
+  fabButton: { flexDirection: 'row', alignItems: 'center', gap: 5, paddingHorizontal: 14, paddingVertical: 10, borderRadius: BorderRadius.lg },
+  fabText: { color: '#FFFFFF', fontSize: FontSizes.xs, fontWeight: '600' },
+  // Config modal
+  configModalHeader: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', padding: Spacing.md, borderBottomWidth: 1, borderBottomColor: 'rgba(0,0,0,0.08)' },
+  configModalTitle: { fontSize: FontSizes.lg, fontWeight: '700' },
+  configSectionTitle: { fontSize: FontSizes.md, fontWeight: '700', marginBottom: 4 },
+  configRow: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', paddingVertical: Spacing.md, borderBottomWidth: 1, borderBottomColor: 'rgba(0,0,0,0.05)' },
+  configLabelRow: { flexDirection: 'row', alignItems: 'center', gap: Spacing.sm },
+  configDot: { width: 12, height: 12, borderRadius: 6 },
+  configLabel: { fontSize: FontSizes.md, fontWeight: '500' },
+  configCountRow: { flexDirection: 'row', alignItems: 'center', gap: 8 },
+  configCountBtn: { width: 36, height: 36, borderRadius: 18, borderWidth: 1, justifyContent: 'center', alignItems: 'center' },
+  configInput: { width: 48, height: 36, borderWidth: 1, borderRadius: BorderRadius.md, fontSize: FontSizes.md, fontWeight: '600' },
 });

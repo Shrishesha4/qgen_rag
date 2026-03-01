@@ -16,6 +16,7 @@ import {
   Platform,
 } from 'react-native';
 import { useRouter } from 'expo-router';
+import { useSafeAreaInsets } from 'react-native-safe-area-context';
 
 import { useColorScheme } from '@/hooks/use-color-scheme';
 import { Colors, Spacing, FontSizes, BorderRadius } from '@/constants/theme';
@@ -37,6 +38,11 @@ export default function CreateTestScreen() {
   const colorScheme = useColorScheme() ?? 'light';
   const colors = Colors[colorScheme];
   const router = useRouter();
+  const insets = useSafeAreaInsets();
+  
+  // Calculate bottom padding for bottom bar (accounts for tab bar + safe area)
+  const TAB_BAR_HEIGHT = Platform.OS === 'ios' ? 49 : 60;
+  const bottomBarPadding = TAB_BAR_HEIGHT + insets.bottom + 16;
 
   // Flow state
   const [step, setStep] = useState<Step>('basics');
@@ -756,7 +762,7 @@ export default function CreateTestScreen() {
         </ScrollView>
 
         {/* Bottom Actions */}
-        <View style={[styles.bottomBar, { backgroundColor: colors.card, borderTopColor: colors.border }]}>
+        <View style={[styles.bottomBar, { backgroundColor: colors.card, borderTopColor: colors.border, paddingBottom: bottomBarPadding }]}>
           {step !== 'basics' && (
             <NativeButton
               title="Back"
@@ -1047,7 +1053,5 @@ const styles = StyleSheet.create({
     paddingHorizontal: Spacing.lg,
     paddingVertical: Spacing.md,
     borderTopWidth: 1,
-    paddingBottom: 100,
-    backgroundColor: '#000000',
   },
 });

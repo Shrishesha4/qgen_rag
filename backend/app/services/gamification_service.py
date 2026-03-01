@@ -741,43 +741,108 @@ class GamificationService:
 
     # --- Leaderboard ---
 
-    async def get_leaderboard(self, student_id: UUID, limit: int = 20) -> dict:
-        """Get XP leaderboard."""
-        result = await self.db.execute(
-            select(User)
-            .where(User.role == "student")
-            .order_by(desc(User.xp_total))
-            .limit(limit)
-        )
-        users = result.scalars().all()
+    async def get_leaderboard(self, student_id: UUID, limit: int = 20, subject_id: Optional[UUID] = None) -> dict:
+        """Get XP leaderboard. If subject_id is provided, returns class-wise leaderboard."""
+        from app.models.subject import SubjectEnrollment
         
-        entries = []
-        current_rank = None
-        for i, u in enumerate(users, 1):
-            entries.append({
-                "rank": i,
-                "user_id": u.id,
-                "username": u.username,
-                "full_name": u.full_name,
-                "avatar_url": u.avatar_url,
-                "xp_total": u.xp_total,
-                "streak_count": u.streak_count,
-                "level": calculate_level(u.xp_total),
-            })
-            if u.id == student_id:
-                current_rank = i
-        
-        # Count total students
-        total = await self.db.execute(
-            select(func.count(User.id)).where(User.role == "student")
-        )
-        total_students = total.scalar() or 0
-        
-        return {
-            "entries": entries,
-            "total_students": total_students,
-            "current_user_rank": current_rank,
-        }
+        if subject_id:
+            # Class-wise leaderboard: only students enrolled in this subject
+            # Calculate XP from their progress in this subject
+            result = await self.db.execute(
+                select(User, StudentProgress)
+                .join(SubjectEnrollment, User.id == SubjectEnrollment.student_id)
+                .outerjoin(
+                    StudentProgress,
+                    (User.id == StudentProgress.student_id) & (StudentProgress.subject_id == subject_id)
+                )
+                .where(User.role == "student")
+                .where(SubjectEnrollment.subject_id == subject_id)
+                .where(SubjectEnrollment.status == "approved")
+                .distinct()
+            )
+            rows = result.all()
+            
+            # Aggregate XP per user for this subject
+            user_xp: dict = {}
+            for user, progress in rows:
+                if user.id not in user_xp:
+                    user_xp[user.id] = {
+                        "user": user,
+                        "xp": 0
+                    }
+                if progress:
+                    user_xp[user.id]["xp"] += progress.xp_earned
+            
+            # Sort by XP descending
+            sorted_users = sorted(user_xp.values(), key=lambda x: x["xp"], reverse=True)[:limit]
+            
+            entries = []
+            current_rank = None
+            for i, item in enumerate(sorted_users, 1):
+                u = item["user"]
+                entries.append({
+                    "rank": i,
+                    "user_id": u.id,
+                    "username": u.username,
+                    "full_name": u.full_name,
+                    "avatar_url": u.avatar_url,
+                    "xp_total": item["xp"],
+                    "streak_count": u.streak_count,
+                    "level": calculate_level(item["xp"]),
+                })
+                if u.id == student_id:
+                    current_rank = i
+            
+            # Count total students in this subject
+            total = await self.db.execute(
+                select(func.count(SubjectEnrollment.id))
+                .where(SubjectEnrollment.subject_id == subject_id)
+                .where(SubjectEnrollment.status == "approved")
+            )
+            total_students = total.scalar() or 0
+            
+            return {
+                "entries": entries,
+                "total_students": total_students,
+                "current_user_rank": current_rank,
+            }
+        else:
+            # Global leaderboard
+            result = await self.db.execute(
+                select(User)
+                .where(User.role == "student")
+                .order_by(desc(User.xp_total))
+                .limit(limit)
+            )
+            users = result.scalars().all()
+            
+            entries = []
+            current_rank = None
+            for i, u in enumerate(users, 1):
+                entries.append({
+                    "rank": i,
+                    "user_id": u.id,
+                    "username": u.username,
+                    "full_name": u.full_name,
+                    "avatar_url": u.avatar_url,
+                    "xp_total": u.xp_total,
+                    "streak_count": u.streak_count,
+                    "level": calculate_level(u.xp_total),
+                })
+                if u.id == student_id:
+                    current_rank = i
+            
+            # Count total students
+            total = await self.db.execute(
+                select(func.count(User.id)).where(User.role == "student")
+            )
+            total_students = total.scalar() or 0
+            
+            return {
+                "entries": entries,
+                "total_students": total_students,
+                "current_user_rank": current_rank,
+            }
 
     # --- Test History ---
 
