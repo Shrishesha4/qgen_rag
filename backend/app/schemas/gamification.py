@@ -120,6 +120,7 @@ class LessonResult(BaseModel):
     new_level: int
     results: List[AnswerResult]
     accuracy: float
+    tutor_feedback: Optional[str] = None
 
 
 # --- Test History ---
@@ -136,6 +137,7 @@ class TestHistoryResponse(BaseModel):
     xp_earned: int
     time_taken_seconds: Optional[int] = None
     difficulty: str
+    tutor_feedback: Optional[str] = None
     created_at: datetime
 
     model_config = {"from_attributes": True}

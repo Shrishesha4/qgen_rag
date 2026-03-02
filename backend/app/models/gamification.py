@@ -119,6 +119,9 @@ class TestHistory(Base):
     # Answers detail
     answers: Mapped[Optional[dict]] = mapped_column(JSONB)  # [{question_id, selected, correct, xp}]
     
+    # AI Tutor feedback
+    tutor_feedback: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
+    
     # Timestamps
     created_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), server_default=func.now()
