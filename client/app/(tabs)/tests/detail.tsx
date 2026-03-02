@@ -301,29 +301,9 @@ export default function TestDetailScreen() {
       );
     }
 
-    if (studentTest.already_submitted) {
-      return (
-        <SafeAreaView style={[styles.container, { backgroundColor: colors.background }]} edges={['bottom']}>
-          <View style={styles.centered}>
-            <Text style={{ fontSize: 64 }}>✅</Text>
-            <Text style={{ color: colors.text, fontSize: FontSizes.xl, fontWeight: '700', marginTop: 12 }}>
-              Already Submitted
-            </Text>
-            <Text style={{ color: colors.textSecondary, marginTop: 8, textAlign: 'center', paddingHorizontal: 40 }}>
-              You have already completed this test. Check your results in the Learn tab.
-            </Text>
-            <TouchableOpacity
-              style={{ marginTop: 24, backgroundColor: colors.primary, paddingHorizontal: 32, paddingVertical: 12, borderRadius: BorderRadius.lg }}
-              onPress={() => router.back()}
-            >
-              <Text style={{ color: '#FFF', fontWeight: '600' }}>Go Back</Text>
-            </TouchableOpacity>
-          </View>
-        </SafeAreaView>
-      );
-    }
-
     const questions = studentTest.questions || [];
+    const previousAttempt = studentTest.previous_attempt;
+    
     return (
       <SafeAreaView style={[styles.container, { backgroundColor: colors.background }]} edges={['bottom']}>
         <ScrollView contentContainerStyle={{ padding: Spacing.lg, paddingBottom: 120 }}>
@@ -345,6 +325,23 @@ export default function TestDetailScreen() {
               </Text>
             )}
           </View>
+
+          {/* Previous Attempt Info */}
+          {previousAttempt && (
+            <GlassCard style={{ padding: Spacing.md, marginBottom: Spacing.lg, borderColor: colors.warning, borderWidth: 1 }}>
+              <View style={{ flexDirection: 'row', alignItems: 'center', gap: Spacing.sm }}>
+                <Text style={{ fontSize: 24 }}>🔄</Text>
+                <View style={{ flex: 1 }}>
+                  <Text style={{ fontSize: FontSizes.sm, fontWeight: '600', color: colors.text }}>
+                    Previous Attempt: {previousAttempt.score}/{previousAttempt.total_marks}
+                  </Text>
+                  <Text style={{ fontSize: FontSizes.xs, color: colors.textSecondary }}>
+                    Questions & options are shuffled for re-attempts
+                  </Text>
+                </View>
+              </View>
+            </GlassCard>
+          )}
 
           {/* Test Stats */}
           <View style={{ flexDirection: 'row', gap: Spacing.sm, marginBottom: Spacing.lg }}>
@@ -409,7 +406,7 @@ export default function TestDetailScreen() {
             }
           >
             <Text style={{ color: '#FFF', fontSize: FontSizes.lg, fontWeight: '800' }}>
-              🚀 Start Test
+              {previousAttempt ? '🔄 Retake Test' : '🚀 Start Test'}
             </Text>
           </TouchableOpacity>
         </ScrollView>

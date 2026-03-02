@@ -164,12 +164,6 @@ export default function TakeTestScreen() {
         (async () => {
             try {
                 const data = await testsService.getStudentTest(testId);
-                if (data.already_submitted) {
-                    Alert.alert('Already Submitted', 'You have already completed this test.', [
-                        { text: 'OK', onPress: () => router.back() },
-                    ]);
-                    return;
-                }
                 setTest(data);
                 setQuestions(data.questions || []);
                 setIsLoading(false);

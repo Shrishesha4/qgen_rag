@@ -650,11 +650,13 @@ class TestService:
 
     async def get_test_for_student(self, test_id: UUID, student_id: UUID) -> Optional[dict]:
         """Get test details and questions for a student to take."""
+        import random
+        
         test = await self.get_test(test_id)
         if not test or test.status != "published":
             return None
 
-        # Check if already submitted
+        # Check previous submissions (for info, but allow re-attempts)
         result = await self.db.execute(
             select(TestSubmission).where(
                 and_(
@@ -662,10 +664,9 @@ class TestService:
                     TestSubmission.student_id == student_id,
                     TestSubmission.status == "submitted",
                 )
-            )
+            ).order_by(TestSubmission.submitted_at.desc())
         )
-        if result.scalar_one_or_none():
-            return {"already_submitted": True, "test_id": test_id}
+        previous_submission = result.scalar_one_or_none()
 
         # Get questions (without correct answers)
         questions = await self.get_test_questions(test_id)
@@ -673,6 +674,12 @@ class TestService:
             q.pop("correct_answer", None)
             q.pop("correct_answer_override", None)
             q.pop("explanation", None)
+            # Shuffle options if present
+            if q.get("options"):
+                random.shuffle(q["options"])
+        
+        # Shuffle questions order
+        random.shuffle(questions)
 
         return {
             "id": test.id,
@@ -683,6 +690,11 @@ class TestService:
             "total_marks": test.total_marks,
             "duration_minutes": test.duration_minutes,
             "questions": questions,
+            "previous_attempt": {
+                "score": previous_submission.score,
+                "total_marks": previous_submission.total_marks,
+                "submitted_at": previous_submission.submitted_at.isoformat() if previous_submission.submitted_at else None,
+            } if previous_submission else None,
         }
 
     async def submit_test(self, test_id: UUID, student_id: UUID, data: dict) -> dict:
@@ -691,18 +703,16 @@ class TestService:
         if not test or test.status != "published":
             raise ValueError("Test not available")
 
-        # Check if already submitted
+        # Check for existing submission (for re-attempts, we update it)
         result = await self.db.execute(
             select(TestSubmission).where(
                 and_(
                     TestSubmission.test_id == test_id,
                     TestSubmission.student_id == student_id,
-                    TestSubmission.status == "submitted",
                 )
             )
         )
-        if result.scalar_one_or_none():
-            raise ValueError("Already submitted this test")
+        existing_submission = result.scalar_one_or_none()
 
         # Get questions with answers
         questions = await self.get_test_questions(test_id)
@@ -737,18 +747,31 @@ class TestService:
 
         percentage = round((score / total_marks * 100), 1) if total_marks > 0 else 0.0
 
-        submission = TestSubmission(
-            test_id=test_id,
-            student_id=student_id,
-            score=score,
-            total_marks=total_marks,
-            percentage=percentage,
-            answers=answer_results,
-            time_taken_seconds=data.get("total_time_seconds"),
-            status="submitted",
-            submitted_at=datetime.now(timezone.utc),
-        )
-        self.db.add(submission)
+        if existing_submission:
+            # Update existing submission for re-attempt
+            existing_submission.score = score
+            existing_submission.total_marks = total_marks
+            existing_submission.percentage = percentage
+            existing_submission.answers = answer_results
+            existing_submission.time_taken_seconds = data.get("total_time_seconds")
+            existing_submission.status = "submitted"
+            existing_submission.submitted_at = datetime.now(timezone.utc)
+            submission = existing_submission
+        else:
+            # Create new submission
+            submission = TestSubmission(
+                test_id=test_id,
+                student_id=student_id,
+                score=score,
+                total_marks=total_marks,
+                percentage=percentage,
+                answers=answer_results,
+                time_taken_seconds=data.get("total_time_seconds"),
+                status="submitted",
+                submitted_at=datetime.now(timezone.utc),
+            )
+            self.db.add(submission)
+        
         await self.db.commit()
         await self.db.refresh(submission)
 

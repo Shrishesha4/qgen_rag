@@ -11,8 +11,10 @@ export default function TestsLayout() {
       screenOptions={{
         headerShown: true,
         headerStyle: {
-          backgroundColor: colors.background,
+          backgroundColor: 'transparent',
         },
+        headerTransparent: true,
+        headerBlurEffect: colorScheme === 'dark' ? 'dark' : 'light',
         headerTintColor: colors.primary,
         headerTitleStyle: {
           fontWeight: '600',
