@@ -753,9 +753,21 @@ class TestService:
         await self.db.refresh(submission)
 
         # Award XP and gamification stats
+        tutor_feedback = None
         try:
             from app.services.gamification_service import GamificationService
             gamification = GamificationService(self.db)
+            # Build question_details for AI tutor feedback
+            question_details = [
+                {
+                    "question_text": question_map.get(r["question_id"], {}).get("question_text", ""),
+                    "options": question_map.get(r["question_id"], {}).get("options", []),
+                    "selected_answer": r["selected_answer"],
+                    "correct_answer": r["correct_answer"],
+                    "is_correct": r["is_correct"],
+                }
+                for r in answer_results
+            ]
             gamification_result = await gamification.process_test_submission(
                 student_id=student_id,
                 subject_id=test.subject_id,
@@ -764,8 +776,10 @@ class TestService:
                 total_marks=total_marks,
                 total_questions=len(questions),
                 total_time_seconds=data.get("total_time_seconds", 0),
-                results=answer_results
+                results=answer_results,
+                question_details=question_details,
             )
+            tutor_feedback = gamification_result.get("tutor_feedback")
         except Exception as e:
             logger.error(f"Failed to record gamification for test: {e}")
 
@@ -781,6 +795,7 @@ class TestService:
             "started_at": submission.started_at,
             "submitted_at": submission.submitted_at,
             "results": answer_results,
+            "tutor_feedback": tutor_feedback,
         }
 
     def _check_answer(self, selected: str, correct: str) -> bool:

@@ -1,8 +1,9 @@
 /**
  * Take Test Screen - Gamified one-question-at-a-time test experience
- * Features: animated transitions, progress bar, timer, streak counter, score reveal
+ * Features: 3...2...1...GO! countdown, react-native-reanimated 120fps animations,
+ * haptic feedback, AI Tutor feedback, celebration effects
  */
-import React, { useEffect, useState, useCallback, useRef } from 'react';
+import React, { useEffect, useState, useCallback } from 'react';
 import {
     View,
     Text,
@@ -10,17 +11,34 @@ import {
     TouchableOpacity,
     ActivityIndicator,
     Alert,
-    Animated,
     Dimensions,
+    ScrollView,
 } from 'react-native';
 import { useRouter, useLocalSearchParams } from 'expo-router';
 import { SafeAreaView } from 'react-native-safe-area-context';
+import * as Haptics from 'expo-haptics';
+import ReAnimated, {
+    useSharedValue,
+    useAnimatedStyle,
+    withSpring,
+    withTiming,
+    withDelay,
+    withSequence,
+    withRepeat,
+    runOnJS,
+    Easing,
+} from 'react-native-reanimated';
 import { useColorScheme } from '@/hooks/use-color-scheme';
 import { Colors, Spacing, FontSizes, BorderRadius } from '@/constants/theme';
 import { IconSymbol } from '@/components/ui/icon-symbol';
 import { testsService } from '@/services/tests';
 
 const { width: SCREEN_WIDTH } = Dimensions.get('window');
+
+// Spring configs for high-refresh-rate smoothness
+const SPRING_SNAPPY = { damping: 20, stiffness: 200, mass: 0.8 };
+const SPRING_BOUNCY = { damping: 12, stiffness: 150, mass: 0.6 };
+const SPRING_GENTLE = { damping: 15, stiffness: 100, mass: 1 };
 
 export default function TakeTestScreen() {
     const colorScheme = useColorScheme() ?? 'light';
@@ -31,34 +49,114 @@ export default function TakeTestScreen() {
     const [test, setTest] = useState<any>(null);
     const [questions, setQuestions] = useState<any[]>([]);
     const [isLoading, setIsLoading] = useState(true);
+    const [showCountdown, setShowCountdown] = useState(false);
+    const [countdownValue, setCountdownValue] = useState('3');
     const [currentIndex, setCurrentIndex] = useState(0);
     const [answers, setAnswers] = useState<Record<string, string>>({});
     const [submitting, setSubmitting] = useState(false);
     const [showResult, setShowResult] = useState(false);
     const [result, setResult] = useState<any>(null);
     const [elapsedSeconds, setElapsedSeconds] = useState(0);
+    const [testStarted, setTestStarted] = useState(false);
 
-    // Animations
-    const slideAnim = useRef(new Animated.Value(0)).current;
-    const fadeAnim = useRef(new Animated.Value(1)).current;
-    const scaleAnim = useRef(new Animated.Value(1)).current;
-    const progressAnim = useRef(new Animated.Value(0)).current;
-    const optionAnims = useRef<Animated.Value[]>([]).current;
-    const resultScaleAnim = useRef(new Animated.Value(0)).current;
-    const resultFadeAnim = useRef(new Animated.Value(0)).current;
+    // Reanimated shared values
+    const countdownScale = useSharedValue(0);
+    const countdownOpacity = useSharedValue(0);
+    const overlayOpacity = useSharedValue(1);
 
-    // Timer
+    const questionSlideX = useSharedValue(0);
+    const questionFade = useSharedValue(1);
+    const questionScale = useSharedValue(1);
+    const progressWidth = useSharedValue(0);
+
+    // Option animation values - declared individually to satisfy hooks rules
+    const opt0Opacity = useSharedValue(0); const opt0TranslateY = useSharedValue(30);
+    const opt1Opacity = useSharedValue(0); const opt1TranslateY = useSharedValue(30);
+    const opt2Opacity = useSharedValue(0); const opt2TranslateY = useSharedValue(30);
+    const opt3Opacity = useSharedValue(0); const opt3TranslateY = useSharedValue(30);
+    const opt4Opacity = useSharedValue(0); const opt4TranslateY = useSharedValue(30);
+    const opt5Opacity = useSharedValue(0); const opt5TranslateY = useSharedValue(30);
+    const optionValues = [
+        { opacity: opt0Opacity, translateY: opt0TranslateY },
+        { opacity: opt1Opacity, translateY: opt1TranslateY },
+        { opacity: opt2Opacity, translateY: opt2TranslateY },
+        { opacity: opt3Opacity, translateY: opt3TranslateY },
+        { opacity: opt4Opacity, translateY: opt4TranslateY },
+        { opacity: opt5Opacity, translateY: opt5TranslateY },
+    ];
+
+    const resultScale = useSharedValue(0);
+    const resultOpacity = useSharedValue(0);
+    const tutorFade = useSharedValue(0);
+    const tutorSlide = useSharedValue(20);
+    const confettiOp = useSharedValue(0);
+    const pulseScale = useSharedValue(1);
+    const selectedPop = useSharedValue(1);
+
+    // Timer - only counts when test has started and not showing result
     useEffect(() => {
-        if (isLoading || showResult) return;
+        if (!testStarted || showResult) return;
         const timer = setInterval(() => setElapsedSeconds((s) => s + 1), 1000);
         return () => clearInterval(timer);
-    }, [isLoading, showResult]);
+    }, [testStarted, showResult]);
+
+    // Pulse animation for submitting state
+    useEffect(() => {
+        if (submitting) {
+            pulseScale.value = withRepeat(
+                withSequence(
+                    withTiming(1.06, { duration: 700, easing: Easing.inOut(Easing.ease) }),
+                    withTiming(1, { duration: 700, easing: Easing.inOut(Easing.ease) })
+                ),
+                -1, // infinite repeat
+                true  // reverse
+            );
+        } else {
+            pulseScale.value = 1;
+        }
+    }, [submitting]);
 
     const formatTime = (s: number) => {
         const m = Math.floor(s / 60);
         const sec = s % 60;
         return `${m}:${sec.toString().padStart(2, '0')}`;
     };
+
+    // ====== Countdown ======
+    const startCountdown = useCallback(() => {
+        setShowCountdown(true);
+        const steps = ['3', '2', '1', 'GO!'];
+        let i = 0;
+
+        const showNext = () => {
+            if (i >= steps.length) {
+                // End countdown
+                overlayOpacity.value = withTiming(0, { duration: 300 }, () => {
+                    runOnJS(setShowCountdown)(false);
+                    runOnJS(setTestStarted)(true);
+                });
+                return;
+            }
+            runOnJS(setCountdownValue)(steps[i]);
+            runOnJS(Haptics.impactAsync)(Haptics.ImpactFeedbackStyle.Heavy);
+
+            countdownScale.value = 0;
+            countdownOpacity.value = 1;
+            countdownScale.value = withSequence(
+                withSpring(1.3, { damping: 8, stiffness: 300 }),
+                withSpring(1, { damping: 14, stiffness: 200 })
+            );
+
+            // Fade out after showing
+            setTimeout(() => {
+                countdownOpacity.value = withTiming(0, { duration: 250 });
+                i++;
+                setTimeout(showNext, 300);
+            }, 600);
+        };
+
+        setTimeout(showNext, 200);
+    }, []);
 
     // Load test
     useEffect(() => {
@@ -74,98 +172,89 @@ export default function TakeTestScreen() {
                 }
                 setTest(data);
                 setQuestions(data.questions || []);
-                // Init option animations
-                const opts = data.questions?.[0]?.options || [];
-                for (let i = 0; i < 6; i++) {
-                    if (!optionAnims[i]) optionAnims.push(new Animated.Value(0));
-                }
-                // Animate first question entry
-                setTimeout(() => animateQuestionEntry(opts.length), 300);
+                setIsLoading(false);
+                // Start countdown after load
+                setTimeout(() => startCountdown(), 300);
             } catch (error: any) {
                 Alert.alert('Error', error?.response?.data?.detail || 'Failed to load test');
                 router.back();
-            } finally {
-                setIsLoading(false);
             }
         })();
     }, [testId]);
 
+    // Animate first question after countdown
+    useEffect(() => {
+        if (testStarted && questions.length > 0) {
+            animateQuestionEntry(questions[0]?.options?.length || 0);
+        }
+    }, [testStarted]);
+
     const animateQuestionEntry = (optCount: number) => {
-        slideAnim.setValue(SCREEN_WIDTH);
-        fadeAnim.setValue(0);
-        scaleAnim.setValue(0.9);
+        questionSlideX.value = SCREEN_WIDTH;
+        questionFade.value = 0;
+        questionScale.value = 0.92;
 
         // Reset option anims
         for (let i = 0; i < 6; i++) {
-            if (optionAnims[i]) optionAnims[i].setValue(0);
+            optionValues[i].opacity.value = 0;
+            optionValues[i].translateY.value = 30;
         }
 
-        Animated.parallel([
-            Animated.spring(slideAnim, { toValue: 0, useNativeDriver: true, tension: 50, friction: 9 }),
-            Animated.timing(fadeAnim, { toValue: 1, duration: 300, useNativeDriver: true }),
-            Animated.spring(scaleAnim, { toValue: 1, useNativeDriver: true, tension: 50, friction: 9 }),
-        ]).start();
+        questionSlideX.value = withSpring(0, SPRING_SNAPPY);
+        questionFade.value = withTiming(1, { duration: 300 });
+        questionScale.value = withSpring(1, SPRING_SNAPPY);
 
-        // Stagger option animations
+        // Stagger options
         for (let i = 0; i < optCount; i++) {
-            if (optionAnims[i]) {
-                Animated.timing(optionAnims[i], {
-                    toValue: 1,
-                    duration: 250,
-                    delay: 200 + i * 80,
-                    useNativeDriver: true,
-                }).start();
-            }
+            optionValues[i].opacity.value = withDelay(200 + i * 70, withTiming(1, { duration: 250 }));
+            optionValues[i].translateY.value = withDelay(200 + i * 70, withSpring(0, SPRING_BOUNCY));
         }
 
         // Progress bar
-        Animated.timing(progressAnim, {
-            toValue: (currentIndex + 1) / Math.max(questions.length, 1),
-            duration: 400,
-            useNativeDriver: false,
-        }).start();
+        progressWidth.value = withTiming(
+            ((currentIndex + 1) / Math.max(questions.length, 1)) * 100,
+            { duration: 400, easing: Easing.out(Easing.cubic) }
+        );
     };
 
     const animateQuestionExit = (direction: 'left' | 'right', cb: () => void) => {
         const toX = direction === 'left' ? -SCREEN_WIDTH : SCREEN_WIDTH;
-        Animated.parallel([
-            Animated.timing(slideAnim, { toValue: toX, duration: 200, useNativeDriver: true }),
-            Animated.timing(fadeAnim, { toValue: 0, duration: 200, useNativeDriver: true }),
-        ]).start(cb);
+        questionSlideX.value = withTiming(toX, { duration: 200, easing: Easing.in(Easing.cubic) });
+        questionFade.value = withTiming(0, { duration: 200 }, () => {
+            runOnJS(cb)();
+        });
     };
 
     const goToQuestion = (newIndex: number) => {
         if (newIndex < 0 || newIndex >= questions.length) return;
+        Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
         const direction = newIndex > currentIndex ? 'left' : 'right';
         animateQuestionExit(direction, () => {
             setCurrentIndex(newIndex);
             const opts = questions[newIndex]?.options || [];
-            // Update progress
-            Animated.timing(progressAnim, {
-                toValue: (newIndex + 1) / questions.length,
-                duration: 400,
-                useNativeDriver: false,
-            }).start();
+            progressWidth.value = withTiming(
+                ((newIndex + 1) / questions.length) * 100,
+                { duration: 400 }
+            );
             animateQuestionEntry(opts.length);
         });
     };
 
     const selectAnswer = (questionId: string, optLetter: string) => {
+        Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
         setAnswers((prev) => ({ ...prev, [questionId]: optLetter }));
-
-        // Bounce animation on selection
-        Animated.sequence([
-            Animated.timing(scaleAnim, { toValue: 1.02, duration: 100, useNativeDriver: true }),
-            Animated.spring(scaleAnim, { toValue: 1, useNativeDriver: true, tension: 100, friction: 6 }),
-        ]).start();
+        selectedPop.value = withSequence(
+            withTiming(1.03, { duration: 80 }),
+            withSpring(1, { damping: 10, stiffness: 300 })
+        );
     };
 
     const handleSubmit = () => {
+        Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Medium);
         const unanswered = questions.length - Object.keys(answers).length;
         const msg = unanswered > 0
             ? `You have ${unanswered} unanswered question(s). Submit anyway?`
             : 'Ready to submit your test?';
-
         Alert.alert('Submit Test', msg, [
             { text: 'Cancel', style: 'cancel' },
             { text: 'Submit', onPress: doSubmit },
@@ -185,11 +274,24 @@ export default function TakeTestScreen() {
             setResult(res);
             setShowResult(true);
 
-            // Animate result
-            Animated.parallel([
-                Animated.spring(resultScaleAnim, { toValue: 1, useNativeDriver: true, tension: 40, friction: 5 }),
-                Animated.timing(resultFadeAnim, { toValue: 1, duration: 600, useNativeDriver: true }),
-            ]).start();
+            const pct = Math.round(res.percentage || 0);
+            if (pct >= 80) {
+                Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success);
+                confettiOp.value = withSequence(
+                    withTiming(1, { duration: 300 }),
+                    withDelay(1500, withTiming(0, { duration: 2000 }))
+                );
+            } else {
+                Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Medium);
+            }
+
+            resultScale.value = withSpring(1, SPRING_GENTLE);
+            resultOpacity.value = withTiming(1, { duration: 600 });
+
+            if (res.tutor_feedback) {
+                tutorFade.value = withDelay(1000, withTiming(1, { duration: 600 }));
+                tutorSlide.value = withDelay(1000, withSpring(0, SPRING_GENTLE));
+            }
         } catch (error: any) {
             Alert.alert('Error', error?.response?.data?.detail || 'Failed to submit');
         } finally {
@@ -197,12 +299,103 @@ export default function TakeTestScreen() {
         }
     };
 
+    // ====== Animated Styles ======
+    const countdownStyle = useAnimatedStyle(() => ({
+        transform: [{ scale: countdownScale.value }],
+        opacity: countdownOpacity.value,
+    }));
+    const overlayStyle = useAnimatedStyle(() => ({
+        opacity: overlayOpacity.value,
+    }));
+    const questionStyle = useAnimatedStyle(() => ({
+        transform: [
+            { translateX: questionSlideX.value },
+            { scale: questionScale.value },
+        ],
+        opacity: questionFade.value,
+    }));
+    const progressStyle = useAnimatedStyle(() => {
+        // Use percentage string for width - reanimated supports this at runtime
+        return { width: `${progressWidth.value}%` } as { width: string };
+    });
+    const resultAnimStyle = useAnimatedStyle(() => ({
+        transform: [{ scale: resultScale.value }],
+        opacity: resultOpacity.value,
+    }));
+    const tutorStyle = useAnimatedStyle(() => ({
+        opacity: tutorFade.value,
+        transform: [{ translateY: tutorSlide.value }],
+    }));
+    const confettiStyle = useAnimatedStyle(() => ({
+        opacity: confettiOp.value,
+    }));
+    const pulseStyle = useAnimatedStyle(() => ({
+        transform: [{ scale: pulseScale.value }],
+    }));
+
+    // Option animated styles - must call hooks at top level, not in loops
+    const optStyle0 = useAnimatedStyle(() => ({ opacity: optionValues[0].opacity.value, transform: [{ translateY: optionValues[0].translateY.value }] }));
+    const optStyle1 = useAnimatedStyle(() => ({ opacity: optionValues[1].opacity.value, transform: [{ translateY: optionValues[1].translateY.value }] }));
+    const optStyle2 = useAnimatedStyle(() => ({ opacity: optionValues[2].opacity.value, transform: [{ translateY: optionValues[2].translateY.value }] }));
+    const optStyle3 = useAnimatedStyle(() => ({ opacity: optionValues[3].opacity.value, transform: [{ translateY: optionValues[3].translateY.value }] }));
+    const optStyle4 = useAnimatedStyle(() => ({ opacity: optionValues[4].opacity.value, transform: [{ translateY: optionValues[4].translateY.value }] }));
+    const optStyle5 = useAnimatedStyle(() => ({ opacity: optionValues[5].opacity.value, transform: [{ translateY: optionValues[5].translateY.value }] }));
+    const optionAnimStyles = [optStyle0, optStyle1, optStyle2, optStyle3, optStyle4, optStyle5];
+
+    // ====== Loading ======
     if (isLoading) {
         return (
             <SafeAreaView style={[styles.container, { backgroundColor: colors.background }]}>
                 <View style={styles.centered}>
                     <ActivityIndicator size="large" color={colors.primary} />
                     <Text style={{ color: colors.textSecondary, marginTop: 12 }}>Loading test...</Text>
+                </View>
+            </SafeAreaView>
+        );
+    }
+
+    // ====== Countdown Overlay ======
+    if (showCountdown) {
+        return (
+            <SafeAreaView style={[styles.container, { backgroundColor: colors.background }]}>
+                <ReAnimated.View style={[styles.countdownOverlay, overlayStyle, { backgroundColor: colors.background }]}>
+                    <ReAnimated.View style={countdownStyle}>
+                        <Text style={[
+                            styles.countdownText,
+                            {
+                                color: countdownValue === 'GO!' ? colors.success : colors.primary,
+                                fontSize: countdownValue === 'GO!' ? 72 : 120,
+                            },
+                        ]}>
+                            {countdownValue}
+                        </Text>
+                    </ReAnimated.View>
+                    <Text style={[styles.countdownSubtext, { color: colors.textSecondary }]}>
+                        {test?.title || 'Get Ready!'}
+                    </Text>
+                    <Text style={[styles.countdownMeta, { color: colors.textTertiary }]}>
+                        {questions.length} questions
+                    </Text>
+                </ReAnimated.View>
+            </SafeAreaView>
+        );
+    }
+
+    // ====== Submitting State ======
+    if (submitting) {
+        return (
+            <SafeAreaView style={[styles.container, { backgroundColor: colors.background }]}>
+                <View style={styles.centered}>
+                    <ReAnimated.View style={[{ alignItems: 'center' }, pulseStyle]}>
+                        <Text style={{ fontSize: 48, marginBottom: 16 }}>🤖</Text>
+                        <ActivityIndicator size="large" color={colors.primary} />
+                        <Text style={{ color: colors.text, marginTop: 16, fontSize: FontSizes.lg, fontWeight: '600', textAlign: 'center' }}>
+                            The Tutor is evaluating{'\n'}your answers...
+                        </Text>
+                        <Text style={{ color: colors.textSecondary, marginTop: 8, fontSize: FontSizes.sm }}>
+                            This may take a moment
+                        </Text>
+                    </ReAnimated.View>
                 </View>
             </SafeAreaView>
         );
@@ -222,18 +415,19 @@ export default function TakeTestScreen() {
 
         return (
             <SafeAreaView style={[styles.container, { backgroundColor: colors.background }]}>
-                <View style={styles.resultContainer}>
-                    <Animated.View style={{
-                        transform: [{ scale: resultScaleAnim }],
-                        opacity: resultFadeAnim,
-                        alignItems: 'center',
-                    }}>
+                <ScrollView contentContainerStyle={styles.resultScrollContent}>
+                    {pct >= 80 && (
+                        <ReAnimated.View style={[styles.confettiOverlay, confettiStyle]} pointerEvents="none">
+                            <Text style={styles.confettiText}>🎉🎊✨🎉🎊✨🎉</Text>
+                        </ReAnimated.View>
+                    )}
+
+                    <ReAnimated.View style={[{ alignItems: 'center' }, resultAnimStyle]}>
                         <Text style={{ fontSize: 80 }}>{grade.emoji}</Text>
                         <Text style={{ fontSize: 32, fontWeight: '900', color: colors.text, marginTop: 16 }}>
                             {grade.label}
                         </Text>
 
-                        {/* Score Circle */}
                         <View style={[styles.scoreCircle, { borderColor: grade.color }]}>
                             <Text style={{ fontSize: 48, fontWeight: '900', color: grade.color }}>{pct}%</Text>
                             <Text style={{ fontSize: FontSizes.sm, color: colors.textSecondary }}>
@@ -241,7 +435,6 @@ export default function TakeTestScreen() {
                             </Text>
                         </View>
 
-                        {/* Stats Row */}
                         <View style={styles.resultStats}>
                             <View style={styles.resultStatItem}>
                                 <Text style={{ fontSize: FontSizes.xxl, fontWeight: '800', color: colors.primary }}>
@@ -262,16 +455,53 @@ export default function TakeTestScreen() {
                                 <Text style={{ fontSize: FontSizes.xs, color: colors.textSecondary }}>Answered</Text>
                             </View>
                         </View>
+                    </ReAnimated.View>
 
-                        <TouchableOpacity
-                            style={[styles.doneButton, { backgroundColor: colors.primary }]}
-                            onPress={() => router.back()}
-                        >
-                            <Text style={{ color: '#FFF', fontSize: FontSizes.md, fontWeight: '700' }}>
-                                Done 🎉
-                            </Text>
-                        </TouchableOpacity>
-                    </Animated.View>
+                    {result.tutor_feedback ? (
+                        <ReAnimated.View style={[
+                            styles.tutorCard,
+                            { backgroundColor: colors.card, borderColor: colors.border },
+                            tutorStyle,
+                        ]}>
+                            <View style={styles.tutorHeader}>
+                                <View style={[styles.tutorAvatar, { backgroundColor: colors.primary + '20' }]}>
+                                    <Text style={styles.tutorAvatarEmoji}>🤖</Text>
+                                </View>
+                                <View>
+                                    <Text style={[styles.tutorName, { color: colors.text }]}>AI Tutor</Text>
+                                    <Text style={[styles.tutorSubtitle, { color: colors.textTertiary }]}>Personalized feedback</Text>
+                                </View>
+                            </View>
+                            <View style={[styles.tutorBubble, { backgroundColor: colors.primary + '10' }]}>
+                                <Text style={[styles.tutorFeedbackText, { color: colors.text }]}>
+                                    {result.tutor_feedback}
+                                </Text>
+                            </View>
+                        </ReAnimated.View>
+                    ) : null}
+
+                    <TouchableOpacity
+                        style={[styles.doneButton, { backgroundColor: colors.primary }]}
+                        onPress={() => {
+                            Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
+                            router.back();
+                        }}
+                    >
+                        <Text style={{ color: '#FFF', fontSize: FontSizes.md, fontWeight: '700' }}>
+                            Done 🎉
+                        </Text>
+                    </TouchableOpacity>
+                </ScrollView>
+            </SafeAreaView>
+        );
+    }
+
+    // ====== Waiting for countdown to finish ======
+    if (!testStarted) {
+        return (
+            <SafeAreaView style={[styles.container, { backgroundColor: colors.background }]}>
+                <View style={styles.centered}>
+                    <ActivityIndicator size="large" color={colors.primary} />
                 </View>
             </SafeAreaView>
         );
@@ -300,6 +530,7 @@ export default function TakeTestScreen() {
             {/* Top Bar */}
             <View style={styles.topBar}>
                 <TouchableOpacity onPress={() => {
+                    Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
                     Alert.alert('Exit Test', 'Your progress will be lost. Are you sure?', [
                         { text: 'Continue Test', style: 'cancel' },
                         { text: 'Exit', style: 'destructive', onPress: () => router.back() },
@@ -310,15 +541,10 @@ export default function TakeTestScreen() {
 
                 {/* Progress Bar */}
                 <View style={[styles.progressBarBg, { backgroundColor: colors.border }]}>
-                    <Animated.View style={[
+                    <ReAnimated.View style={[
                         styles.progressBarFill,
-                        {
-                            backgroundColor: colors.primary,
-                            width: progressAnim.interpolate({
-                                inputRange: [0, 1],
-                                outputRange: ['0%', '100%'],
-                            }),
-                        },
+                        { backgroundColor: colors.primary },
+                        progressStyle,
                     ]} />
                 </View>
 
@@ -361,16 +587,7 @@ export default function TakeTestScreen() {
             )}
 
             {/* Question Card */}
-            <Animated.View style={[
-                styles.questionContainer,
-                {
-                    transform: [
-                        { translateX: slideAnim },
-                        { scale: scaleAnim },
-                    ],
-                    opacity: fadeAnim,
-                },
-            ]}>
+            <ReAnimated.View style={[styles.questionContainer, questionStyle]}>
                 <View style={[styles.questionCard, { backgroundColor: colors.card, borderColor: colors.border }]}>
                     <Text style={[styles.questionText, { color: colors.text }]}>
                         {currentQ.question_text}
@@ -382,21 +599,10 @@ export default function TakeTestScreen() {
                     {options.map((opt: string, i: number) => {
                         const optLetter = opt.charAt(0).toUpperCase();
                         const isSelected = selectedAnswer === optLetter;
-                        const anim = optionAnims[i] || new Animated.Value(1);
+                        const animStyle = optionAnimStyles[i] || {};
 
                         return (
-                            <Animated.View
-                                key={i}
-                                style={{
-                                    opacity: anim,
-                                    transform: [{
-                                        translateY: anim.interpolate({
-                                            inputRange: [0, 1],
-                                            outputRange: [30, 0],
-                                        }),
-                                    }],
-                                }}
-                            >
+                            <ReAnimated.View key={i} style={animStyle}>
                                 <TouchableOpacity
                                     style={[
                                         styles.optionButton,
@@ -434,11 +640,11 @@ export default function TakeTestScreen() {
                                         {opt.substring(opt.indexOf(')') + 1).trim() || opt}
                                     </Text>
                                 </TouchableOpacity>
-                            </Animated.View>
+                            </ReAnimated.View>
                         );
                     })}
                 </View>
-            </Animated.View>
+            </ReAnimated.View>
 
             {/* Navigation */}
             <View style={styles.navBar}>
@@ -451,7 +657,6 @@ export default function TakeTestScreen() {
                     <Text style={{ color: colors.primary, fontWeight: '600' }}>Prev</Text>
                 </TouchableOpacity>
 
-                {/* Question dots */}
                 <View style={styles.dotsRow}>
                     {questions.map((_, i) => {
                         const qid = questions[i]?.question_id || questions[i]?.id;
@@ -482,13 +687,9 @@ export default function TakeTestScreen() {
                         onPress={handleSubmit}
                         disabled={submitting}
                     >
-                        {submitting ? (
-                            <ActivityIndicator size="small" color="#FFF" />
-                        ) : (
-                            <Text style={{ color: '#FFF', fontWeight: '700', fontSize: FontSizes.sm }}>
-                                Submit ✨
-                            </Text>
-                        )}
+                        <Text style={{ color: '#FFF', fontWeight: '700', fontSize: FontSizes.sm }}>
+                            Submit ✨
+                        </Text>
                     </TouchableOpacity>
                 ) : (
                     <TouchableOpacity
@@ -507,6 +708,27 @@ export default function TakeTestScreen() {
 const styles = StyleSheet.create({
     container: { flex: 1 },
     centered: { flex: 1, justifyContent: 'center', alignItems: 'center' },
+    // Countdown
+    countdownOverlay: {
+        ...StyleSheet.absoluteFillObject,
+        justifyContent: 'center',
+        alignItems: 'center',
+        zIndex: 100,
+    },
+    countdownText: {
+        fontWeight: '900',
+        textAlign: 'center',
+    },
+    countdownSubtext: {
+        fontSize: FontSizes.lg,
+        fontWeight: '600',
+        marginTop: 24,
+    },
+    countdownMeta: {
+        fontSize: FontSizes.sm,
+        marginTop: 8,
+    },
+    // Top bar
     topBar: {
         flexDirection: 'row',
         alignItems: 'center',
@@ -622,12 +844,22 @@ const styles = StyleSheet.create({
         paddingHorizontal: 20,
         borderRadius: BorderRadius.lg,
     },
-    // Result styles
-    resultContainer: {
-        flex: 1,
+    // Result
+    confettiOverlay: {
+        position: 'absolute',
+        top: 0,
+        left: 0,
+        right: 0,
+        alignItems: 'center',
+        zIndex: 10,
+    },
+    confettiText: { fontSize: 40, letterSpacing: 8 },
+    resultScrollContent: {
+        flexGrow: 1,
         justifyContent: 'center',
         alignItems: 'center',
         padding: Spacing.xl,
+        paddingBottom: 100,
     },
     scoreCircle: {
         width: 160,
@@ -651,5 +883,39 @@ const styles = StyleSheet.create({
         paddingVertical: 14,
         paddingHorizontal: 48,
         borderRadius: BorderRadius.xl,
+        marginTop: Spacing.lg,
+    },
+    // AI Tutor
+    tutorCard: {
+        width: '100%',
+        marginTop: Spacing.lg,
+        marginBottom: Spacing.md,
+        borderRadius: BorderRadius.xl,
+        padding: Spacing.lg,
+        borderWidth: 1,
+    },
+    tutorHeader: {
+        flexDirection: 'row',
+        alignItems: 'center',
+        gap: Spacing.sm,
+        marginBottom: Spacing.md,
+    },
+    tutorAvatar: {
+        width: 40,
+        height: 40,
+        borderRadius: 20,
+        justifyContent: 'center',
+        alignItems: 'center',
+    },
+    tutorAvatarEmoji: { fontSize: 22 },
+    tutorName: { fontSize: FontSizes.md, fontWeight: '700' },
+    tutorSubtitle: { fontSize: FontSizes.xs },
+    tutorBubble: {
+        borderRadius: BorderRadius.lg,
+        padding: Spacing.md,
+    },
+    tutorFeedbackText: {
+        fontSize: FontSizes.sm + 1,
+        lineHeight: 22,
     },
 });

@@ -80,6 +80,7 @@ export interface LessonResult {
   new_level: number;
   results: AnswerResult[];
   accuracy: number;
+  tutor_feedback?: string;
 }
 
 export interface StudentProgress {

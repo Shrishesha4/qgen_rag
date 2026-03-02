@@ -475,6 +475,41 @@ alembic upgrade head
 alembic downgrade -1
 ```
 
+#### Running Migrations for AI Tutor Feedback
+
+If you just pulled changes that include the `006_add_tutor_feedback` migration, run:
+
+```bash
+# One-liner: apply the latest migration from host (no need to enter the container)
+docker-compose exec api alembic upgrade head
+
+# Or step-by-step:
+# 1. Make sure your containers are running
+docker-compose up -d
+
+# 2. Enter the API container
+docker-compose exec api bash
+
+# 3. Check current migration status
+alembic current
+
+# 4. Apply all pending migrations
+alembic upgrade head
+
+# 5. Verify the migration was applied
+alembic current
+# Should show: 006_add_tutor_feedback (head)
+
+# 6. Exit the container
+exit
+```
+
+> **Note:** If you encounter migration errors, you can reset and reapply:
+> ```bash
+> docker-compose exec api alembic downgrade base
+> docker-compose exec api alembic upgrade head
+> ```
+
 ### Rebuilding Services
 
 ```bash

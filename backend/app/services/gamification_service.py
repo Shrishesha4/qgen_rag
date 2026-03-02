@@ -81,6 +81,62 @@ def get_badges(streak_count: int) -> List[str]:
     return badges
 
 
+async def generate_tutor_feedback(
+    question_details: list, correct_count: int, total_questions: int
+) -> Optional[str]:
+    """Generate personalized AI tutor feedback using the LLM service.
+    
+    Args:
+        question_details: List of dicts with question_text, options, selected_answer, correct_answer, is_correct
+        correct_count: Number of correct answers
+        total_questions: Total number of questions
+    
+    Returns:
+        Tutor feedback string or None if LLM is unavailable
+    """
+    try:
+        from app.services.llm_service import LLMService
+        llm = LLMService()
+        
+        # Build the question summary for the prompt
+        q_summary_parts = []
+        for i, q in enumerate(question_details, 1):
+            status = "✅ Correct" if q["is_correct"] else "❌ Incorrect"
+            q_summary_parts.append(
+                f"Q{i}: {q['question_text']}\n"
+                f"  Student's answer: {q['selected_answer']}\n"
+                f"  Correct answer: {q['correct_answer']}\n"
+                f"  Result: {status}"
+            )
+        q_summary = "\n\n".join(q_summary_parts)
+        
+        system_prompt = (
+            "You are a warm, encouraging AI tutor for a college learning platform. "
+            "After a student completes a quiz, you give a brief personalized summary. "
+            "Praise specific correct concepts. For missed questions, gently explain the right answer. "
+            "Keep your response concise (3-6 sentences), conversational, and motivating. "
+            "Do not use markdown headers. Use plain text with occasional emojis."
+        )
+        
+        prompt = (
+            f"A student just scored {correct_count}/{total_questions} on a quiz.\n\n"
+            f"Here are the details:\n\n{q_summary}\n\n"
+            f"Give a short, personalized tutor response."
+        )
+        
+        feedback = await llm.generate_with_fallback(
+            prompt=prompt,
+            system_prompt=system_prompt,
+            temperature=0.7,
+            max_tokens=500,
+            fallback_response=None,
+        )
+        return feedback.strip() if feedback else None
+    except Exception as e:
+        logger.warning(f"Tutor feedback generation failed: {e}")
+        return None
+
+
 class GamificationService:
     """Service handling all gamification logic."""
 
@@ -477,6 +533,7 @@ class GamificationService:
         total_marks = 0
         hearts_remaining = await self.get_hearts(student_id)
         
+        question_details = []  # For AI tutor feedback
         for ans in answers:
             question = await self.db.get(Question, ans["question_id"])
             if not question:
@@ -508,6 +565,13 @@ class GamificationService:
                 "correct_answer": question.correct_answer or "",
                 "xp_earned": xp,
                 "explanation": question.explanation,
+            })
+            question_details.append({
+                "question_text": question.question_text,
+                "options": question.options or [],
+                "selected_answer": ans["selected_answer"].strip(),
+                "correct_answer": question.correct_answer or "",
+                "is_correct": is_correct,
             })
         
         total_questions = len(results)
@@ -569,6 +633,11 @@ class GamificationService:
             
             p.current_level = new_level
         
+        # Generate AI tutor feedback
+        tutor_feedback = await generate_tutor_feedback(
+            question_details, correct_count, total_questions
+        )
+        
         # Save test history
         test = TestHistory(
             student_id=student_id,
@@ -585,6 +654,7 @@ class GamificationService:
                 {"question_id": str(r["question_id"]), "correct": r["is_correct"], "xp": r["xp_earned"]}
                 for r in results
             ],
+            tutor_feedback=tutor_feedback,
         )
         self.db.add(test)
         
@@ -624,12 +694,14 @@ class GamificationService:
             "new_level": new_level,
             "results": results,
             "accuracy": accuracy,
+            "tutor_feedback": tutor_feedback,
         }
 
     async def process_test_submission(
         self, student_id: UUID, subject_id: UUID, title: str, 
         correct_count: int, total_marks: int, total_questions: int, 
-        total_time_seconds: int, results: list
+        total_time_seconds: int, results: list,
+        question_details: Optional[list] = None,
     ) -> dict:
         """Process a teacher test submission to grant XP and update gamification state."""
         user = await self.db.get(User, student_id)
@@ -649,6 +721,13 @@ class GamificationService:
 
         user.xp_total += total_xp
 
+        # Generate AI tutor feedback
+        tutor_feedback = None
+        if question_details:
+            tutor_feedback = await generate_tutor_feedback(
+                question_details, correct_count, total_questions
+            )
+
         # Save test history so it appears in profile 
         test = TestHistory(
             student_id=student_id,
@@ -664,6 +743,7 @@ class GamificationService:
                 {"question_id": r["question_id"], "correct": r["is_correct"], "xp": 0}
                 for r in results
             ],
+            tutor_feedback=tutor_feedback,
         )
         self.db.add(test)
         
@@ -686,7 +766,7 @@ class GamificationService:
         d.time_spent_seconds += total_time_seconds or 0
         
         await self.db.commit()
-        return {"xp_earned": total_xp}
+        return {"xp_earned": total_xp, "tutor_feedback": tutor_feedback}
 
     # --- Profile ---
 
@@ -869,6 +949,7 @@ class GamificationService:
                 "xp_earned": t.xp_earned,
                 "time_taken_seconds": t.time_taken_seconds,
                 "difficulty": t.difficulty,
+                "tutor_feedback": t.tutor_feedback,
                 "created_at": t.created_at,
             }
             for t in tests
