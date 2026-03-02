@@ -1,8 +1,9 @@
 import React, { useState } from 'react';
-import { View, StyleSheet, ActivityIndicator, Text, TouchableOpacity } from 'react-native';
+import { View, StyleSheet, ActivityIndicator, Text, TouchableOpacity, Platform } from 'react-native';
 import { useLocalSearchParams, useRouter } from 'expo-router';
 import { SafeAreaView } from 'react-native-safe-area-context';
-import Pdf from 'react-native-pdf';
+import { WebView } from 'react-native-webview';
+import * as Linking from 'expo-linking';
 import { useColorScheme } from '@/hooks/use-color-scheme';
 import { Colors, FontSizes, Spacing } from '@/constants/theme';
 import { IconSymbol } from '@/components/ui/icon-symbol';
@@ -60,26 +61,37 @@ export default function PdfViewerScreen() {
                             <Text style={styles.backButtonText}>Go Back</Text>
                         </TouchableOpacity>
                     </View>
+                ) : Platform.OS === 'android' ? (
+                    <View style={styles.androidFallbackContainer}>
+                        <IconSymbol name="doc.text" size={64} color={colors.primary} />
+                        <Text style={[styles.androidFallbackTitle, { color: colors.text }]}>Document Ready</Text>
+                        <Text style={[styles.androidFallbackText, { color: colors.textSecondary }]}>
+                            Tap below to open or download this document using your device's native PDF reader.
+                        </Text>
+                        <TouchableOpacity
+                            style={[styles.openButton, { backgroundColor: colors.primary }]}
+                            onPress={() => Linking.openURL(url)}
+                        >
+                            <Text style={styles.openButtonText}>Open Document</Text>
+                        </TouchableOpacity>
+                    </View>
                 ) : (
-                    <Pdf
-                        source={{ uri: url, cache: true }}
-                        onLoadComplete={(numberOfPages, filePath) => {
-                            setLoading(false);
-                        }}
-                        onPageChanged={(page, numberOfPages) => {
-                            // optional page tracking
-                        }}
-                        onError={(error) => {
-                            console.error('PDF error:', error);
-                            setLoading(false);
-                            setError('Failed to load document');
-                        }}
+                    <WebView
+                        source={{ uri: url }}
                         style={styles.pdf}
-                        trustAllCerts={false}
+                        onLoadEnd={() => setLoading(false)}
+                        onError={(syntheticEvent) => {
+                            const { nativeEvent } = syntheticEvent;
+                            console.error('WebView error: ', nativeEvent);
+                            setLoading(false);
+                            setError('Failed to load document preview');
+                        }}
+                        startInLoadingState={true}
+                        renderLoading={() => <View />}
                     />
                 )}
-            </View>
-        </SafeAreaView>
+            </View >
+        </SafeAreaView >
     );
 }
 
@@ -140,6 +152,36 @@ const styles = StyleSheet.create({
         borderRadius: 8,
     },
     backButtonText: {
+        color: '#fff',
+        fontWeight: '600',
+        fontSize: FontSizes.md,
+    },
+    androidFallbackContainer: {
+        flex: 1,
+        justifyContent: 'center',
+        alignItems: 'center',
+        padding: Spacing.xl,
+    },
+    androidFallbackTitle: {
+        fontSize: FontSizes.lg,
+        fontWeight: 'bold',
+        marginTop: Spacing.md,
+    },
+    androidFallbackText: {
+        fontSize: FontSizes.md,
+        textAlign: 'center',
+        marginTop: Spacing.sm,
+        marginBottom: Spacing.xl,
+        paddingHorizontal: Spacing.lg,
+    },
+    openButton: {
+        paddingHorizontal: Spacing.xl,
+        paddingVertical: Spacing.md,
+        borderRadius: 8,
+        flexDirection: 'row',
+        alignItems: 'center',
+    },
+    openButtonText: {
         color: '#fff',
         fontWeight: '600',
         fontSize: FontSizes.md,
