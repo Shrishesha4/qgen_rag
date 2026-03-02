@@ -238,7 +238,7 @@ export default function TestsDashboard() {
                         <View style={[styles.gamifiedCard, { backgroundColor: colors.card, borderColor: colors.border }]}>
                           {/* Gradient accent bar */}
                           <LinearGradient
-                            colors={[colors.primary, colors.secondary || '#5856D6']}
+                            colors={[colors.primary, colors.secondary]}
                             start={{ x: 0, y: 0 }}
                             end={{ x: 0, y: 1 }}
                             style={styles.accentBar}

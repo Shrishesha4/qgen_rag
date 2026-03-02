@@ -24,6 +24,7 @@ import ReAnimated, {
     withTiming,
     withDelay,
     withSequence,
+    withRepeat,
     runOnJS,
     Easing,
 } from 'react-native-reanimated';
@@ -102,13 +103,16 @@ export default function TakeTestScreen() {
     // Pulse animation for submitting state
     useEffect(() => {
         if (submitting) {
-            const interval = setInterval(() => {
-                pulseScale.value = withSequence(
+            pulseScale.value = withRepeat(
+                withSequence(
                     withTiming(1.06, { duration: 700, easing: Easing.inOut(Easing.ease) }),
                     withTiming(1, { duration: 700, easing: Easing.inOut(Easing.ease) })
-                );
-            }, 1400);
-            return () => clearInterval(interval);
+                ),
+                -1, // infinite repeat
+                true  // reverse
+            );
+        } else {
+            pulseScale.value = 1;
         }
     }, [submitting]);
 
@@ -310,9 +314,10 @@ export default function TakeTestScreen() {
         ],
         opacity: questionFade.value,
     }));
-    const progressStyle = useAnimatedStyle(() => ({
-        width: `${progressWidth.value}%` as any,
-    }));
+    const progressStyle = useAnimatedStyle(() => {
+        // Use percentage string for width - reanimated supports this at runtime
+        return { width: `${progressWidth.value}%` } as { width: string };
+    });
     const resultAnimStyle = useAnimatedStyle(() => ({
         transform: [{ scale: resultScale.value }],
         opacity: resultOpacity.value,
