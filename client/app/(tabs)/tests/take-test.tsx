@@ -1,6 +1,7 @@
 /**
  * Take Test Screen - Gamified one-question-at-a-time test experience
- * Features: animated transitions, progress bar, timer, streak counter, score reveal
+ * Features: animated transitions, progress bar, timer, streak counter, score reveal,
+ * haptic feedback, celebration effects, AI Tutor feedback
  */
 import React, { useEffect, useState, useCallback, useRef } from 'react';
 import {
@@ -12,9 +13,11 @@ import {
     Alert,
     Animated,
     Dimensions,
+    ScrollView,
 } from 'react-native';
 import { useRouter, useLocalSearchParams } from 'expo-router';
 import { SafeAreaView } from 'react-native-safe-area-context';
+import * as Haptics from 'expo-haptics';
 import { useColorScheme } from '@/hooks/use-color-scheme';
 import { Colors, Spacing, FontSizes, BorderRadius } from '@/constants/theme';
 import { IconSymbol } from '@/components/ui/icon-symbol';
@@ -46,6 +49,10 @@ export default function TakeTestScreen() {
     const optionAnims = useRef<Animated.Value[]>([]).current;
     const resultScaleAnim = useRef(new Animated.Value(0)).current;
     const resultFadeAnim = useRef(new Animated.Value(0)).current;
+    const tutorFadeAnim = useRef(new Animated.Value(0)).current;
+    const tutorSlideAnim = useRef(new Animated.Value(20)).current;
+    const confettiOpacity = useRef(new Animated.Value(0)).current;
+    const pulseAnim = useRef(new Animated.Value(1)).current;
 
     // Timer
     useEffect(() => {
@@ -53,6 +60,20 @@ export default function TakeTestScreen() {
         const timer = setInterval(() => setElapsedSeconds((s) => s + 1), 1000);
         return () => clearInterval(timer);
     }, [isLoading, showResult]);
+
+    // Pulsing animation for tutor loading state
+    useEffect(() => {
+        if (submitting) {
+            const pulse = Animated.loop(
+                Animated.sequence([
+                    Animated.timing(pulseAnim, { toValue: 1.05, duration: 800, useNativeDriver: true }),
+                    Animated.timing(pulseAnim, { toValue: 1, duration: 800, useNativeDriver: true }),
+                ])
+            );
+            pulse.start();
+            return () => pulse.stop();
+        }
+    }, [submitting]);
 
     const formatTime = (s: number) => {
         const m = Math.floor(s / 60);
@@ -136,6 +157,7 @@ export default function TakeTestScreen() {
 
     const goToQuestion = (newIndex: number) => {
         if (newIndex < 0 || newIndex >= questions.length) return;
+        Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
         const direction = newIndex > currentIndex ? 'left' : 'right';
         animateQuestionExit(direction, () => {
             setCurrentIndex(newIndex);
@@ -151,6 +173,7 @@ export default function TakeTestScreen() {
     };
 
     const selectAnswer = (questionId: string, optLetter: string) => {
+        Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
         setAnswers((prev) => ({ ...prev, [questionId]: optLetter }));
 
         // Bounce animation on selection
@@ -161,6 +184,7 @@ export default function TakeTestScreen() {
     };
 
     const handleSubmit = () => {
+        Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Medium);
         const unanswered = questions.length - Object.keys(answers).length;
         const msg = unanswered > 0
             ? `You have ${unanswered} unanswered question(s). Submit anyway?`
@@ -185,11 +209,32 @@ export default function TakeTestScreen() {
             setResult(res);
             setShowResult(true);
 
+            // Celebrate based on score
+            const pct = Math.round(res.percentage || 0);
+            if (pct >= 80) {
+                Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success);
+                // Confetti for great scores
+                Animated.sequence([
+                    Animated.timing(confettiOpacity, { toValue: 1, duration: 300, useNativeDriver: true }),
+                    Animated.timing(confettiOpacity, { toValue: 0, duration: 2000, delay: 1500, useNativeDriver: true }),
+                ]).start();
+            } else {
+                Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Medium);
+            }
+
             // Animate result
             Animated.parallel([
                 Animated.spring(resultScaleAnim, { toValue: 1, useNativeDriver: true, tension: 40, friction: 5 }),
                 Animated.timing(resultFadeAnim, { toValue: 1, duration: 600, useNativeDriver: true }),
             ]).start();
+
+            // Animate tutor feedback after a delay
+            if (res.tutor_feedback) {
+                Animated.parallel([
+                    Animated.timing(tutorFadeAnim, { toValue: 1, duration: 600, delay: 1000, useNativeDriver: true }),
+                    Animated.timing(tutorSlideAnim, { toValue: 0, duration: 600, delay: 1000, useNativeDriver: true }),
+                ]).start();
+            }
         } catch (error: any) {
             Alert.alert('Error', error?.response?.data?.detail || 'Failed to submit');
         } finally {
@@ -203,6 +248,26 @@ export default function TakeTestScreen() {
                 <View style={styles.centered}>
                     <ActivityIndicator size="large" color={colors.primary} />
                     <Text style={{ color: colors.textSecondary, marginTop: 12 }}>Loading test...</Text>
+                </View>
+            </SafeAreaView>
+        );
+    }
+
+    // ====== Submitting State ======
+    if (submitting) {
+        return (
+            <SafeAreaView style={[styles.container, { backgroundColor: colors.background }]}>
+                <View style={styles.centered}>
+                    <Animated.View style={{ transform: [{ scale: pulseAnim }], alignItems: 'center' }}>
+                        <Text style={{ fontSize: 48, marginBottom: 16 }}>🤖</Text>
+                        <ActivityIndicator size="large" color={colors.primary} />
+                        <Text style={{ color: colors.text, marginTop: 16, fontSize: FontSizes.lg, fontWeight: '600', textAlign: 'center' }}>
+                            The Tutor is evaluating{'\n'}your answers...
+                        </Text>
+                        <Text style={{ color: colors.textSecondary, marginTop: 8, fontSize: FontSizes.sm }}>
+                            This may take a moment
+                        </Text>
+                    </Animated.View>
                 </View>
             </SafeAreaView>
         );
@@ -222,7 +287,14 @@ export default function TakeTestScreen() {
 
         return (
             <SafeAreaView style={[styles.container, { backgroundColor: colors.background }]}>
-                <View style={styles.resultContainer}>
+                <ScrollView contentContainerStyle={styles.resultScrollContent}>
+                    {/* Confetti overlay */}
+                    {pct >= 80 && (
+                        <Animated.View style={[styles.confettiOverlay, { opacity: confettiOpacity }]} pointerEvents="none">
+                            <Text style={styles.confettiText}>🎉🎊✨🎉🎊✨🎉</Text>
+                        </Animated.View>
+                    )}
+
                     <Animated.View style={{
                         transform: [{ scale: resultScaleAnim }],
                         opacity: resultFadeAnim,
@@ -262,17 +334,43 @@ export default function TakeTestScreen() {
                                 <Text style={{ fontSize: FontSizes.xs, color: colors.textSecondary }}>Answered</Text>
                             </View>
                         </View>
-
-                        <TouchableOpacity
-                            style={[styles.doneButton, { backgroundColor: colors.primary }]}
-                            onPress={() => router.back()}
-                        >
-                            <Text style={{ color: '#FFF', fontSize: FontSizes.md, fontWeight: '700' }}>
-                                Done 🎉
-                            </Text>
-                        </TouchableOpacity>
                     </Animated.View>
-                </View>
+
+                    {/* AI Tutor Feedback */}
+                    {result.tutor_feedback ? (
+                        <Animated.View style={[
+                            styles.tutorCard,
+                            { backgroundColor: colors.card, borderColor: colors.border, opacity: tutorFadeAnim, transform: [{ translateY: tutorSlideAnim }] },
+                        ]}>
+                            <View style={styles.tutorHeader}>
+                                <View style={[styles.tutorAvatar, { backgroundColor: colors.primary + '20' }]}>
+                                    <Text style={styles.tutorAvatarEmoji}>🤖</Text>
+                                </View>
+                                <View>
+                                    <Text style={[styles.tutorName, { color: colors.text }]}>AI Tutor</Text>
+                                    <Text style={[styles.tutorSubtitle, { color: colors.textTertiary }]}>Personalized feedback</Text>
+                                </View>
+                            </View>
+                            <View style={[styles.tutorBubble, { backgroundColor: colors.primary + '10' }]}>
+                                <Text style={[styles.tutorFeedbackText, { color: colors.text }]}>
+                                    {result.tutor_feedback}
+                                </Text>
+                            </View>
+                        </Animated.View>
+                    ) : null}
+
+                    <TouchableOpacity
+                        style={[styles.doneButton, { backgroundColor: colors.primary }]}
+                        onPress={() => {
+                            Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
+                            router.back();
+                        }}
+                    >
+                        <Text style={{ color: '#FFF', fontSize: FontSizes.md, fontWeight: '700' }}>
+                            Done 🎉
+                        </Text>
+                    </TouchableOpacity>
+                </ScrollView>
             </SafeAreaView>
         );
     }
@@ -300,6 +398,7 @@ export default function TakeTestScreen() {
             {/* Top Bar */}
             <View style={styles.topBar}>
                 <TouchableOpacity onPress={() => {
+                    Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
                     Alert.alert('Exit Test', 'Your progress will be lost. Are you sure?', [
                         { text: 'Continue Test', style: 'cancel' },
                         { text: 'Exit', style: 'destructive', onPress: () => router.back() },
@@ -623,6 +722,22 @@ const styles = StyleSheet.create({
         borderRadius: BorderRadius.lg,
     },
     // Result styles
+    confettiOverlay: {
+        position: 'absolute',
+        top: 0,
+        left: 0,
+        right: 0,
+        alignItems: 'center',
+        zIndex: 10,
+    },
+    confettiText: { fontSize: 40, letterSpacing: 8 },
+    resultScrollContent: {
+        flexGrow: 1,
+        justifyContent: 'center',
+        alignItems: 'center',
+        padding: Spacing.xl,
+        paddingBottom: 100,
+    },
     resultContainer: {
         flex: 1,
         justifyContent: 'center',
@@ -651,5 +766,39 @@ const styles = StyleSheet.create({
         paddingVertical: 14,
         paddingHorizontal: 48,
         borderRadius: BorderRadius.xl,
+        marginTop: Spacing.lg,
+    },
+    // AI Tutor styles
+    tutorCard: {
+        width: '100%',
+        marginTop: Spacing.lg,
+        marginBottom: Spacing.md,
+        borderRadius: BorderRadius.xl,
+        padding: Spacing.lg,
+        borderWidth: 1,
+    },
+    tutorHeader: {
+        flexDirection: 'row',
+        alignItems: 'center',
+        gap: Spacing.sm,
+        marginBottom: Spacing.md,
+    },
+    tutorAvatar: {
+        width: 40,
+        height: 40,
+        borderRadius: 20,
+        justifyContent: 'center',
+        alignItems: 'center',
+    },
+    tutorAvatarEmoji: { fontSize: 22 },
+    tutorName: { fontSize: FontSizes.md, fontWeight: '700' },
+    tutorSubtitle: { fontSize: FontSizes.xs },
+    tutorBubble: {
+        borderRadius: BorderRadius.lg,
+        padding: Spacing.md,
+    },
+    tutorFeedbackText: {
+        fontSize: FontSizes.sm + 1,
+        lineHeight: 22,
     },
 });

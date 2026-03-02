@@ -13,6 +13,7 @@ import {
 import { useLocalSearchParams, useRouter } from 'expo-router';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { LinearGradient } from 'expo-linear-gradient';
+import * as Haptics from 'expo-haptics';
 import { useColorScheme } from '@/hooks/use-color-scheme';
 import { Colors, Spacing, FontSizes, BorderRadius } from '@/constants/theme';
 import { useLearningStore } from '@/stores/learningStore';
@@ -53,11 +54,13 @@ export default function LessonScreen() {
 
   const handleSelectAnswer = (answer: string) => {
     if (showResult) return;
+    Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
     setSelectedAnswer(answer);
   };
 
   const handleCheckAnswer = () => {
     if (!selectedAnswer || !currentQuestion) return;
+    Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Medium);
 
     // Extract just the option letter (e.g. "A" from "A) Some answer text...")
     // The backend stores correct_answer as just the letter (A, B, C, D)
