@@ -3,7 +3,7 @@
  * Features: 3...2...1...GO! countdown, react-native-reanimated 120fps animations,
  * haptic feedback, AI Tutor feedback, celebration effects
  */
-import React, { useEffect, useState, useCallback, useRef } from 'react';
+import React, { useEffect, useState, useCallback } from 'react';
 import {
     View,
     Text,
@@ -26,10 +26,6 @@ import ReAnimated, {
     withSequence,
     runOnJS,
     Easing,
-    FadeIn,
-    FadeOut,
-    SlideInRight,
-    SlideOutLeft,
 } from 'react-native-reanimated';
 import { useColorScheme } from '@/hooks/use-color-scheme';
 import { Colors, Spacing, FontSizes, BorderRadius } from '@/constants/theme';
@@ -72,9 +68,21 @@ export default function TakeTestScreen() {
     const questionScale = useSharedValue(1);
     const progressWidth = useSharedValue(0);
 
-    const optionValues = useRef(
-        Array.from({ length: 6 }, () => ({ opacity: useSharedValue(0), translateY: useSharedValue(30) }))
-    ).current;
+    // Option animation values - declared individually to satisfy hooks rules
+    const opt0Opacity = useSharedValue(0); const opt0TranslateY = useSharedValue(30);
+    const opt1Opacity = useSharedValue(0); const opt1TranslateY = useSharedValue(30);
+    const opt2Opacity = useSharedValue(0); const opt2TranslateY = useSharedValue(30);
+    const opt3Opacity = useSharedValue(0); const opt3TranslateY = useSharedValue(30);
+    const opt4Opacity = useSharedValue(0); const opt4TranslateY = useSharedValue(30);
+    const opt5Opacity = useSharedValue(0); const opt5TranslateY = useSharedValue(30);
+    const optionValues = [
+        { opacity: opt0Opacity, translateY: opt0TranslateY },
+        { opacity: opt1Opacity, translateY: opt1TranslateY },
+        { opacity: opt2Opacity, translateY: opt2TranslateY },
+        { opacity: opt3Opacity, translateY: opt3TranslateY },
+        { opacity: opt4Opacity, translateY: opt4TranslateY },
+        { opacity: opt5Opacity, translateY: opt5TranslateY },
+    ];
 
     const resultScale = useSharedValue(0);
     const resultOpacity = useSharedValue(0);
@@ -320,16 +328,14 @@ export default function TakeTestScreen() {
         transform: [{ scale: pulseScale.value }],
     }));
 
-    const makeOptionStyle = (i: number) =>
-        useAnimatedStyle(() => ({
-            opacity: optionValues[i].opacity.value,
-            transform: [{ translateY: optionValues[i].translateY.value }],
-        }));
-
-    const optionAnimStyles = [
-        makeOptionStyle(0), makeOptionStyle(1), makeOptionStyle(2),
-        makeOptionStyle(3), makeOptionStyle(4), makeOptionStyle(5),
-    ];
+    // Option animated styles - must call hooks at top level, not in loops
+    const optStyle0 = useAnimatedStyle(() => ({ opacity: optionValues[0].opacity.value, transform: [{ translateY: optionValues[0].translateY.value }] }));
+    const optStyle1 = useAnimatedStyle(() => ({ opacity: optionValues[1].opacity.value, transform: [{ translateY: optionValues[1].translateY.value }] }));
+    const optStyle2 = useAnimatedStyle(() => ({ opacity: optionValues[2].opacity.value, transform: [{ translateY: optionValues[2].translateY.value }] }));
+    const optStyle3 = useAnimatedStyle(() => ({ opacity: optionValues[3].opacity.value, transform: [{ translateY: optionValues[3].translateY.value }] }));
+    const optStyle4 = useAnimatedStyle(() => ({ opacity: optionValues[4].opacity.value, transform: [{ translateY: optionValues[4].translateY.value }] }));
+    const optStyle5 = useAnimatedStyle(() => ({ opacity: optionValues[5].opacity.value, transform: [{ translateY: optionValues[5].translateY.value }] }));
+    const optionAnimStyles = [optStyle0, optStyle1, optStyle2, optStyle3, optStyle4, optStyle5];
 
     // ====== Loading ======
     if (isLoading) {
