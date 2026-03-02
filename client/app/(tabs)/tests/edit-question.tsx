@@ -200,7 +200,7 @@ export default function EditQuestionScreen() {
         </ScrollView>
 
         {/* Save Button */}
-        <View style={[styles.bottomBar, { backgroundColor: colors.card, borderTopColor: colors.border }]}>
+        <View style={[styles.bottomBar, { backgroundColor: 'transparent', borderTopWidth: 0 }]}>
           <TouchableOpacity
             style={[styles.cancelButton, { borderColor: colors.border }]}
             onPress={() => router.back()}

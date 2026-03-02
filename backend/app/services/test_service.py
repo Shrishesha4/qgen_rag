@@ -219,32 +219,63 @@ class TestService:
             reranker_service=reranker_service,
         )
 
-        # Build difficulty plan — pedagogical order: easy → medium → hard
+        # Build difficulty pool or plan based on config
         difficulty_config = test.difficulty_config or {}
-        generation_plan: List[Dict[str, Any]] = []
-        # Ordered pedagogically
+        difficulty_pool = []
         for level in ["easy", "medium", "hard"]:
             cfg = difficulty_config.get(level)
             if isinstance(cfg, dict) and cfg.get("count", 0) > 0:
-                generation_plan.append({
-                    "difficulty": level,
-                    "count": cfg["count"],
-                    "focus_topics": cfg.get("lo_mapping") or None,
-                })
-
-        # If no difficulty config, default to balanced 10 questions
-        if not generation_plan:
-            generation_plan = [
-                {"difficulty": "easy", "count": 4, "focus_topics": None},
-                {"difficulty": "medium", "count": 3, "focus_topics": None},
-                {"difficulty": "hard", "count": 3, "focus_topics": None},
-            ]
-
-        # Handle topic-wise generation — use topic names as focus
+                difficulty_pool.extend([level] * cfg["count"])
+        
+        if not difficulty_pool:
+            difficulty_pool = ["easy"] * 4 + ["medium"] * 3 + ["hard"] * 3
+            
+        generation_plan: List[Dict[str, Any]] = []
         topic_config = test.topic_config or []
-        topic_focus = None
+
         if test.generation_type in ("topic_wise", "multi_topic") and topic_config:
-            topic_focus = [t.get("topic_name", "") for t in topic_config if t.get("topic_name")]
+            diff_idx = 0
+            for topic in topic_config:
+                t_count = topic.get("count", 5)
+                if not isinstance(t_count, int):
+                    try:
+                        t_count = int(t_count)
+                    except:
+                        t_count = 5
+                
+                t_id_str = topic.get("topic_id")
+                t_name = topic.get("topic_name", "")
+                
+                t_diff_counts = {"easy": 0, "medium": 0, "hard": 0}
+                for _ in range(t_count):
+                    diff = difficulty_pool[diff_idx % len(difficulty_pool)]
+                    t_diff_counts[diff] += 1
+                    diff_idx += 1
+                
+                for level, count in t_diff_counts.items():
+                    if count > 0:
+                        generation_plan.append({
+                            "difficulty": level,
+                            "count": count,
+                            "focus_topics": [t_name] if t_name else None,
+                            "topic_id": t_id_str
+                        })
+        else:
+            for level in ["easy", "medium", "hard"]:
+                cfg = difficulty_config.get(level)
+                if isinstance(cfg, dict) and cfg.get("count", 0) > 0:
+                    generation_plan.append({
+                        "difficulty": level,
+                        "count": cfg["count"],
+                        "focus_topics": cfg.get("lo_mapping") or None,
+                        "topic_id": None
+                    })
+            if not generation_plan:
+                generation_plan = [
+                    {"difficulty": "easy", "count": 4, "focus_topics": None, "topic_id": None},
+                    {"difficulty": "medium", "count": 3, "focus_topics": None, "topic_id": None},
+                    {"difficulty": "hard", "count": 3, "focus_topics": None, "topic_id": None},
+                ]
 
         # Build blacklist from existing questions for this subject (deduplication)
         blacklist_result = await self.db.execute(
@@ -291,13 +322,20 @@ class TestService:
             difficulty = plan["difficulty"]
             count = plan["count"]
             marks_per_q = self._get_marks_for_difficulty(difficulty)
-            focus = topic_focus or plan.get("focus_topics")
+            focus = plan.get("focus_topics")
+            topic_id_str = plan.get("topic_id")
 
             logger.info(
                 f"Generating {count} {difficulty} questions for test {test_id}"
             )
 
-            for i in range(count):
+            generated_for_plan = 0
+            max_retries_per_q = 3  # retry up to 3 times per question slot
+            attempts = 0
+            max_total_attempts = count * (max_retries_per_q + 1)  # hard ceiling
+
+            while generated_for_plan < count and attempts < max_total_attempts:
+                attempts += 1
                 try:
                     # Select relevant chunks
                     focus_topics_for_chunk = focus
@@ -320,7 +358,7 @@ class TestService:
                     )
 
                     if not question_data:
-                        logger.warning(f"LLM returned no data for question {i+1} ({difficulty})")
+                        logger.warning(f"LLM returned no data for question attempt {attempts} ({difficulty})")
                         continue
 
                     # Check for duplicates against existing + newly generated
@@ -330,7 +368,7 @@ class TestService:
                         threshold=0.85,
                     )
                     if is_duplicate:
-                        logger.info(f"Skipping duplicate question ({difficulty} #{i+1})")
+                        logger.info(f"Duplicate detected ({difficulty} attempt {attempts}), retrying...")
                         continue
 
                     # Save question to the question bank
@@ -342,8 +380,9 @@ class TestService:
                         marks=marks_per_q,
                         difficulty=difficulty,
                         chunk_ids=[c.id for c in selected_chunks],
-                        chunks=None,  # Skip strict validation for test generation
+                        chunks=selected_chunks,
                         subject_id=test.subject_id,
+                        topic_id=uuid.UUID(topic_id_str) if topic_id_str else None,
                     )
 
                     # Add to blacklist for future dedup within this batch
@@ -360,18 +399,25 @@ class TestService:
                     self.db.add(tq)
                     total_marks += marks_per_q
                     order_index += 1
+                    generated_for_plan += 1
                     generated_questions.append(question_obj)
 
                     logger.info(
-                        f"Generated {difficulty} question {i+1}/{count} for test {test_id}"
+                        f"Generated {difficulty} question {generated_for_plan}/{count} for test {test_id}"
                     )
 
                 except Exception as e:
                     logger.error(
-                        f"Failed to generate {difficulty} question {i+1}: {e}"
+                        f"Failed to generate {difficulty} question (attempt {attempts}): {e}"
                     )
                     questions_failed += 1
                     continue
+
+            if generated_for_plan < count:
+                logger.warning(
+                    f"Could only generate {generated_for_plan}/{count} {difficulty} "
+                    f"questions after {attempts} attempts for test {test_id}"
+                )
 
         if not generated_questions:
             raise ValueError(

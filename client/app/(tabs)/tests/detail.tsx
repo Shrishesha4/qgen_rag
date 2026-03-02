@@ -38,7 +38,7 @@ export default function TestDetailScreen() {
   const { user } = useAuthStore();
   const isStudent = user?.role === 'student';
   const insets = useSafeAreaInsets();
-  
+
   // Calculate bottom padding for floating bar (accounts for tab bar + safe area)
   const TAB_BAR_HEIGHT = Platform.OS === 'ios' ? 49 : 60;
   const floatingBarBottom = TAB_BAR_HEIGHT + insets.bottom;
@@ -211,7 +211,7 @@ export default function TestDetailScreen() {
     setCfgMediumLO(dc.medium?.lo_mapping || []);
     setCfgHardLO(dc.hard?.lo_mapping || []);
     setShowEditConfig(true);
-    
+
     // Load subject LOs if not already loaded
     if (test.subject_id && subjectLOs.length === 0) {
       setLoadingSubjectLOs(true);
@@ -596,7 +596,7 @@ export default function TestDetailScreen() {
       </ScrollView>
 
       {/* ===== Floating Action Bar ===== */}
-      <View style={[styles.floatingBar, { backgroundColor: colors.card, borderTopColor: colors.border, bottom: floatingBarBottom }]}>
+      <View style={[styles.floatingBar, { backgroundColor: 'transparent', borderTopWidth: 0, bottom: floatingBarBottom }]}>
         <ScrollView horizontal showsHorizontalScrollIndicator={false} contentContainerStyle={styles.floatingBarContent}>
           {test.status !== 'published' && (
             <TouchableOpacity style={[styles.fabButton, { backgroundColor: colors.success }]} onPress={handlePublish} disabled={!!actionLoading}>

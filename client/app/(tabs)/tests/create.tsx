@@ -39,7 +39,7 @@ export default function CreateTestScreen() {
   const colors = Colors[colorScheme];
   const router = useRouter();
   const insets = useSafeAreaInsets();
-  
+
   // Calculate bottom padding for bottom bar (accounts for tab bar + safe area)
   const TAB_BAR_HEIGHT = Platform.OS === 'ios' ? 49 : 60;
   const bottomBarPadding = TAB_BAR_HEIGHT + insets.bottom + 16;
@@ -762,11 +762,11 @@ export default function CreateTestScreen() {
         </ScrollView>
 
         {/* Bottom Actions */}
-        <View style={[styles.bottomBar, { backgroundColor: colors.card, borderTopColor: colors.border, paddingBottom: bottomBarPadding }]}>
+        <View style={[styles.bottomBar, { backgroundColor: 'transparent', borderTopWidth: 0, paddingBottom: bottomBarPadding }]}>
           {step !== 'basics' && (
             <NativeButton
               title="Back"
-              variant="glass"
+              variant="secondary"
               size="medium"
               icon="chevron.left"
               iconPosition="left"
@@ -777,7 +777,7 @@ export default function CreateTestScreen() {
           {step === 'review' ? (
             <NativeButton
               title="Generate Test"
-              variant="glass"
+              variant="primary"
               size="medium"
               icon="sparkles"
               iconPosition="left"
@@ -788,7 +788,7 @@ export default function CreateTestScreen() {
           ) : (
             <NativeButton
               title="Next"
-              variant="glass"
+              variant="primary"
               size="medium"
               icon="chevron.right"
               iconPosition="right"

@@ -202,7 +202,7 @@ export default function HomeScreen() {
               <IconSymbol name="person.2.fill" size={22} color="#FFFFFF" />
             </LinearGradient>
             <Text style={[styles.statValue, { color: colors.text }]}>{pendingEnrollments}</Text>
-            <Text style={[styles.statLabel, { color: colors.textSecondary }]}>Enrollments</Text>
+            <Text style={[styles.statLabel, { color: colors.textSecondary }]}>Pending Enrollments</Text>
           </GlassCard>
         </TouchableOpacity>
       </View>
