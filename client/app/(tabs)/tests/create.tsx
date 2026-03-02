@@ -41,10 +41,6 @@ export default function CreateTestScreen() {
   const router = useRouter();
   const insets = useSafeAreaInsets();
 
-  // Calculate bottom padding for bottom bar (accounts for tab bar + safe area)
-  const TAB_BAR_HEIGHT = Platform.OS === 'ios' ? 49 : 60;
-  const bottomBarPadding = TAB_BAR_HEIGHT + insets.bottom + 16;
-
   // Flow state
   const [step, setStep] = useState<Step>('basics');
   const [isLoading, setIsLoading] = useState(false);
@@ -781,12 +777,12 @@ export default function CreateTestScreen() {
 
   return (
     <View style={[styles.container, { backgroundColor: colors.background }]}>
-      <KeyboardAvoidingView
-        style={styles.flex}
-        behavior={Platform.OS === 'ios' ? 'padding' : undefined}
-      >
-        {/* Progress */}
-        <View style={styles.progressContainer}>
+        <KeyboardAvoidingView
+          style={styles.flex}
+          behavior={Platform.OS === 'ios' ? 'padding' : undefined}
+        >
+          {/* Progress */}
+          <View style={styles.progressContainer}>
           {(['basics', 'generation_type', ...(generationType !== 'subject_wise' ? ['topics'] : []), 'difficulty', 'review'] as Step[]).map(
             (s, idx, arr) => (
               <View key={s} style={styles.progressItem}>
@@ -815,7 +811,7 @@ export default function CreateTestScreen() {
           )}
         </View>
 
-        <ScrollView contentContainerStyle={styles.scrollContent} keyboardShouldPersistTaps="handled">
+        <ScrollView contentContainerStyle={[styles.scrollContent, { paddingBottom: insets.bottom + 100 }]} keyboardShouldPersistTaps="handled">
           {step === 'basics' && renderBasicsStep()}
           {step === 'generation_type' && renderGenerationTypeStep()}
           {step === 'difficulty' && renderDifficultyStep()}
@@ -824,7 +820,7 @@ export default function CreateTestScreen() {
         </ScrollView>
 
         {/* Bottom Actions */}
-        <View style={[styles.bottomBar, { backgroundColor: 'transparent', borderTopWidth: 0, paddingBottom: bottomBarPadding }]}>
+        <View style={[styles.bottomBar, { backgroundColor: 'transparent', borderTopWidth: 0, paddingBottom: insets.bottom + Spacing.md }]}>
           {step !== 'basics' && (
             <NativeButton
               title="Back"
@@ -872,7 +868,7 @@ const styles = StyleSheet.create({
     alignItems: 'center',
     justifyContent: 'center',
     paddingHorizontal: Spacing.xl,
-    paddingTop: Spacing.md,
+    paddingTop: 110,
     paddingBottom: Spacing.sm,
   },
   progressItem: {

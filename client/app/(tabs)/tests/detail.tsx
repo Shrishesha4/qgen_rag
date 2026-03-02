@@ -22,7 +22,6 @@ import { Colors, Spacing, FontSizes, BorderRadius } from '@/constants/theme';
 import { useAuthStore } from '@/stores/authStore';
 import { IconSymbol } from '@/components/ui/icon-symbol';
 import { GlassCard } from '@/components/ui/glass-card';
-import { NativeButton } from '@/components/ui/native-button';
 import {
   testsService,
   TestDetailResponse,
@@ -277,9 +276,9 @@ export default function TestDetailScreen() {
 
   if (isLoading) {
     return (
-      <SafeAreaView style={[styles.container, { backgroundColor: colors.background }]} edges={['bottom']}>
+      <View style={[styles.container, { backgroundColor: colors.background }]}>
         <View style={styles.centered}><ActivityIndicator size="large" color={colors.primary} /></View>
-      </SafeAreaView>
+      </View>
     );
   }
 
@@ -287,7 +286,7 @@ export default function TestDetailScreen() {
   if (isStudent) {
     if (!studentTest) {
       return (
-        <SafeAreaView style={[styles.container, { backgroundColor: colors.background }]} edges={['bottom']}>
+        <View style={[styles.container, { backgroundColor: colors.background }]}>
           <View style={styles.centered}>
             <IconSymbol name="exclamationmark.triangle.fill" size={48} color={colors.warning} />
             <Text style={{ color: colors.text, fontSize: FontSizes.lg, fontWeight: '600', marginTop: 12 }}>
@@ -297,7 +296,7 @@ export default function TestDetailScreen() {
               This test may have been unpublished or you may not be enrolled.
             </Text>
           </View>
-        </SafeAreaView>
+        </View>
       );
     }
 
@@ -305,8 +304,8 @@ export default function TestDetailScreen() {
     const previousAttempt = studentTest.previous_attempt;
     
     return (
-      <SafeAreaView style={[styles.container, { backgroundColor: colors.background }]} edges={['bottom']}>
-        <ScrollView contentContainerStyle={{ padding: Spacing.lg, paddingBottom: 120 }}>
+      <View style={[styles.container, { backgroundColor: colors.background }]}>
+        <ScrollView contentContainerStyle={{ padding: Spacing.lg, paddingTop: 120, paddingBottom: 120 }}>
           {/* Hero Card */}
           <View style={{
             backgroundColor: colors.primary,
@@ -334,9 +333,6 @@ export default function TestDetailScreen() {
                 <View style={{ flex: 1 }}>
                   <Text style={{ fontSize: FontSizes.sm, fontWeight: '600', color: colors.text }}>
                     Previous Attempt: {previousAttempt.score}/{previousAttempt.total_marks}
-                  </Text>
-                  <Text style={{ fontSize: FontSizes.xs, color: colors.textSecondary }}>
-                    Questions & options are shuffled for re-attempts
                   </Text>
                 </View>
               </View>
@@ -410,23 +406,23 @@ export default function TestDetailScreen() {
             </Text>
           </TouchableOpacity>
         </ScrollView>
-      </SafeAreaView>
+      </View>
     );
   }
 
   // ====== TEACHER VIEW ======
   if (!test) {
     return (
-      <SafeAreaView style={[styles.container, { backgroundColor: colors.background }]} edges={['bottom']}>
+      <View style={[styles.container, { backgroundColor: colors.background }]}>
         <View style={styles.centered}><Text style={{ color: colors.error }}>Test not found</Text></View>
-      </SafeAreaView>
+      </View>
     );
   }
 
   return (
-    <SafeAreaView style={[styles.container, { backgroundColor: colors.background }]} edges={[]}>
+    <View style={[styles.container, { backgroundColor: colors.background }]}>
       <ScrollView
-        contentContainerStyle={[styles.content, { paddingBottom: floatingBarBottom + 70 }]}
+        contentContainerStyle={[styles.content, { paddingTop: 110, paddingBottom: floatingBarBottom + 70 }]}
         refreshControl={<RefreshControl refreshing={refreshing} onRefresh={onRefresh} />}
       >
         {/* Status Banner */}
@@ -521,31 +517,6 @@ export default function TestDetailScreen() {
           </View>
         </GlassCard>
 
-        {/* Actions */}
-        <View style={styles.actionsRow}>
-          {test.status !== 'published' && (
-            <TouchableOpacity style={[styles.actionButton, { backgroundColor: colors.success }]} onPress={handlePublish} disabled={!!actionLoading}>
-              {actionLoading === 'publish' ? <ActivityIndicator size="small" color="#FFF" /> : <><IconSymbol name="paperplane.fill" size={16} color="#FFF" /><Text style={styles.actionText}>Publish</Text></>}
-            </TouchableOpacity>
-          )}
-          {test.status === 'published' && (
-            <TouchableOpacity style={[styles.actionButton, { backgroundColor: colors.error }]} onPress={handleUnpublish} disabled={!!actionLoading}>
-              {actionLoading === 'unpublish' ? <ActivityIndicator size="small" color="#FFF" /> : <><IconSymbol name="xmark.circle.fill" size={16} color="#FFF" /><Text style={styles.actionText}>Unpublish</Text></>}
-            </TouchableOpacity>
-          )}
-          {test.status !== 'published' && (
-            <TouchableOpacity style={[styles.actionButton, { backgroundColor: colors.secondary }]} onPress={handleRegenerate} disabled={!!actionLoading}>
-              {actionLoading === 'regenerate' ? <ActivityIndicator size="small" color="#FFF" /> : <><IconSymbol name="arrow.triangle.2.circlepath" size={16} color="#FFF" /><Text style={styles.actionText}>Regenerate</Text></>}
-            </TouchableOpacity>
-          )}
-          {test.status === 'published' && test.submissions_count > 0 && (
-            <TouchableOpacity style={[styles.actionButton, { backgroundColor: colors.primary }]}
-              onPress={() => router.push({ pathname: '/(tabs)/tests/performance', params: { testId: test.id } })}>
-              <IconSymbol name="chart.bar.fill" size={16} color="#FFF" /><Text style={styles.actionText}>Performance</Text>
-            </TouchableOpacity>
-          )}
-        </View>
-
         {/* Questions */}
         <Text style={[styles.questionsHeader, { color: colors.text }]}>Questions ({test.questions?.length || 0})</Text>
         {(!test.questions || test.questions.length === 0) ? (
@@ -621,7 +592,7 @@ export default function TestDetailScreen() {
               <IconSymbol name="slider.horizontal.3" size={16} color="#FFF" /><Text style={styles.fabText}>Config</Text>
             </TouchableOpacity>
           )}
-          {test.status === 'published' && test.submissions_count > 0 && (
+          {test.submissions_count > 0 && (
             <TouchableOpacity style={[styles.fabButton, { backgroundColor: colors.primary }]}
               onPress={() => router.push({ pathname: '/(tabs)/tests/performance', params: { testId: test.id } })}>
               <IconSymbol name="chart.bar.fill" size={16} color="#FFF" /><Text style={styles.fabText}>Stats</Text>
@@ -722,7 +693,7 @@ export default function TestDetailScreen() {
           </ScrollView>
         </SafeAreaView>
       </Modal>
-    </SafeAreaView>
+    </View>
   );
 }
 

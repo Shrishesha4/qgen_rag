@@ -160,63 +160,16 @@ export default function SubjectDetailScreen() {
       <Stack.Screen
         options={{
           headerShown: true,
+          headerTransparent: true,
           title: params.subjectName,
           headerBackTitle: 'Subjects',
           headerShadowVisible: false,
-          headerStyle: { backgroundColor: colors.background },
+          headerStyle: { backgroundColor: 'transparent' },
           headerTintColor: colors.primary,
           headerTitleStyle: { color: colors.text, fontWeight: '600' },
         }}
       />
-      <SafeAreaView style={[styles.safeArea, { backgroundColor: colors.background }]} edges={['bottom']}>
-        {/* Tab Selector */}
-        <View style={[styles.tabSelector, { backgroundColor: colors.card }]}>
-          <TouchableOpacity
-            style={[
-              styles.tabButton,
-              activeTab === 'materials' && { backgroundColor: colors.primary },
-            ]}
-            onPress={() => setActiveTab('materials')}
-          >
-            <IconSymbol
-              name="book.fill"
-              size={16}
-              color={activeTab === 'materials' ? '#FFFFFF' : colors.textSecondary}
-            />
-            <Text style={[styles.tabButtonText, { color: activeTab === 'materials' ? '#FFFFFF' : colors.textSecondary }]}>Learn</Text>
-          </TouchableOpacity>
-          <TouchableOpacity
-            style={[
-              styles.tabButton,
-              activeTab === 'practice' && { backgroundColor: colors.primary },
-            ]}
-            onPress={() => setActiveTab('practice')}
-          >
-            <IconSymbol
-              name="pencil.and.outline"
-              size={16}
-              color={activeTab === 'practice' ? '#FFFFFF' : colors.textSecondary}
-            />
-            <Text style={[styles.tabButtonText, { color: activeTab === 'practice' ? '#FFFFFF' : colors.textSecondary }]}>Practice</Text>
-          </TouchableOpacity>
-          <TouchableOpacity
-            style={[
-              styles.tabButton,
-              activeTab === 'ranks' && { backgroundColor: colors.primary },
-            ]}
-            onPress={() => {
-              setActiveTab('ranks');
-              if (leaderboard.length === 0) loadLeaderboard();
-            }}
-          >
-            <IconSymbol
-              name="rosette"
-              size={16}
-              color={activeTab === 'ranks' ? '#FFFFFF' : colors.textSecondary}
-            />
-            <Text style={[styles.tabButtonText, { color: activeTab === 'ranks' ? '#FFFFFF' : colors.textSecondary }]}>Ranks</Text>
-          </TouchableOpacity>
-        </View>
+      <View style={[styles.safeArea, { backgroundColor: colors.background, paddingTop: 20}]}>
 
         <ScrollView
           contentContainerStyle={styles.content}
@@ -226,7 +179,7 @@ export default function SubjectDetailScreen() {
           {activeTab === 'materials' && (
             <>
               {loadingMaterials && loading ? (
-                <ActivityIndicator size="large" color={colors.primary} style={{ marginTop: 40 }} />
+                <ActivityIndicator size="large" color={colors.primary} style={{ marginTop: 150 }} />
               ) : allMaterials.length === 0 && !topics.some(t => t.hasSyllabus) ? (
                 <View style={styles.empty}>
                   <Text style={styles.emptyEmoji}>📚</Text>
@@ -240,7 +193,7 @@ export default function SubjectDetailScreen() {
                   {/* Topic Learning Content - Teacher's Notes/Syllabus */}
                   {topics.some(t => t.hasSyllabus) && (
                     <>
-                      <Text style={[styles.sectionTitle, { color: colors.textSecondary }]}>LEARNING CONTENT</Text>
+                      <Text style={[styles.sectionTitle, { color: colors.textSecondary, paddingTop: 100 }]}>LEARNING CONTENT</Text>
                       {topics.filter(t => t.hasSyllabus).map((topic) => (
                         <TouchableOpacity
                           key={topic.id}
@@ -349,12 +302,6 @@ export default function SubjectDetailScreen() {
           {/* ============ PRACTICE TAB ============ */}
           {activeTab === 'practice' && (
             <>
-              <TouchableOpacity
-                style={[styles.startAllButton, { backgroundColor: colors.primary }]}
-                onPress={handleStartAll}
-              >
-                <Text style={styles.startAllText}>🎯 Start Mixed Lesson</Text>
-              </TouchableOpacity>
 
               {loading ? (
                 <ActivityIndicator size="large" color={colors.primary} style={{ marginTop: 40 }} />
@@ -367,46 +314,56 @@ export default function SubjectDetailScreen() {
                 </View>
               ) : (
                 topics.map((topic) => (
-                  <TouchableOpacity
-                    key={topic.id}
-                    style={[styles.topicCard, { backgroundColor: colors.backgroundSecondary }]}
-                    onPress={() => handleStartTopic(topic.id)}
-                    activeOpacity={0.7}
-                  >
-                    <View style={styles.topicLeft}>
+                    <View style={{ marginTop: topics.indexOf(topic) === 0 ? 100 : 0 }}>
+                    <TouchableOpacity
+                      key={topic.id}
+                      style={[styles.topicCard, { backgroundColor: colors.backgroundSecondary }]}
+                      onPress={() => handleStartTopic(topic.id)}
+                      activeOpacity={0.7}
+                    >
+                      <View style={styles.topicLeft}>
                       <MasteryRing mastery={topic.mastery} size={50} />
-                    </View>
-                    <View style={styles.topicInfo}>
+                      </View>
+                      <View style={styles.topicInfo}>
                       <Text style={[styles.topicName, { color: colors.text }]}>{topic.name}</Text>
                       <Text style={[styles.topicMeta, { color: colors.textSecondary }]}>
                         {topic.questionsAttempted > 0
-                          ? `${Math.round(topic.accuracy)}% accuracy · ${topic.questionsAttempted} attempted`
-                          : 'Not started'}
+                        ? `${Math.round(topic.accuracy)}% accuracy · ${topic.questionsAttempted} attempted`
+                        : 'Not started'}
                       </Text>
                       <View style={[styles.diffBadge, {
                         backgroundColor: topic.difficulty === 'hard' ? '#FF3B3020' : topic.difficulty === 'medium' ? '#FF950020' : '#34C75920',
                       }]}>
                         <Text style={[styles.diffText, {
-                          color: topic.difficulty === 'hard' ? '#FF3B30' : topic.difficulty === 'medium' ? '#FF9500' : '#34C759',
+                        color: topic.difficulty === 'hard' ? '#FF3B30' : topic.difficulty === 'medium' ? '#FF9500' : '#34C759',
                         }]}>
-                          {topic.difficulty}
+                        {topic.difficulty}
                         </Text>
                       </View>
+                      </View>
+                      <Text style={[styles.arrow, { color: colors.textSecondary }]}>›</Text>
+                    </TouchableOpacity>
                     </View>
-                    <Text style={[styles.arrow, { color: colors.textSecondary }]}>›</Text>
-                  </TouchableOpacity>
                 ))
               )}
+
+              <TouchableOpacity
+                style={[styles.startAllButton, { backgroundColor: colors.primary }]}
+                onPress={handleStartAll}
+              >
+                <Text style={styles.startAllText}>🎯 Start Mixed Lesson</Text>
+              </TouchableOpacity>
             </>
           )}
 
           {/* ============ RANKS TAB ============ */}
-          {activeTab === 'ranks' && (
+            {activeTab === 'ranks' && (
             <>
+              <View style={{ marginTop: 100 }}>
               {myRank && (
                 <View style={[styles.myRankCard, { backgroundColor: colors.primary }]}>
-                  <Text style={styles.myRankLabel}>Your Rank</Text>
-                  <Text style={styles.myRankValue}>#{myRank}</Text>
+                <Text style={styles.myRankLabel}>Your Rank</Text>
+                <Text style={styles.myRankValue}>#{myRank}</Text>
                 </View>
               )}
 
@@ -414,42 +371,91 @@ export default function SubjectDetailScreen() {
                 <ActivityIndicator size="large" color={colors.primary} style={{ marginTop: 40 }} />
               ) : leaderboard.length === 0 ? (
                 <View style={styles.empty}>
-                  <Text style={styles.emptyEmoji}>🏆</Text>
-                  <Text style={[styles.emptyText, { color: colors.textSecondary }]}>
-                    No leaderboard data yet. Start practicing to earn XP!
-                  </Text>
+                <Text style={styles.emptyEmoji}>🏆</Text>
+                <Text style={[styles.emptyText, { color: colors.textSecondary }]}>
+                  No leaderboard data yet. Start practicing to earn XP!
+                </Text>
                 </View>
               ) : (
                 leaderboard.map((entry, idx) => (
-                  <View
-                    key={entry.user_id}
-                    style={[styles.rankRow, {
-                      backgroundColor: idx < 3 ? (colorScheme === 'dark' ? 'rgba(255,215,0,0.08)' : 'rgba(255,215,0,0.12)') : colors.backgroundSecondary,
-                    }]}
-                  >
-                    <Text style={[styles.rankNum, {
-                      color: idx === 0 ? '#FFD700' : idx === 1 ? '#C0C0C0' : idx === 2 ? '#CD7F32' : colors.textSecondary,
-                    }]}>
-                      {idx === 0 ? '🥇' : idx === 1 ? '🥈' : idx === 2 ? '🥉' : `#${entry.rank}`}
-                    </Text>
-                    <View style={styles.rankInfo}>
-                      <Text style={[styles.rankName, { color: colors.text }]}>
-                        {entry.full_name || entry.username}
-                      </Text>
-                      <Text style={[styles.rankMeta, { color: colors.textSecondary }]}>
-                        Level {entry.level} · {entry.xp_total} XP
-                      </Text>
-                    </View>
-                    <View style={[styles.xpBadge, { backgroundColor: colors.primary + '20' }]}>
-                      <Text style={[styles.xpText, { color: colors.primary }]}>{entry.xp_total} XP</Text>
-                    </View>
+                <View
+                  key={entry.user_id}
+                  style={[styles.rankRow, {
+                  backgroundColor: idx < 3 ? (colorScheme === 'dark' ? 'rgba(255,215,0,0.08)' : 'rgba(255,215,0,0.12)') : colors.backgroundSecondary,
+                  }]}
+                >
+                  <Text style={[styles.rankNum, {
+                  color: idx === 0 ? '#FFD700' : idx === 1 ? '#C0C0C0' : idx === 2 ? '#CD7F32' : colors.textSecondary,
+                  }]}>
+                  {idx === 0 ? '🥇' : idx === 1 ? '🥈' : idx === 2 ? '🥉' : `#${entry.rank}`}
+                  </Text>
+                  <View style={styles.rankInfo}>
+                  <Text style={[styles.rankName, { color: colors.text }]}>
+                    {entry.full_name || entry.username}
+                  </Text>
+                  <Text style={[styles.rankMeta, { color: colors.textSecondary }]}>
+                    Level {entry.level} · {entry.xp_total} XP
+                  </Text>
                   </View>
+                  <View style={[styles.xpBadge, { backgroundColor: colors.primary + '20' }]}>
+                  <Text style={[styles.xpText, { color: colors.primary }]}>{entry.xp_total} XP</Text>
+                  </View>
+                </View>
                 ))
               )}
+              </View>
             </>
-          )}
+            )}
         </ScrollView>
-      </SafeAreaView>
+        {/* Tab Selector */}
+        <View style={[styles.tabSelector, { backgroundColor: colors.card, marginBottom: 100}]}>
+          <TouchableOpacity
+            style={[
+              styles.tabButton,
+              activeTab === 'materials' && { backgroundColor: colors.primary },
+            ]}
+            onPress={() => setActiveTab('materials')}
+          >
+            <IconSymbol
+              name="book.fill"
+              size={16}
+              color={activeTab === 'materials' ? '#FFFFFF' : colors.textSecondary}
+            />
+            <Text style={[styles.tabButtonText, { color: activeTab === 'materials' ? '#FFFFFF' : colors.textSecondary }]}>Learn</Text>
+          </TouchableOpacity>
+          <TouchableOpacity
+            style={[
+              styles.tabButton,
+              activeTab === 'practice' && { backgroundColor: colors.primary },
+            ]}
+            onPress={() => setActiveTab('practice')}
+          >
+            <IconSymbol
+              name="pencil.and.outline"
+              size={16}
+              color={activeTab === 'practice' ? '#FFFFFF' : colors.textSecondary}
+            />
+            <Text style={[styles.tabButtonText, { color: activeTab === 'practice' ? '#FFFFFF' : colors.textSecondary }]}>Practice</Text>
+          </TouchableOpacity>
+          <TouchableOpacity
+            style={[
+              styles.tabButton,
+              activeTab === 'ranks' && { backgroundColor: colors.primary },
+            ]}
+            onPress={() => {
+              setActiveTab('ranks');
+              if (leaderboard.length === 0) loadLeaderboard();
+            }}
+          >
+            <IconSymbol
+              name="rosette"
+              size={16}
+              color={activeTab === 'ranks' ? '#FFFFFF' : colors.textSecondary}
+            />
+            <Text style={[styles.tabButtonText, { color: activeTab === 'ranks' ? '#FFFFFF' : colors.textSecondary }]}>Ranks</Text>
+          </TouchableOpacity>
+        </View>
+      </View>
     </>
   );
 }
@@ -462,7 +468,6 @@ const styles = StyleSheet.create({
   tabSelector: {
     flexDirection: 'row',
     marginHorizontal: Spacing.md,
-    marginBottom: Spacing.md,
     borderRadius: BorderRadius.md,
     padding: 4,
   },
@@ -499,7 +504,7 @@ const styles = StyleSheet.create({
     paddingVertical: Spacing.md,
     borderRadius: BorderRadius.lg,
     alignItems: 'center',
-    marginBottom: Spacing.lg,
+    marginTop: Spacing.lg,
   },
   startAllText: { color: '#fff', fontSize: FontSizes.md, fontWeight: '700' },
   topicCard: {

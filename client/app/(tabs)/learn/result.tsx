@@ -59,15 +59,13 @@ export default function ResultScreen() {
         ]).start();
       }
     }
-
-    return () => {
-      clearLesson();
-    };
-  }, [clearLesson]);
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [lessonResult]);
 
   const handleContinue = () => {
     Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
     loadProfile();
+    clearLesson();
     router.replace('/(tabs)/learn');
   };
 

@@ -185,15 +185,16 @@ export default function TopicContentScreen() {
       <Stack.Screen
         options={{
           headerShown: true,
+          headerTransparent: true,
           title: topicName || 'Chapter Details',
           headerBackTitle: 'Back',
           headerShadowVisible: false,
-          headerStyle: { backgroundColor: colors.background },
+          headerStyle: { backgroundColor: 'transparent' },
           headerTintColor: colors.primary,
           headerTitleStyle: { color: colors.text, fontWeight: '600' },
         }}
       />
-      <SafeAreaView style={[styles.container, { backgroundColor: colors.background }]} edges={['bottom']}>
+      <View style={[styles.container, { backgroundColor: colors.background }]}>
         <ScrollView
           style={styles.scrollView}
           contentContainerStyle={styles.scrollContent}
@@ -205,7 +206,7 @@ export default function TopicContentScreen() {
             {content}
           </Markdown>
         </ScrollView>
-      </SafeAreaView>
+      </View>
     </>
   );
 }
@@ -224,6 +225,7 @@ const styles = StyleSheet.create({
   },
   scrollContent: {
     padding: Spacing.lg,
+    paddingTop: 110,
     paddingBottom: Spacing.xxl * 2,
   },
   centerContainer: {

@@ -10,11 +10,10 @@ export default function TestsLayout() {
     <Stack
       screenOptions={{
         headerShown: true,
+        headerTransparent: true,
         headerStyle: {
           backgroundColor: 'transparent',
         },
-        headerTransparent: true,
-        headerBlurEffect: colorScheme === 'dark' ? 'dark' : 'light',
         headerTintColor: colors.primary,
         headerTitleStyle: {
           fontWeight: '600',

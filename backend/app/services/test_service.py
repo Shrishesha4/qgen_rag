@@ -536,6 +536,13 @@ class TestService:
             })
         return questions
 
+    async def get_submissions_count(self, test_id: UUID) -> int:
+        """Get total submissions count for a test."""
+        result = await self.db.execute(
+            select(func.count(TestSubmission.id)).where(TestSubmission.test_id == test_id)
+        )
+        return result.scalar() or 0
+
     async def update_test_question(
         self, test_id: UUID, test_question_id: UUID, teacher_id: UUID, data: dict
     ) -> Optional[dict]:

@@ -593,6 +593,10 @@ class GamificationService:
         mastery_change = 0.0
         new_mastery = 0.0
         if topic_id:
+            # Use upsert to handle race conditions
+            from sqlalchemy.dialects.postgresql import insert as pg_insert
+            
+            # First, try to get existing progress
             progress = await self.db.execute(
                 select(StudentProgress).where(
                     and_(
@@ -603,14 +607,37 @@ class GamificationService:
                 )
             )
             p = progress.scalar_one_or_none()
+            
             if not p:
-                p = StudentProgress(
+                # Use upsert to safely insert or update
+                stmt = pg_insert(StudentProgress).values(
                     student_id=student_id,
                     subject_id=subject_id,
                     topic_id=topic_id,
+                    topic_mastery=0.0,
+                    xp_earned=0,
+                    current_level=1,
+                    accuracy_percentage=0.0,
+                    questions_attempted=0,
+                    questions_correct=0,
+                    current_difficulty="easy",
+                ).on_conflict_do_nothing(
+                    constraint="uq_student_topic_progress"
                 )
-                self.db.add(p)
+                await self.db.execute(stmt)
                 await self.db.flush()
+                
+                # Re-fetch the record (either just inserted or already existed)
+                progress = await self.db.execute(
+                    select(StudentProgress).where(
+                        and_(
+                            StudentProgress.student_id == student_id,
+                            StudentProgress.subject_id == subject_id,
+                            StudentProgress.topic_id == topic_id,
+                        )
+                    )
+                )
+                p = progress.scalar_one()
             
             old_mastery = p.topic_mastery
             p.questions_attempted += total_questions

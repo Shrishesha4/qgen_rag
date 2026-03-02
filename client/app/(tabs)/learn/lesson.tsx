@@ -34,6 +34,7 @@ export default function LessonScreen() {
   const [answers, setAnswers] = useState<AnswerSubmission[]>([]);
   const [hearts, setHearts] = useState(5);
   const [lessonStartTime, setLessonStartTime] = useState<number | null>(null);
+  const [isSubmitting, setIsSubmitting] = useState(false);
 
   useEffect(() => {
     if (params.subjectId) {
@@ -83,6 +84,7 @@ export default function LessonScreen() {
       setSelectedAnswer(null);
       setShowResult(false);
     } else {
+      setIsSubmitting(true);
       const totalTime = lessonStartTime ? Math.round((Date.now() - lessonStartTime) / 1000) : 0;
       await submitLesson(
         params.subjectId,
@@ -264,7 +266,7 @@ export default function LessonScreen() {
       </ScrollView>
 
       {/* Bottom Action */}
-      <View style={[styles.bottomBar, { backgroundColor: colors.background }]}>
+      <View style={[styles.bottomBar, { backgroundColor: colors.background, paddingBottom: 120 }]}>
         {!showResult ? (
           <TouchableOpacity
             style={[
@@ -289,10 +291,15 @@ export default function LessonScreen() {
           <TouchableOpacity
             style={[styles.actionButton, { backgroundColor: colors.primary }]}
             onPress={handleNext}
+            disabled={isSubmitting}
           >
-            <Text style={styles.actionButtonText}>
-              {currentIndex < questions.length - 1 ? 'Continue' : 'Finish'}
-            </Text>
+            {isSubmitting ? (
+              <ActivityIndicator color="#fff" />
+            ) : (
+              <Text style={styles.actionButtonText}>
+                {currentIndex < questions.length - 1 ? 'Continue' : 'Finish'}
+              </Text>
+            )}
           </TouchableOpacity>
         )}
       </View>
