@@ -40,6 +40,36 @@ const SPRING_SNAPPY = { damping: 20, stiffness: 200, mass: 0.8 };
 const SPRING_BOUNCY = { damping: 12, stiffness: 150, mass: 0.6 };
 const SPRING_GENTLE = { damping: 15, stiffness: 100, mass: 1 };
 
+// Level definitions with emojis and descriptions
+const LEVEL_INFO = {
+    easy: {
+        level: 1,
+        emoji: '🌱',
+        title: 'Level 1 - Warm Up',
+        subtitle: 'Easy Questions',
+        description: 'Let\'s start with the basics. Build your confidence!',
+        color: '#34C759',
+    },
+    medium: {
+        level: 2,
+        emoji: '🔥',
+        title: 'Level 2 - Getting Serious',
+        subtitle: 'Medium Questions',
+        description: 'Time to challenge yourself. Stay focused!',
+        color: '#FF9500',
+    },
+    hard: {
+        level: 3,
+        emoji: '💎',
+        title: 'Level 3 - Expert Mode',
+        subtitle: 'Hard Questions',
+        description: 'The real test begins. Show what you\'ve got!',
+        color: '#FF3B30',
+    },
+};
+
+type DifficultyLevel = 'easy' | 'medium' | 'hard';
+
 export default function TakeTestScreen() {
     const colorScheme = useColorScheme() ?? 'light';
     const colors = Colors[colorScheme];
@@ -58,6 +88,18 @@ export default function TakeTestScreen() {
     const [result, setResult] = useState<any>(null);
     const [elapsedSeconds, setElapsedSeconds] = useState(0);
     const [testStarted, setTestStarted] = useState(false);
+
+    // Level-based organization
+    const [groupedQuestions, setGroupedQuestions] = useState<{
+        easy: any[];
+        medium: any[];
+        hard: any[];
+    }>({ easy: [], medium: [], hard: [] });
+    const [currentLevel, setCurrentLevel] = useState<DifficultyLevel | null>(null);
+    const [showLevelInterstitial, setShowLevelInterstitial] = useState(false);
+    const [levelOrder, setLevelOrder] = useState<DifficultyLevel[]>([]);
+    const [currentLevelIndex, setCurrentLevelIndex] = useState(0);
+    const [questionIndexInLevel, setQuestionIndexInLevel] = useState(0);
 
     // Reanimated shared values
     const countdownScale = useSharedValue(0);
@@ -93,6 +135,13 @@ export default function TakeTestScreen() {
     const pulseScale = useSharedValue(1);
     const selectedPop = useSharedValue(1);
 
+    // Level interstitial animation values
+    const levelScale = useSharedValue(0);
+    const levelOpacity = useSharedValue(0);
+    const levelEmojiScale = useSharedValue(0);
+    const levelTitleY = useSharedValue(30);
+    const levelDescY = useSharedValue(30);
+
     // Timer - only counts when test has started and not showing result
     useEffect(() => {
         if (!testStarted || showResult) return;
@@ -121,6 +170,35 @@ export default function TakeTestScreen() {
         const sec = s % 60;
         return `${m}:${sec.toString().padStart(2, '0')}`;
     };
+
+    // ====== Level Interstitial ======
+    const startLevelInterstitial = useCallback((level: DifficultyLevel) => {
+        setCurrentLevel(level);
+        setShowLevelInterstitial(true);
+        
+        // Reset animations
+        levelScale.value = 0;
+        levelOpacity.value = 0;
+        levelEmojiScale.value = 0;
+        levelTitleY.value = 30;
+        levelDescY.value = 30;
+
+        Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Heavy);
+
+        // Animate in
+        levelOpacity.value = withTiming(1, { duration: 300 });
+        levelScale.value = withSpring(1, SPRING_BOUNCY);
+        levelEmojiScale.value = withDelay(100, withSpring(1, { damping: 8, stiffness: 200 }));
+        levelTitleY.value = withDelay(200, withSpring(0, SPRING_GENTLE));
+        levelDescY.value = withDelay(350, withSpring(0, SPRING_GENTLE));
+
+        // Auto-dismiss after animation
+        setTimeout(() => {
+            levelOpacity.value = withTiming(0, { duration: 300 }, () => {
+                runOnJS(setShowLevelInterstitial)(false);
+            });
+        }, 2000);
+    }, []);
 
     // ====== Countdown ======
     const startCountdown = useCallback(() => {
@@ -165,7 +243,38 @@ export default function TakeTestScreen() {
             try {
                 const data = await testsService.getStudentTest(testId);
                 setTest(data);
-                setQuestions(data.questions || []);
+                
+                // Group questions by difficulty
+                const qs = data.questions || [];
+                const grouped = {
+                    easy: qs.filter((q: any) => q.difficulty_level === 'easy'),
+                    medium: qs.filter((q: any) => q.difficulty_level === 'medium'),
+                    hard: qs.filter((q: any) => q.difficulty_level === 'hard'),
+                };
+                
+                // Handle questions without difficulty level - put them in medium
+                const unassigned = qs.filter((q: any) => 
+                    !['easy', 'medium', 'hard'].includes(q.difficulty_level)
+                );
+                grouped.medium = [...grouped.medium, ...unassigned];
+                
+                setGroupedQuestions(grouped);
+                
+                // Determine level order (only include levels with questions)
+                const order: DifficultyLevel[] = [];
+                if (grouped.easy.length > 0) order.push('easy');
+                if (grouped.medium.length > 0) order.push('medium');
+                if (grouped.hard.length > 0) order.push('hard');
+                setLevelOrder(order);
+                
+                // Flatten questions in order: easy -> medium -> hard
+                const orderedQuestions = [
+                    ...grouped.easy,
+                    ...grouped.medium,
+                    ...grouped.hard,
+                ];
+                setQuestions(orderedQuestions);
+                
                 setIsLoading(false);
                 // Start countdown after load
                 setTimeout(() => startCountdown(), 300);
@@ -176,12 +285,50 @@ export default function TakeTestScreen() {
         })();
     }, [testId]);
 
-    // Animate first question after countdown
+    // Show first level interstitial after countdown
     useEffect(() => {
-        if (testStarted && questions.length > 0) {
-            animateQuestionEntry(questions[0]?.options?.length || 0);
+        if (testStarted && levelOrder.length > 0 && !currentLevel) {
+            // Show the first level interstitial
+            const firstLevel = levelOrder[0];
+            setCurrentLevelIndex(0);
+            setQuestionIndexInLevel(0);
+            startLevelInterstitial(firstLevel);
         }
-    }, [testStarted]);
+    }, [testStarted, levelOrder, currentLevel, startLevelInterstitial]);
+
+    // Animate first question after level interstitial dismisses
+    useEffect(() => {
+        if (testStarted && questions.length > 0 && currentLevel && !showLevelInterstitial) {
+            animateQuestionEntry(questions[currentIndex]?.options?.length || 0);
+        }
+    }, [testStarted, showLevelInterstitial, currentLevel]);
+
+    // Helper to get the current level for a question index
+    const getLevelForIndex = useCallback((index: number): DifficultyLevel | null => {
+        const easyCount = groupedQuestions.easy.length;
+        const mediumCount = groupedQuestions.medium.length;
+        
+        if (index < easyCount) return 'easy';
+        if (index < easyCount + mediumCount) return 'medium';
+        return 'hard';
+    }, [groupedQuestions]);
+
+    // Check if we're transitioning to a new level
+    const checkLevelTransition = useCallback((newIndex: number) => {
+        const newLevel = getLevelForIndex(newIndex);
+        const currentQuestionLevel = getLevelForIndex(currentIndex);
+        
+        if (newLevel && newLevel !== currentQuestionLevel && levelOrder.includes(newLevel)) {
+            // Transitioning to a new level
+            const newLevelIdx = levelOrder.indexOf(newLevel);
+            setCurrentLevelIndex(newLevelIdx);
+            setQuestionIndexInLevel(0);
+            setCurrentIndex(newIndex);
+            startLevelInterstitial(newLevel);
+            return true;
+        }
+        return false;
+    }, [getLevelForIndex, currentIndex, levelOrder, startLevelInterstitial]);
 
     const animateQuestionEntry = (optCount: number) => {
         questionSlideX.value = SCREEN_WIDTH;
@@ -222,9 +369,29 @@ export default function TakeTestScreen() {
     const goToQuestion = (newIndex: number) => {
         if (newIndex < 0 || newIndex >= questions.length) return;
         Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
+        
+        // Check if we're transitioning to a new level (only when going forward)
+        if (newIndex > currentIndex && checkLevelTransition(newIndex)) {
+            // Level transition will handle the animation
+            return;
+        }
+        
         const direction = newIndex > currentIndex ? 'left' : 'right';
         animateQuestionExit(direction, () => {
             setCurrentIndex(newIndex);
+            // Update current level and question index in level
+            const level = getLevelForIndex(newIndex);
+            if (level) {
+                setCurrentLevel(level);
+                if (level === 'easy') {
+                    setQuestionIndexInLevel(newIndex);
+                } else if (level === 'medium') {
+                    setQuestionIndexInLevel(newIndex - groupedQuestions.easy.length);
+                } else {
+                    setQuestionIndexInLevel(newIndex - groupedQuestions.easy.length - groupedQuestions.medium.length);
+                }
+            }
+            
             const opts = questions[newIndex]?.options || [];
             progressWidth.value = withTiming(
                 ((newIndex + 1) / questions.length) * 100,
@@ -308,10 +475,9 @@ export default function TakeTestScreen() {
         ],
         opacity: questionFade.value,
     }));
-    const progressStyle = useAnimatedStyle(() => {
-        // Use percentage string for width - reanimated supports this at runtime
-        return { width: `${progressWidth.value}%` } as { width: string };
-    });
+    const progressStyle = useAnimatedStyle(() => ({
+        width: (SCREEN_WIDTH * progressWidth.value) / 100,
+    }));
     const resultAnimStyle = useAnimatedStyle(() => ({
         transform: [{ scale: resultScale.value }],
         opacity: resultOpacity.value,
@@ -335,6 +501,23 @@ export default function TakeTestScreen() {
     const optStyle4 = useAnimatedStyle(() => ({ opacity: optionValues[4].opacity.value, transform: [{ translateY: optionValues[4].translateY.value }] }));
     const optStyle5 = useAnimatedStyle(() => ({ opacity: optionValues[5].opacity.value, transform: [{ translateY: optionValues[5].translateY.value }] }));
     const optionAnimStyles = [optStyle0, optStyle1, optStyle2, optStyle3, optStyle4, optStyle5];
+
+    // Level interstitial animated styles
+    const levelContainerStyle = useAnimatedStyle(() => ({
+        opacity: levelOpacity.value,
+        transform: [{ scale: levelScale.value }],
+    }));
+    const levelEmojiStyle = useAnimatedStyle(() => ({
+        transform: [{ scale: levelEmojiScale.value }],
+    }));
+    const levelTitleStyle = useAnimatedStyle(() => ({
+        transform: [{ translateY: levelTitleY.value }],
+        opacity: 1 - levelTitleY.value / 30,
+    }));
+    const levelDescStyle = useAnimatedStyle(() => ({
+        transform: [{ translateY: levelDescY.value }],
+        opacity: 1 - levelDescY.value / 30,
+    }));
 
     // ====== Loading ======
     if (isLoading) {
@@ -370,6 +553,42 @@ export default function TakeTestScreen() {
                     <Text style={[styles.countdownMeta, { color: colors.textTertiary }]}>
                         {questions.length} questions
                     </Text>
+                </ReAnimated.View>
+            </SafeAreaView>
+        );
+    }
+
+    // ====== Level Interstitial ======
+    if (showLevelInterstitial && currentLevel) {
+        const levelInfo = LEVEL_INFO[currentLevel];
+        const questionsInLevel = groupedQuestions[currentLevel].length;
+        
+        return (
+            <SafeAreaView style={[styles.container, { backgroundColor: colors.background }]}>
+                <ReAnimated.View style={[styles.levelOverlay, levelContainerStyle]}>
+                    <ReAnimated.View style={levelEmojiStyle}>
+                        <Text style={styles.levelEmoji}>{levelInfo.emoji}</Text>
+                    </ReAnimated.View>
+                    
+                    <ReAnimated.View style={levelTitleStyle}>
+                        <Text style={[styles.levelTitle, { color: levelInfo.color }]}>
+                            {levelInfo.title}
+                        </Text>
+                        <Text style={[styles.levelSubtitle, { color: colors.textSecondary }]}>
+                            {levelInfo.subtitle}
+                        </Text>
+                    </ReAnimated.View>
+                    
+                    <ReAnimated.View style={levelDescStyle}>
+                        <Text style={[styles.levelDescription, { color: colors.text }]}>
+                            {levelInfo.description}
+                        </Text>
+                        <View style={[styles.levelQuestionsInfo, { backgroundColor: levelInfo.color + '15' }]}>
+                            <Text style={[styles.levelQuestionsText, { color: levelInfo.color }]}>
+                                {questionsInLevel} question{questionsInLevel !== 1 ? 's' : ''} in this level
+                            </Text>
+                        </View>
+                    </ReAnimated.View>
                 </ReAnimated.View>
             </SafeAreaView>
         );
@@ -551,11 +770,21 @@ export default function TakeTestScreen() {
                 </View>
             </View>
 
-            {/* Question Counter */}
+            {/* Level & Question Counter */}
             <View style={styles.counterRow}>
-                <Text style={{ fontSize: FontSizes.sm, color: colors.textSecondary }}>
-                    Question {currentIndex + 1} of {questions.length}
-                </Text>
+                <View style={{ flexDirection: 'row', alignItems: 'center', gap: 8 }}>
+                    {currentLevel && (
+                        <View style={[styles.levelBadge, { backgroundColor: LEVEL_INFO[currentLevel].color + '15' }]}>
+                            <Text style={{ fontSize: 12 }}>{LEVEL_INFO[currentLevel].emoji}</Text>
+                            <Text style={{ fontSize: FontSizes.xs, fontWeight: '700', color: LEVEL_INFO[currentLevel].color }}>
+                                L{LEVEL_INFO[currentLevel].level}
+                            </Text>
+                        </View>
+                    )}
+                    <Text style={{ fontSize: FontSizes.sm, color: colors.textSecondary }}>
+                        Question {currentIndex + 1} of {questions.length}
+                    </Text>
+                </View>
                 <View style={[styles.answeredBadge, { backgroundColor: colors.primary + '15' }]}>
                     <Text style={{ fontSize: FontSizes.xs, fontWeight: '600', color: colors.primary }}>
                         {answeredCount}/{questions.length} answered
@@ -757,6 +986,14 @@ const styles = StyleSheet.create({
         paddingVertical: 4,
         borderRadius: BorderRadius.full,
     },
+    levelBadge: {
+        flexDirection: 'row',
+        alignItems: 'center',
+        gap: 4,
+        paddingHorizontal: 8,
+        paddingVertical: 4,
+        borderRadius: BorderRadius.full,
+    },
     diffBadge: {
         paddingHorizontal: 10,
         paddingVertical: 4,
@@ -911,5 +1148,44 @@ const styles = StyleSheet.create({
     tutorFeedbackText: {
         fontSize: FontSizes.sm + 1,
         lineHeight: 22,
+    },
+    // Level Interstitial
+    levelOverlay: {
+        flex: 1,
+        justifyContent: 'center',
+        alignItems: 'center',
+        paddingHorizontal: Spacing.xl,
+    },
+    levelEmoji: {
+        fontSize: 100,
+        marginBottom: Spacing.lg,
+    },
+    levelTitle: {
+        fontSize: 32,
+        fontWeight: '900',
+        textAlign: 'center',
+        marginBottom: 8,
+    },
+    levelSubtitle: {
+        fontSize: FontSizes.lg,
+        fontWeight: '600',
+        textAlign: 'center',
+        marginBottom: Spacing.md,
+    },
+    levelDescription: {
+        fontSize: FontSizes.md,
+        textAlign: 'center',
+        lineHeight: 24,
+        marginBottom: Spacing.lg,
+    },
+    levelQuestionsInfo: {
+        paddingHorizontal: 20,
+        paddingVertical: 12,
+        borderRadius: BorderRadius.lg,
+    },
+    levelQuestionsText: {
+        fontSize: FontSizes.sm,
+        fontWeight: '700',
+        textAlign: 'center',
     },
 });
