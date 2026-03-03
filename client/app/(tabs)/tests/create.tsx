@@ -820,7 +820,7 @@ export default function CreateTestScreen() {
         </ScrollView>
 
         {/* Bottom Actions */}
-        <View style={[styles.bottomBar, { backgroundColor: 'transparent', borderTopWidth: 0, paddingBottom: insets.bottom + Spacing.md }]}>
+        <View style={[styles.bottomBar, { backgroundColor: 'transparent', borderTopWidth: 0, paddingBottom: insets.bottom + Spacing.md + 60 }]}>
           {step !== 'basics' && (
             <NativeButton
               title="Back"

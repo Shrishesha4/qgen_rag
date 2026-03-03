@@ -550,7 +550,7 @@ const styles = StyleSheet.create({
   xpBadge: { paddingHorizontal: Spacing.sm, paddingVertical: 4, borderRadius: BorderRadius.md },
   xpText: { fontSize: FontSizes.xs, fontWeight: '700' },
   // Empty
-  empty: { alignItems: 'center', paddingTop: 60 },
+  empty: { alignItems: 'center', paddingTop: 350 },
   emptyEmoji: { fontSize: 48 },
   emptyTitle: { fontSize: FontSizes.lg, fontWeight: '700', marginTop: Spacing.md },
   emptyText: { fontSize: FontSizes.md, marginTop: Spacing.sm, textAlign: 'center', paddingHorizontal: 40 },
