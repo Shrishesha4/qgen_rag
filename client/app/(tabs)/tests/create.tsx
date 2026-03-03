@@ -43,7 +43,6 @@ export default function CreateTestScreen() {
 
   // Flow state
   const [step, setStep] = useState<Step>('basics');
-  const [isLoading, setIsLoading] = useState(false);
   const [isCreating, setIsCreating] = useState(false);
 
   // Subjects & topics
@@ -583,7 +582,7 @@ export default function CreateTestScreen() {
           </GlassCard>
         ))}
 
-        <View style={[styles.totalBar, { backgroundColor: colors.backgroundSecondary }]}>
+        <View style={styles.totalBar}>
           <Text style={[styles.totalText, { color: colors.text }]}>
             Total Questions: {getTotalQuestions()}
           </Text>
@@ -659,7 +658,7 @@ export default function CreateTestScreen() {
       )}
 
       {selectedTopics.length > 0 && (
-        <View style={[styles.totalBar, { backgroundColor: colors.backgroundSecondary }]}>
+        <View style={styles.totalBar}>
           <Text style={[styles.totalText, { color: colors.text }]}>
             Total Questions: {getTotalQuestions()}
           </Text>
@@ -820,7 +819,7 @@ export default function CreateTestScreen() {
         </ScrollView>
 
         {/* Bottom Actions */}
-        <View style={[styles.bottomBar, { backgroundColor: 'transparent', borderTopWidth: 0, paddingBottom: insets.bottom + Spacing.md + 60 }]}>
+        <View style={[styles.bottomBar, { paddingBottom: insets.bottom + Spacing.md + 60 }]}>
           {step !== 'basics' && (
             <NativeButton
               title="Back"
@@ -868,7 +867,7 @@ const styles = StyleSheet.create({
     alignItems: 'center',
     justifyContent: 'center',
     paddingHorizontal: Spacing.xl,
-    paddingTop: 110,
+    paddingTop: 120,
     paddingBottom: Spacing.sm,
   },
   progressItem: {
@@ -1138,10 +1137,13 @@ const styles = StyleSheet.create({
     fontStyle: 'italic',
   },
   bottomBar: {
+    position: 'absolute',
+    bottom: 0,
+    left: 0,
+    right: 0,
     flexDirection: 'row',
     alignItems: 'center',
     paddingHorizontal: Spacing.lg,
-    paddingVertical: Spacing.md,
-    borderTopWidth: 1,
+    paddingTop: Spacing.md,
   },
 });

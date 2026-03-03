@@ -299,15 +299,17 @@ class GamificationService:
         enrollment = result.scalar_one_or_none()
         if not enrollment:
             raise ValueError("Enrollment not found or unauthorized")
-        if enrollment.status != "pending":
-            raise ValueError(f"Enrollment is already {enrollment.status}")
+        # Allow rejecting pending requests OR revoking already-approved enrollments
+        if enrollment.status not in ("pending", "approved"):
+            raise ValueError(f"Cannot reject/revoke enrollment with status '{enrollment.status}'")
         
+        action = "revoked" if enrollment.status == "approved" else "rejected"
         enrollment.status = "rejected"
         enrollment.is_active = False
         enrollment.reviewed_at = datetime.now(timezone.utc)
         await self.db.commit()
         await self.db.refresh(enrollment)
-        logger.info(f"Enrollment {enrollment_id} rejected by teacher {teacher_id}")
+        logger.info(f"Enrollment {enrollment_id} {action} by teacher {teacher_id}")
         return enrollment
 
     # --- Available Subjects ---

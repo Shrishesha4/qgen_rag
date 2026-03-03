@@ -330,9 +330,9 @@ class TestService:
             )
 
             generated_for_plan = 0
-            max_retries_per_q = 3  # retry up to 3 times per question slot
+            max_retries_per_q = 10  # retry up to 10 times per question slot
             attempts = 0
-            max_total_attempts = count * (max_retries_per_q + 1)  # hard ceiling
+            max_total_attempts = count * (max_retries_per_q + 2)  # hard ceiling
 
             while generated_for_plan < count and attempts < max_total_attempts:
                 attempts += 1
@@ -362,10 +362,11 @@ class TestService:
                         continue
 
                     # Check for duplicates against existing + newly generated
+                    # Threshold of 0.92 avoids false positives on semantically-similar-but-distinct questions
                     is_duplicate = await qgen_service._check_duplicate(
                         question_text=question_data["question_text"],
                         blacklist_embeddings=blacklist_embeddings,
-                        threshold=0.85,
+                        threshold=0.92,
                     )
                     if is_duplicate:
                         logger.info(f"Duplicate detected ({difficulty} attempt {attempts}), retrying...")

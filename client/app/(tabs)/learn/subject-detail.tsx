@@ -407,6 +407,7 @@ export default function SubjectDetailScreen() {
             </>
             )}
         </ScrollView>
+        
         {/* Tab Selector */}
         <View style={[styles.tabSelector, { backgroundColor: colors.card, marginBottom: 100}]}>
           <TouchableOpacity
@@ -470,6 +471,7 @@ const styles = StyleSheet.create({
     marginHorizontal: Spacing.md,
     borderRadius: BorderRadius.md,
     padding: 4,
+    height: 50,
   },
   tabButton: {
     flex: 1,
