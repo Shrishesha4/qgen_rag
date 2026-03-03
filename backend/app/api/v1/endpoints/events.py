@@ -12,6 +12,13 @@ The stream emits events of the form:
 
 A keepalive comment (``: keepalive``) is sent every 30 s to prevent
 proxies / load-balancers from closing the connection.
+
+NOTE: This endpoint uses a dedicated lightweight auth dependency
+(``_get_sse_user``) that opens *and closes* its own DB session before
+the streaming response begins.  The normal ``get_current_active_user``
+dependency would keep a SQLAlchemy session (= DB pool slot) checked-out
+for the entire lifetime of the SSE connection, which can be minutes or
+hours and would exhaust the pool.
 """
 
 from __future__ import annotations
@@ -19,19 +26,78 @@ from __future__ import annotations
 import asyncio
 import json
 import logging
+import uuid as _uuid
 
-from fastapi import APIRouter, Depends, Request
+from fastapi import APIRouter, Depends, HTTPException, Request, status
 from fastapi.responses import StreamingResponse
+from fastapi.security import HTTPBearer, HTTPAuthorizationCredentials
 
-from app.api.v1.deps import get_current_active_user
+from app.core.database import AsyncSessionLocal
+from app.core.security import decode_token
 from app.models.user import User
 from app.services.event_broadcaster import broadcaster
+from app.services.redis_service import RedisService
+from app.services.user_service import UserService
 
 logger = logging.getLogger(__name__)
 
 router = APIRouter()
 
 KEEPALIVE_INTERVAL = 30  # seconds
+
+_bearer = HTTPBearer()
+
+
+async def _get_sse_user(
+    credentials: HTTPAuthorizationCredentials = Depends(_bearer),
+) -> User:
+    """
+    Lightweight auth dependency for the SSE endpoint.
+
+    Opens a short-lived DB session, resolves the user, then **closes** the
+    session before the streaming response starts.  This avoids holding a pool
+    slot for the duration of the long-lived connection.
+    """
+    token = credentials.credentials
+
+    payload = decode_token(token)
+    if not payload or payload.get("type") != "access":
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail="Invalid or expired token",
+            headers={"WWW-Authenticate": "Bearer"},
+        )
+
+    # Check blacklist
+    jti = payload.get("jti")
+    if jti:
+        redis_service = RedisService()
+        if await redis_service.is_token_blacklisted(jti):
+            raise HTTPException(
+                status_code=status.HTTP_401_UNAUTHORIZED,
+                detail="Token has been revoked",
+                headers={"WWW-Authenticate": "Bearer"},
+            )
+
+    user_id_str = payload.get("sub")
+    if not user_id_str:
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail="Invalid token payload",
+        )
+
+    # Open a *temporary* session — will be closed before streaming starts
+    async with AsyncSessionLocal() as session:
+        user_service = UserService(session)
+        user = await user_service.get_user_by_id(_uuid.UUID(user_id_str))
+
+    if not user or not user.is_active:
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail="User not found or inactive",
+        )
+
+    return user
 
 
 async def _event_generator(request: Request, user: User):
@@ -91,7 +157,7 @@ def _sse_frame(event: str, data: dict) -> str:
 )
 async def event_stream(
     request: Request,
-    current_user: User = Depends(get_current_active_user),
+    current_user: User = Depends(_get_sse_user),
 ):
     return StreamingResponse(
         _event_generator(request, current_user),

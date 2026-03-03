@@ -4,7 +4,8 @@
  *  1. Connects to ``/api/v1/events`` with the user's JWT.
  *  2. Reconnects automatically on errors / network drops (exponential back-off).
  *  3. Disconnects when the app goes to background, reconnects on foreground.
- *  4. Dispatches incoming ``table_change`` events to React Query, either
+ *  4. Reacts to auth state — connects on login, disconnects on logout.
+ *  5. Dispatches incoming ``table_change`` events to React Query, either
  *     invalidating queries or patching the cache directly.
  *
  * Wrap your authenticated app tree with ``<SSEProvider>`` — it reads the
@@ -12,8 +13,8 @@
  * interceptor refresh flow.
  */
 
-import React, { createContext, useCallback, useContext, useEffect, useRef } from 'react';
-import { AppState, AppStateStatus } from 'react-native';
+import React, { createContext, useContext, useEffect, useRef } from 'react';
+import { AppState, type AppStateStatus } from 'react-native';
 import EventSource from 'react-native-sse';
 import NetInfo, { type NetInfoState } from '@react-native-community/netinfo';
 
@@ -22,6 +23,7 @@ type SSECustomEvents = 'connected' | 'table_change';
 
 import { API_BASE_URL, tokenStorage } from '@/services/api';
 import { queryClient } from '@/providers/QueryProvider';
+import { useAuthStore } from '@/stores/authStore';
 
 // ── Types ────────────────────────────────────────────────────────────────
 
@@ -47,9 +49,6 @@ export const useSSE = () => useContext(SSEContext);
 // Maps a PG table name to React Query query-key prefixes that should be
 // invalidated when that table changes.  Add entries here as you add new
 // queries throughout the app.
-//
-// For high-frequency tables you can instead do an optimistic ``setQueryData``
-// inside ``handleTableChange`` below.
 
 const TABLE_QUERY_KEY_MAP: Record<string, string[][]> = {
   documents:           [['documents']],
@@ -69,35 +68,18 @@ const TABLE_QUERY_KEY_MAP: Record<string, string[][]> = {
 
 function handleTableChange(event: TableChangeEvent) {
   const queryKeys = TABLE_QUERY_KEY_MAP[event.table];
-
-  if (!queryKeys) {
-    // Unknown table — nothing to invalidate.
-    return;
-  }
-
-  // For DELETE operations we always invalidate so list queries drop the item.
-  // For INSERT/UPDATE we can choose between invalidation (simple, extra
-  // round-trip) or optimistic cache update (no round-trip but more code).
-  //
-  // The default strategy here is *smart invalidation*: mark matching queries
-  // as stale and let React Query refetch only the ones that are currently
-  // being observed (mounted on screen).  This avoids unnecessary fetches for
-  // screens the user isn't looking at.
+  if (!queryKeys) return;
 
   for (const key of queryKeys) {
     queryClient.invalidateQueries({
       queryKey: key,
-      // ``refetchType: 'active'`` means only queries with active observers
-      // (i.e. mounted components) are refetched immediately.  Inactive
-      // queries are marked stale and will refetch on next mount.
+      // Only refetch queries with active observers (mounted components).
+      // Inactive queries are marked stale and will refetch on next mount.
       refetchType: 'active',
     });
   }
 
-  // ── Optimistic cache patches (optional, per-table) ──────────────────
-  //
-  // Example: remove a deleted item from a list cache instantly:
-  //
+  // Optimistic DELETE — remove item from list caches immediately
   if (event.op === 'DELETE') {
     for (const key of queryKeys) {
       queryClient.setQueriesData<any[]>(
@@ -117,16 +99,18 @@ const MAX_BACKOFF_MS = 30_000;
 const INITIAL_BACKOFF_MS = 1_000;
 
 export function SSEProvider({ children }: { children: React.ReactNode }) {
-  const esRef = useRef<EventSource | null>(null);
+  const esRef = useRef<EventSource<SSECustomEvents> | null>(null);
   const backoffRef = useRef(INITIAL_BACKOFF_MS);
   const reconnectTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const [isConnected, setIsConnected] = React.useState(false);
   const mountedRef = useRef(true);
-  const appStateRef = useRef<AppStateStatus>(AppState.currentState);
 
-  // ── Connect / disconnect ──────────────────────────────────────────────
+  // Subscribe to auth state so we connect/disconnect on login/logout
+  const isAuthenticated = useAuthStore((s) => s.isAuthenticated);
 
-  const disconnect = useCallback(() => {
+  // ── Imperative helpers (refs to avoid stale closures) ─────────────────
+
+  const disconnect = () => {
     if (reconnectTimerRef.current) {
       clearTimeout(reconnectTimerRef.current);
       reconnectTimerRef.current = null;
@@ -136,17 +120,27 @@ export function SSEProvider({ children }: { children: React.ReactNode }) {
       esRef.current = null;
     }
     setIsConnected(false);
-  }, []);
+  };
 
-  const connect = useCallback(async () => {
-    // Don't connect if already connected or unmounted
+  const scheduleReconnect = () => {
+    if (!mountedRef.current) return;
+    if (reconnectTimerRef.current) return; // already scheduled
+
+    const delay = backoffRef.current;
+    console.log(`[SSE] Reconnecting in ${delay}ms …`);
+    reconnectTimerRef.current = setTimeout(() => {
+      reconnectTimerRef.current = null;
+      backoffRef.current = Math.min(backoffRef.current * 2, MAX_BACKOFF_MS);
+      connectSSE();
+    }, delay);
+  };
+
+  const connectSSE = async () => {
+    // Guard: don't double-connect, don't connect if unmounted
     if (esRef.current || !mountedRef.current) return;
 
     const token = await tokenStorage.getAccessToken();
-    if (!token) {
-      // No token → user is not authenticated, skip.
-      return;
-    }
+    if (!token) return; // not authenticated
 
     const url = `${API_BASE_URL}/events`;
 
@@ -154,21 +148,18 @@ export function SSEProvider({ children }: { children: React.ReactNode }) {
       headers: {
         Authorization: `Bearer ${token}`,
       },
-      // Polyfill option — keep the connection open
       pollingInterval: 0,
     });
 
     esRef.current = es;
 
-    // ── SSE event handlers ────────────────────────────────────────────
-
-    es.addEventListener('connected', (_msg: any) => {
+    es.addEventListener('connected', () => {
       console.log('[SSE] Connected');
       setIsConnected(true);
-      backoffRef.current = INITIAL_BACKOFF_MS; // reset back-off on success
+      backoffRef.current = INITIAL_BACKOFF_MS;
     });
 
-    es.addEventListener('table_change', (msg: any) => {
+    es.addEventListener('table_change', (msg) => {
       if (!msg?.data) return;
       try {
         const event: TableChangeEvent = JSON.parse(msg.data);
@@ -178,7 +169,7 @@ export function SSEProvider({ children }: { children: React.ReactNode }) {
       }
     });
 
-    es.addEventListener('error', (err: any) => {
+    es.addEventListener('error', (err) => {
       console.warn('[SSE] Error, will reconnect:', err);
       disconnect();
       scheduleReconnect();
@@ -189,65 +180,66 @@ export function SSEProvider({ children }: { children: React.ReactNode }) {
       disconnect();
       scheduleReconnect();
     });
-  }, [disconnect]);
+  };
 
-  // ── Reconnect with exponential back-off ───────────────────────────────
+  // ── React to auth state ───────────────────────────────────────────────
+  // Connect when authenticated, disconnect + cancel reconnects when not.
 
-  const scheduleReconnect = useCallback(() => {
-    if (!mountedRef.current) return;
-    if (reconnectTimerRef.current) return; // already scheduled
-
-    const delay = backoffRef.current;
-    console.log(`[SSE] Reconnecting in ${delay}ms …`);
-    reconnectTimerRef.current = setTimeout(() => {
-      reconnectTimerRef.current = null;
-      backoffRef.current = Math.min(backoffRef.current * 2, MAX_BACKOFF_MS);
-      connect();
-    }, delay);
-  }, [connect]);
+  useEffect(() => {
+    if (isAuthenticated) {
+      connectSSE();
+    } else {
+      disconnect();
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [isAuthenticated]);
 
   // ── AppState: disconnect on background, reconnect on foreground ───────
 
   useEffect(() => {
-    const subscription = AppState.addEventListener('change', (nextState) => {
-      const prev = appStateRef.current;
-      appStateRef.current = nextState;
+    let prev: AppStateStatus = AppState.currentState;
 
-      if (nextState === 'active' && prev !== 'active') {
-        // Came to foreground → reconnect
+    const subscription = AppState.addEventListener('change', (nextState) => {
+      const wasPrev = prev;
+      prev = nextState;
+
+      if (!isAuthenticated) return;
+
+      if (nextState === 'active' && wasPrev !== 'active') {
         console.log('[SSE] App foregrounded — reconnecting');
-        connect();
-      } else if (nextState.match(/inactive|background/) && prev === 'active') {
-        // Going to background → tear down to save battery
+        connectSSE();
+      } else if (nextState.match(/inactive|background/) && wasPrev === 'active') {
         console.log('[SSE] App backgrounded — disconnecting');
         disconnect();
       }
     });
     return () => subscription.remove();
-  }, [connect, disconnect]);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [isAuthenticated]);
 
   // ── Network state: reconnect when connectivity is restored ────────────
 
   useEffect(() => {
     const unsubscribe = NetInfo.addEventListener((state: NetInfoState) => {
-      if (state.isConnected && !esRef.current && mountedRef.current) {
+      if (state.isConnected && !esRef.current && mountedRef.current && isAuthenticated) {
         console.log('[SSE] Network restored — reconnecting');
-        connect();
+        connectSSE();
       }
     });
     return () => unsubscribe();
-  }, [connect]);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [isAuthenticated]);
 
-  // ── Mount / unmount ───────────────────────────────────────────────────
+  // ── Mount / unmount cleanup ───────────────────────────────────────────
 
   useEffect(() => {
     mountedRef.current = true;
-    connect();
     return () => {
       mountedRef.current = false;
       disconnect();
     };
-  }, [connect, disconnect]);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
 
   // ── Render ────────────────────────────────────────────────────────────
 

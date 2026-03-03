@@ -63,8 +63,8 @@ export default function RootLayout() {
       <QueryProvider>
         <ThemeProvider value={colorScheme === 'dark' ? DarkTheme : DefaultTheme}>
           <ToastProvider>
-            <AuthGuard>
-              <SSEProvider>
+            <SSEProvider>
+              <AuthGuard>
                 <Stack
                   screenOptions={{
                     headerTransparent: true,
@@ -75,8 +75,8 @@ export default function RootLayout() {
                   <Stack.Screen name="(tabs)" options={{ headerShown: false }} />
                   <Stack.Screen name="modal" options={{ presentation: 'modal', title: 'Modal' }} />
                 </Stack>
-              </SSEProvider>
-            </AuthGuard>
+              </AuthGuard>
+            </SSEProvider>
           </ToastProvider>
           <StatusBar style="auto" />
         </ThemeProvider>

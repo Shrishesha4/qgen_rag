@@ -23,9 +23,8 @@ from __future__ import annotations
 import asyncio
 import json
 import logging
-from dataclasses import dataclass, field
-from typing import Any, AsyncIterator
-from urllib.parse import urlparse, parse_qs
+from dataclasses import dataclass
+from typing import AsyncIterator
 
 import asyncpg
 
