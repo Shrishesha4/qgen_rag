@@ -9,6 +9,8 @@ import { useColorScheme } from '@/hooks/use-color-scheme';
 import { useAuthStore } from '@/stores/authStore';
 import { View, ActivityIndicator } from 'react-native';
 import { ToastProvider } from '@/components/toast';
+import { QueryProvider } from '@/providers/QueryProvider';
+import { SSEProvider } from '@/providers/SSEProvider';
 
 export const unstable_settings = {
   initialRouteName: '(tabs)',
@@ -58,23 +60,27 @@ export default function RootLayout() {
 
   return (
     <SafeAreaProvider>
-      <ThemeProvider value={colorScheme === 'dark' ? DarkTheme : DefaultTheme}>
-        <ToastProvider>
-          <AuthGuard>
-            <Stack
-              screenOptions={{
-                headerTransparent: true,
-                headerStyle: { backgroundColor: 'transparent' },
-              }}
-            >
-              <Stack.Screen name="(auth)" options={{ headerShown: false }} />
-              <Stack.Screen name="(tabs)" options={{ headerShown: false }} />
-              <Stack.Screen name="modal" options={{ presentation: 'modal', title: 'Modal' }} />
-            </Stack>
-          </AuthGuard>
-        </ToastProvider>
-        <StatusBar style="auto" />
-      </ThemeProvider>
+      <QueryProvider>
+        <ThemeProvider value={colorScheme === 'dark' ? DarkTheme : DefaultTheme}>
+          <ToastProvider>
+            <AuthGuard>
+              <SSEProvider>
+                <Stack
+                  screenOptions={{
+                    headerTransparent: true,
+                    headerStyle: { backgroundColor: 'transparent' },
+                  }}
+                >
+                  <Stack.Screen name="(auth)" options={{ headerShown: false }} />
+                  <Stack.Screen name="(tabs)" options={{ headerShown: false }} />
+                  <Stack.Screen name="modal" options={{ presentation: 'modal', title: 'Modal' }} />
+                </Stack>
+              </SSEProvider>
+            </AuthGuard>
+          </ToastProvider>
+          <StatusBar style="auto" />
+        </ThemeProvider>
+      </QueryProvider>
     </SafeAreaProvider>
   );
 }
