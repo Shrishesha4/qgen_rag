@@ -36,6 +36,8 @@ export interface DocumentStatus {
   processing_progress: number;
   processing_detail: string | null;
   total_pages: number | null;
+  extraction_method: 'native' | 'ocr' | null;
+  used_ocr: boolean;
   error: string | null;
 }
 
@@ -140,7 +142,7 @@ export const referencesService = {
   },
 
   /**
-   * Upload reference questions from Excel/CSV
+   * Upload reference questions from PDF/Excel/CSV
    */
   async uploadReferenceQuestions(
     subjectId: string,

@@ -145,6 +145,8 @@ export const documentsService = {
     total_chunks: number | null;
     total_tokens: number | null;
     processed_at: string | null;
+    extraction_method: 'native' | 'ocr' | null;
+    used_ocr: boolean;
   }> {
     const response = await apiClient.get(`/documents/${documentId}/status`);
     return response.data;

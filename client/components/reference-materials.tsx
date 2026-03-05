@@ -319,6 +319,7 @@ export function ReferenceMaterials({
     try {
       const result = await DocumentPicker.getDocumentAsync({
         type: [
+          'application/pdf',
           'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
           'application/vnd.ms-excel',
           'text/csv',
@@ -350,7 +351,7 @@ export function ReferenceMaterials({
         subjectId,
         file.uri,
         file.name,
-        file.mimeType || 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
+        file.mimeType || 'application/pdf',
         (pct) => {
           setUploadPercent(pct);
           setUploadProgress(`Uploading ${file.name} — ${pct}%`);
@@ -483,19 +484,27 @@ export function ReferenceMaterials({
       {isAnyUploading && (
         <View style={[styles.progressContainer, { backgroundColor: colors.card }]}>
           <View style={styles.progressHeader}>
-            <ActivityIndicator size="small" color={colors.primary} />
+            <ActivityIndicator size="small" color={processingStatus?.used_ocr ? '#FF9500' : colors.primary} />
             <Text style={[styles.progressText, { color: colors.text }]}>
               {processingStatus
                 ? processingStatus.processing_detail || processingStatus.processing_step || 'Processing...'
                 : uploadProgress || 'Preparing...'}
             </Text>
           </View>
+          {processingStatus?.used_ocr && (
+            <View style={[styles.ocrBadge, { backgroundColor: '#FF950015' }]}>
+              <IconSymbol name="doc.viewfinder" size={12} color="#FF9500" />
+              <Text style={styles.ocrBadgeText}>
+                Scanned document detected — using OCR
+              </Text>
+            </View>
+          )}
           <View style={[styles.progressBarTrack, { backgroundColor: colors.border }]}>
             <Animated.View
               style={[
                 styles.progressBarFill,
                 {
-                  backgroundColor: colors.primary,
+                  backgroundColor: processingStatus?.used_ocr ? '#FF9500' : colors.primary,
                   width: progressAnim.interpolate({
                     inputRange: [0, 1],
                     outputRange: ['0%', '100%'],
@@ -564,7 +573,7 @@ export function ReferenceMaterials({
       </View>
 
       {/* Template Papers Section */}
-      <View style={[styles.section, { backgroundColor: colors.card }]}>
+      {/* <View style={[styles.section, { backgroundColor: colors.card }]}>
         <View style={styles.sectionHeader}>
           <View style={styles.sectionTitleRow}>
             <View style={[styles.sectionIcon, { backgroundColor: '#FF950015' }]}>
@@ -610,7 +619,7 @@ export function ReferenceMaterials({
             {templatePapers.map(renderDocumentItem)}
           </View>
         )}
-      </View>
+      </View> */}
 
       {/* Reference Questions Section */}
       <View style={[styles.section, { backgroundColor: colors.card }]}>
@@ -649,7 +658,7 @@ export function ReferenceMaterials({
         </View>
 
         <Text style={[styles.sectionDescription, { color: colors.textSecondary }]}>
-          Upload Excel (.xlsx) or CSV files with past exam questions to set the standard for AI-generated questions.
+          Upload PDF, Excel (.xlsx), or CSV files with past exam questions to set the standard for AI-generated questions.
         </Text>
 
         {isLoading ? (
@@ -903,7 +912,21 @@ const styles = StyleSheet.create({
   progressPercent: {
     fontSize: FontSizes.xs,
     marginTop: 4,
-    textAlign: 'right',
+    textAlign: 'right' as const,
+  },
+  ocrBadge: {
+    flexDirection: 'row' as const,
+    alignItems: 'center' as const,
+    gap: 6,
+    paddingHorizontal: 10,
+    paddingVertical: 5,
+    borderRadius: BorderRadius.sm,
+    marginBottom: 8,
+  },
+  ocrBadgeText: {
+    fontSize: FontSizes.xs,
+    fontWeight: '600' as const,
+    color: '#FF9500',
   },
 });
 

@@ -274,15 +274,20 @@ class OllamaLLMService:
         prompt: str,
         system_prompt: Optional[str] = None,
         temperature: float = 0.3,
+        max_tokens: int = 8192,
     ) -> Dict[str, Any]:
         """Generate a JSON response from the LLM with retry logic."""
-        json_system = (system_prompt or "") + "\n\nYou must respond with valid JSON only. No extra text. Keep responses concise."
+        json_system = (system_prompt or "") + (
+            "\n\nIMPORTANT: You must respond with ONLY a valid JSON object. "
+            "Do NOT include any text, explanation, or markdown formatting before or after the JSON. "
+            "Start your response with { and end with }."
+        )
         
         response = await self.generate(
             prompt=prompt,
             system_prompt=json_system,
             temperature=temperature,
-            max_tokens=6000,  # Increased to avoid truncation
+            max_tokens=max_tokens,
         )
         
         # Log raw response for debugging
@@ -428,10 +433,12 @@ class OllamaLLMService:
     def _repair_truncated_json(self, text: str, depth: int, in_string: bool) -> Optional[str]:
         """Attempt to repair truncated JSON by closing incomplete structures.
         
+        Uses a nesting stack to close brackets/braces in the correct order.
+        
         Args:
             text: The partial JSON text starting from '{'
-            depth: Current brace depth (how many unclosed {)
-            in_string: Whether we're currently inside a string
+            depth: Current brace depth (unused, kept for API compat)
+            in_string: Whether we're currently inside a string (unused, recomputed)
         
         Returns:
             Repaired JSON string or None if repair failed
@@ -441,31 +448,45 @@ class OllamaLLMService:
         
         result = text.rstrip()
         
-        # If we're inside a string, close it
-        if in_string:
-            # Remove trailing incomplete content that might be a broken escape sequence
+        # Re-scan the text to build an accurate nesting stack
+        stack = []  # tracks expected closing chars in nesting order
+        in_str = False
+        escape = False
+        
+        for ch in result:
+            if escape:
+                escape = False
+                continue
+            if ch == '\\':
+                escape = True
+                continue
+            if ch == '"':
+                in_str = not in_str
+                continue
+            if in_str:
+                continue
+            if ch == '{':
+                stack.append('}')
+            elif ch == '[':
+                stack.append(']')
+            elif ch in ('}', ']'):
+                if stack:
+                    stack.pop()
+        
+        # If we ended inside a string, close it
+        if in_str:
             while result and result[-1] == '\\':
                 result = result[:-1]
             result += '"'
         
-        # Check if we need to add a colon and value (key without value)
-        # Pattern: ..."key"  (missing : "value")
-        import re
-        if re.search(r'"[^"]*"\s*$', result) and not re.search(r':\s*"[^"]*"\s*$', result):
-            # Check if this looks like a key (preceded by { or ,)
-            stripped = result.rstrip()
-            if re.search(r'[{,]\s*"[^"]*"\s*$', stripped):
-                result += ': ""'
+        # Remove any trailing comma before we close structures
+        result = result.rstrip()
+        if result.endswith(','):
+            result = result[:-1]
         
-        # Close any open arrays
-        # Count [ and ]
-        open_arrays = result.count('[') - result.count(']')
-        for _ in range(open_arrays):
-            result += ']'
-        
-        # Close any open objects
-        for _ in range(depth):
-            result += '}'
+        # Close all open structures in reverse nesting order
+        while stack:
+            result += stack.pop()
         
         logger.debug(f"Repaired JSON: {result[:200]}...{result[-100:]}")
         return result

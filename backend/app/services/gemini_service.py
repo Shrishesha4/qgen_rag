@@ -273,7 +273,7 @@ class GeminiService:
         # Configure generation with JSON response format
         config = types.GenerateContentConfig(
             temperature=temperature,
-            max_output_tokens=4096,
+            max_output_tokens=8192,
             candidate_count=1,
             safety_settings=self._get_safety_settings(),
             response_mime_type="application/json",  # Force JSON output
@@ -399,8 +399,67 @@ class GeminiService:
                     except json.JSONDecodeError:
                         return json.loads(self._fix_json_syntax(json_str))
         
+        # JSON appears truncated - try to repair it
+        logger.warning(f"JSON appears truncated (depth={depth}, in_string={in_string}). Attempting repair.")
+        repaired = self._repair_truncated_json(text[start:])
+        if repaired:
+            try:
+                return json.loads(repaired)
+            except json.JSONDecodeError:
+                pass
+        
         raise json.JSONDecodeError("No valid JSON object found", text, 0)
     
+    def _repair_truncated_json(self, text: str) -> Optional[str]:
+        """Attempt to repair truncated JSON by closing incomplete structures."""
+        if not text:
+            return None
+        
+        result = text.rstrip()
+        
+        # Re-scan to build accurate nesting stack
+        stack = []
+        in_str = False
+        escape = False
+        
+        for ch in result:
+            if escape:
+                escape = False
+                continue
+            if ch == '\\':
+                escape = True
+                continue
+            if ch == '"':
+                in_str = not in_str
+                continue
+            if in_str:
+                continue
+            if ch == '{':
+                stack.append('}')
+            elif ch == '[':
+                stack.append(']')
+            elif ch in ('}', ']'):
+                if stack:
+                    stack.pop()
+        
+        # If we ended inside a string, close it
+        if in_str:
+            while result and result[-1] == '\\':
+                result = result[:-1]
+            result += '"'
+        
+        # Remove trailing comma
+        result = result.rstrip()
+        if result.endswith(','):
+            result = result[:-1]
+        
+        # Close all open structures in reverse nesting order
+        while stack:
+            result += stack.pop()
+        
+        logger.debug(f"Repaired JSON: {result[:200]}...{result[-100:]}")
+        return result
+
     def _sanitize_control_chars(self, text: str) -> str:
         """Sanitize control characters that break JSON parsing.
         

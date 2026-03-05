@@ -19,6 +19,10 @@ engine = create_async_engine(
     future=True,
     pool_size=20,
     max_overflow=10,
+    # Wait up to 120s for a connection from the pool (default is 30s)
+    pool_timeout=120,
+    # Recycle connections after 30 minutes to avoid stale connections during long operations
+    pool_recycle=1800,
     # Verify connections before checkout to avoid using stale/broken connections
     pool_pre_ping=True,
     # Always rollback on return so interrupted transactions don't poison the pool

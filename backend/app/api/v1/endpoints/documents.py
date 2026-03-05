@@ -2,6 +2,7 @@
 Document management API endpoints.
 """
 
+import asyncio
 import os
 from typing import Optional, Literal
 import uuid
@@ -225,6 +226,7 @@ async def get_document_status(
             detail="Document not found",
         )
     
+    metadata = document.document_metadata or {}
     return {
         "document_id": str(document.id),
         "filename": document.filename,
@@ -232,19 +234,343 @@ async def get_document_status(
         "total_chunks": document.total_chunks,
         "total_tokens": document.total_tokens,
         "processed_at": document.processed_at,
-        "processing_step": (document.document_metadata or {}).get("processing_step"),
-        "processing_progress": (document.document_metadata or {}).get("processing_progress", 0),
-        "processing_detail": (document.document_metadata or {}).get("processing_detail"),
-        "total_pages": (document.document_metadata or {}).get("total_pages"),
-        "error": (document.document_metadata or {}).get("error"),
+        "processing_step": metadata.get("processing_step"),
+        "processing_progress": metadata.get("processing_progress", 0),
+        "processing_detail": metadata.get("processing_detail"),
+        "total_pages": metadata.get("total_pages"),
+        "extraction_method": metadata.get("extraction_method"),
+        "used_ocr": metadata.get("used_ocr", False),
+        "error": metadata.get("error"),
     }
 
 
 # ============== Reference Document Management ==============
 
+
+def _parse_reference_questions_from_spreadsheet(ext: str, content: bytes) -> list:
+    """Parse reference questions from Excel/CSV file content."""
+    import io
+    
+    parsed_questions = []
+    
+    if ext == ".xlsx":
+        import openpyxl
+        wb = openpyxl.load_workbook(io.BytesIO(content), data_only=True)
+        ws = wb.active
+        
+        row1_values = [str(cell.value).strip().lower() if cell.value else "" for cell in ws[1]]
+        row2_values = [str(cell.value).strip().lower() if cell.value else "" for cell in ws[2]] if ws.max_row >= 2 else []
+        
+        if any("question" in v for v in row2_values):
+            headers = row2_values
+            data_start = 3
+        elif any("question" in v for v in row1_values):
+            headers = row1_values
+            data_start = 2
+        else:
+            headers = row1_values
+            data_start = 2
+        
+        for row in ws.iter_rows(min_row=data_start, values_only=True):
+            if row and any(v is not None for v in row):
+                cells = [str(v).strip() if v is not None else "" for v in row]
+                parsed_questions.append(dict(zip(headers, cells)))
+    
+    elif ext == ".csv":
+        import csv
+        text = content.decode("utf-8-sig")
+        reader = csv.reader(io.StringIO(text))
+        all_rows = list(reader)
+        if len(all_rows) >= 2:
+            headers = [v.strip().lower() for v in all_rows[0]]
+            for row in all_rows[1:]:
+                if any(v.strip() for v in row):
+                    cells = [v.strip() for v in row]
+                    parsed_questions.append(dict(zip(headers, cells)))
+    
+    # Build structured reference question list
+    ref_questions = []
+    for pq in parsed_questions:
+        q_text = ""
+        for key in pq:
+            if "question" in key and pq[key]:
+                q_text = pq[key]
+                break
+        if not q_text:
+            continue
+        
+        # Extract options
+        options = []
+        for opt_key in ["option_a", "option a", "a", "option_b", "option b", "b", 
+                         "option_c", "option c", "c", "option_d", "option d", "d"]:
+            if opt_key in pq and pq[opt_key]:
+                options.append(pq[opt_key])
+        
+        # Extract correct answer
+        correct = ""
+        for ans_key in ["option_correct", "correct", "answer", "correct_answer", "correct answer"]:
+            if ans_key in pq and pq[ans_key]:
+                correct = pq[ans_key]
+                break
+        
+        # Extract other fields
+        difficulty = ""
+        for d_key in ["difficulty", "difficulty_level"]:
+            if d_key in pq and pq[d_key]:
+                difficulty = pq[d_key]
+                break
+        
+        marks_val = ""
+        for m_key in ["marks", "mark", "points"]:
+            if m_key in pq and pq[m_key]:
+                marks_val = pq[m_key]
+                break
+        
+        co_val = ""
+        for c_key in ["co", "course_outcome", "course outcome"]:
+            if c_key in pq and pq[c_key]:
+                co_val = pq[c_key]
+                break
+        
+        lo_val = ""
+        for l_key in ["lo", "lo mapping", "lo_mapping", "learning_outcome", "learning outcome"]:
+            if l_key in pq and pq[l_key]:
+                lo_val = pq[l_key]
+                break
+        
+        ref_questions.append({
+            "question_text": q_text,
+            "options": options if options else None,
+            "correct_answer": correct or None,
+            "question_type": "mcq" if len(options) >= 3 else "short_answer",
+            "difficulty": difficulty or None,
+            "marks": marks_val or None,
+            "co": co_val or None,
+            "lo": lo_val or None,
+        })
+    
+    return ref_questions
+
+
+async def _process_pdf_reference_questions(
+    document_service: DocumentService,
+    content: bytes,
+    filename: str,
+    document_id: uuid.UUID,
+) -> None:
+    """
+    Background task: Extract text from a PDF (with OCR fallback for scanned docs),
+    then use the LLM to parse questions into structured format.
+    Uses short-lived DB sessions to avoid holding connections during long operations.
+    """
+    import tempfile
+    import logging
+    from sqlalchemy import update
+    from app.models.document import Document
+    from app.services.llm_service import LLMService
+    from app.core.database import AsyncSessionLocal
+    
+    logger = logging.getLogger(__name__)
+    
+    async def _update_doc(values: dict):
+        """Helper to update document with a short-lived session."""
+        async with AsyncSessionLocal() as session:
+            await session.execute(
+                update(Document).where(Document.id == document_id).values(**values)
+            )
+            await session.commit()
+    
+    try:
+        # Update status to processing
+        await _update_doc({
+            "processing_status": "processing",
+            "document_metadata": {"processing_step": "extracting_text", "processing_progress": 10},
+        })
+        
+        # Write PDF to a temp file for extraction
+        with tempfile.NamedTemporaryFile(suffix=".pdf", delete=False) as tmp:
+            tmp.write(content)
+            tmp_path = tmp.name
+        
+        try:
+            # Create a short-lived session just for the DocumentService init
+            # The extraction itself doesn't need DB — only the progress callback does
+            async def progress_cb(step, progress, detail):
+                await _update_doc({
+                    "document_metadata": {
+                        "processing_step": step,
+                        "processing_progress": min(progress, 50),
+                        "processing_detail": detail,
+                    }
+                })
+            
+            # Use a temporary session for DocumentService (extraction is mostly CPU/IO, not DB)
+            async with AsyncSessionLocal() as tmp_session:
+                bg_document_service = DocumentService(tmp_session)
+                pages_data = await bg_document_service._extract_text_with_pages(
+                    tmp_path, "application/pdf", progress_callback=progress_cb
+                )
+            
+            # Combine all page text
+            full_text = "\n\n".join(
+                p["text"] for p in pages_data if p.get("text", "").strip()
+            )
+            
+            if not full_text.strip():
+                logger.warning(f"No text extracted from PDF: {filename}")
+                await _update_doc({
+                    "processing_status": "completed",
+                    "total_chunks": 0,
+                    "document_metadata": {
+                        "parsed_questions": [],
+                        "total_parsed": 0,
+                        "error": "No text could be extracted from the PDF.",
+                    },
+                })
+                return
+            
+            used_ocr = any(p.get("extraction_method") == "ocr" for p in pages_data)
+            
+            # Update status for LLM parsing phase
+            await _update_doc({
+                "document_metadata": {
+                    "processing_step": "llm_parsing",
+                    "processing_progress": 55,
+                    "processing_detail": f"Extracted {len(pages_data)} pages. Parsing questions with AI...",
+                    "used_ocr": used_ocr,
+                    "total_pages": len(pages_data),
+                }
+            })
+            
+            # Use LLM to parse questions from the extracted text
+            llm = LLMService()
+            
+            # Process in chunks — keep small to avoid LLM output truncation
+            max_chunk_size = 8000
+            text_chunks = []
+            if len(full_text) > max_chunk_size:
+                current_chunk = ""
+                for page in pages_data:
+                    page_text = page.get("text", "").strip()
+                    if not page_text:
+                        continue
+                    if len(current_chunk) + len(page_text) > max_chunk_size and current_chunk:
+                        text_chunks.append(current_chunk)
+                        current_chunk = page_text
+                    else:
+                        current_chunk += "\n\n" + page_text if current_chunk else page_text
+                if current_chunk:
+                    text_chunks.append(current_chunk)
+            else:
+                text_chunks = [full_text]
+            
+            all_questions = []
+            for chunk_idx, chunk_text in enumerate(text_chunks):
+                progress = 55 + int((chunk_idx / len(text_chunks)) * 40)
+                await _update_doc({
+                    "document_metadata": {
+                        "processing_step": "llm_parsing",
+                        "processing_progress": progress,
+                        "processing_detail": f"Parsing questions (part {chunk_idx + 1}/{len(text_chunks)})...",
+                        "used_ocr": used_ocr,
+                        "total_pages": len(pages_data),
+                    }
+                })
+                
+                system_prompt = (
+                    "You are an expert at extracting exam/test questions from document text. "
+                    "Parse the following text and identify all questions present. "
+                    "For each question, extract the question text, options (if MCQ), correct answer (if available), "
+                    "question type (mcq, short_answer, long_answer, true_false, fill_in_blank), "
+                    "difficulty level, marks/points, course outcome (CO), and learning outcome (LO) if mentioned."
+                )
+                
+                prompt = f"""Extract all questions from the following exam/question paper text.
+Respond with ONLY a JSON object — no explanation, no markdown, no text before or after.
+
+TEXT:
+{chunk_text}
+
+JSON format:
+{{
+  "questions": [
+    {{
+      "question_text": "The full question text",
+      "options": ["Option A", "Option B", "Option C", "Option D"],
+      "correct_answer": "answer or null",
+      "question_type": "mcq",
+      "difficulty": "easy",
+      "marks": "5",
+      "co": "CO1",
+      "lo": "LO1"
+    }}
+  ]
+}}
+
+Rules:
+- question_type: mcq | short_answer | long_answer | true_false | fill_in_blank
+- options: array for MCQs, null otherwise
+- Set null for any field not found in the text
+- Extract EVERY question including sub-questions (a, b, c)
+- Do NOT invent questions not present in the text
+- Return {{"questions": []}} if no questions found"""
+
+                try:
+                    result = await llm.generate_json(
+                        prompt=prompt,
+                        system_prompt=system_prompt,
+                        temperature=0.1,
+                    )
+                    
+                    questions = result.get("questions", [])
+                    for q in questions:
+                        if not q.get("question_text"):
+                            continue
+                        all_questions.append({
+                            "question_text": q["question_text"],
+                            "options": q.get("options"),
+                            "correct_answer": q.get("correct_answer"),
+                            "question_type": q.get("question_type", "short_answer"),
+                            "difficulty": q.get("difficulty"),
+                            "marks": q.get("marks"),
+                            "co": q.get("co"),
+                            "lo": q.get("lo"),
+                        })
+                except Exception as e:
+                    logger.error(f"LLM parsing failed for chunk {chunk_idx + 1}: {e}")
+            
+            # Update document with final results
+            await _update_doc({
+                "processing_status": "completed",
+                "total_chunks": len(all_questions),
+                "document_metadata": {
+                    "parsed_questions": all_questions,
+                    "total_parsed": len(all_questions),
+                    "used_ocr": used_ocr,
+                    "total_pages": len(pages_data),
+                },
+            })
+            logger.info(f"PDF reference questions parsed: {len(all_questions)} questions from {filename}")
+            
+        finally:
+            try:
+                os.unlink(tmp_path)
+            except OSError:
+                pass
+                
+    except Exception as e:
+        logger.error(f"Background PDF reference question processing failed: {e}")
+        try:
+            await _update_doc({
+                "processing_status": "failed",
+                "document_metadata": {"error": str(e)},
+            })
+        except Exception:
+            pass
+
 @router.post("/reference/upload", response_model=DocumentUploadResponse, status_code=status.HTTP_201_CREATED)
 async def upload_reference_document(
-    file: UploadFile = File(..., description="Reference book PDF, template paper PDF, or reference questions Excel"),
+    file: UploadFile = File(..., description="Reference book PDF, template paper PDF, or reference questions PDF/Excel/CSV"),
     subject_id: str = Form(..., description="Subject ID to associate the document with"),
     index_type: Literal["reference_book", "template_paper", "reference_questions"] = Form(..., description="Type of reference material"),
     current_user: User = Depends(rate_limit(requests=20, window_seconds=3600)),
@@ -255,7 +581,7 @@ async def upload_reference_document(
     
     - reference_book: PDF used for conceptual inspiration when generating questions
     - template_paper: PDF used for detecting similarity with existing exam questions
-    - reference_questions: Excel/CSV of past exam questions used as quality/style templates
+    - reference_questions: PDF/Excel/CSV of past exam questions used as quality/style templates
     """
     import io
     
@@ -264,10 +590,10 @@ async def upload_reference_document(
     
     # Validate file type based on index_type
     if index_type == "reference_questions":
-        if ext not in (".xlsx", ".csv"):
+        if ext not in (".xlsx", ".csv", ".pdf"):
             raise HTTPException(
                 status_code=status.HTTP_415_UNSUPPORTED_MEDIA_TYPE,
-                detail=f"Reference questions must be .xlsx or .csv files, got: {ext}",
+                detail=f"Reference questions must be .xlsx, .csv, or .pdf files, got: {ext}",
             )
     else:
         if ext not in settings.ALLOWED_EXTENSIONS:
@@ -306,141 +632,64 @@ async def upload_reference_document(
             index_type=index_type,
         )
         
-        # For reference_questions, parse Excel/CSV and store as structured chunks
+        # For reference_questions, parse Excel/CSV/PDF and store as structured chunks
         if index_type == "reference_questions":
-            parsed_questions = []
-            try:
-                if ext == ".xlsx":
-                    import openpyxl
-                    wb = openpyxl.load_workbook(io.BytesIO(content), data_only=True)
-                    ws = wb.active
-                    
-                    row1_values = [str(cell.value).strip().lower() if cell.value else "" for cell in ws[1]]
-                    row2_values = [str(cell.value).strip().lower() if cell.value else "" for cell in ws[2]] if ws.max_row >= 2 else []
-                    
-                    if any("question" in v for v in row2_values):
-                        headers = row2_values
-                        data_start = 3
-                    elif any("question" in v for v in row1_values):
-                        headers = row1_values
-                        data_start = 2
-                    else:
-                        headers = row1_values
-                        data_start = 2
-                    
-                    for row in ws.iter_rows(min_row=data_start, values_only=True):
-                        if row and any(v is not None for v in row):
-                            cells = [str(v).strip() if v is not None else "" for v in row]
-                            parsed_questions.append(dict(zip(headers, cells)))
-                
-                elif ext == ".csv":
-                    import csv
-                    text = content.decode("utf-8-sig")
-                    reader = csv.reader(io.StringIO(text))
-                    all_rows = list(reader)
-                    if len(all_rows) >= 2:
-                        headers = [v.strip().lower() for v in all_rows[0]]
-                        for row in all_rows[1:]:
-                            if any(v.strip() for v in row):
-                                cells = [v.strip() for v in row]
-                                parsed_questions.append(dict(zip(headers, cells)))
-                
-                # Store parsed questions as metadata on the document
-                from sqlalchemy import update
-                from app.models.document import Document
-                
-                # Build structured reference question list
-                ref_questions = []
-                for pq in parsed_questions:
-                    q_text = ""
-                    for key in pq:
-                        if "question" in key and pq[key]:
-                            q_text = pq[key]
-                            break
-                    if not q_text:
-                        continue
-                    
-                    # Extract options
-                    options = []
-                    for opt_key in ["option_a", "option a", "a", "option_b", "option b", "b", 
-                                     "option_c", "option c", "c", "option_d", "option d", "d"]:
-                        if opt_key in pq and pq[opt_key]:
-                            options.append(pq[opt_key])
-                    
-                    # Extract correct answer
-                    correct = ""
-                    for ans_key in ["option_correct", "correct", "answer", "correct_answer", "correct answer"]:
-                        if ans_key in pq and pq[ans_key]:
-                            correct = pq[ans_key]
-                            break
-                    
-                    # Extract other fields
-                    difficulty = ""
-                    for d_key in ["difficulty", "difficulty_level"]:
-                        if d_key in pq and pq[d_key]:
-                            difficulty = pq[d_key]
-                            break
-                    
-                    marks_val = ""
-                    for m_key in ["marks", "mark", "points"]:
-                        if m_key in pq and pq[m_key]:
-                            marks_val = pq[m_key]
-                            break
-                    
-                    co_val = ""
-                    for c_key in ["co", "course_outcome", "course outcome"]:
-                        if c_key in pq and pq[c_key]:
-                            co_val = pq[c_key]
-                            break
-                    
-                    lo_val = ""
-                    for l_key in ["lo", "lo mapping", "lo_mapping", "learning_outcome", "learning outcome"]:
-                        if l_key in pq and pq[l_key]:
-                            lo_val = pq[l_key]
-                            break
-                    
-                    ref_questions.append({
-                        "question_text": q_text,
-                        "options": options if options else None,
-                        "correct_answer": correct or None,
-                        "question_type": "mcq" if len(options) >= 3 else "short_answer",
-                        "difficulty": difficulty or None,
-                        "marks": marks_val or None,
-                        "co": co_val or None,
-                        "lo": lo_val or None,
-                    })
-                
-                # Update document with parsed data
-                await db.execute(
-                    update(Document)
-                    .where(Document.id == document.id)
-                    .values(
-                        processing_status="completed",
-                        total_chunks=len(ref_questions),
-                        document_metadata={
-                            "parsed_questions": ref_questions,
-                            "total_parsed": len(ref_questions),
-                        },
+            from sqlalchemy import update
+            from app.models.document import Document
+            
+            if ext == ".pdf":
+                # PDF: Process in background (OCR + LLM takes time)
+                # Return immediately and let frontend poll for status
+                asyncio.create_task(
+                    _process_pdf_reference_questions(
+                        document_service, content, filename, document.id
                     )
                 )
-                await db.commit()
-                
                 return DocumentUploadResponse(
                     document_id=document.id,
                     filename=document.filename,
-                    status="completed",
-                    message=f"Reference questions uploaded: {len(ref_questions)} questions parsed from {filename}.",
+                    status="processing",
+                    message=f"PDF uploaded. Extracting and parsing questions from {filename}...",
                 )
-            except Exception as e:
-                import logging
-                logging.getLogger(__name__).error(f"Failed to parse reference questions: {e}")
-                # Still allow upload even if parsing fails
-                await db.execute(
-                    update(Document)
-                    .where(Document.id == document.id)
-                    .values(processing_status="failed")
-                )
-                await db.commit()
+            else:
+                # Excel/CSV: Direct spreadsheet parsing (fast, do inline)
+                try:
+                    ref_questions = _parse_reference_questions_from_spreadsheet(
+                        ext, content
+                    )
+                    
+                    await db.execute(
+                        update(Document)
+                        .where(Document.id == document.id)
+                        .values(
+                            processing_status="completed",
+                            total_chunks=len(ref_questions),
+                            document_metadata={
+                                "parsed_questions": ref_questions,
+                                "total_parsed": len(ref_questions),
+                            },
+                        )
+                    )
+                    await db.commit()
+                    
+                    return DocumentUploadResponse(
+                        document_id=document.id,
+                        filename=document.filename,
+                        status="completed",
+                        message=f"Reference questions uploaded: {len(ref_questions)} questions parsed from {filename}.",
+                    )
+                except Exception as e:
+                    import logging
+                    logging.getLogger(__name__).error(f"Failed to parse reference questions: {e}")
+                    await db.execute(
+                        update(Document)
+                        .where(Document.id == document.id)
+                        .values(processing_status="failed")
+                    )
+                    await db.commit()
+        else:
+            # reference_book / template_paper: run standard extract → embed → store pipeline
+            asyncio.create_task(document_service._process_document(document.id))
         
         return DocumentUploadResponse(
             document_id=document.id,

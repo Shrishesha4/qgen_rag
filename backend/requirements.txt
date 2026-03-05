@@ -35,6 +35,10 @@ PyMuPDF==1.23.26
 python-docx==1.1.0
 openpyxl==3.1.2
 
+# OCR for scanned PDFs
+pytesseract==0.3.10
+Pillow==10.2.0
+
 # Validation
 pydantic==2.6.1
 pydantic-settings==2.2.1

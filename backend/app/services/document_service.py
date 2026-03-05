@@ -95,20 +95,57 @@ class DocumentService:
         index_type: str,  # reference_book or template_paper
     ) -> Document:
         """
-        Upload a reference document (book or template paper).
+        Upload a reference document (book, template paper, or reference questions).
         These are stored in a separate index for novelty comparison.
+        
+        Unlike upload_document(), this does NOT auto-start _process_document.
+        Processing is handled by the calling endpoint based on index_type.
         """
         if index_type not in ("reference_book", "template_paper", "reference_questions"):
             raise ValueError("index_type must be 'reference_book', 'template_paper', or 'reference_questions'")
         
-        return await self.upload_document(
+        # Calculate file hash
+        file_hash = hashlib.sha256(file_content).hexdigest()
+        file_size = len(file_content)
+
+        # Check for duplicate (same user, same file)
+        existing = await self.db.execute(
+            select(Document).where(
+                Document.user_id == user_id,
+                Document.file_hash == file_hash,
+            )
+        )
+        if existing.scalar_one_or_none():
+            raise ValueError("Document already uploaded")
+
+        # Create storage path
+        storage_dir = Path(settings.UPLOAD_DIR) / str(user_id)
+        storage_dir.mkdir(parents=True, exist_ok=True)
+        
+        unique_filename = f"{uuid.uuid4()}_{filename}"
+        storage_path = storage_dir / unique_filename
+
+        # Save file
+        async with aiofiles.open(storage_path, "wb") as f:
+            await f.write(file_content)
+
+        # Create document record
+        document = Document(
             user_id=user_id,
             filename=filename,
-            file_content=file_content,
+            file_hash=file_hash,
+            file_size_bytes=file_size,
             mime_type=mime_type,
+            storage_path=str(storage_path),
+            processing_status="pending",
             index_type=index_type,
             subject_id=subject_id,
         )
+        self.db.add(document)
+        await self.db.commit()
+        await self.db.refresh(document)
+
+        return document
 
     async def upload_and_process_document(
         self,
@@ -167,14 +204,20 @@ class DocumentService:
         await self.db.refresh(document)
 
         try:
-            # Extract text with page-level information
+            # Extract text with page-level information (with OCR fallback)
             pages_data = await self._extract_text_with_pages(str(storage_path), mime_type)
+            
+            # Determine extraction method used
+            extraction_methods = set(p.get("extraction_method", "native") for p in pages_data)
+            used_ocr = "ocr" in extraction_methods
             
             # Update document metadata with page info
             document.document_metadata = {
                 **(document.document_metadata or {}),
                 "total_pages": len(pages_data),
                 "document_name": pages_data[0].get("document_name") if pages_data else filename,
+                "extraction_method": "ocr" if used_ocr else "native",
+                "used_ocr": used_ocr,
             }
 
             # Chunk the document with page tracking
@@ -247,153 +290,220 @@ class DocumentService:
         """Process document: extract text with page info, chunk, and create embeddings.
         
         Uses batched embedding generation and progress tracking for large files.
+        Splits into phases to avoid holding DB connections during long extraction/OCR.
         """
         import logging
         logger = logging.getLogger(__name__)
         from app.core.database import AsyncSessionLocal
+        from sqlalchemy import update as sa_update
         
         EMBEDDING_BATCH_SIZE = 32  # Process embeddings in batches to avoid OOM
         DB_INSERT_BATCH_SIZE = 100  # Insert chunks in batches to avoid huge transactions
         
-        async with AsyncSessionLocal() as db:
-            try:
-                result = await db.execute(
-                    select(Document).where(Document.id == document_id)
+        # Helper for short-lived progress updates (no long-held session)
+        async def _quick_progress(step, progress, detail):
+            async with AsyncSessionLocal() as s:
+                await s.execute(
+                    sa_update(Document)
+                    .where(Document.id == document_id)
+                    .values(document_metadata={
+                        "processing_step": step,
+                        "processing_progress": progress,
+                        "processing_detail": detail,
+                    })
                 )
-                document = result.scalar_one_or_none()
-                if not document:
-                    return
+                await s.commit()
+            logger.info(f"[doc:{document_id}] {step}: {progress}% - {detail}")
+        
+        # ── Phase 1: Fetch document info and mark as processing ──
+        async with AsyncSessionLocal() as db:
+            result = await db.execute(
+                select(Document).where(Document.id == document_id)
+            )
+            document = result.scalar_one_or_none()
+            if not document:
+                return
+            
+            storage_path = document.storage_path
+            mime_type = document.mime_type
+            doc_filename = document.filename
+            
+            document.processing_status = "processing"
+            await self._update_progress(db, document, "extracting", 5, "Extracting text from document...")
+        # Session released — no DB connection held during extraction
+        
+        try:
+            # ── Phase 2: Extract text (long-running, especially with OCR) ──
+            # Progress callback uses short-lived sessions
+            pages_data = await self._extract_text_with_pages(
+                storage_path, mime_type,
+                progress_callback=_quick_progress
+            )
+            
+            extraction_methods = set(p.get("extraction_method", "native") for p in pages_data)
+            used_ocr = "ocr" in extraction_methods
+            
+            # Chunk the document (CPU-only, no DB needed)
+            chunks = self._chunk_text_with_pages(pages_data)
+            total_chunks = len(chunks)
+            
+            # ── Phase 3: Embed and store (needs DB, but proceeds quickly) ──
+            async with AsyncSessionLocal() as db:
+                try:
+                    result = await db.execute(
+                        select(Document).where(Document.id == document_id)
+                    )
+                    document = result.scalar_one_or_none()
+                    if not document:
+                        return
+                    
+                    # Store extraction metadata
+                    document.document_metadata = {
+                        **(document.document_metadata or {}),
+                        "total_pages": len(pages_data),
+                        "document_name": pages_data[0].get("document_name") if pages_data else doc_filename,
+                        "extraction_method": "ocr" if used_ocr else "native",
+                        "used_ocr": used_ocr,
+                    }
+                    
+                    if total_chunks == 0:
+                        document.total_chunks = 0
+                        document.total_tokens = 0
+                        document.processing_status = "completed"
+                        document.processed_at = datetime.now(timezone.utc)
+                        await self._update_progress(db, document, "completed", 100, "No content found in document.")
+                        return
 
-                # Update status
-                document.processing_status = "processing"
-                await self._update_progress(db, document, "extracting", 5, "Extracting text from document...")
+                    await self._update_progress(db, document, "embedding", 60, 
+                        f"Created {total_chunks} chunks. Generating embeddings...")
 
-                # Extract text with page-level information
-                pages_data = await self._extract_text_with_pages(document.storage_path, document.mime_type)
-                
-                # Store document metadata including page count
-                document.document_metadata = {
-                    **(document.document_metadata or {}),
-                    "total_pages": len(pages_data),
-                    "document_name": pages_data[0].get("document_name") if pages_data else document.filename,
-                }
-                await self._update_progress(db, document, "chunking", 15, 
-                    f"Extracted {len(pages_data)} pages. Chunking text...")
+                    # BATCHED EMBEDDING GENERATION
+                    chunk_texts = [chunk_data["text"] for chunk_data in chunks]
+                    all_embeddings = [None] * total_chunks
+                    
+                    for batch_start in range(0, total_chunks, EMBEDDING_BATCH_SIZE):
+                        batch_end = min(batch_start + EMBEDDING_BATCH_SIZE, total_chunks)
+                        batch_texts = chunk_texts[batch_start:batch_end]
+                        
+                        batch_embeddings = await self.embedding_service.get_embeddings(batch_texts, is_query=False)
+                        
+                        for i, emb in enumerate(batch_embeddings):
+                            all_embeddings[batch_start + i] = emb
+                        
+                        embed_progress = 60 + int((batch_end / total_chunks) * 25)
+                        await self._update_progress(db, document, "embedding", embed_progress,
+                            f"Generating embeddings ({batch_end}/{total_chunks} chunks)...")
+                        
+                        await asyncio.sleep(0)
 
-                # Chunk the document with page tracking
-                chunks = self._chunk_text_with_pages(pages_data)
-                total_chunks = len(chunks)
-                
-                if total_chunks == 0:
-                    document.total_chunks = 0
-                    document.total_tokens = 0
+                    await self._update_progress(db, document, "storing", 88, 
+                        f"Storing {total_chunks} chunks in database...")
+
+                    # BATCHED DB INSERTION
+                    total_tokens = 0
+                    for batch_start in range(0, total_chunks, DB_INSERT_BATCH_SIZE):
+                        batch_end = min(batch_start + DB_INSERT_BATCH_SIZE, total_chunks)
+                        chunk_objects = []
+                        
+                        for idx in range(batch_start, batch_end):
+                            chunk_data = chunks[idx]
+                            embedding = all_embeddings[idx]
+                            
+                            chunk_metadata = chunk_data.get("metadata", {})
+                            chunk_metadata["source_info"] = {
+                                "document_name": chunk_data.get("document_name", doc_filename),
+                                "page_number": chunk_data.get("page_number"),
+                                "page_range": chunk_data.get("page_range"),
+                                "position_in_page": chunk_data.get("position_in_page"),
+                                "position_percentage": chunk_data.get("position_percentage"),
+                            }
+                            
+                            chunk = DocumentChunk(
+                                document_id=document_id,
+                                chunk_index=idx,
+                                chunk_text=chunk_data["text"],
+                                chunk_embedding=embedding,
+                                token_count=chunk_data["token_count"],
+                                page_number=chunk_data.get("page_number"),
+                                section_heading=chunk_data.get("section_heading"),
+                                chunk_metadata=chunk_metadata,
+                            )
+                            chunk_objects.append(chunk)
+                            total_tokens += chunk_data["token_count"]
+                        
+                        db.add_all(chunk_objects)
+                        await db.flush()
+                        
+                        store_progress = 88 + int(((batch_end) / total_chunks) * 10)
+                        await self._update_progress(db, document, "storing", store_progress,
+                            f"Stored {batch_end}/{total_chunks} chunks...")
+
+                    # Update document
+                    document.total_chunks = total_chunks
+                    document.total_tokens = total_tokens
                     document.processing_status = "completed"
                     document.processed_at = datetime.now(timezone.utc)
-                    await self._update_progress(db, document, "completed", 100, "No content found in document.")
-                    return
+                    
+                    ocr_label = " (OCR)" if (document.document_metadata or {}).get("used_ocr") else ""
+                    await self._update_progress(db, document, "completed", 100, 
+                        f"Processing complete{ocr_label}. {total_chunks} chunks, {total_tokens} tokens.")
+                    
+                    logger.info(f"✅ Document '{doc_filename}' processed{ocr_label}: {total_chunks} chunks, {total_tokens} tokens")
 
-                await self._update_progress(db, document, "embedding", 20, 
-                    f"Created {total_chunks} chunks. Generating embeddings...")
-
-                # BATCHED EMBEDDING GENERATION to avoid OOM on large documents
-                chunk_texts = [chunk_data["text"] for chunk_data in chunks]
-                all_embeddings = [None] * total_chunks
-                
-                for batch_start in range(0, total_chunks, EMBEDDING_BATCH_SIZE):
-                    batch_end = min(batch_start + EMBEDDING_BATCH_SIZE, total_chunks)
-                    batch_texts = chunk_texts[batch_start:batch_end]
-                    
-                    batch_embeddings = await self.embedding_service.get_embeddings(batch_texts, is_query=False)
-                    
-                    for i, emb in enumerate(batch_embeddings):
-                        all_embeddings[batch_start + i] = emb
-                    
-                    # Update progress (embedding is 20-80% of total)
-                    embed_progress = 20 + int((batch_end / total_chunks) * 60)
-                    await self._update_progress(db, document, "embedding", embed_progress,
-                        f"Generating embeddings ({batch_end}/{total_chunks} chunks)...")
-                    
-                    # Yield control to allow other tasks to run
-                    await asyncio.sleep(0)
-
-                await self._update_progress(db, document, "storing", 85, 
-                    f"Storing {total_chunks} chunks in database...")
-
-                # BATCHED DB INSERTION to avoid huge transactions
-                total_tokens = 0
-                for batch_start in range(0, total_chunks, DB_INSERT_BATCH_SIZE):
-                    batch_end = min(batch_start + DB_INSERT_BATCH_SIZE, total_chunks)
-                    chunk_objects = []
-                    
-                    for idx in range(batch_start, batch_end):
-                        chunk_data = chunks[idx]
-                        embedding = all_embeddings[idx]
-                        
-                        # Build comprehensive chunk metadata
-                        chunk_metadata = chunk_data.get("metadata", {})
-                        chunk_metadata["source_info"] = {
-                            "document_name": chunk_data.get("document_name", document.filename),
-                            "page_number": chunk_data.get("page_number"),
-                            "page_range": chunk_data.get("page_range"),
-                            "position_in_page": chunk_data.get("position_in_page"),
-                            "position_percentage": chunk_data.get("position_percentage"),
+                except Exception as e:
+                    logger.error(f"❌ Document processing failed for {document_id}: {e}")
+                    document.processing_status = "failed"
+                    document.document_metadata = {
+                        **(document.document_metadata or {}),
+                        "error": str(e),
+                        "processing_step": "failed",
+                        "processing_progress": 0,
+                    }
+                    await db.commit()
+        
+        except Exception as e:
+            logger.error(f"❌ Document extraction failed for {document_id}: {e}")
+            try:
+                async with AsyncSessionLocal() as db:
+                    result = await db.execute(
+                        select(Document).where(Document.id == document_id)
+                    )
+                    document = result.scalar_one_or_none()
+                    if document:
+                        document.processing_status = "failed"
+                        document.document_metadata = {
+                            **(document.document_metadata or {}),
+                            "error": str(e),
+                            "processing_step": "failed",
+                            "processing_progress": 0,
                         }
-                        
-                        chunk = DocumentChunk(
-                            document_id=document_id,
-                            chunk_index=idx,
-                            chunk_text=chunk_data["text"],
-                            chunk_embedding=embedding,
-                            token_count=chunk_data["token_count"],
-                            page_number=chunk_data.get("page_number"),
-                            section_heading=chunk_data.get("section_heading"),
-                            chunk_metadata=chunk_metadata,
-                        )
-                        chunk_objects.append(chunk)
-                        total_tokens += chunk_data["token_count"]
-                    
-                    db.add_all(chunk_objects)
-                    await db.flush()  # Flush each batch to keep memory low
-                    
-                    store_progress = 85 + int(((batch_end) / total_chunks) * 10)
-                    await self._update_progress(db, document, "storing", store_progress,
-                        f"Stored {batch_end}/{total_chunks} chunks...")
-
-                # Update document
-                document.total_chunks = total_chunks
-                document.total_tokens = total_tokens
-                document.processing_status = "completed"
-                document.processed_at = datetime.now(timezone.utc)
-                await self._update_progress(db, document, "completed", 100, 
-                    f"Processing complete. {total_chunks} chunks, {total_tokens} tokens.")
-                
-                logger.info(f"✅ Document '{document.filename}' processed: {total_chunks} chunks, {total_tokens} tokens")
-
-            except Exception as e:
-                logger.error(f"❌ Document processing failed for {document_id}: {e}")
-                document.processing_status = "failed"
-                document.document_metadata = {
-                    **(document.document_metadata or {}),
-                    "error": str(e),
-                    "processing_step": "failed",
-                    "processing_progress": 0,
-                }
-                await db.commit()
+                        await db.commit()
+            except Exception:
+                pass
 
     async def _extract_text(self, file_path: str, mime_type: str) -> str:
         """Extract text from document based on file type (legacy method for compatibility)."""
         pages = await self._extract_text_with_pages(file_path, mime_type)
         return "\n\n".join([p["text"] for p in pages])
     
-    async def _extract_text_with_pages(self, file_path: str, mime_type: str) -> List[dict]:
+    async def _extract_text_with_pages(self, file_path: str, mime_type: str, progress_callback=None) -> List[dict]:
         """
         Extract text from document with page-level metadata.
         
+        For PDFs, first attempts native text extraction. If the document appears
+        to be scanned (sparse text), falls back to OCR with retry logic.
+        
+        Args:
+            file_path: Path to the document file
+            mime_type: MIME type of the document
+            progress_callback: Optional async callback(step, progress, detail) for progress updates
+            
         Returns a list of dicts with structure:
         {
             "page_number": int,
             "text": str,
             "blocks": [{"text": str, "position": {"top": float, "left": float, "bottom": float, "right": float}}]
+            "extraction_method": "native" | "ocr"
         }
         """
         import fitz  # PyMuPDF
@@ -402,64 +512,52 @@ class DocumentService:
         document_name = Path(file_path).stem
 
         if mime_type == "application/pdf":
-            pages_data = []
-            with fitz.open(file_path) as doc:
-                for page_num, page in enumerate(doc, start=1):
-                    # Extract text blocks with position info
-                    blocks = page.get_text("dict", flags=fitz.TEXT_PRESERVE_WHITESPACE)["blocks"]
-                    text_blocks = []
-                    
-                    for block in blocks:
-                        if block.get("type") == 0:  # Text block
-                            block_text = ""
-                            for line in block.get("lines", []):
-                                for span in line.get("spans", []):
-                                    block_text += span.get("text", "")
-                                block_text += "\n"
-                            
-                            if block_text.strip():
-                                text_blocks.append({
-                                    "text": block_text.strip(),
-                                    "position": {
-                                        "top": block.get("bbox", [0, 0, 0, 0])[1],
-                                        "left": block.get("bbox", [0, 0, 0, 0])[0],
-                                        "bottom": block.get("bbox", [0, 0, 0, 0])[3],
-                                        "right": block.get("bbox", [0, 0, 0, 0])[2],
-                                    }
-                                })
-                    
-                    page_height = page.rect.height
-                    full_text = page.get_text()
-                    
-                    pages_data.append({
-                        "page_number": page_num,
-                        "text": full_text,
-                        "page_height": page_height,
-                        "blocks": text_blocks,
-                        "document_name": document_name,
-                    })
+            # Step 1: Try native text extraction (run in thread — fitz is CPU-bound)
+            pages_data = await asyncio.to_thread(self._extract_pdf_native, file_path, document_name)
+            
+            # Step 2: Check if the document is scanned/image-heavy
+            if settings.OCR_ENABLED and self._is_scanned_pdf(pages_data):
+                if progress_callback:
+                    await progress_callback(
+                        "ocr_detecting", 8,
+                        f"Detected scanned/image-heavy PDF ({len(pages_data)} pages). Starting OCR..."
+                    )
+                
+                # Step 3: Fall back to OCR with retry
+                ocr_pages = await self._extract_pdf_ocr_with_retry(
+                    file_path, document_name, len(pages_data), progress_callback
+                )
+                
+                if ocr_pages:
+                    return ocr_pages
+                else:
+                    # OCR failed completely, return whatever native extraction got
+                    if progress_callback:
+                        await progress_callback(
+                            "ocr_fallback", 14,
+                            "OCR failed. Using available native text extraction."
+                        )
+                    return pages_data
             
             return pages_data
         
         elif mime_type == "text/plain":
             async with aiofiles.open(file_path, "r") as f:
                 content = await f.read()
-            # Treat entire text file as one page
             return [{
                 "page_number": 1,
                 "text": content,
                 "page_height": None,
                 "blocks": [{"text": content, "position": {"top": 0, "left": 0, "bottom": 100, "right": 100}}],
                 "document_name": document_name,
+                "extraction_method": "native",
             }]
         
         elif mime_type == "application/vnd.openxmlformats-officedocument.wordprocessingml.document":
             from docx import Document as DocxDocument
             doc = DocxDocument(file_path)
-            # DOCX doesn't have clear page breaks, treat paragraphs with estimated page grouping
             paragraphs = [para.text for para in doc.paragraphs if para.text.strip()]
             
-            # Estimate ~40 lines per page for DOCX
             lines_per_page = 40
             pages_data = []
             current_page = 1
@@ -475,6 +573,7 @@ class DocumentService:
                         "page_height": None,
                         "blocks": current_blocks,
                         "document_name": document_name,
+                        "extraction_method": "native",
                     })
                     current_page += 1
                     current_blocks = []
@@ -486,7 +585,6 @@ class DocumentService:
                 })
                 current_line_count += para_lines
             
-            # Add remaining content
             if current_blocks:
                 pages_data.append({
                     "page_number": current_page,
@@ -494,12 +592,219 @@ class DocumentService:
                     "page_height": None,
                     "blocks": current_blocks,
                     "document_name": document_name,
+                    "extraction_method": "native",
                 })
             
-            return pages_data if pages_data else [{"page_number": 1, "text": "", "page_height": None, "blocks": [], "document_name": document_name}]
+            return pages_data if pages_data else [{"page_number": 1, "text": "", "page_height": None, "blocks": [], "document_name": document_name, "extraction_method": "native"}]
         
         else:
             raise ValueError(f"Unsupported file type: {mime_type}")
+
+    def _extract_pdf_native(self, file_path: str, document_name: str) -> List[dict]:
+        """Extract text from PDF using PyMuPDF native text extraction."""
+        import fitz
+        
+        pages_data = []
+        with fitz.open(file_path) as doc:
+            for page_num, page in enumerate(doc, start=1):
+                blocks = page.get_text("dict", flags=fitz.TEXT_PRESERVE_WHITESPACE)["blocks"]
+                text_blocks = []
+                
+                for block in blocks:
+                    if block.get("type") == 0:  # Text block
+                        block_text = ""
+                        for line in block.get("lines", []):
+                            for span in line.get("spans", []):
+                                block_text += span.get("text", "")
+                            block_text += "\n"
+                        
+                        if block_text.strip():
+                            text_blocks.append({
+                                "text": block_text.strip(),
+                                "position": {
+                                    "top": block.get("bbox", [0, 0, 0, 0])[1],
+                                    "left": block.get("bbox", [0, 0, 0, 0])[0],
+                                    "bottom": block.get("bbox", [0, 0, 0, 0])[3],
+                                    "right": block.get("bbox", [0, 0, 0, 0])[2],
+                                }
+                            })
+                
+                page_height = page.rect.height
+                full_text = page.get_text()
+                
+                pages_data.append({
+                    "page_number": page_num,
+                    "text": full_text,
+                    "page_height": page_height,
+                    "blocks": text_blocks,
+                    "document_name": document_name,
+                    "extraction_method": "native",
+                })
+        
+        return pages_data
+
+    def _is_scanned_pdf(self, pages_data: List[dict]) -> bool:
+        """
+        Detect whether a PDF is scanned/image-heavy by analyzing text density.
+        
+        Uses two heuristics:
+        1. Average characters per page is below threshold
+        2. Ratio of pages with meaningful text is below threshold
+        """
+        if not pages_data:
+            return False
+        
+        min_chars = settings.OCR_MIN_TEXT_PER_PAGE
+        sparse_threshold = settings.OCR_SPARSE_THRESHOLD
+        
+        pages_with_text = 0
+        total_chars = 0
+        
+        for page in pages_data:
+            text = page.get("text", "").strip()
+            char_count = len(text)
+            total_chars += char_count
+            if char_count >= min_chars:
+                pages_with_text += 1
+        
+        total_pages = len(pages_data)
+        text_ratio = pages_with_text / total_pages if total_pages > 0 else 0
+        avg_chars_per_page = total_chars / total_pages if total_pages > 0 else 0
+        
+        # Consider scanned if most pages lack text
+        # A normal text PDF page has 1000-3000+ characters
+        is_scanned = text_ratio < sparse_threshold or avg_chars_per_page < min_chars
+        
+        return is_scanned
+
+    async def _extract_pdf_ocr_with_retry(
+        self,
+        file_path: str,
+        document_name: str,
+        total_pages: int,
+        progress_callback=None,
+    ) -> Optional[List[dict]]:
+        """
+        Extract text from PDF pages using OCR (Tesseract) with retry logic.
+        
+        Renders each PDF page as an image and runs Tesseract OCR.
+        Retries failed pages up to OCR_MAX_RETRIES times.
+        
+        Returns list of page dicts or None if OCR is unavailable.
+        """
+        import logging
+        logger = logging.getLogger(__name__)
+        
+        try:
+            import pytesseract
+            from PIL import Image
+            import fitz
+        except ImportError as e:
+            logger.warning(f"OCR dependencies not available: {e}")
+            return None
+        
+        # Verify tesseract is installed
+        try:
+            pytesseract.get_tesseract_version()
+        except Exception:
+            logger.warning("Tesseract binary not found. OCR disabled.")
+            return None
+        
+        max_retries = settings.OCR_MAX_RETRIES
+        dpi = settings.OCR_DPI
+        language = settings.OCR_LANGUAGE
+        
+        pages_data = []
+        failed_pages = []
+        
+        if progress_callback:
+            await progress_callback(
+                "ocr", 10,
+                f"Running OCR on {total_pages} pages (this may take a while)..."
+            )
+        
+        try:
+            with fitz.open(file_path) as doc:
+                for page_idx, page in enumerate(doc):
+                    page_num = page_idx + 1
+                    ocr_text = None
+                    
+                    for attempt in range(max_retries + 1):
+                        try:
+                            # Run CPU-bound rendering + OCR in a thread
+                            # so the asyncio event loop stays responsive
+                            def _ocr_page(pg=page):
+                                zoom = dpi / 72
+                                mat = fitz.Matrix(zoom, zoom)
+                                pix = pg.get_pixmap(matrix=mat)
+                                img = Image.frombytes("RGB", [pix.width, pix.height], pix.samples)
+                                text = pytesseract.image_to_string(
+                                    img, lang=language, config='--psm 6'
+                                )
+                                pix = None
+                                img = None
+                                return text
+
+                            ocr_text = await asyncio.to_thread(_ocr_page)
+                            
+                            break  # Success, no need to retry
+                            
+                        except Exception as e:
+                            if attempt < max_retries:
+                                logger.warning(
+                                    f"OCR attempt {attempt + 1} failed for page {page_num}: {e}. Retrying..."
+                                )
+                                await asyncio.sleep(0.5 * (attempt + 1))  # Backoff
+                            else:
+                                logger.error(
+                                    f"OCR failed for page {page_num} after {max_retries + 1} attempts: {e}"
+                                )
+                                failed_pages.append(page_num)
+                                ocr_text = ""
+                    
+                    text = (ocr_text or "").strip()
+                    
+                    # Build block data from OCR text (paragraph-level)
+                    text_blocks = []
+                    if text:
+                        paragraphs = [p.strip() for p in text.split("\n\n") if p.strip()]
+                        block_height = page.rect.height / max(len(paragraphs), 1)
+                        for i, para in enumerate(paragraphs):
+                            text_blocks.append({
+                                "text": para,
+                                "position": {
+                                    "top": i * block_height,
+                                    "left": 0,
+                                    "bottom": (i + 1) * block_height,
+                                    "right": page.rect.width,
+                                }
+                            })
+                    
+                    pages_data.append({
+                        "page_number": page_num,
+                        "text": text,
+                        "page_height": page.rect.height,
+                        "blocks": text_blocks,
+                        "document_name": document_name,
+                        "extraction_method": "ocr",
+                    })
+                    
+                    # Update progress periodically
+                    if progress_callback and (page_num % 5 == 0 or page_num == total_pages):
+                        ocr_progress = 10 + int((page_num / total_pages) * 45)  # 10-55% range
+                        await progress_callback(
+                            "ocr", min(ocr_progress, 55),
+                            f"OCR processing page {page_num}/{total_pages}..."
+                        )
+            
+            if failed_pages:
+                logger.warning(f"OCR completed with {len(failed_pages)} failed pages: {failed_pages}")
+            
+            return pages_data
+            
+        except Exception as e:
+            logger.error(f"OCR extraction failed: {e}")
+            return None
 
     def _chunk_text(
         self,

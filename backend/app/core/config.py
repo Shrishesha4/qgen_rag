@@ -87,6 +87,14 @@ class Settings(BaseSettings):
     CHUNK_SIZE: int = Field(default=1000)
     CHUNK_OVERLAP: int = Field(default=200)
 
+    # OCR Settings (for scanned PDFs)
+    OCR_ENABLED: bool = Field(default=True)
+    OCR_MIN_TEXT_PER_PAGE: int = Field(default=50)  # Min chars per page to consider it has text
+    OCR_SPARSE_THRESHOLD: float = Field(default=0.3)  # If <30% of pages have text, consider it scanned
+    OCR_LANGUAGE: str = Field(default="eng")  # Tesseract language code
+    OCR_MAX_RETRIES: int = Field(default=2)  # Number of OCR retries on failure
+    OCR_DPI: int = Field(default=300)  # DPI for rendering PDF pages to images
+
     # Logging & Monitoring
     LOG_LEVEL: str = Field(default="INFO")  # DEBUG, INFO, WARNING, ERROR, CRITICAL
     LOG_JSON: bool = Field(default=False)    # True for production (structured JSON logs)
