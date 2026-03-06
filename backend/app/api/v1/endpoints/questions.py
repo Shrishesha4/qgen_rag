@@ -316,6 +316,7 @@ async def quick_generate_questions(
                 file_content=content,
                 mime_type=mime_type,
                 context=enhanced_context,
+                subject_id=parsed_subject_id,
             )
             
             # Extract document_id immediately to avoid session issues
@@ -1355,6 +1356,100 @@ async def delete_generation_session(
     await db.commit()
 
     return {"message": "Session and associated questions deleted successfully"}
+
+
+@router.get("/teacher/dashboard")
+async def get_teacher_dashboard(
+    current_user: User = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+):
+    """
+    Unified teacher dashboard stats in a single call.
+    Returns subjects, documents, question counts, vetting breakdown, and type distribution.
+    """
+    from sqlalchemy import select, func, case
+    from app.models.question import Question, GenerationSession
+    from app.models.document import Document
+    from app.models.subject import Subject
+
+    # Subjects owned by user
+    subjects_result = await db.execute(
+        select(func.count()).where(Subject.user_id == current_user.id)
+    )
+    subjects_count = subjects_result.scalar_one()
+
+    # Uploaded documents (primary + processed)
+    docs_result = await db.execute(
+        select(func.count()).where(
+            Document.user_id == current_user.id,
+            Document.processing_status == "completed",
+        )
+    )
+    documents_count = docs_result.scalar_one()
+
+    # Generation sessions
+    sessions_result = await db.execute(
+        select(func.count()).where(GenerationSession.user_id == current_user.id)
+    )
+    sessions_count = sessions_result.scalar_one()
+
+    # Question stats — join via session (document_id may be null for subject-based)
+    # Use session.user_id as the ownership check
+    q_base = (
+        select(Question)
+        .join(GenerationSession, Question.session_id == GenerationSession.id)
+        .where(
+            GenerationSession.user_id == current_user.id,
+            Question.is_archived == False,
+        )
+    )
+
+    total_result = await db.execute(
+        select(func.count()).select_from(q_base.subquery())
+    )
+    total_questions = total_result.scalar_one()
+
+    vetting_result = await db.execute(
+        select(
+            Question.vetting_status,
+            func.count(),
+        )
+        .join(GenerationSession, Question.session_id == GenerationSession.id)
+        .where(
+            GenerationSession.user_id == current_user.id,
+            Question.is_archived == False,
+        )
+        .group_by(Question.vetting_status)
+    )
+    vetting_counts = {row[0]: row[1] for row in vetting_result.all()}
+
+    type_result = await db.execute(
+        select(Question.question_type, func.count())
+        .join(GenerationSession, Question.session_id == GenerationSession.id)
+        .where(
+            GenerationSession.user_id == current_user.id,
+            Question.is_archived == False,
+        )
+        .group_by(Question.question_type)
+    )
+    questions_by_type = {row[0]: row[1] for row in type_result.all()}
+
+    pending = vetting_counts.get("pending", 0)
+    approved = vetting_counts.get("approved", 0)
+    rejected = vetting_counts.get("rejected", 0)
+    approval_rate = round((approved / max(approved + rejected, 1)) * 100, 1)
+
+    return {
+        "subjects_count": subjects_count,
+        "documents_count": documents_count,
+        "sessions_count": sessions_count,
+        "total_questions": total_questions,
+        "pending_questions": pending,
+        "approved_questions": approved,
+        "rejected_questions": rejected,
+        "approval_rate": approval_rate,
+        "questions_by_type": questions_by_type,
+    }
 
 
 @router.get("/stats/summary")

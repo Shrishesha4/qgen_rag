@@ -197,6 +197,18 @@ export interface QuestionStats {
   average_generation_time_seconds: number;
 }
 
+export interface TeacherDashboard {
+  subjects_count: number;
+  documents_count: number;
+  sessions_count: number;
+  total_questions: number;
+  pending_questions: number;
+  approved_questions: number;
+  rejected_questions: number;
+  approval_rate: number;
+  questions_by_type: Record<string, number>;
+}
+
 export const questionsService = {
   /**
    * Generate questions with true SSE streaming
@@ -437,6 +449,11 @@ export const questionsService = {
   async getStats(documentId?: string): Promise<QuestionStats> {
     const params = documentId ? `?document_id=${documentId}` : '';
     const response = await apiClient.get<QuestionStats>(`/questions/stats/summary${params}`);
+    return response.data;
+  },
+
+  async getTeacherDashboard(): Promise<TeacherDashboard> {
+    const response = await apiClient.get<TeacherDashboard>('/questions/teacher/dashboard');
     return response.data;
   },
 

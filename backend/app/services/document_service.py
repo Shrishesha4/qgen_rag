@@ -154,6 +154,7 @@ class DocumentService:
         file_content: bytes,
         mime_type: str,
         context: Optional[str] = None,
+        subject_id: Optional[uuid.UUID] = None,
     ) -> Document:
         """
         Upload and synchronously process a document.
@@ -197,6 +198,7 @@ class DocumentService:
             mime_type=mime_type,
             storage_path=str(storage_path),
             processing_status="processing",
+            subject_id=subject_id,
             document_metadata={"context": context} if context else {},
         )
         self.db.add(document)

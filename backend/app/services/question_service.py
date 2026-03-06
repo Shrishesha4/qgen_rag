@@ -1116,6 +1116,8 @@ Output valid JSON only."""
         - generation_reasoning: Why this question was generated
         - content_coverage: What aspects are covered
         """
+        import logging
+        logger = logging.getLogger(__name__)
         if not chunks:
             return {"sources": [], "generation_reasoning": None, "content_coverage": None}
         
@@ -2372,7 +2374,9 @@ Output valid JSON only."""
                 message="Finding subject documents...",
             )
 
-            # 1. Fetch all completed primary documents for the subject
+            # 1. Fetch all completed primary documents for the subject.
+            #    First try direct subject linkage (documents uploaded with subject_id set).
+            #    Then fall back to documents used in previous generation sessions for this subject.
             doc_query = select(Document).where(
                 and_(
                     Document.user_id == user_id,
@@ -2382,13 +2386,51 @@ Output valid JSON only."""
                 )
             )
             doc_result = await self.db.execute(doc_query)
-            primary_docs = doc_result.scalars().all()
+            primary_docs = list(doc_result.scalars().all())
+
+            if not primary_docs:
+                # Fallback 1: find completed documents that were used in prior generation
+                # sessions linked to this subject (covers documents uploaded via quick-generate
+                # PDF tab before subject_id propagation was implemented).
+                session_doc_query = (
+                    select(Document)
+                    .distinct()
+                    .join(
+                        GenerationSession,
+                        and_(
+                            GenerationSession.document_id == Document.id,
+                            GenerationSession.user_id == user_id,
+                            GenerationSession.subject_id == subject_id,
+                        ),
+                    )
+                    .where(
+                        and_(
+                            Document.user_id == user_id,
+                            Document.processing_status == "completed",
+                        )
+                    )
+                )
+                session_doc_result = await self.db.execute(session_doc_query)
+                primary_docs = list(session_doc_result.scalars().all())
+
+            if not primary_docs:
+                # Fallback 2: use ANY completed document linked to this subject regardless
+                # of index_type (e.g., reference_book docs are still useful content).
+                any_doc_query = select(Document).where(
+                    and_(
+                        Document.user_id == user_id,
+                        Document.subject_id == subject_id,
+                        Document.processing_status == "completed",
+                    )
+                )
+                any_doc_result = await self.db.execute(any_doc_query)
+                primary_docs = list(any_doc_result.scalars().all())
 
             if not primary_docs:
                 yield QuickGenerateProgress(
                     status="error",
                     progress=0,
-                    message="No processed documents found for this subject. Please upload and index a document first.",
+                    message="No processed documents found for this subject. Please upload a PDF via the PDF tab first and select this subject.",
                 )
                 return
 
