@@ -24,9 +24,8 @@ import {
   KeyboardAvoidingView,
   Platform,
 } from 'react-native';
-import { SafeAreaView } from 'react-native-safe-area-context';
+import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { BlurView } from 'expo-blur';
-import { LinearGradient } from 'expo-linear-gradient';
 
 import { GlassCard } from '@/components/ui/glass-card';
 import { IconSymbol } from '@/components/ui/icon-symbol';
@@ -90,6 +89,7 @@ export function SwipeVetting({
   const colorScheme = useColorScheme();
   const colors = Colors[colorScheme ?? 'light'];
   const isDark = colorScheme === 'dark';
+  const insets = useSafeAreaInsets();
   const { showSuccess, showError } = useToast();
 
   const [currentIndex, setCurrentIndex] = useState(0);
@@ -110,6 +110,20 @@ export function SwipeVetting({
   // Swipe animation
   const position = useRef(new Animated.ValueXY()).current;
   const scrollViewRef = useRef<ScrollView>(null);
+
+  // Refs for gesture callbacks — always points to latest functions (fixes stale closures in panResponder)
+  const viewModeRef = useRef<ViewMode>('question');
+  const gestureCallbacksRef = useRef<{
+    handleUpSwipe: () => void;
+    handleDownSwipe: () => void;
+    swipeOut: (d: 'left' | 'right') => void;
+    resetPosition: () => void;
+  }>({
+    handleUpSwipe: () => {},
+    handleDownSwipe: () => {},
+    swipeOut: () => {},
+    resetPosition: () => {},
+  });
 
   const currentQuestion = questions[currentIndex];
   const totalQuestions = total ?? questions.length;
@@ -153,29 +167,26 @@ export function SwipeVetting({
 
   const panResponder = useRef(
     PanResponder.create({
-      onStartShouldSetPanResponder: () => viewMode === 'question',
-      onMoveShouldSetPanResponder: () => viewMode === 'question',
+      onStartShouldSetPanResponder: () => viewModeRef.current === 'question',
+      onMoveShouldSetPanResponder: () => viewModeRef.current === 'question',
       onPanResponderMove: (_, gesture) => {
         position.setValue({ x: gesture.dx, y: gesture.dy });
       },
       onPanResponderRelease: (_, gesture) => {
-        if (viewMode !== 'question') {
-          resetPosition();
+        if (viewModeRef.current !== 'question') {
+          gestureCallbacksRef.current.resetPosition();
           return;
         }
-        // Check horizontal swipe
         if (gesture.dx > SWIPE_THRESHOLD) {
-          swipeOut('right');
+          gestureCallbacksRef.current.swipeOut('right');
         } else if (gesture.dx < -SWIPE_THRESHOLD) {
-          swipeOut('left');
-        }
-        // Check vertical swipe
-        else if (gesture.dy < -SWIPE_THRESHOLD) {
-          handleUpSwipe();
+          gestureCallbacksRef.current.swipeOut('left');
+        } else if (gesture.dy < -SWIPE_THRESHOLD) {
+          gestureCallbacksRef.current.handleUpSwipe();
         } else if (gesture.dy > SWIPE_THRESHOLD) {
-          handleDownSwipe();
+          gestureCallbacksRef.current.handleDownSwipe();
         } else {
-          resetPosition();
+          gestureCallbacksRef.current.resetPosition();
         }
       },
     })
@@ -189,7 +200,7 @@ export function SwipeVetting({
     }).start();
   }, [position]);
 
-  const swipeOut = useCallback((direction: 'left' | 'right') => {
+  const swipeOut = (direction: 'left' | 'right') => {
     const x = direction === 'right' ? SCREEN_WIDTH + 100 : -SCREEN_WIDTH - 100;
     Animated.timing(position, {
       toValue: { x, y: 0 },
@@ -201,15 +212,14 @@ export function SwipeVetting({
       } else {
         setViewMode('reject');
         resetPosition();
-        // Scroll to show the reject panel
         setTimeout(() => {
           scrollViewRef.current?.scrollTo({ y: 200, animated: true });
         }, 100);
       }
     });
-  }, [position]);
+  };
 
-  const handleUpSwipe = useCallback(() => {
+  const handleUpSwipe = () => {
     Animated.timing(position, {
       toValue: { x: 0, y: -50 },
       duration: 150,
@@ -217,14 +227,13 @@ export function SwipeVetting({
     }).start(() => {
       setViewMode('edit');
       resetPosition();
-      // Scroll to show the edit panel
       setTimeout(() => {
         scrollViewRef.current?.scrollTo({ y: 200, animated: true });
       }, 100);
     });
-  }, [position, resetPosition]);
+  };
 
-  const handleDownSwipe = useCallback(() => {
+  const handleDownSwipe = () => {
     Animated.timing(position, {
       toValue: { x: 0, y: 50 },
       duration: 150,
@@ -233,7 +242,7 @@ export function SwipeVetting({
       handleSkip();
       resetPosition();
     });
-  }, [position, resetPosition]);
+  };
 
   const handleApprove = async () => {
     if (!currentQuestion || isProcessing) return;
@@ -299,6 +308,7 @@ export function SwipeVetting({
       await vetterService.updateQuestion(currentQuestion.id, updates);
       showSuccess('Question updated!');
       onQuestionUpdated(currentQuestion.id, updates as Partial<QuestionForVetting>);
+      resetPosition();
       setViewMode('question');
     } catch (err) {
       showError('Failed to update question');
@@ -376,6 +386,10 @@ export function SwipeVetting({
     setEditingOptionText('');
   };
 
+  // Update refs every render so panResponder always calls the latest handler versions
+  viewModeRef.current = viewMode;
+  gestureCallbacksRef.current = { handleUpSwipe, handleDownSwipe, swipeOut, resetPosition };
+
   // Card animation
   const rotate = position.x.interpolate({
     inputRange: [-SCREEN_WIDTH / 2, 0, SCREEN_WIDTH / 2],
@@ -408,7 +422,7 @@ export function SwipeVetting({
 
   return (
     <Modal visible={visible} animationType="slide" presentationStyle="fullScreen">
-      <SafeAreaView style={[styles.container, { backgroundColor: colors.background }]} edges={['top', 'left', 'right']}>
+      <View style={[styles.container, { backgroundColor: colors.background, paddingTop: insets.top }]}>
         <KeyboardAvoidingView 
           style={styles.flex} 
           behavior={Platform.OS === 'ios' ? 'padding' : 'height'}
@@ -665,7 +679,10 @@ export function SwipeVetting({
                     <Text style={[styles.panelTitle, { color: colors.error }]}>
                       <IconSymbol name="xmark.circle.fill" size={18} color={colors.error} /> Reject Question
                     </Text>
-                    <TouchableOpacity onPress={() => setViewMode('question')}>
+                    <TouchableOpacity onPress={() => {
+                      resetPosition();
+                      setViewMode('question');
+                    }}>
                       <IconSymbol name="xmark" size={20} color={colors.textSecondary} />
                     </TouchableOpacity>
                   </View>
@@ -717,7 +734,10 @@ export function SwipeVetting({
                   <View style={styles.panelButtons}>
                     <TouchableOpacity
                       style={[styles.panelButton, { backgroundColor: colors.border }]}
-                      onPress={() => setViewMode('question')}
+                      onPress={() => {
+                        resetPosition();
+                        setViewMode('question');
+                      }}
                     >
                       <Text style={[styles.panelButtonText, { color: colors.text }]}>Cancel</Text>
                     </TouchableOpacity>
@@ -745,7 +765,10 @@ export function SwipeVetting({
                     <Text style={[styles.panelTitle, { color: colors.primary }]}>
                       <IconSymbol name="pencil" size={18} color={colors.primary} /> Edit Question
                     </Text>
-                    <TouchableOpacity onPress={() => setViewMode('question')}>
+                    <TouchableOpacity onPress={() => {
+                      resetPosition();
+                      setViewMode('question');
+                    }}>
                       <IconSymbol name="xmark" size={20} color={colors.textSecondary} />
                     </TouchableOpacity>
                   </View>
@@ -956,7 +979,10 @@ export function SwipeVetting({
                   <View style={styles.panelButtons}>
                     <TouchableOpacity
                       style={[styles.panelButton, { backgroundColor: colors.border }]}
-                      onPress={() => setViewMode('question')}
+                      onPress={() => {
+                        resetPosition();
+                        setViewMode('question');
+                      }}
                     >
                       <Text style={[styles.panelButtonText, { color: colors.text }]}>Cancel</Text>
                     </TouchableOpacity>
@@ -980,7 +1006,7 @@ export function SwipeVetting({
 
           {/* Quick Action Buttons */}
           {viewMode === 'question' && (
-            <View style={styles.actionButtonsRow}>
+            <View style={[styles.actionButtonsRow, { bottom: Math.max(insets.bottom + 10, 24) }]}>
               <TouchableOpacity
                 style={[styles.actionButton, { backgroundColor: colors.error + '20' }]}
                 onPress={() => setViewMode('reject')}
@@ -1021,7 +1047,7 @@ export function SwipeVetting({
             </View>
           )}
         </KeyboardAvoidingView>
-      </SafeAreaView>
+      </View>
     </Modal>
   );
 }
@@ -1089,7 +1115,6 @@ const styles = StyleSheet.create({
   },
   header: {
     paddingHorizontal: Spacing.md,
-    paddingTop: Spacing.xs,
     paddingBottom: Spacing.sm,
     borderBottomWidth: 1,
     borderBottomColor: 'rgba(0,0,0,0.05)',
@@ -1273,16 +1298,16 @@ const styles = StyleSheet.create({
   approveLabel: {
     right: 10,
     borderColor: '#34C759',
-    backgroundColor: 'rgba(52, 199, 89, 0.1)',
+    backgroundColor: 'rgba(52, 199, 89, 0.88)',
   },
   rejectLabel: {
     left: 10,
     borderColor: '#FF3B30',
-    backgroundColor: 'rgba(255, 59, 48, 0.1)',
+    backgroundColor: 'rgba(255, 59, 48, 0.88)',
   },
   swipeLabelText: {
-    fontSize: FontSizes.sm,
-    fontWeight: '700',
+    fontSize: FontSizes.md,
+    fontWeight: '800',
     color: '#fff',
   },
   // Inline Panels
