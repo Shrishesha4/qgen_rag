@@ -241,101 +241,129 @@ export default function SubjectDetailScreen() {
   };
 
   const runGeneration = (rubricId: string, isTempRubric: boolean) => {
-    setIsGenerating(true);
-    setGenQuestions([]);
-    setGenProgress(null);
-    genProgressAnim.setValue(0);
+    try {
+      setIsGenerating(true);
+      setGenQuestions([]);
+      setGenProgress(null);
+      genProgressAnim.setValue(0);
 
-    const cancel = rubricsService.generateFromRubric(
-      rubricId,
-      (progress) => {
-        setGenProgress(progress);
-        if (progress.progress) {
-          Animated.timing(genProgressAnim, {
-            toValue: progress.progress,
-            duration: 300,
-            useNativeDriver: false,
-          }).start();
-        }
-        if (progress.question) {
-          setGenQuestions((prev) => [...prev, progress.question!]);
-        }
-        if (progress.status === 'error') {
-          showError(new Error(progress.message || 'Generation failed'), 'Generation Failed');
-          setIsGenerating(false);
-        }
-      },
-      async () => {
-        // Don't setIsGenerating(false) yet — let completion UI stay visible
-        if (isTempRubric) {
-          try { await rubricsService.deleteRubric(rubricId); } catch { }
-        }
-      },
-      async (error) => {
-        showError(error, 'Generation Failed');
-        setIsGenerating(false);
-        if (isTempRubric) {
-          try { await rubricsService.deleteRubric(rubricId); } catch { }
-        }
-      },
-      generateTopic?.id,
-    );
-    cancelGenRef.current = cancel;
+      const cancel = rubricsService.generateFromRubric(
+        rubricId,
+        (progress) => {
+          try {
+            setGenProgress(progress);
+            if (progress.progress) {
+              Animated.timing(genProgressAnim, {
+                toValue: progress.progress,
+                duration: 300,
+                useNativeDriver: false,
+              }).start();
+            }
+            if (progress.question) {
+              setGenQuestions((prev) => [...prev, progress.question!]);
+            }
+            if (progress.status === 'error') {
+              showError(new Error(progress.message || 'Generation failed'), 'Generation Failed');
+              setIsGenerating(false);
+            }
+          } catch (callbackError) {
+            console.error('[SubjectDetail] Error in progress callback:', callbackError);
+          }
+        },
+        async () => {
+          // Don't setIsGenerating(false) yet — let completion UI stay visible
+          if (isTempRubric) {
+            try { await rubricsService.deleteRubric(rubricId); } catch { }
+          }
+        },
+        async (error) => {
+          try {
+            showError(error, 'Generation Failed');
+            setIsGenerating(false);
+            if (isTempRubric) {
+              try { await rubricsService.deleteRubric(rubricId); } catch { }
+            }
+          } catch (errorCallbackError) {
+            console.error('[SubjectDetail] Error in error callback:', errorCallbackError);
+          }
+        },
+        generateTopic?.id,
+      );
+      cancelGenRef.current = cancel;
+    } catch (error) {
+      console.error('[SubjectDetail] Unexpected error in runGeneration:', error);
+      setIsGenerating(false);
+      showError(error, 'Generation Failed');
+    }
   };
 
   const handleQuickGenerate = () => {
-    console.log('[SubjectDetail] handleQuickGenerate called, topic:', generateTopic?.name);
-    if (!generateTopic || !id) {
-      console.log('[SubjectDetail] Missing generateTopic or id, aborting');
-      return;
-    }
-    const mcq = parseInt(qgMcqCount) || 0;
-    const short = parseInt(qgShortCount) || 0;
-    const long = parseInt(qgLongCount) || 0;
-    if (mcq + short + long === 0) {
-      showWarning('Add at least one question', 'Missing Information');
-      return;
-    }
-    setIsGenerating(true);
-    setGenQuestions([]);
-    setGenProgress(null);
-    genProgressAnim.setValue(0);
+    try {
+      console.log('[SubjectDetail] handleQuickGenerate called, topic:', generateTopic?.name);
+      if (!generateTopic || !id) {
+        console.log('[SubjectDetail] Missing generateTopic or id, aborting');
+        return;
+      }
+      const mcq = parseInt(qgMcqCount) || 0;
+      const short = parseInt(qgShortCount) || 0;
+      const long = parseInt(qgLongCount) || 0;
+      if (mcq + short + long === 0) {
+        showWarning('Add at least one question', 'Missing Information');
+        return;
+      }
+      setIsGenerating(true);
+      setGenQuestions([]);
+      setGenProgress(null);
+      genProgressAnim.setValue(0);
 
-    const dist: Record<string, { count: number; marks_each: number }> = {};
-    if (mcq > 0) dist.mcq = { count: mcq, marks_each: parseInt(qgMcqMarks) || 2 };
-    if (short > 0) dist.short_notes = { count: short, marks_each: parseInt(qgShortMarks) || 5 };
-    if (long > 0) dist.essay = { count: long, marks_each: parseInt(qgLongMarks) || 10 };
+      const dist: Record<string, { count: number; marks_each: number }> = {};
+      if (mcq > 0) dist.mcq = { count: mcq, marks_each: parseInt(qgMcqMarks) || 2 };
+      if (short > 0) dist.short_notes = { count: short, marks_each: parseInt(qgShortMarks) || 5 };
+      if (long > 0) dist.essay = { count: long, marks_each: parseInt(qgLongMarks) || 10 };
 
-    console.log('[SubjectDetail] Starting generation with dist:', JSON.stringify(dist));
-    const cancel = rubricsService.generateChapter(
-      generateTopic.id,
-      dist,
-      (progress) => {
-        setGenProgress(progress);
-        if (progress.progress) {
-          Animated.timing(genProgressAnim, {
-            toValue: progress.progress,
-            duration: 300,
-            useNativeDriver: false,
-          }).start();
-        }
-        if (progress.question) {
-          setGenQuestions((prev) => [...prev, progress.question!]);
-        }
-        if (progress.status === 'error') {
-          showError(new Error(progress.message || 'Generation failed'), 'Generation Failed');
-          setIsGenerating(false);
-        }
-      },
-      () => {
-        // Don't setIsGenerating(false) — let completion UI stay visible
-      },
-      (error) => {
-        showError(error, 'Generation Failed');
-        setIsGenerating(false);
-      },
-    );
-    cancelGenRef.current = cancel;
+      console.log('[SubjectDetail] Starting generation with dist:', JSON.stringify(dist));
+      const cancel = rubricsService.generateChapter(
+        generateTopic.id,
+        dist,
+        (progress) => {
+          try {
+            setGenProgress(progress);
+            if (progress.progress) {
+              Animated.timing(genProgressAnim, {
+                toValue: progress.progress,
+                duration: 300,
+                useNativeDriver: false,
+              }).start();
+            }
+            if (progress.question) {
+              setGenQuestions((prev) => [...prev, progress.question!]);
+            }
+            if (progress.status === 'error') {
+              showError(new Error(progress.message || 'Generation failed'), 'Generation Failed');
+              setIsGenerating(false);
+            }
+          } catch (callbackError) {
+            console.error('[SubjectDetail] Error in progress callback:', callbackError);
+          }
+        },
+        () => {
+          // Don't setIsGenerating(false) — let completion UI stay visible
+        },
+        (error) => {
+          try {
+            showError(error, 'Generation Failed');
+            setIsGenerating(false);
+          } catch (errorCallbackError) {
+            console.error('[SubjectDetail] Error in error callback:', errorCallbackError);
+          }
+        },
+      );
+      cancelGenRef.current = cancel;
+    } catch (error) {
+      console.error('[SubjectDetail] Unexpected error in handleQuickGenerate:', error);
+      setIsGenerating(false);
+      showError(error, 'Generation Failed');
+    }
   };
 
   const handleUseExistingRubric = (rubric: Rubric) => {

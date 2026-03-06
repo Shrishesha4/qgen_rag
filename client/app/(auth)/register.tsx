@@ -15,6 +15,12 @@ import { NativeButton } from '@/components/ui/native-button';
 import { useAuthStore } from '@/stores/authStore';
 import { Colors, Spacing, BorderRadius, FontSizes } from '@/constants/theme';
 import { useColorScheme } from '@/hooks/use-color-scheme';
+import { UserRole } from '@/services/auth';
+
+const ROLES: { value: UserRole; label: string; description: string }[] = [
+  { value: 'teacher', label: 'Teacher', description: 'Create and manage questions' },
+  { value: 'vetter', label: 'Vetter', description: 'Review and approve questions' },
+];
 
 export default function RegisterScreen() {
   const [email, setEmail] = useState('');
@@ -22,6 +28,7 @@ export default function RegisterScreen() {
   const [fullName, setFullName] = useState('');
   const [password, setPassword] = useState('');
   const [confirmPassword, setConfirmPassword] = useState('');
+  const [selectedRole, setSelectedRole] = useState<UserRole>('teacher');
   const [localError, setLocalError] = useState<string | null>(null);
   
   const { register, isLoading, error, clearError } = useAuthStore();
@@ -47,7 +54,7 @@ export default function RegisterScreen() {
       return;
     }
 
-    await register(email, username, password, fullName || undefined);
+    await register(email, username, password, fullName || undefined, selectedRole);
   };
 
   const displayError = localError || error;
@@ -115,6 +122,41 @@ export default function RegisterScreen() {
               onChangeText={setFullName}
               autoComplete="name"
             />
+          </View>
+
+          <View style={styles.inputContainer}>
+            <Text style={[styles.label, { color: colors.text }]}>Role *</Text>
+            <View style={styles.roleContainer}>
+              {ROLES.map((role) => (
+                <TouchableOpacity
+                  key={role.value}
+                  style={[
+                    styles.roleOption,
+                    { 
+                      backgroundColor: colors.card, 
+                      borderColor: selectedRole === role.value ? colors.primary : colors.border,
+                      borderWidth: selectedRole === role.value ? 2 : 1,
+                    }
+                  ]}
+                  onPress={() => setSelectedRole(role.value)}
+                >
+                  <View style={styles.roleHeader}>
+                    <View style={[
+                      styles.roleRadio,
+                      { borderColor: selectedRole === role.value ? colors.primary : colors.border }
+                    ]}>
+                      {selectedRole === role.value && (
+                        <View style={[styles.roleRadioInner, { backgroundColor: colors.primary }]} />
+                      )}
+                    </View>
+                    <Text style={[styles.roleLabel, { color: colors.text }]}>{role.label}</Text>
+                  </View>
+                  <Text style={[styles.roleDescription, { color: colors.textSecondary }]}>
+                    {role.description}
+                  </Text>
+                </TouchableOpacity>
+              ))}
+            </View>
           </View>
 
           <View style={styles.inputContainer}>
@@ -232,6 +274,40 @@ const styles = StyleSheet.create({
   hint: {
     fontSize: FontSizes.xs,
     marginTop: Spacing.xs,
+  },
+  roleContainer: {
+    gap: Spacing.sm,
+  },
+  roleOption: {
+    borderRadius: BorderRadius.md,
+    padding: Spacing.md,
+  },
+  roleHeader: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    marginBottom: Spacing.xs,
+  },
+  roleRadio: {
+    width: 20,
+    height: 20,
+    borderRadius: 10,
+    borderWidth: 2,
+    justifyContent: 'center',
+    alignItems: 'center',
+    marginRight: Spacing.sm,
+  },
+  roleRadioInner: {
+    width: 10,
+    height: 10,
+    borderRadius: 5,
+  },
+  roleLabel: {
+    fontSize: FontSizes.md,
+    fontWeight: '600',
+  },
+  roleDescription: {
+    fontSize: FontSizes.xs,
+    marginLeft: 28,
   },
   footer: {
     flexDirection: 'row',

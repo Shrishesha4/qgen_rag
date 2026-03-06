@@ -98,8 +98,6 @@ class QuestionForVetting(BaseModel):
     options: Optional[List[str]]
     correct_answer: Optional[str]
     explanation: Optional[str]
-    expected_answer: Optional[str]
-    key_points: Optional[List[str]]
     marks: Optional[int]
     difficulty_level: Optional[str]
     bloom_taxonomy_level: Optional[str]
@@ -107,7 +105,7 @@ class QuestionForVetting(BaseModel):
     vetting_notes: Optional[str]
     learning_outcome_id: Optional[str]
     course_outcome_mapping: Optional[dict]
-    created_at: datetime
+    generated_at: datetime
     
     # Teacher info
     teacher_id: Optional[uuid.UUID]
@@ -210,7 +208,7 @@ async def get_vetter_dashboard(
     yesterday = datetime.now(timezone.utc).replace(hour=0, minute=0, second=0, microsecond=0)
     recent_result = await db.execute(
         select(func.count(Question.id)).where(
-            Question.created_at >= yesterday,
+            Question.generated_at >= yesterday,
             Question.is_latest == True,
             Question.is_archived == False,
         )
@@ -420,7 +418,7 @@ async def get_questions_for_vetting(
     
     # Apply pagination
     offset = (page - 1) * limit
-    query = query.order_by(Question.created_at.desc()).offset(offset).limit(limit)
+    query = query.order_by(Question.generated_at.desc()).offset(offset).limit(limit)
     
     result = await db.execute(query)
     questions = result.scalars().all()
@@ -448,8 +446,6 @@ async def get_questions_for_vetting(
             options=q.options,
             correct_answer=q.correct_answer,
             explanation=q.explanation,
-            expected_answer=q.expected_answer,
-            key_points=q.key_points,
             marks=q.marks,
             difficulty_level=q.difficulty_level,
             bloom_taxonomy_level=q.bloom_taxonomy_level,
@@ -457,7 +453,7 @@ async def get_questions_for_vetting(
             vetting_notes=q.vetting_notes,
             learning_outcome_id=q.learning_outcome_id,
             course_outcome_mapping=q.course_outcome_mapping,
-            created_at=q.created_at,
+            generated_at=q.generated_at,
             teacher_id=teacher_id_val,
             teacher_name=teacher_name,
             subject_id=q.subject_id,

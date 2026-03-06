@@ -94,7 +94,12 @@ export default function QuestionsForVetting() {
         if (pageNum === 1) {
           setQuestions(data.questions);
         } else {
-          setQuestions((prev) => [...prev, ...data.questions]);
+          // Deduplicate when appending pages
+          setQuestions((prev) => {
+            const existingIds = new Set(prev.map((q) => q.id));
+            const newQuestions = data.questions.filter((q) => !existingIds.has(q.id));
+            return [...prev, ...newQuestions];
+          });
         }
 
         setTotal(data.total);
@@ -121,9 +126,12 @@ export default function QuestionsForVetting() {
   }, [teacherFilter]);
 
   useEffect(() => {
+    setPage(1);
+    setSelectedIds(new Set());
     fetchQuestions(1);
     fetchSubjects();
-  }, [fetchQuestions, fetchSubjects]);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [statusFilter, teacherFilter, subjectFilter]);
 
   const onRefresh = useCallback(() => {
     setIsRefreshing(true);
@@ -431,7 +439,7 @@ export default function QuestionsForVetting() {
 
       <FlatList
         data={questions}
-        keyExtractor={(item) => item.id}
+        keyExtractor={(item) => String(item.id)}
         renderItem={({ item }) => <QuestionCard question={item} />}
         contentContainerStyle={styles.listContent}
         refreshControl={<RefreshControl refreshing={isRefreshing} onRefresh={onRefresh} />}

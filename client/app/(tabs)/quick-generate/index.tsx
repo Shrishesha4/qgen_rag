@@ -159,62 +159,80 @@ export default function QuickGenerateScreen() {
   };
 
   const handleGenerate = () => {
-    mediumImpact();
-    if (!selectedFile) {
-      showWarning('Please upload a PDF document first', 'Missing File');
-      return;
-    }
-    if (!context.trim()) {
-      showWarning('Please provide a context or title for generation', 'Missing Context');
-      return;
-    }
-    if (selectedTypes.length === 0) {
-      showWarning('Please select at least one question type', 'Missing Types');
-      return;
-    }
-
-    setIsGenerating(true);
-    setGeneratedQuestions([]);
-    setProgress(null);
-    progressAnim.setValue(0);
-
-    cancelRef.current = questionsService.quickGenerate(
-      {
-        file: selectedFile,
-        context: context.trim(),
-        count,
-        types: selectedTypes,
-        difficulty,
-        marks_mcq: selectedTypes.includes('mcq') ? marksMcq : undefined,
-        marks_short: selectedTypes.includes('short_answer') ? marksShort : undefined,
-        marks_long: selectedTypes.includes('long_answer') ? marksLong : undefined,
-        subject_id: selectedSubjectId || undefined,
-        topic_id: selectedTopicId || undefined,
-      },
-      (progressUpdate) => {
-        console.log('[QuickGenerate UI] Progress update:', progressUpdate.status, progressUpdate.progress);
-        setProgress(progressUpdate);
-        Animated.timing(progressAnim, {
-          toValue: progressUpdate.progress / 100,
-          duration: 300,
-          useNativeDriver: false,
-        }).start();
-        
-        if (progressUpdate.question) {
-          console.log('[QuickGenerate UI] New question received:', progressUpdate.question.id);
-          setGeneratedQuestions(prev => [...prev, progressUpdate.question!]);
-        }
-      },
-      (documentId) => {
-        console.log('[QuickGenerate UI] Complete, documentId:', documentId);
-        setIsGenerating(false);
-      },
-      (error) => {
-        console.log('[QuickGenerate UI] Error:', error.message);
-        setIsGenerating(false);
-        showError(error, 'Generation Failed');
+    try {
+      mediumImpact();
+      if (!selectedFile) {
+        showWarning('Please upload a PDF document first', 'Missing File');
+        return;
       }
-    );
+      if (!context.trim()) {
+        showWarning('Please provide a context or title for generation', 'Missing Context');
+        return;
+      }
+      if (selectedTypes.length === 0) {
+        showWarning('Please select at least one question type', 'Missing Types');
+        return;
+      }
+
+      setIsGenerating(true);
+      setGeneratedQuestions([]);
+      setProgress(null);
+      progressAnim.setValue(0);
+
+      cancelRef.current = questionsService.quickGenerate(
+        {
+          file: selectedFile,
+          context: context.trim(),
+          count,
+          types: selectedTypes,
+          difficulty,
+          marks_mcq: selectedTypes.includes('mcq') ? marksMcq : undefined,
+          marks_short: selectedTypes.includes('short_answer') ? marksShort : undefined,
+          marks_long: selectedTypes.includes('long_answer') ? marksLong : undefined,
+          subject_id: selectedSubjectId || undefined,
+          topic_id: selectedTopicId || undefined,
+        },
+        (progressUpdate) => {
+          try {
+            console.log('[QuickGenerate UI] Progress update:', progressUpdate.status, progressUpdate.progress);
+            setProgress(progressUpdate);
+            Animated.timing(progressAnim, {
+              toValue: progressUpdate.progress / 100,
+              duration: 300,
+              useNativeDriver: false,
+            }).start();
+            
+            if (progressUpdate.question) {
+              console.log('[QuickGenerate UI] New question received:', progressUpdate.question.id);
+              setGeneratedQuestions(prev => [...prev, progressUpdate.question!]);
+            }
+          } catch (callbackError) {
+            console.error('[QuickGenerate UI] Error in progress callback:', callbackError);
+          }
+        },
+        (documentId) => {
+          try {
+            console.log('[QuickGenerate UI] Complete, documentId:', documentId);
+            setIsGenerating(false);
+          } catch (completeError) {
+            console.error('[QuickGenerate UI] Error in complete callback:', completeError);
+          }
+        },
+        (error) => {
+          try {
+            console.log('[QuickGenerate UI] Error:', error.message);
+            setIsGenerating(false);
+            showError(error, 'Generation Failed');
+          } catch (errorCallbackError) {
+            console.error('[QuickGenerate UI] Error in error callback:', errorCallbackError);
+          }
+        }
+      );
+    } catch (error) {
+      console.error('[QuickGenerate UI] Unexpected error in handleGenerate:', error);
+      setIsGenerating(false);
+      showError(error, 'Generation Failed');
+    }
   };
 
   const handleCancel = () => {

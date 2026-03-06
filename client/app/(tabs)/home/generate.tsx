@@ -245,52 +245,70 @@ export default function GenerateScreen() {
   };
 
   const handleGenerate = () => {
-    console.log('[Generate] handleGenerate called, selectedRubric:', selectedRubric?.id);
-    if (!selectedRubric) {
-      console.log('[Generate] No rubric selected, aborting');
-      return;
-    }
-    
-    console.log('[Generate] Starting generation...');
-    setIsGenerating(true);
-    setGeneratedQuestions([]);
-    progressAnim.setValue(0);
-    
-    console.log('[Generate] Calling rubricsService.generateFromRubric with rubricId:', selectedRubric.id);
-    const cancel = rubricsService.generateFromRubric(
-      selectedRubric.id,
-      (progress) => {
-        console.log('[Generate] Progress received:', progress.status, progress.message);
-        setGenerationProgress(progress);
-        
-        if (progress.progress) {
-          Animated.timing(progressAnim, {
-            toValue: progress.progress,
-            duration: 300,
-            useNativeDriver: false,
-          }).start();
-        }
-        
-        if (progress.question) {
-          setGeneratedQuestions(prev => [...prev, progress.question!]);
-        }
-        
-        if (progress.status === 'error') {
-          showError(new Error(progress.message || 'Failed to generate questions'), 'Generation Failed');
-          setIsGenerating(false);
-        }
-      },
-      () => {
-        setIsGenerating(false);
-        loadData();
-      },
-      (error) => {
-        showError(error, 'Generation Failed');
-        setIsGenerating(false);
+    try {
+      console.log('[Generate] handleGenerate called, selectedRubric:', selectedRubric?.id);
+      if (!selectedRubric) {
+        console.log('[Generate] No rubric selected, aborting');
+        return;
       }
-    );
-    
-    cancelGenerationRef.current = cancel;
+      
+      console.log('[Generate] Starting generation...');
+      setIsGenerating(true);
+      setGeneratedQuestions([]);
+      progressAnim.setValue(0);
+      
+      console.log('[Generate] Calling rubricsService.generateFromRubric with rubricId:', selectedRubric.id);
+      const cancel = rubricsService.generateFromRubric(
+        selectedRubric.id,
+        (progress) => {
+          try {
+            console.log('[Generate] Progress received:', progress.status, progress.message);
+            setGenerationProgress(progress);
+            
+            if (progress.progress) {
+              Animated.timing(progressAnim, {
+                toValue: progress.progress,
+                duration: 300,
+                useNativeDriver: false,
+              }).start();
+            }
+            
+            if (progress.question) {
+              setGeneratedQuestions(prev => [...prev, progress.question!]);
+            }
+            
+            if (progress.status === 'error') {
+              showError(new Error(progress.message || 'Failed to generate questions'), 'Generation Failed');
+              setIsGenerating(false);
+            }
+          } catch (callbackError) {
+            console.error('[Generate] Error in progress callback:', callbackError);
+          }
+        },
+        () => {
+          try {
+            setIsGenerating(false);
+            loadData();
+          } catch (completeError) {
+            console.error('[Generate] Error in complete callback:', completeError);
+          }
+        },
+        (error) => {
+          try {
+            showError(error, 'Generation Failed');
+            setIsGenerating(false);
+          } catch (errorCallbackError) {
+            console.error('[Generate] Error in error callback:', errorCallbackError);
+          }
+        }
+      );
+      
+      cancelGenerationRef.current = cancel;
+    } catch (error) {
+      console.error('[Generate] Unexpected error in handleGenerate:', error);
+      setIsGenerating(false);
+      showError(error, 'Generation Failed');
+    }
   };
 
   const handleCancelGeneration = () => {
