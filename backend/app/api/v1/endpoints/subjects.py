@@ -91,9 +91,30 @@ async def list_subjects(
     
     result = await db.execute(query)
     subjects = result.scalars().all()
-    
+
+    # Compute live question counts per subject (non-archived, latest version only)
+    subject_ids = [s.id for s in subjects]
+    live_counts: dict = {}
+    if subject_ids:
+        live_counts_result = await db.execute(
+            select(Question.subject_id, func.count(Question.id))
+            .where(
+                Question.subject_id.in_(subject_ids),
+                Question.is_archived == False,
+                Question.is_latest == True,
+            )
+            .group_by(Question.subject_id)
+        )
+        live_counts = dict(live_counts_result.all())
+
+    subject_responses = []
+    for s in subjects:
+        sr = SubjectResponse.model_validate(s)
+        sr.total_questions = live_counts.get(s.id, 0)
+        subject_responses.append(sr)
+
     return SubjectListResponse(
-        subjects=[SubjectResponse.model_validate(s) for s in subjects],
+        subjects=subject_responses,
         pagination={
             "page": page,
             "limit": limit,
@@ -126,17 +147,28 @@ async def get_subject(
             detail="Subject not found",
         )
     
-    # Compute live question counts per topic (only non-archived)
+    # Compute live question counts per topic (only non-archived, latest version)
     topic_counts_result = await db.execute(
         select(Question.topic_id, func.count(Question.id))
         .where(
             Question.topic_id.isnot(None),
             Question.is_archived == False,
-            Question.vetting_status == "approved",
+            Question.is_latest == True,
         )
         .group_by(Question.topic_id)
     )
     topic_counts = dict(topic_counts_result.all())
+
+    # Compute live subject-level total (includes questions without a topic)
+    subject_count_result = await db.execute(
+        select(func.count(Question.id))
+        .where(
+            Question.subject_id == subject_id,
+            Question.is_archived == False,
+            Question.is_latest == True,
+        )
+    )
+    live_subject_total = subject_count_result.scalar_one()
 
     sorted_topics = sorted(subject.topics, key=lambda x: x.order_index)
     topic_responses = []
@@ -145,8 +177,10 @@ async def get_subject(
         tr.total_questions = topic_counts.get(t.id, 0)
         topic_responses.append(tr)
 
+    subject_resp = SubjectResponse.model_validate(subject)
+    subject_resp.total_questions = live_subject_total
     return SubjectDetailResponse(
-        **SubjectResponse.model_validate(subject).model_dump(),
+        **subject_resp.model_dump(),
         topics=topic_responses
     )
 
