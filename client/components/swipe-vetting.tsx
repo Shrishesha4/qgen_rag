@@ -1086,9 +1086,10 @@ export function SwipeVetting({
             </View>
             {/* Scrollable content */}
             <ScrollView
-              style={styles.sourcesModalScroll}
+              style={{ maxHeight: SCREEN_HEIGHT * 0.55 }}
               contentContainerStyle={styles.sourcesModalScrollContent}
-              showsVerticalScrollIndicator={false}
+              showsVerticalScrollIndicator={true}
+              nestedScrollEnabled
             >
               <QuestionSources sourceInfo={currentQuestion.source_info} defaultExpanded />
             </ScrollView>
@@ -1335,7 +1336,6 @@ const styles = StyleSheet.create({
   },
   sourcesFloatingCard: {
     width: '100%',
-    maxHeight: SCREEN_HEIGHT * 0.65,
     borderRadius: BorderRadius.lg,
     overflow: 'hidden',
     shadowColor: '#000',
