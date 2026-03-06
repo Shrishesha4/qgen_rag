@@ -99,6 +99,17 @@ export interface BulkVetRequest {
   notes?: string;
 }
 
+export interface VetterUpdateQuestionRequest {
+  marks?: number;
+  difficulty_level?: string;
+  bloom_taxonomy_level?: string;
+  correct_answer?: string;
+  options?: string[];
+  question_text?: string;
+  course_outcome_mapping?: Record<string, number>;
+  learning_outcome_id?: string;
+}
+
 export interface QuestionFilters {
   page?: number;
   limit?: number;
@@ -174,6 +185,14 @@ export const vetterService = {
    */
   async bulkVet(data: BulkVetRequest): Promise<{ message: string; count: number; status: string }> {
     const response = await apiClient.post('/vetter/questions/bulk-vet', data);
+    return response.data;
+  },
+
+  /**
+   * Update a question as a vetter
+   */
+  async updateQuestion(questionId: string, data: VetterUpdateQuestionRequest): Promise<{ message: string; question_id: string; question: QuestionForVetting }> {
+    const response = await apiClient.put(`/vetter/questions/${questionId}`, data);
     return response.data;
   },
 };

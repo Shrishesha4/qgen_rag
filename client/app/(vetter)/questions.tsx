@@ -1,4 +1,4 @@
-import React, { useEffect, useState, useCallback } from 'react';
+import React, { useEffect, useState, useCallback, useMemo } from 'react';
 import {
   View,
   Text,
@@ -10,12 +10,16 @@ import {
   Modal,
   TextInput,
   ScrollView,
+  Dimensions,
 } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { useLocalSearchParams } from 'expo-router';
+import { LinearGradient } from 'expo-linear-gradient';
 
 import { GlassCard } from '@/components/ui/glass-card';
 import { NativeButton } from '@/components/ui/native-button';
+import { IconSymbol } from '@/components/ui/icon-symbol';
+import { SwipeVetting } from '@/components/swipe-vetting';
 import { Colors, Spacing, BorderRadius, FontSizes } from '@/constants/theme';
 import { useColorScheme } from '@/hooks/use-color-scheme';
 import { useToast } from '@/components/toast';
@@ -25,6 +29,8 @@ import {
   QuestionsResponse,
   SubjectSummary,
 } from '@/services/vetter.service';
+
+const { width: SCREEN_WIDTH } = Dimensions.get('window');
 
 type StatusFilter = 'pending' | 'approved' | 'rejected' | 'all';
 
@@ -76,6 +82,32 @@ export default function QuestionsForVetting() {
 
   // Selected for bulk action
   const [selectedIds, setSelectedIds] = useState<Set<string>>(new Set());
+
+  // Subject search dropdown
+  const [showSubjectPicker, setShowSubjectPicker] = useState(false);
+  const [subjectSearch, setSubjectSearch] = useState('');
+
+  // Swipe vetting mode
+  const [showSwipeVetting, setShowSwipeVetting] = useState(false);
+
+  // Fuzzy search filter for subjects
+  const filteredSubjects = useMemo(() => {
+    if (!subjectSearch.trim()) return subjects;
+    const searchLower = subjectSearch.toLowerCase();
+    return subjects.filter(
+      (s) =>
+        s.name.toLowerCase().includes(searchLower) ||
+        s.code.toLowerCase().includes(searchLower) ||
+        s.teacher_name.toLowerCase().includes(searchLower)
+    );
+  }, [subjects, subjectSearch]);
+
+  // Get selected subject name for display
+  const selectedSubjectName = useMemo(() => {
+    if (!subjectFilter) return 'All Subjects';
+    const subject = subjects.find((s) => s.id === subjectFilter);
+    return subject ? `${subject.code} - ${subject.name}` : 'All Subjects';
+  }, [subjectFilter, subjects]);
 
   const fetchQuestions = useCallback(
     async (pageNum = 1, showLoader = true) => {
@@ -216,6 +248,34 @@ export default function QuestionsForVetting() {
       prev.includes(reason) ? prev.filter((r) => r !== reason) : [...prev, reason]
     );
   };
+
+  // Handle swipe vetting callbacks
+  const handleQuestionVetted = useCallback((questionId: string, status: 'approved' | 'rejected' | 'skipped') => {
+    if (status !== 'skipped') {
+      // Remove from list if we're filtering by pending
+      if (statusFilter === 'pending') {
+        setQuestions((prev) => prev.filter((q) => q.id !== questionId));
+        setTotal((prev) => prev - 1);
+      }
+    }
+  }, [statusFilter]);
+
+  const handleQuestionUpdated = useCallback((questionId: string, updates: Partial<QuestionForVetting>) => {
+    setQuestions((prev) =>
+      prev.map((q) => (q.id === questionId ? { ...q, ...updates } : q))
+    );
+  }, []);
+
+  const handleSelectSubject = useCallback((subjectId: string | undefined) => {
+    setSubjectFilter(subjectId);
+    setShowSubjectPicker(false);
+    setSubjectSearch('');
+  }, []);
+
+  // Get pending questions for swipe mode
+  const pendingQuestions = useMemo(() => {
+    return questions.filter((q) => q.vetting_status === 'pending');
+  }, [questions]);
 
   const QuestionCard = ({ question }: { question: QuestionForVetting }) => {
     const isSelected = selectedIds.has(question.id);
@@ -405,6 +465,18 @@ export default function QuestionsForVetting() {
           {total} questions found
         </Text>
       </View>
+
+      {/* Subject Dropdown */}
+      <TouchableOpacity
+        style={[styles.subjectDropdown, { backgroundColor: colors.card, borderColor: colors.border }]}
+        onPress={() => setShowSubjectPicker(true)}
+      >
+        <IconSymbol name="book.fill" size={16} color={colors.primary} />
+        <Text style={[styles.subjectDropdownText, { color: colors.text }]} numberOfLines={1}>
+          {selectedSubjectName}
+        </Text>
+        <IconSymbol name="chevron.down" size={14} color={colors.textSecondary} />
+      </TouchableOpacity>
 
       <FilterBar />
 
@@ -685,6 +757,142 @@ export default function QuestionsForVetting() {
           </ScrollView>
         </SafeAreaView>
       </Modal>
+
+      {/* Subject Picker Modal */}
+      <Modal
+        visible={showSubjectPicker}
+        animationType="slide"
+        presentationStyle="pageSheet"
+        onRequestClose={() => {
+          setShowSubjectPicker(false);
+          setSubjectSearch('');
+        }}
+      >
+        <SafeAreaView style={[styles.modalContainer, { backgroundColor: colors.background }]}>
+          <View style={styles.modalHeader}>
+            <Text style={[styles.modalTitle, { color: colors.text }]}>Select Subject</Text>
+            <TouchableOpacity onPress={() => {
+              setShowSubjectPicker(false);
+              setSubjectSearch('');
+            }}>
+              <Text style={[styles.closeButton, { color: colors.primary }]}>Close</Text>
+            </TouchableOpacity>
+          </View>
+
+          {/* Search Bar */}
+          <View style={[styles.searchContainer, { backgroundColor: colors.card, borderColor: colors.border }]}>
+            <IconSymbol name="magnifyingglass" size={18} color={colors.textSecondary} />
+            <TextInput
+              style={[styles.searchInput, { color: colors.text }]}
+              placeholder="Search subjects..."
+              placeholderTextColor={colors.textTertiary}
+              value={subjectSearch}
+              onChangeText={setSubjectSearch}
+              autoCapitalize="none"
+              autoCorrect={false}
+            />
+            {subjectSearch.length > 0 && (
+              <TouchableOpacity onPress={() => setSubjectSearch('')}>
+                <IconSymbol name="xmark.circle.fill" size={18} color={colors.textSecondary} />
+              </TouchableOpacity>
+            )}
+          </View>
+
+          <ScrollView style={styles.modalContent}>
+            {/* All Subjects option */}
+            <TouchableOpacity
+              style={[
+                styles.subjectItem,
+                { borderColor: colors.border },
+                !subjectFilter && { backgroundColor: colors.primary + '15' },
+              ]}
+              onPress={() => handleSelectSubject(undefined)}
+            >
+              <View style={styles.subjectItemContent}>
+                <Text style={[styles.subjectItemName, { color: colors.text }]}>All Subjects</Text>
+                <Text style={[styles.subjectItemMeta, { color: colors.textSecondary }]}>
+                  Show questions from all subjects
+                </Text>
+              </View>
+              {!subjectFilter && (
+                <IconSymbol name="checkmark.circle.fill" size={22} color={colors.primary} />
+              )}
+            </TouchableOpacity>
+
+            {/* Subject list */}
+            {filteredSubjects.map((subject) => (
+              <TouchableOpacity
+                key={subject.id}
+                style={[
+                  styles.subjectItem,
+                  { borderColor: colors.border },
+                  subjectFilter === subject.id && { backgroundColor: colors.primary + '15' },
+                ]}
+                onPress={() => handleSelectSubject(subject.id)}
+              >
+                <View style={styles.subjectItemContent}>
+                  <Text style={[styles.subjectItemName, { color: colors.text }]}>
+                    {subject.code} - {subject.name}
+                  </Text>
+                  <Text style={[styles.subjectItemMeta, { color: colors.textSecondary }]}>
+                    {subject.teacher_name} • {subject.pending_count} pending
+                  </Text>
+                </View>
+                {subject.pending_count > 0 && (
+                  <View style={[styles.pendingBadge, { backgroundColor: colors.warning }]}>
+                    <Text style={styles.pendingBadgeText}>{subject.pending_count}</Text>
+                  </View>
+                )}
+                {subjectFilter === subject.id && (
+                  <IconSymbol name="checkmark.circle.fill" size={22} color={colors.primary} />
+                )}
+              </TouchableOpacity>
+            ))}
+
+            {filteredSubjects.length === 0 && subjectSearch && (
+              <View style={styles.emptyContainer}>
+                <Text style={[styles.emptyText, { color: colors.textSecondary }]}>
+                  No subjects match "{subjectSearch}"
+                </Text>
+              </View>
+            )}
+          </ScrollView>
+        </SafeAreaView>
+      </Modal>
+
+      {/* Floating Start Vetting Button */}
+      {pendingQuestions.length > 0 && statusFilter === 'pending' && (
+        <TouchableOpacity
+          style={styles.floatingButton}
+          onPress={() => setShowSwipeVetting(true)}
+          activeOpacity={0.9}
+        >
+          <LinearGradient
+            colors={['#5856D6', '#4A4ADE']}
+            start={{ x: 0, y: 0 }}
+            end={{ x: 1, y: 0 }}
+            style={styles.floatingButtonGradient}
+          >
+            <IconSymbol name="hand.draw.fill" size={20} color="#FFFFFF" />
+            <Text style={styles.floatingButtonText}>Start Vetting</Text>
+            <View style={styles.floatingButtonBadge}>
+              <Text style={styles.floatingButtonBadgeText}>{pendingQuestions.length}</Text>
+            </View>
+          </LinearGradient>
+        </TouchableOpacity>
+      )}
+
+      {/* Swipe Vetting Modal */}
+      <SwipeVetting
+        visible={showSwipeVetting}
+        onClose={() => {
+          setShowSwipeVetting(false);
+          fetchQuestions(1, false); // Refresh after vetting session
+        }}
+        questions={pendingQuestions}
+        onQuestionVetted={handleQuestionVetted}
+        onQuestionUpdated={handleQuestionUpdated}
+      />
     </SafeAreaView>
   );
 }
@@ -915,5 +1123,109 @@ const styles = StyleSheet.create({
     minHeight: 80,
     textAlignVertical: 'top',
     marginTop: Spacing.sm,
+  },
+  // Subject Dropdown styles
+  subjectDropdown: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    marginHorizontal: Spacing.md,
+    marginBottom: Spacing.sm,
+    paddingHorizontal: Spacing.md,
+    paddingVertical: Spacing.sm,
+    borderRadius: BorderRadius.md,
+    borderWidth: 1,
+    gap: Spacing.sm,
+  },
+  subjectDropdownText: {
+    flex: 1,
+    fontSize: FontSizes.sm,
+    fontWeight: '500',
+  },
+  // Search styles
+  searchContainer: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    marginHorizontal: Spacing.md,
+    marginVertical: Spacing.sm,
+    paddingHorizontal: Spacing.md,
+    paddingVertical: Spacing.sm,
+    borderRadius: BorderRadius.md,
+    borderWidth: 1,
+    gap: Spacing.sm,
+  },
+  searchInput: {
+    flex: 1,
+    fontSize: FontSizes.md,
+    paddingVertical: Spacing.xs,
+  },
+  // Subject Item styles
+  subjectItem: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    padding: Spacing.md,
+    marginBottom: Spacing.sm,
+    borderRadius: BorderRadius.md,
+    borderWidth: 1,
+  },
+  subjectItemContent: {
+    flex: 1,
+  },
+  subjectItemName: {
+    fontSize: FontSizes.md,
+    fontWeight: '600',
+  },
+  subjectItemMeta: {
+    fontSize: FontSizes.sm,
+    marginTop: 2,
+  },
+  pendingBadge: {
+    paddingHorizontal: Spacing.sm,
+    paddingVertical: 2,
+    borderRadius: BorderRadius.full,
+    marginRight: Spacing.sm,
+  },
+  pendingBadgeText: {
+    color: '#FFFFFF',
+    fontSize: FontSizes.xs,
+    fontWeight: '700',
+  },
+  // Floating Button styles
+  floatingButton: {
+    position: 'absolute',
+    bottom: 100,
+    left: Spacing.lg,
+    right: Spacing.lg,
+    borderRadius: BorderRadius.lg,
+    overflow: 'hidden',
+    shadowColor: '#5856D6',
+    shadowOffset: { width: 0, height: 4 },
+    shadowOpacity: 0.3,
+    shadowRadius: 8,
+    elevation: 8,
+  },
+  floatingButtonGradient: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'center',
+    paddingVertical: Spacing.md,
+    paddingHorizontal: Spacing.lg,
+    gap: Spacing.sm,
+  },
+  floatingButtonText: {
+    color: '#FFFFFF',
+    fontSize: FontSizes.md,
+    fontWeight: '700',
+  },
+  floatingButtonBadge: {
+    backgroundColor: 'rgba(255,255,255,0.3)',
+    paddingHorizontal: Spacing.sm,
+    paddingVertical: 2,
+    borderRadius: BorderRadius.full,
+    marginLeft: Spacing.xs,
+  },
+  floatingButtonBadgeText: {
+    color: '#FFFFFF',
+    fontSize: FontSizes.xs,
+    fontWeight: '700',
   },
 });

@@ -636,3 +636,90 @@ async def get_topic_stats(
         ))
     
     return stats
+
+
+# ============== Update Question (Vetter) ==============
+
+
+class VetterUpdateQuestionRequest(BaseModel):
+    """Request body for vetter to update a question."""
+    marks: Optional[int] = None
+    difficulty_level: Optional[str] = None
+    bloom_taxonomy_level: Optional[str] = None
+    correct_answer: Optional[str] = None
+    options: Optional[List[str]] = None
+    question_text: Optional[str] = None
+    course_outcome_mapping: Optional[dict] = None
+    learning_outcome_id: Optional[str] = None
+
+
+@router.put("/questions/{question_id}", response_model=dict)
+async def update_question_as_vetter(
+    question_id: uuid.UUID,
+    update_data: VetterUpdateQuestionRequest,
+    current_user: User = Depends(get_current_vetter),
+    db: AsyncSession = Depends(get_db),
+):
+    """
+    Update a question as a vetter.
+    Vetters can edit marks, difficulty, answers, and mappings.
+    """
+    # Get question
+    result = await db.execute(
+        select(Question)
+        .options(
+            selectinload(Question.subject),
+            selectinload(Question.topic),
+        )
+        .where(
+            Question.id == question_id,
+            Question.is_latest == True,
+            Question.is_archived == False,
+        )
+    )
+    question = result.scalar_one_or_none()
+    
+    if not question:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="Question not found",
+        )
+    
+    # Update fields if provided
+    if update_data.marks is not None:
+        question.marks = update_data.marks
+    if update_data.difficulty_level is not None:
+        question.difficulty_level = update_data.difficulty_level
+    if update_data.bloom_taxonomy_level is not None:
+        question.bloom_taxonomy_level = update_data.bloom_taxonomy_level
+    if update_data.correct_answer is not None:
+        question.correct_answer = update_data.correct_answer
+    if update_data.options is not None:
+        question.options = update_data.options
+    if update_data.question_text is not None:
+        question.question_text = update_data.question_text
+    if update_data.course_outcome_mapping is not None:
+        question.course_outcome_mapping = update_data.course_outcome_mapping
+    if update_data.learning_outcome_id is not None:
+        question.learning_outcome_id = update_data.learning_outcome_id
+    
+    await db.commit()
+    await db.refresh(question)
+    
+    return {
+        "message": "Question updated successfully",
+        "question_id": str(question_id),
+        "question": {
+            "id": str(question.id),
+            "question_text": question.question_text,
+            "question_type": question.question_type,
+            "options": question.options,
+            "correct_answer": question.correct_answer,
+            "marks": question.marks,
+            "difficulty_level": question.difficulty_level,
+            "bloom_taxonomy_level": question.bloom_taxonomy_level,
+            "course_outcome_mapping": question.course_outcome_mapping,
+            "learning_outcome_id": question.learning_outcome_id,
+            "vetting_status": question.vetting_status,
+        },
+    }
