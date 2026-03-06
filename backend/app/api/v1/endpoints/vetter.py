@@ -23,6 +23,7 @@ from app.models.question import Question
 from app.models.subject import Subject, Topic
 from app.services.question_service import QuestionGenerationService
 from app.services.embedding_service import EmbeddingService
+from app.schemas.question import QuestionSourceInfo, SourceReference
 
 
 router = APIRouter()
@@ -117,6 +118,7 @@ class QuestionForVetting(BaseModel):
     subject_code: Optional[str]
     topic_id: Optional[uuid.UUID]
     topic_name: Optional[str]
+    source_info: Optional[QuestionSourceInfo] = None
     
     model_config = {"from_attributes": True}
 
@@ -439,6 +441,19 @@ async def get_questions_for_vetting(
                 teacher_name = teacher.full_name or teacher.username
                 teacher_id_val = teacher.id
         
+        # Extract source_info from generation_metadata
+        source_info = None
+        if q.generation_metadata:
+            metadata = q.generation_metadata
+            if "source_info" in metadata:
+                source_info = QuestionSourceInfo(**metadata["source_info"])
+            elif "sources" in metadata:
+                source_info = QuestionSourceInfo(
+                    sources=[SourceReference(**s) for s in metadata.get("sources", [])],
+                    generation_reasoning=metadata.get("generation_reasoning"),
+                    content_coverage=metadata.get("content_coverage"),
+                )
+
         question_responses.append(QuestionForVetting(
             id=q.id,
             question_text=q.question_text,
@@ -461,6 +476,7 @@ async def get_questions_for_vetting(
             subject_code=q.subject.code if q.subject else None,
             topic_id=q.topic_id,
             topic_name=q.topic.name if q.topic else None,
+            source_info=source_info,
         ))
     
     return {

@@ -3,6 +3,7 @@
  */
 
 import apiClient from './api';
+import { QuestionSourceInfo } from './questions';
 
 // Types
 export interface TeacherSummary {
@@ -75,6 +76,7 @@ export interface QuestionForVetting {
   subject_code: string | null;
   topic_id: string | null;
   topic_name: string | null;
+  source_info: QuestionSourceInfo | null;
 }
 
 export interface QuestionsResponse {

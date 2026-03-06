@@ -107,6 +107,9 @@ export function SwipeVetting({
   const [selectedReasons, setSelectedReasons] = useState<string[]>([]);
   const [rejectNotes, setRejectNotes] = useState('');
 
+  // Source references modal
+  const [showSourcesModal, setShowSourcesModal] = useState(false);
+
   // Swipe animation
   const position = useRef(new Animated.ValueXY()).current;
   const scrollViewRef = useRef<ScrollView>(null);
@@ -622,15 +625,19 @@ export function SwipeVetting({
                     </View>
                   )}
 
-                  {/* Source References */}
-                  {(currentQuestion as any).source_info && (
-                    <View style={styles.sourcesSection}>
-                      <View style={[styles.sourcesHeader, { backgroundColor: colors.primary + '15' }]}>
-                        <IconSymbol name="doc.text.fill" size={14} color={colors.primary} />
-                        <Text style={[styles.sourcesHeaderText, { color: colors.primary }]}>Source References</Text>
-                      </View>
-                      <QuestionSources sourceInfo={(currentQuestion as any).source_info} compact />
-                    </View>
+                  {/* Source References - Tappable button */}
+                  {currentQuestion.source_info && currentQuestion.source_info.sources.length > 0 && (
+                    <TouchableOpacity
+                      style={[styles.sourcesButton, { backgroundColor: colors.primary + '15', borderColor: colors.primary + '40' }]}
+                      onPress={() => setShowSourcesModal(true)}
+                      activeOpacity={0.7}
+                    >
+                      <IconSymbol name="doc.text.magnifyingglass" size={14} color={colors.primary} />
+                      <Text style={[styles.sourcesButtonText, { color: colors.primary }]}>
+                        Source References ({currentQuestion.source_info.sources.length})
+                      </Text>
+                      <IconSymbol name="chevron.right" size={12} color={colors.primary} />
+                    </TouchableOpacity>
                   )}
 
                   {/* Teacher info */}
@@ -874,7 +881,8 @@ export function SwipeVetting({
                       // MCQ: Show options to tap and select correct answer
                       <View style={styles.mcqEditContainer}>
                         {mcqOptions.map((option, idx) => {
-                          const isCorrect = option === editData.correct_answer;
+                          const isCorrect = option === editData.correct_answer ||
+                            (!!editData.correct_answer && option.startsWith(editData.correct_answer));
                           const isEditing = editingOptionIndex === idx;
                           const { prefix, text } = extractOptionPrefix(option);
                           
@@ -1048,6 +1056,45 @@ export function SwipeVetting({
           )}
         </KeyboardAvoidingView>
       </View>
+
+      {/* Source References Floating Card */}
+      {showSourcesModal && currentQuestion?.source_info && (
+        <View style={styles.sourcesOverlay}>
+          <TouchableOpacity
+            style={StyleSheet.absoluteFillObject}
+            activeOpacity={1}
+            onPress={() => setShowSourcesModal(false)}
+          />
+          <View style={[styles.sourcesFloatingCard, { backgroundColor: colors.card }]}>
+            {/* Header */}
+            <View style={[styles.sourcesModalHeader, { borderBottomColor: colors.border }]}>
+              <View style={styles.sourcesModalHeaderLeft}>
+                <IconSymbol name="doc.text.magnifyingglass" size={18} color={colors.primary} />
+                <Text style={[styles.sourcesModalTitle, { color: colors.text }]}>Source References</Text>
+                {currentQuestion.source_info.sources && (
+                  <Text style={[styles.sourcesModalCount, { color: colors.textSecondary }]}>
+                    {currentQuestion.source_info.sources.length} source{currentQuestion.source_info.sources.length !== 1 ? 's' : ''}
+                  </Text>
+                )}
+              </View>
+              <TouchableOpacity
+                onPress={() => setShowSourcesModal(false)}
+                style={[styles.sourcesModalClose, { backgroundColor: colors.border }]}
+              >
+                <IconSymbol name="xmark" size={14} color={colors.textSecondary} />
+              </TouchableOpacity>
+            </View>
+            {/* Scrollable content */}
+            <ScrollView
+              style={styles.sourcesModalScroll}
+              contentContainerStyle={styles.sourcesModalScrollContent}
+              showsVerticalScrollIndicator={false}
+            >
+              <QuestionSources sourceInfo={currentQuestion.source_info} defaultExpanded />
+            </ScrollView>
+          </View>
+        </View>
+      )}
     </Modal>
   );
 }
@@ -1262,18 +1309,75 @@ const styles = StyleSheet.create({
     borderTopWidth: 1,
     borderTopColor: 'rgba(0,0,0,0.05)',
   },
-  sourcesHeader: {
+  sourcesButton: {
     flexDirection: 'row',
     alignItems: 'center',
     gap: Spacing.xs,
+    marginTop: Spacing.md,
     paddingHorizontal: Spacing.sm,
-    paddingVertical: Spacing.xs,
-    borderRadius: BorderRadius.sm,
-    marginBottom: Spacing.sm,
+    paddingVertical: Spacing.sm,
+    borderRadius: BorderRadius.md,
+    borderWidth: 1,
   },
-  sourcesHeaderText: {
-    fontSize: FontSizes.xs,
+  sourcesButtonText: {
+    flex: 1,
+    fontSize: FontSizes.sm,
     fontWeight: '600',
+  },
+  // Sources floating card
+  sourcesOverlay: {
+    ...StyleSheet.absoluteFillObject,
+    justifyContent: 'center',
+    alignItems: 'center',
+    backgroundColor: 'rgba(0,0,0,0.50)',
+    zIndex: 100,
+    paddingHorizontal: Spacing.lg,
+  },
+  sourcesFloatingCard: {
+    width: '100%',
+    maxHeight: SCREEN_HEIGHT * 0.65,
+    borderRadius: BorderRadius.lg,
+    overflow: 'hidden',
+    shadowColor: '#000',
+    shadowOffset: { width: 0, height: 8 },
+    shadowOpacity: 0.25,
+    shadowRadius: 16,
+    elevation: 20,
+  },
+  sourcesModalHeader: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    paddingHorizontal: Spacing.md,
+    paddingVertical: Spacing.sm,
+    borderBottomWidth: 1,
+  },
+  sourcesModalHeaderLeft: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: Spacing.xs,
+    flex: 1,
+  },
+  sourcesModalTitle: {
+    fontSize: FontSizes.md,
+    fontWeight: '700',
+  },
+  sourcesModalCount: {
+    fontSize: FontSizes.sm,
+    marginLeft: 4,
+  },
+  sourcesModalClose: {
+    width: 28,
+    height: 28,
+    borderRadius: 14,
+    justifyContent: 'center',
+    alignItems: 'center',
+  },
+  sourcesModalScroll: {
+    flex: 1,
+  },
+  sourcesModalScrollContent: {
+    padding: Spacing.md,
   },
   teacherRow: {
     flexDirection: 'row',
@@ -1296,12 +1400,12 @@ const styles = StyleSheet.create({
     zIndex: 10,
   },
   approveLabel: {
-    right: 10,
+    left: 10,
     borderColor: '#34C759',
     backgroundColor: 'rgba(52, 199, 89, 0.88)',
   },
   rejectLabel: {
-    left: 10,
+    right: 10,
     borderColor: '#FF3B30',
     backgroundColor: 'rgba(255, 59, 48, 0.88)',
   },

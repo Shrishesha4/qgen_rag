@@ -28,13 +28,14 @@ if (Platform.OS === 'android' && UIManager.setLayoutAnimationEnabledExperimental
 interface QuestionSourcesProps {
   sourceInfo: QuestionSourceInfo | null | undefined;
   compact?: boolean; // For inline usage
+  defaultExpanded?: boolean; // Start expanded
 }
 
-export function QuestionSources({ sourceInfo, compact = false }: QuestionSourcesProps) {
+export function QuestionSources({ sourceInfo, compact = false, defaultExpanded = false }: QuestionSourcesProps) {
   const colorScheme = useColorScheme();
   const colors = Colors[colorScheme ?? 'light'];
   const isDark = colorScheme === 'dark';
-  const [isExpanded, setIsExpanded] = useState(false);
+  const [isExpanded, setIsExpanded] = useState(defaultExpanded);
   const [expandedSnippets, setExpandedSnippets] = useState<Record<number, boolean>>({});
 
   // Debug logging

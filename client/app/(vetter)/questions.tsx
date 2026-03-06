@@ -898,7 +898,7 @@ export default function QuestionsForVetting() {
             <IconSymbol name="hand.draw.fill" size={20} color="#FFFFFF" />
             <Text style={styles.floatingButtonText}>Start Vetting</Text>
             <View style={styles.floatingButtonBadge}>
-              <Text style={styles.floatingButtonBadgeText}>{pendingQuestions.length}</Text>
+              <Text style={styles.floatingButtonBadgeText}>{total}</Text>
             </View>
           </LinearGradient>
         </TouchableOpacity>
