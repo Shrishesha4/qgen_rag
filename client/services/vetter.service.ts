@@ -139,6 +139,7 @@ export interface RejectAndRegenerateResponse {
     vetting_status: string;
     version_number: number;
     session_id: string;
+    source_info: QuestionSourceInfo | null;
   } | null;
 }
 

@@ -241,7 +241,7 @@ export default function QuestionsForVetting() {
             version_number: result.new_question.version_number,
             replaces_id: selectedQuestion.id,
             replaced_by_id: null,
-            source_info: null,
+            source_info: result.new_question.source_info ?? null,
           };
 
           // Keep modal open, swap in the replacement question for inline review

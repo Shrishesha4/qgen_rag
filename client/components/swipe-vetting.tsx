@@ -327,7 +327,7 @@ export function SwipeVetting({
           version_number: result.new_question.version_number,
           replaces_id: currentQuestion.id,
           replaced_by_id: null,
-          source_info: null,
+          source_info: result.new_question.source_info ?? null,
         };
         // Set override immediately so card shows without waiting for parent prop cycle
         setQuestionOverride(newQ);

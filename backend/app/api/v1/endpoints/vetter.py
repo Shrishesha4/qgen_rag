@@ -13,7 +13,7 @@ from datetime import datetime, timezone
 from fastapi import APIRouter, Depends, HTTPException, status, Query
 from sqlalchemy import select, func, and_, or_
 from sqlalchemy.ext.asyncio import AsyncSession
-from sqlalchemy.orm import selectinload
+from sqlalchemy.orm import selectinload, joinedload
 from pydantic import BaseModel, Field
 
 from app.core.database import get_db
@@ -761,9 +761,10 @@ async def reject_and_regenerate_question(
             "regenerated": False,
         }
 
-    # 5. Get document chunks
+    # 5. Get document chunks (join document so _build_source_info can read filename)
     chunks_result = await db.execute(
         select(DocumentChunk)
+        .options(joinedload(DocumentChunk.document))
         .where(DocumentChunk.document_id == document_id)
         .order_by(DocumentChunk.chunk_index)
     )
@@ -904,6 +905,18 @@ async def reject_and_regenerate_question(
         f"new question {new_question.id} created for teacher {teacher_id}"
     )
 
+    # Build source_info for the response from generation_metadata
+    new_source_info = None
+    gen_meta = new_question.generation_metadata or {}
+    if "source_info" in gen_meta:
+        meta_si = gen_meta["source_info"]
+        if meta_si and meta_si.get("sources"):
+            new_source_info = QuestionSourceInfo(
+                sources=[SourceReference(**s) for s in meta_si["sources"]],
+                generation_reasoning=meta_si.get("generation_reasoning"),
+                content_coverage=meta_si.get("content_coverage"),
+            ).model_dump()
+
     return {
         "message": "Question rejected and regenerated successfully",
         "question_id": str(question_id),
@@ -921,6 +934,7 @@ async def reject_and_regenerate_question(
             "vetting_status": new_question.vetting_status,
             "version_number": new_question.version_number,
             "session_id": str(new_question.session_id),
+            "source_info": new_source_info,
         },
     }
 
