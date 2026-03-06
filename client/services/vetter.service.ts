@@ -77,6 +77,10 @@ export interface QuestionForVetting {
   topic_id: string | null;
   topic_name: string | null;
   source_info: QuestionSourceInfo | null;
+  // Version control
+  version_number: number;
+  replaces_id: string | null;
+  replaced_by_id: string | null;
 }
 
 export interface QuestionsResponse {
@@ -146,6 +150,26 @@ export interface QuestionFilters {
   topic_id?: string;
   question_type?: string;
   status?: 'pending' | 'approved' | 'rejected' | 'all';
+}
+
+export interface QuestionVersionEntry {
+  id: string;
+  version_number: number;
+  question_text: string;
+  question_type: string;
+  options: string[] | null;
+  correct_answer: string | null;
+  marks: number | null;
+  difficulty_level: string | null;
+  vetting_status: string;
+  vetting_notes: string | null;
+  is_latest: boolean;
+  generated_at: string | null;
+}
+
+export interface VersionHistoryResponse {
+  question_id: string;
+  versions: QuestionVersionEntry[];
 }
 
 // API Service
@@ -233,6 +257,24 @@ export const vetterService = {
       `/vetter/questions/${questionId}/reject-and-regenerate`,
       data,
     );
+    return response.data;
+  },
+
+  /**
+   * Get the full version history chain for a question.
+   */
+  async getVersionHistory(questionId: string): Promise<VersionHistoryResponse> {
+    const response = await apiClient.get<VersionHistoryResponse>(
+      `/vetter/questions/${questionId}/version-history`,
+    );
+    return response.data;
+  },
+
+  /**
+   * Restore a previous version of a question as the latest active version.
+   */
+  async restoreVersion(versionId: string): Promise<{ message: string; restored_question_id: string; version_number: number }> {
+    const response = await apiClient.post(`/vetter/questions/${versionId}/restore`);
     return response.data;
   },
 };

@@ -119,7 +119,12 @@ class QuestionForVetting(BaseModel):
     topic_id: Optional[uuid.UUID]
     topic_name: Optional[str]
     source_info: Optional[QuestionSourceInfo] = None
-    
+
+    # Version control
+    version_number: int = 1
+    replaces_id: Optional[uuid.UUID] = None
+    replaced_by_id: Optional[uuid.UUID] = None
+
     model_config = {"from_attributes": True}
 
 
@@ -477,6 +482,9 @@ async def get_questions_for_vetting(
             topic_id=q.topic_id,
             topic_name=q.topic.name if q.topic else None,
             source_info=source_info,
+            version_number=q.version_number or 1,
+            replaces_id=q.replaces_id,
+            replaced_by_id=q.replaced_by_id,
         ))
     
     return {
@@ -725,7 +733,23 @@ async def reject_and_regenerate_question(
     teacher_id = question.subject.user_id if question.subject else None
     document_id = question.document_id
 
-    # 4. If no document or no teacher, just reject (restore is_latest=True)
+    # 4. If document_id is null but subject_id exists, find any usable document for the subject
+    if not document_id and question.subject_id:
+        from app.models.document import Document
+        doc_result = await db.execute(
+            select(Document.id)
+            .where(
+                Document.subject_id == question.subject_id,
+                Document.processing_status == "completed",
+            )
+            .order_by(Document.upload_timestamp.desc())
+            .limit(1)
+        )
+        fallback_doc_id = doc_result.scalar_one_or_none()
+        if fallback_doc_id:
+            document_id = fallback_doc_id
+
+    # 5. If still no document or no teacher, just reject (restore is_latest=True)
     if not document_id or not teacher_id:
         question.is_latest = True
         question.vetting_status = "rejected"
@@ -791,31 +815,43 @@ async def reject_and_regenerate_question(
             "regenerated": False,
         }
 
-    # 7. Create a new GenerationSession owned by the teacher
-    new_session = GenerationSession(
-        user_id=teacher_id,
-        document_id=document_id,
-        subject_id=question.subject_id,
-        topic_id=question.topic_id,
-        generation_method="vetter_regen",
-        requested_count=1,
-        status="completed",
-        started_at=datetime.now(timezone.utc),
-        completed_at=datetime.now(timezone.utc),
-        questions_generated=1,
-        generation_config={
-            "vetted_by": str(current_user.id),
-            "original_question_id": str(question_id),
-        },
-    )
-    db.add(new_session)
-    await db.flush()  # Get session ID without committing
+    # 7. Reuse the original question's session so the regen appears in the same history entry.
+    #    If the question has no session (e.g. subject-level gen), create a new one as fallback.
+    session_id_to_use = question.session_id
+    if not session_id_to_use:
+        fallback_session = GenerationSession(
+            user_id=teacher_id,
+            document_id=document_id,
+            subject_id=question.subject_id,
+            topic_id=question.topic_id,
+            generation_method="vetter_regen",
+            requested_count=1,
+            status="completed",
+            started_at=datetime.now(timezone.utc),
+            completed_at=datetime.now(timezone.utc),
+            questions_generated=1,
+            generation_config={
+                "vetted_by": str(current_user.id),
+                "original_question_id": str(question_id),
+            },
+        )
+        db.add(fallback_session)
+        await db.flush()
+        session_id_to_use = fallback_session.id
+    else:
+        # Bump questions_generated count on the original session
+        orig_session_result = await db.execute(
+            select(GenerationSession).where(GenerationSession.id == session_id_to_use)
+        )
+        orig_session = orig_session_result.scalar_one_or_none()
+        if orig_session:
+            orig_session.questions_generated = (orig_session.questions_generated or 0) + 1
 
     # 8. Save the new question
     try:
         new_question, _ = await gen_service._save_question(
             document_id=document_id,
-            session_id=new_session.id,
+            session_id=session_id_to_use,
             question_data=question_data,
             question_type=question.question_type,
             marks=question.marks,
@@ -899,6 +935,140 @@ class VetterUpdateQuestionRequest(BaseModel):
     question_text: Optional[str] = None
     course_outcome_mapping: Optional[dict] = None
     learning_outcome_id: Optional[str] = None
+
+
+# ============== Version History ==============
+
+
+@router.get("/questions/{question_id}/version-history")
+async def get_question_version_history(
+    question_id: uuid.UUID,
+    current_user: User = Depends(get_current_vetter),
+    db: AsyncSession = Depends(get_db),
+):
+    """
+    Get all versions in a question's regeneration chain, ordered oldest-first.
+    """
+    import logging
+    logger = logging.getLogger(__name__)
+
+    # Ensure the question exists
+    result = await db.execute(select(Question).where(Question.id == question_id))
+    question = result.scalar_one_or_none()
+    if not question:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Question not found")
+
+    # Walk backwards to find the root version
+    seen: set = set()
+    current_q = question
+    while current_q.replaces_id and current_q.replaces_id not in seen:
+        seen.add(current_q.id)
+        prev_result = await db.execute(select(Question).where(Question.id == current_q.replaces_id))
+        prev_q = prev_result.scalar_one_or_none()
+        if not prev_q:
+            break
+        current_q = prev_q
+
+    # Walk forward from root to collect chain
+    versions = []
+    chain_seen: set = set()
+    q = current_q
+    while q and q.id not in chain_seen:
+        chain_seen.add(q.id)
+        versions.append(q)
+        if not q.replaced_by_id:
+            break
+        next_result = await db.execute(select(Question).where(Question.id == q.replaced_by_id))
+        q = next_result.scalar_one_or_none()
+
+    return {
+        "question_id": str(question_id),
+        "versions": [
+            {
+                "id": str(v.id),
+                "version_number": v.version_number or 1,
+                "question_text": v.question_text,
+                "question_type": v.question_type,
+                "options": v.options,
+                "correct_answer": v.correct_answer,
+                "marks": v.marks,
+                "difficulty_level": v.difficulty_level,
+                "vetting_status": v.vetting_status,
+                "vetting_notes": v.vetting_notes,
+                "is_latest": v.is_latest,
+                "generated_at": v.generated_at.isoformat() if v.generated_at else None,
+            }
+            for v in versions
+        ],
+    }
+
+
+# ============== Restore Version ==============
+
+
+@router.post("/questions/{question_id}/restore")
+async def restore_question_version(
+    question_id: uuid.UUID,
+    current_user: User = Depends(get_current_vetter),
+    db: AsyncSession = Depends(get_db),
+):
+    """
+    Restore a previous version by making it the latest active version.
+    All other versions in the same chain are demoted to is_latest=False.
+    The restored version's vetting_status is reset to 'pending'.
+    """
+    import logging
+    logger = logging.getLogger(__name__)
+
+    # Get the target version
+    result = await db.execute(select(Question).where(Question.id == question_id))
+    target = result.scalar_one_or_none()
+    if not target:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Question version not found")
+
+    # Collect all chain IDs by walking backwards and forwards
+    chain_ids: set = set()
+    # Walk backwards
+    current_q = target
+    while current_q:
+        chain_ids.add(current_q.id)
+        if current_q.replaces_id and current_q.replaces_id not in chain_ids:
+            prev_result = await db.execute(select(Question).where(Question.id == current_q.replaces_id))
+            current_q = prev_result.scalar_one_or_none()
+        else:
+            break
+    # Walk forwards from target
+    current_q = target
+    while current_q:
+        chain_ids.add(current_q.id)
+        if current_q.replaced_by_id and current_q.replaced_by_id not in chain_ids:
+            next_result = await db.execute(select(Question).where(Question.id == current_q.replaced_by_id))
+            current_q = next_result.scalar_one_or_none()
+        else:
+            break
+
+    # Set all chain members to is_latest=False
+    chain_result = await db.execute(select(Question).where(Question.id.in_(list(chain_ids))))
+    for q in chain_result.scalars().all():
+        q.is_latest = False
+
+    # Promote the target version
+    target.is_latest = True
+    target.vetting_status = "pending"
+    target.vetting_notes = f"Restored from version history by vetter"
+
+    await db.commit()
+    await db.refresh(target)
+    logger.info(f"Question version {question_id} restored as latest by vetter {current_user.id}")
+
+    return {
+        "message": "Version restored successfully",
+        "restored_question_id": str(question_id),
+        "version_number": target.version_number or 1,
+    }
+
+
+
 
 
 @router.put("/questions/{question_id}", response_model=dict)

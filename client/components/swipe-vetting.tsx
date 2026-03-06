@@ -70,6 +70,7 @@ interface SwipeVettingProps {
   questions: QuestionForVetting[];
   onQuestionVetted: (questionId: string, status: 'approved' | 'rejected' | 'skipped') => void;
   onQuestionUpdated: (questionId: string, updates: Partial<QuestionForVetting>) => void;
+  onQuestionReplaced?: (oldId: string, newQuestion: QuestionForVetting) => void;
   onLoadMore?: () => void;
   hasMore?: boolean;
   total?: number;
@@ -83,6 +84,7 @@ export function SwipeVetting({
   questions,
   onQuestionVetted,
   onQuestionUpdated,
+  onQuestionReplaced,
   onLoadMore,
   hasMore = false,
   total,
@@ -96,7 +98,11 @@ export function SwipeVetting({
   const [currentIndex, setCurrentIndex] = useState(0);
   const [isProcessing, setIsProcessing] = useState(false);
   const [viewMode, setViewMode] = useState<ViewMode>('question');
-  
+
+  // Local override so a regenerated replacement shows immediately without waiting
+  // for the parent prop cycle. Cleared when navigating to the next card.
+  const [questionOverride, setQuestionOverride] = useState<QuestionForVetting | null>(null);
+
   // Edit mode state
   const [editData, setEditData] = useState<VetterUpdateQuestionRequest>({});
   const [coMappings, setCoMappings] = useState<Record<string, number>>({});
@@ -129,7 +135,7 @@ export function SwipeVetting({
     resetPosition: () => {},
   });
 
-  const currentQuestion = questions[currentIndex];
+  const currentQuestion = questionOverride ?? questions[currentIndex];
   const totalQuestions = total ?? questions.length;
 
   // Load more when approaching end
@@ -302,13 +308,43 @@ export function SwipeVetting({
         rejection_reasons: selectedReasons.length > 0 ? selectedReasons : undefined,
       });
       successNotification();
-      if (result.regenerated) {
-        showSuccess('Question rejected & regenerated for the teacher');
+
+      if (result.regenerated && result.new_question) {
+        // Build replacement question
+        const newQ: QuestionForVetting = {
+          ...currentQuestion,
+          id: result.new_question.id,
+          question_text: result.new_question.question_text,
+          question_type: result.new_question.question_type,
+          options: result.new_question.options,
+          correct_answer: result.new_question.correct_answer,
+          explanation: null,
+          marks: result.new_question.marks,
+          difficulty_level: result.new_question.difficulty_level,
+          bloom_taxonomy_level: result.new_question.bloom_taxonomy_level,
+          vetting_status: result.new_question.vetting_status,
+          vetting_notes: null,
+          version_number: result.new_question.version_number,
+          replaces_id: currentQuestion.id,
+          replaced_by_id: null,
+          source_info: null,
+        };
+        // Set override immediately so card shows without waiting for parent prop cycle
+        setQuestionOverride(newQ);
+        position.setValue({ x: 0, y: 0 }); // snap card back to centre instantly
+        setViewMode('question');
+        setSelectedReasons([]);
+        setRejectNotes('');
+        // Also notify parent to keep the list in sync
+        if (onQuestionReplaced) {
+          onQuestionReplaced(currentQuestion.id, newQ);
+        }
+        showSuccess('Rejected — review the replacement');
       } else {
         showSuccess('Question rejected');
+        onQuestionVetted(currentQuestion.id, 'rejected');
+        moveToNext();
       }
-      onQuestionVetted(currentQuestion.id, 'rejected');
-      moveToNext();
     } catch (err) {
       showError('Failed to reject question');
       console.error(err);
@@ -354,6 +390,7 @@ export function SwipeVetting({
 
   const moveToNext = () => {
     position.setValue({ x: 0, y: 0 });
+    setQuestionOverride(null); // clear any regen override before advancing
     setViewMode('question');
     if (currentIndex < questions.length - 1) {
       setCurrentIndex(currentIndex + 1);

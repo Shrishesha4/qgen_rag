@@ -27,6 +27,8 @@ import {
   vetterService,
   QuestionForVetting,
   SubjectSummary,
+  QuestionVersionEntry,
+  VersionHistoryResponse,
 } from '@/services/vetter.service';
 
 type StatusFilter = 'pending' | 'approved' | 'rejected' | 'all';
@@ -86,6 +88,12 @@ export default function QuestionsForVetting() {
 
   // Swipe vetting mode
   const [showSwipeVetting, setShowSwipeVetting] = useState(false);
+
+  // Version history
+  const [showVersionHistory, setShowVersionHistory] = useState(false);
+  const [versionHistory, setVersionHistory] = useState<QuestionVersionEntry[]>([]);
+  const [isLoadingHistory, setIsLoadingHistory] = useState(false);
+  const [isRestoringVersion, setIsRestoringVersion] = useState<string | null>(null);
 
   // Fuzzy search filter for subjects
   const filteredSubjects = useMemo(() => {
@@ -190,6 +198,11 @@ export default function QuestionsForVetting() {
       setTotal(data.total);
       setHasMore(data.pages > 1);
       setPage(1);
+      // Close any lingering modals before entering swipe mode
+      setShowVetModal(false);
+      setSelectedQuestion(null);
+      setShowVersionHistory(false);
+      setVersionHistory([]);
       setShowSwipeVetting(true);
     } catch (err) {
       setError('Failed to load questions');
@@ -209,9 +222,57 @@ export default function QuestionsForVetting() {
           notes: vetNotes || undefined,
           rejection_reasons: selectedReasons.length > 0 ? selectedReasons : undefined,
         });
-        if (result.regenerated) {
-          showSuccess('Question rejected & regenerated');
+
+        if (result.regenerated && result.new_question) {
+          // Build the replacement question object
+          const newQ: QuestionForVetting = {
+            ...selectedQuestion,
+            id: result.new_question.id,
+            question_text: result.new_question.question_text,
+            question_type: result.new_question.question_type,
+            options: result.new_question.options,
+            correct_answer: result.new_question.correct_answer,
+            explanation: null,
+            marks: result.new_question.marks,
+            difficulty_level: result.new_question.difficulty_level,
+            bloom_taxonomy_level: result.new_question.bloom_taxonomy_level,
+            vetting_status: result.new_question.vetting_status,
+            vetting_notes: null,
+            version_number: result.new_question.version_number,
+            replaces_id: selectedQuestion.id,
+            replaced_by_id: null,
+            source_info: null,
+          };
+
+          // Keep modal open, swap in the replacement question for inline review
+          setSelectedQuestion(newQ);
+          setVetStatus('approved');
+          setVetNotes('');
+          setSelectedReasons([]);
+
+          // Update list in the background
+          if (statusFilter === 'pending') {
+            setQuestions((prev) =>
+              prev.map((q) => (q.id === selectedQuestion.id ? newQ : q))
+            );
+          } else {
+            fetchQuestions(1, false);
+          }
+
+          showSuccess('Rejected — review the replacement below');
         } else {
+          // Regeneration failed — just close and remove
+          setShowVetModal(false);
+          setSelectedQuestion(null);
+          setVetNotes('');
+          setSelectedReasons([]);
+
+          if (statusFilter === 'pending') {
+            setQuestions((prev) => prev.filter((q) => q.id !== selectedQuestion.id));
+            setTotal((prev) => prev - 1);
+          } else {
+            fetchQuestions(1, false);
+          }
           showSuccess('Question rejected');
         }
       } else {
@@ -219,21 +280,21 @@ export default function QuestionsForVetting() {
           status: vetStatus,
           notes: vetNotes || undefined,
         });
+
+        setShowVetModal(false);
+        setSelectedQuestion(null);
+        setVetNotes('');
+        setSelectedReasons([]);
+
         showSuccess(`Question ${vetStatus}`);
-      }
 
-      setShowVetModal(false);
-      setSelectedQuestion(null);
-      setVetNotes('');
-      setSelectedReasons([]);
-
-      // Remove from list if we're filtering by pending
-      if (statusFilter === 'pending') {
-        setQuestions((prev) => prev.filter((q) => q.id !== selectedQuestion.id));
-        setTotal((prev) => prev - 1);
-      } else {
-        // Refresh the current question
-        fetchQuestions(1, false);
+        // Remove from pending list or refresh
+        if (statusFilter === 'pending') {
+          setQuestions((prev) => prev.filter((q) => q.id !== selectedQuestion.id));
+          setTotal((prev) => prev - 1);
+        } else {
+          fetchQuestions(1, false);
+        }
       }
     } catch (err) {
       showError('Failed to vet question');
@@ -242,6 +303,39 @@ export default function QuestionsForVetting() {
       setIsVetting(false);
     }
   };
+
+  const handleOpenVersionHistory = useCallback(async (questionId: string) => {
+    setIsLoadingHistory(true);
+    setVersionHistory([]);
+    setShowVersionHistory(true);
+    try {
+      const data = await vetterService.getVersionHistory(questionId);
+      setVersionHistory(data.versions);
+    } catch (err) {
+      showError('Failed to load version history');
+      console.error(err);
+      setShowVersionHistory(false);
+    } finally {
+      setIsLoadingHistory(false);
+    }
+  }, [showError]);
+
+  const handleRestoreVersion = useCallback(async (versionId: string) => {
+    setIsRestoringVersion(versionId);
+    try {
+      await vetterService.restoreVersion(versionId);
+      showSuccess('Version restored — question is pending review');
+      setShowVersionHistory(false);
+      setShowVetModal(false);
+      setSelectedQuestion(null);
+      fetchQuestions(1, false);
+    } catch (err) {
+      showError('Failed to restore version');
+      console.error(err);
+    } finally {
+      setIsRestoringVersion(null);
+    }
+  }, [showError, showSuccess, fetchQuestions]);
 
   const handleBulkApprove = async () => {
     if (selectedIds.size === 0) return;
@@ -296,6 +390,13 @@ export default function QuestionsForVetting() {
   const handleQuestionUpdated = useCallback((questionId: string, updates: Partial<QuestionForVetting>) => {
     setQuestions((prev) =>
       prev.map((q) => (q.id === questionId ? { ...q, ...updates } : q))
+    );
+  }, []);
+
+  const handleQuestionReplaced = useCallback((oldId: string, newQuestion: QuestionForVetting) => {
+    // Swap the rejected question with its regenerated replacement at the same index
+    setQuestions((prev) =>
+      prev.map((q) => (q.id === oldId ? newQuestion : q))
     );
   }, []);
 
@@ -390,6 +491,13 @@ export default function QuestionsForVetting() {
                 {question.vetting_status.toUpperCase()}
               </Text>
             </View>
+            {question.version_number > 1 && (
+              <View style={[styles.statusTag, { backgroundColor: colors.primary + '20' }]}>
+                <Text style={[styles.statusText, { color: colors.primary }]}>
+                  v{question.version_number}
+                </Text>
+              </View>
+            )}
           </View>
 
           {/* Question text */}
@@ -573,16 +681,128 @@ export default function QuestionsForVetting() {
       >
         <SafeAreaView style={[styles.modalContainer, { backgroundColor: colors.background }]}>
           <View style={styles.modalHeader}>
-            <Text style={[styles.modalTitle, { color: colors.text }]}>Review Question</Text>
-            <TouchableOpacity onPress={() => setShowVetModal(false)}>
-              <Text style={[styles.closeButton, { color: colors.primary }]}>Close</Text>
-            </TouchableOpacity>
+            <Text style={[styles.modalTitle, { color: colors.text }]}>
+              {showVersionHistory ? 'Version History' : 'Review Question'}
+            </Text>
+            <View style={{ flexDirection: 'row', alignItems: 'center', gap: Spacing.md }}>
+              {!showVersionHistory && selectedQuestion && (selectedQuestion.version_number > 1 || selectedQuestion.replaces_id) && (
+                <TouchableOpacity onPress={() => handleOpenVersionHistory(selectedQuestion.id)}>
+                  <Text style={[styles.closeButton, { color: colors.warning }]}>History</Text>
+                </TouchableOpacity>
+              )}
+              {showVersionHistory && (
+                <TouchableOpacity onPress={() => { setShowVersionHistory(false); setVersionHistory([]); }}>
+                  <Text style={[styles.closeButton, { color: colors.primary }]}>← Back</Text>
+                </TouchableOpacity>
+              )}
+              {!showVersionHistory && (
+                <TouchableOpacity onPress={() => {
+                  setShowVetModal(false);
+                  setShowVersionHistory(false);
+                  setVersionHistory([]);
+                }}>
+                  <Text style={[styles.closeButton, { color: colors.primary }]}>Close</Text>
+                </TouchableOpacity>
+              )}
+            </View>
           </View>
 
           <ScrollView style={styles.modalContent}>
-            {selectedQuestion && (
+            {/* ── Version History panel (inline) ── */}
+            {showVersionHistory ? (
+              isLoadingHistory ? (
+                <View style={{ paddingVertical: Spacing.xl, alignItems: 'center' }}>
+                  <ActivityIndicator size="large" color={colors.primary} />
+                  <Text style={[{ color: colors.textSecondary, marginTop: Spacing.md, fontSize: FontSizes.sm }]}>
+                    Loading history...
+                  </Text>
+                </View>
+              ) : versionHistory.length === 0 ? (
+                <View style={{ paddingVertical: Spacing.xl, alignItems: 'center' }}>
+                  <Text style={[{ color: colors.textSecondary, fontSize: FontSizes.md }]}>No version history found</Text>
+                </View>
+              ) : (
+                versionHistory.map((version) => (
+                  <GlassCard
+                    key={version.id}
+                    style={[
+                      styles.detailCard,
+                      version.is_latest && { borderWidth: 2, borderColor: colors.primary },
+                    ]}
+                  >
+                    <View style={[styles.cardHeader, { justifyContent: 'space-between' }]}>
+                      <View style={{ flexDirection: 'row', gap: Spacing.sm, alignItems: 'center' }}>
+                        <View style={[styles.typeTag, { backgroundColor: colors.primary + '20' }]}>
+                          <Text style={[styles.typeText, { color: colors.primary }]}>v{version.version_number}</Text>
+                        </View>
+                        <View style={[styles.statusTag, {
+                          backgroundColor: version.vetting_status === 'pending' ? colors.warning + '20'
+                            : version.vetting_status === 'approved' ? colors.success + '20' : colors.error + '20',
+                        }]}>
+                          <Text style={[styles.statusText, {
+                            color: version.vetting_status === 'pending' ? colors.warning
+                              : version.vetting_status === 'approved' ? colors.success : colors.error,
+                          }]}>{version.vetting_status.toUpperCase()}</Text>
+                        </View>
+                        {version.is_latest && (
+                          <View style={[styles.statusTag, { backgroundColor: colors.success + '20' }]}>
+                            <Text style={[styles.statusText, { color: colors.success }]}>CURRENT</Text>
+                          </View>
+                        )}
+                      </View>
+                      {version.generated_at && (
+                        <Text style={[styles.metaText, { color: colors.textSecondary }]}>
+                          {new Date(version.generated_at).toLocaleDateString()}
+                        </Text>
+                      )}
+                    </View>
+                    <Text style={[styles.detailLabel, { color: colors.textSecondary }]}>Question:</Text>
+                    <Text style={[styles.detailValue, { color: colors.text }]}>{version.question_text}</Text>
+                    {version.options && version.options.length > 0 && (
+                      <>
+                        <Text style={[styles.detailLabel, { color: colors.textSecondary, marginTop: Spacing.sm }]}>Options:</Text>
+                        {version.options.map((opt, oi) => (
+                          <Text key={oi} style={[styles.optionText, { color: colors.text },
+                            opt.startsWith(version.correct_answer || '~~') && { color: colors.success, fontWeight: '600' },
+                          ]}>{opt}</Text>
+                        ))}
+                      </>
+                    )}
+                    <View style={[styles.tagsRow, { marginTop: Spacing.sm }]}>
+                      {version.difficulty_level && (
+                        <View style={[styles.tag, { backgroundColor: colors.card }]}>
+                          <Text style={[styles.tagText, { color: colors.textSecondary }]}>{version.difficulty_level}</Text>
+                        </View>
+                      )}
+                      {version.marks && (
+                        <View style={[styles.tag, { backgroundColor: colors.card }]}>
+                          <Text style={[styles.tagText, { color: colors.textSecondary }]}>{version.marks} marks</Text>
+                        </View>
+                      )}
+                    </View>
+                    {version.vetting_notes && (
+                      <Text style={[styles.metaText, { color: colors.textSecondary, marginTop: Spacing.sm, fontStyle: 'italic' }]}>
+                        Note: {version.vetting_notes}
+                      </Text>
+                    )}
+                    {!version.is_latest && (
+                      <NativeButton
+                        title={isRestoringVersion === version.id ? 'Restoring...' : 'Restore This Version'}
+                        onPress={() => handleRestoreVersion(version.id)}
+                        loading={isRestoringVersion === version.id}
+                        disabled={isRestoringVersion !== null}
+                        fullWidth
+                        size="small"
+                        style={{ marginTop: Spacing.md, backgroundColor: colors.warning }}
+                      />
+                    )}
+                  </GlassCard>
+                ))
+              )
+            ) : (
+            /* ── Normal review panel ── */
+            selectedQuestion && (
               <>
-                {/* Question details */}
                 <GlassCard style={styles.detailCard}>
                   <View style={styles.cardHeader}>
                     <View
@@ -786,10 +1006,13 @@ export default function QuestionsForVetting() {
                   }}
                 />
               </>
+            )
             )}
           </ScrollView>
         </SafeAreaView>
       </Modal>
+
+      {/* Version History Modal — removed; now rendered inline in the vetting modal */}
 
       {/* Subject Picker Modal */}
       <Modal
@@ -925,6 +1148,7 @@ export default function QuestionsForVetting() {
         questions={pendingQuestions}
         onQuestionVetted={handleQuestionVetted}
         onQuestionUpdated={handleQuestionUpdated}
+        onQuestionReplaced={handleQuestionReplaced}
         onLoadMore={loadMore}
         hasMore={hasMore}
         total={total}
