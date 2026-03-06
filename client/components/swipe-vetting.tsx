@@ -272,12 +272,15 @@ export function SwipeVetting({
     
     setIsProcessing(true);
     try {
-      await vetterService.vetQuestion(currentQuestion.id, {
-        status: 'rejected',
+      const result = await vetterService.rejectAndRegenerate(currentQuestion.id, {
         notes: rejectNotes || undefined,
         rejection_reasons: selectedReasons.length > 0 ? selectedReasons : undefined,
       });
-      showSuccess('Question rejected');
+      if (result.regenerated) {
+        showSuccess('Question rejected & regenerated for the teacher');
+      } else {
+        showSuccess('Question rejected');
+      }
       onQuestionVetted(currentQuestion.id, 'rejected');
       moveToNext();
     } catch (err) {

@@ -1,4 +1,4 @@
-import React, { useEffect, useState, useCallback } from 'react';
+import React, { useEffect, useState, useCallback, useMemo } from 'react';
 import {
   View,
   Text,
@@ -7,11 +7,13 @@ import {
   RefreshControl,
   ActivityIndicator,
   TouchableOpacity,
+  TextInput,
 } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { useRouter } from 'expo-router';
 
 import { GlassCard } from '@/components/ui/glass-card';
+import { IconSymbol } from '@/components/ui/icon-symbol';
 import { Colors, Spacing, BorderRadius, FontSizes } from '@/constants/theme';
 import { useColorScheme } from '@/hooks/use-color-scheme';
 import { vetterService, TeacherSummary } from '@/services/vetter.service';
@@ -25,6 +27,7 @@ export default function TeachersList() {
   const [isLoading, setIsLoading] = useState(true);
   const [isRefreshing, setIsRefreshing] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const [searchQuery, setSearchQuery] = useState('');
 
   const fetchTeachers = useCallback(async (showLoader = true) => {
     try {
@@ -49,6 +52,17 @@ export default function TeachersList() {
     setIsRefreshing(true);
     fetchTeachers(false);
   }, [fetchTeachers]);
+
+  const filteredTeachers = useMemo(() => {
+    if (!searchQuery.trim()) return teachers;
+    const q = searchQuery.trim().toLowerCase();
+    return teachers.filter(
+      (t) =>
+        (t.full_name || t.username).toLowerCase().includes(q) ||
+        t.email.toLowerCase().includes(q) ||
+        t.subjects.some((s) => s.toLowerCase().includes(q)),
+    );
+  }, [teachers, searchQuery]);
 
   const TeacherCard = ({ teacher }: { teacher: TeacherSummary }) => (
     <TouchableOpacity
@@ -132,8 +146,24 @@ export default function TeachersList() {
       <View style={styles.header}>
         <Text style={[styles.title, { color: colors.text }]}>Teachers</Text>
         <Text style={[styles.subtitle, { color: colors.textSecondary }]}>
-          {teachers.length} teachers with questions
+          {filteredTeachers.length} of {teachers.length} teachers
         </Text>
+      </View>
+
+      {/* Search bar */}
+      <View style={[styles.searchContainer, { backgroundColor: colors.card, borderColor: colors.border }]}>
+        <IconSymbol name="magnifyingglass" size={16} color={colors.textSecondary} />
+        <TextInput
+          style={[styles.searchInput, { color: colors.text }]}
+          placeholder="Search by name, email, or subject..."
+          placeholderTextColor={colors.textTertiary}
+          value={searchQuery}
+          onChangeText={setSearchQuery}
+          returnKeyType="search"
+          autoCapitalize="none"
+          autoCorrect={false}
+          clearButtonMode="while-editing"
+        />
       </View>
 
       {error && (
@@ -146,7 +176,7 @@ export default function TeachersList() {
       )}
 
       <FlatList
-        data={teachers}
+        data={filteredTeachers}
         keyExtractor={(item) => item.id}
         renderItem={({ item }) => <TeacherCard teacher={item} />}
         contentContainerStyle={styles.listContent}
@@ -292,5 +322,22 @@ const styles = StyleSheet.create({
   },
   emptyText: {
     fontSize: FontSizes.md,
+  },
+  searchContainer: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    marginHorizontal: Spacing.md,
+    marginBottom: Spacing.sm,
+    paddingHorizontal: Spacing.md,
+    paddingVertical: Spacing.sm,
+    marginTop: 18,
+    borderRadius: BorderRadius.md,
+    borderWidth: StyleSheet.hairlineWidth,
+    gap: Spacing.sm,
+  },
+  searchInput: {
+    flex: 1,
+    fontSize: FontSizes.md,
+    paddingVertical: 2,
   },
 });

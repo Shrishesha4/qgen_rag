@@ -204,13 +204,24 @@ export default function QuestionsForVetting() {
 
     setIsVetting(true);
     try {
-      await vetterService.vetQuestion(selectedQuestion.id, {
-        status: vetStatus,
-        notes: vetNotes || undefined,
-        rejection_reasons: vetStatus === 'rejected' ? selectedReasons : undefined,
-      });
+      if (vetStatus === 'rejected') {
+        const result = await vetterService.rejectAndRegenerate(selectedQuestion.id, {
+          notes: vetNotes || undefined,
+          rejection_reasons: selectedReasons.length > 0 ? selectedReasons : undefined,
+        });
+        if (result.regenerated) {
+          showSuccess('Question rejected & regenerated');
+        } else {
+          showSuccess('Question rejected');
+        }
+      } else {
+        await vetterService.vetQuestion(selectedQuestion.id, {
+          status: vetStatus,
+          notes: vetNotes || undefined,
+        });
+        showSuccess(`Question ${vetStatus}`);
+      }
 
-      showSuccess(`Question ${vetStatus}`);
       setShowVetModal(false);
       setSelectedQuestion(null);
       setVetNotes('');

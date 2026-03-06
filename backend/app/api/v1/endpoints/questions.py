@@ -1148,6 +1148,9 @@ async def get_session_questions(
                 "version_number": q.version_number,
                 "replaces_id": str(q.replaces_id) if q.replaces_id else None,
                 "is_latest": q.is_latest,
+                "regenerated_by_vetter": bool(
+                    q.generation_metadata and q.generation_metadata.get("regenerated_by_vetter")
+                ),
             }
             for q in ordered_questions
         ],

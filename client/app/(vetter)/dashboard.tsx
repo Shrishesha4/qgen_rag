@@ -12,6 +12,7 @@ import { SafeAreaView } from 'react-native-safe-area-context';
 import { useRouter } from 'expo-router';
 
 import { GlassCard } from '@/components/ui/glass-card';
+import { IconSymbol } from '@/components/ui/icon-symbol';
 import { Colors, Spacing, BorderRadius, FontSizes } from '@/constants/theme';
 import { useColorScheme } from '@/hooks/use-color-scheme';
 import { useAuthStore } from '@/stores/authStore';
@@ -21,7 +22,7 @@ export default function VetterDashboard() {
   const colorScheme = useColorScheme();
   const colors = Colors[colorScheme ?? 'light'];
   const router = useRouter();
-  const { user, logout } = useAuthStore();
+  const { user } = useAuthStore();
   
   const [dashboard, setDashboard] = useState<Dashboard | null>(null);
   const [isLoading, setIsLoading] = useState(true);
@@ -107,17 +108,14 @@ export default function VetterDashboard() {
             </Text>
           </View>
           <TouchableOpacity 
-            onPress={logout}
-            style={[styles.logoutButton, { backgroundColor: colors.error + '20' }]}
+            onPress={() => router.push('/(vetter)/settings' as any)}
+            style={styles.profileButton}
           >
-            <Text style={[styles.logoutText, { color: colors.error }]}>Logout</Text>
+            <IconSymbol name="person.circle.fill" size={32} color={colors.primary} />
           </TouchableOpacity>
         </View>
 
-        <Text style={[styles.sectionTitle, { color: colors.text }]}>Vetter Dashboard</Text>
-        <Text style={[styles.roleLabel, { color: colors.primary, backgroundColor: colors.primary + '20' }]}>
-          Vetter Portal
-        </Text>
+        <Text style={[styles.sectionTitle, { color: colors.text }]}>Vetting Dashboard</Text>
 
         {error && (
           <GlassCard style={[styles.errorCard, { borderColor: colors.error }]}>
@@ -247,6 +245,9 @@ const styles = StyleSheet.create({
   },
   logoutText: {
     fontWeight: '600',
+  },
+  profileButton: {
+    padding: 4,
   },
   sectionTitle: {
     fontSize: FontSizes.lg,

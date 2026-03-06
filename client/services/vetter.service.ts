@@ -112,6 +112,32 @@ export interface VetterUpdateQuestionRequest {
   learning_outcome_id?: string;
 }
 
+export interface RejectAndRegenerateRequest {
+  notes?: string;
+  rejection_reasons?: string[];
+  custom_feedback?: string;
+}
+
+export interface RejectAndRegenerateResponse {
+  message: string;
+  question_id: string;
+  status: string;
+  regenerated: boolean;
+  new_question?: {
+    id: string;
+    question_text: string;
+    question_type: string;
+    options: string[] | null;
+    correct_answer: string | null;
+    marks: number | null;
+    difficulty_level: string | null;
+    bloom_taxonomy_level: string | null;
+    vetting_status: string;
+    version_number: number;
+    session_id: string;
+  } | null;
+}
+
 export interface QuestionFilters {
   page?: number;
   limit?: number;
@@ -195,6 +221,18 @@ export const vetterService = {
    */
   async updateQuestion(questionId: string, data: VetterUpdateQuestionRequest): Promise<{ message: string; question_id: string; question: QuestionForVetting }> {
     const response = await apiClient.put(`/vetter/questions/${questionId}`, data);
+    return response.data;
+  },
+
+  /**
+   * Reject a question and trigger automatic regeneration of a replacement.
+   * The new question is linked to the teacher's history as a 'vetter_regen' session.
+   */
+  async rejectAndRegenerate(questionId: string, data: RejectAndRegenerateRequest): Promise<RejectAndRegenerateResponse> {
+    const response = await apiClient.post<RejectAndRegenerateResponse>(
+      `/vetter/questions/${questionId}/reject-and-regenerate`,
+      data,
+    );
     return response.data;
   },
 };

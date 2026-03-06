@@ -170,6 +170,7 @@ export interface SessionQuestion {
   version_number?: number;
   replaces_id?: string | null;
   is_latest?: boolean;
+  regenerated_by_vetter?: boolean;
   // Source Attribution
   source_info?: QuestionSourceInfo | null;
 }

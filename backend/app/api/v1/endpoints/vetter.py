@@ -657,6 +657,238 @@ async def get_topic_stats(
 # ============== Update Question (Vetter) ==============
 
 
+class RejectAndRegenerateRequest(BaseModel):
+    """Request to reject a question and trigger regeneration."""
+    notes: Optional[str] = None
+    rejection_reasons: Optional[List[str]] = None
+    custom_feedback: Optional[str] = None
+
+
+# ============== Reject and Regenerate ==============
+
+
+@router.post("/questions/{question_id}/reject-and-regenerate")
+async def reject_and_regenerate_question(
+    question_id: uuid.UUID,
+    vet_data: RejectAndRegenerateRequest,
+    current_user: User = Depends(get_current_vetter),
+    db: AsyncSession = Depends(get_db),
+):
+    """
+    Reject a question and automatically regenerate a replacement.
+    Creates a new GenerationSession (vetter_regen) linked to the teacher's account,
+    so it appears in their history. The new question replaces the rejected one.
+    """
+    import logging
+    import random
+    from app.models.question import GenerationSession
+    from app.models.document import DocumentChunk
+
+    logger = logging.getLogger(__name__)
+
+    # 1. Get the question with subject loaded
+    result = await db.execute(
+        select(Question)
+        .options(
+            selectinload(Question.subject),
+            selectinload(Question.topic),
+        )
+        .where(
+            Question.id == question_id,
+            Question.is_latest == True,
+            Question.is_archived == False,
+        )
+    )
+    question = result.scalar_one_or_none()
+
+    if not question:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="Question not found",
+        )
+
+    # 2. Build rejection notes
+    rejection_notes = vet_data.notes or ""
+    if vet_data.rejection_reasons:
+        rejection_notes = f"{rejection_notes}\nReasons: {', '.join(vet_data.rejection_reasons)}".strip()
+    if vet_data.custom_feedback:
+        rejection_notes = f"{rejection_notes}\nFeedback: {vet_data.custom_feedback}".strip()
+
+    # 3. Mark original as rejected and NOT latest
+    question.vetting_status = "rejected"
+    question.vetting_notes = rejection_notes or None
+    question.vetted_at = datetime.now(timezone.utc)
+    question.vetted_by = current_user.id
+    question.is_latest = False
+
+    # Get teacher's user_id from subject
+    teacher_id = question.subject.user_id if question.subject else None
+    document_id = question.document_id
+
+    # 4. If no document or no teacher, just reject (restore is_latest=True)
+    if not document_id or not teacher_id:
+        question.is_latest = True
+        question.vetting_status = "rejected"
+        await db.commit()
+        return {
+            "message": "Question rejected (no document available for regeneration)",
+            "question_id": str(question_id),
+            "status": "rejected",
+            "regenerated": False,
+        }
+
+    # 5. Get document chunks
+    chunks_result = await db.execute(
+        select(DocumentChunk)
+        .where(DocumentChunk.document_id == document_id)
+        .order_by(DocumentChunk.chunk_index)
+    )
+    chunks = chunks_result.scalars().all()
+
+    if not chunks:
+        question.is_latest = True
+        question.vetting_status = "rejected"
+        await db.commit()
+        return {
+            "message": "Question rejected (no document content available for regeneration)",
+            "question_id": str(question_id),
+            "status": "rejected",
+            "regenerated": False,
+        }
+
+    # 6. Generate a replacement question
+    try:
+        gen_service = QuestionGenerationService(db)
+        selected_chunks = random.sample(chunks, min(3, len(chunks)))
+
+        question_data = await gen_service._generate_single_question(
+            chunks=selected_chunks,
+            question_type=question.question_type,
+            difficulty=question.difficulty_level or "medium",
+            marks=question.marks,
+            bloom_levels=[question.bloom_taxonomy_level] if question.bloom_taxonomy_level else None,
+        )
+    except Exception as e:
+        logger.error(f"reject_and_regenerate: generation failed: {e}")
+        question.is_latest = True
+        question.vetting_status = "rejected"
+        await db.commit()
+        return {
+            "message": "Question rejected (regeneration failed)",
+            "question_id": str(question_id),
+            "status": "rejected",
+            "regenerated": False,
+        }
+
+    if not question_data:
+        question.is_latest = True
+        question.vetting_status = "rejected"
+        await db.commit()
+        return {
+            "message": "Question rejected (could not generate replacement)",
+            "question_id": str(question_id),
+            "status": "rejected",
+            "regenerated": False,
+        }
+
+    # 7. Create a new GenerationSession owned by the teacher
+    new_session = GenerationSession(
+        user_id=teacher_id,
+        document_id=document_id,
+        subject_id=question.subject_id,
+        topic_id=question.topic_id,
+        generation_method="vetter_regen",
+        requested_count=1,
+        status="completed",
+        started_at=datetime.now(timezone.utc),
+        completed_at=datetime.now(timezone.utc),
+        questions_generated=1,
+        generation_config={
+            "vetted_by": str(current_user.id),
+            "original_question_id": str(question_id),
+        },
+    )
+    db.add(new_session)
+    await db.flush()  # Get session ID without committing
+
+    # 8. Save the new question
+    try:
+        new_question, _ = await gen_service._save_question(
+            document_id=document_id,
+            session_id=new_session.id,
+            question_data=question_data,
+            question_type=question.question_type,
+            marks=question.marks,
+            difficulty=question.difficulty_level or "medium",
+            chunk_ids=[c.id for c in selected_chunks],
+            chunks=selected_chunks,
+            subject_id=question.subject_id,
+            topic_id=question.topic_id,
+        )
+    except Exception as e:
+        logger.error(f"reject_and_regenerate: save failed: {e}")
+        await db.rollback()
+        # Re-fetch and restore the original question
+        fresh_result = await db.execute(select(Question).where(Question.id == question_id))
+        fresh_q = fresh_result.scalar_one_or_none()
+        if fresh_q:
+            fresh_q.is_latest = True
+            fresh_q.vetting_status = "rejected"
+            fresh_q.vetted_at = datetime.now(timezone.utc)
+            fresh_q.vetted_by = current_user.id
+            fresh_q.vetting_notes = rejection_notes or None
+            await db.commit()
+        return {
+            "message": "Question rejected (failed to save regenerated question)",
+            "question_id": str(question_id),
+            "status": "rejected",
+            "regenerated": False,
+        }
+
+    # 9. Link the new question as the replacement
+    new_question.replaces_id = question_id
+    new_question.version_number = (question.version_number or 1) + 1
+    new_question.is_latest = True
+    new_question.vetting_status = "pending"
+    new_question.generation_metadata = {
+        **(new_question.generation_metadata or {}),
+        "regenerated_by_vetter": True,
+        "original_question_id": str(question_id),
+        "vetted_by": str(current_user.id),
+    }
+
+    # 10. Update replaced_by on the original (now done after we have new_question.id)
+    question.replaced_by_id = new_question.id
+
+    await db.commit()
+    await db.refresh(new_question)
+
+    logger.info(
+        f"reject_and_regenerate: question {question_id} rejected by {current_user.id}, "
+        f"new question {new_question.id} created for teacher {teacher_id}"
+    )
+
+    return {
+        "message": "Question rejected and regenerated successfully",
+        "question_id": str(question_id),
+        "status": "rejected",
+        "regenerated": True,
+        "new_question": {
+            "id": str(new_question.id),
+            "question_text": new_question.question_text,
+            "question_type": new_question.question_type,
+            "options": new_question.options,
+            "correct_answer": new_question.correct_answer,
+            "marks": new_question.marks,
+            "difficulty_level": new_question.difficulty_level,
+            "bloom_taxonomy_level": new_question.bloom_taxonomy_level,
+            "vetting_status": new_question.vetting_status,
+            "version_number": new_question.version_number,
+            "session_id": str(new_question.session_id),
+        },
+    }
+
+
 class VetterUpdateQuestionRequest(BaseModel):
     """Request body for vetter to update a question."""
     marks: Optional[int] = None

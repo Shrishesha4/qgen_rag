@@ -227,6 +227,7 @@ export default function HistoryScreen() {
             case 'rubric': return { label: 'Rubric Generate', color: '#AF52DE', icon: 'doc.badge.gearshape.fill' as const };
             case 'chapter': return { label: 'Chapter-wise', color: '#34C759', icon: 'book.fill' as const };
             case 'import': return { label: 'Excel/CSV Import', color: '#FF9500', icon: 'square.and.arrow.down.fill' as const };
+            case 'vetter_regen': return { label: 'Vetter Regenerated', color: '#FF2D55', icon: 'arrow.triangle.2.circlepath' as const };
             default: return { label: 'Generated', color: '#8E8E93', icon: 'sparkles' as const };
         }
     };
@@ -578,6 +579,14 @@ export default function HistoryScreen() {
                                                                         {isNewest ? 'CURRENT' : `v${q.version_number ?? (chain.questions.length - versionIndex)}`}
                                                                     </Text>
                                                                 </View>
+                                                                {q.regenerated_by_vetter && (
+                                                                    <View style={[styles.qBadge, { backgroundColor: '#FF2D5520', flexDirection: 'row', alignItems: 'center', gap: 2 }]}>
+                                                                        <IconSymbol name="arrow.triangle.2.circlepath" size={9} color="#FF2D55" />
+                                                                        <Text style={{ fontSize: 9, fontWeight: '700', color: '#FF2D55' }}>
+                                                                            VETTER REGEN
+                                                                        </Text>
+                                                                    </View>
+                                                                )}
                                                                 <View style={[styles.qBadge, { backgroundColor: q.question_type === 'mcq' ? '#007AFF15' : '#AF52DE15' }]}>
                                                                     <Text style={{ fontSize: 10, fontWeight: '600', color: q.question_type === 'mcq' ? '#007AFF' : '#AF52DE' }}>
                                                                         {q.question_type === 'mcq' ? 'MCQ' : q.question_type === 'short_answer' ? 'SHORT' : 'LONG'}
