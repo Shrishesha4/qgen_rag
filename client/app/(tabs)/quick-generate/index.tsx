@@ -39,10 +39,10 @@ export default function QuickGenerateScreen() {
   // Form state
   const [selectedFile, setSelectedFile] = useState<{ uri: string; name: string; type: string } | null>(null);
   const [context, setContext] = useState('');
-  const [count, setCount] = useState(5);
+  const [count, setCount] = useState(10);
   const [customCount, setCustomCount] = useState('');
   const [showCustomInput, setShowCustomInput] = useState(false);
-  const [selectedTypes, setSelectedTypes] = useState<QuestionType[]>(['mcq', 'short_answer']);
+  const [selectedTypes, setSelectedTypes] = useState<QuestionType[]>(['mcq']);
   const [difficulty, setDifficulty] = useState<Difficulty>('medium');
   
   // Marks per question type

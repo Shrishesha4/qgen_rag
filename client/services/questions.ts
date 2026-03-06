@@ -14,6 +14,7 @@ export interface SourceReference {
   position_percentage: number | null;
   section_heading: string | null;
   content_snippet: string | null;
+  highlighted_phrase: string | null;
   relevance_reason: string | null;
 }
 

@@ -57,7 +57,8 @@ class SourceReference(BaseModel):
     position_in_page: Optional[str] = None  # "top", "middle", "bottom"
     position_percentage: Optional[float] = None  # 0-100
     section_heading: Optional[str] = None
-    content_snippet: Optional[str] = None  # Brief excerpt of the source content
+    content_snippet: Optional[str] = None  # Full source passage
+    highlighted_phrase: Optional[str] = None  # Most relevant sentence(s) for this question
     relevance_reason: Optional[str] = None  # Why this content was used for the question
 
 

@@ -1072,7 +1072,37 @@ Output valid JSON only."""
         )
         
         return question, question_response
-    
+
+    @staticmethod
+    def _extract_highlighted_phrase(chunk_text: str, question_text: str, max_chars: int = 300) -> str:
+        """Extract the most relevant sentence(s) from a chunk for the given question."""
+        import re
+        STOPWORDS = {
+            'the', 'a', 'an', 'is', 'are', 'was', 'were', 'be', 'been', 'being',
+            'have', 'has', 'had', 'do', 'does', 'did', 'will', 'would', 'could',
+            'should', 'may', 'might', 'shall', 'can', 'of', 'in', 'on', 'at',
+            'to', 'for', 'with', 'by', 'from', 'as', 'into', 'through', 'during',
+            'what', 'which', 'who', 'how', 'when', 'where', 'why', 'if', 'and',
+            'or', 'but', 'not', 'that', 'this', 'these', 'those', 'it', 'its',
+        }
+        sentences = re.split(r'(?<=[.!?])\s+', chunk_text.strip())
+        sentences = [s.strip() for s in sentences if len(s.strip()) >= 15]
+        if not sentences:
+            return chunk_text[:max_chars]
+        q_words = set(re.sub(r'[^\w\s]', '', question_text.lower()).split()) - STOPWORDS
+        if not q_words:
+            return sentences[0][:max_chars]
+        scored = [(s, len(q_words & set(re.sub(r'[^\w\s]', '', s.lower()).split()))) for s in sentences]
+        scored.sort(key=lambda x: x[1], reverse=True)
+        result = scored[0][0]
+        if len(scored) > 1 and scored[1][1] > 0:
+            candidate = result + ' ' + scored[1][0]
+            if len(candidate) <= max_chars:
+                result = candidate
+        if len(result) > max_chars:
+            result = result[:max_chars].rsplit(' ', 1)[0] + '\u2026'
+        return result
+
     def _build_source_info(
         self,
         chunks: Optional[List[DocumentChunk]],
@@ -1102,8 +1132,11 @@ Output valid JSON only."""
             if not document_name:
                 document_name = "Unknown Document"
             
-            # Store full content snippet (frontend will handle truncation and expansion)
+            # Store full content snippet and extract the most relevant phrase
             content_snippet = chunk.chunk_text
+            highlighted_phrase = self._extract_highlighted_phrase(
+                content_snippet, question_data.get("question_text", "")
+            )
             
             source = {
                 "document_name": document_name,
@@ -1113,6 +1146,7 @@ Output valid JSON only."""
                 "position_percentage": source_info.get("position_percentage"),
                 "section_heading": chunk.section_heading,
                 "content_snippet": content_snippet,
+                "highlighted_phrase": highlighted_phrase,
                 "relevance_reason": self._generate_relevance_reason(chunk, question_data),
             }
             logger.debug(f"Source built: doc={document_name}, page={source['page_number']}, pos={source['position_in_page']}")

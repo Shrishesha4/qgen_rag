@@ -3243,6 +3243,7 @@ async def generate_chapter(
                         "position_percentage": source_meta.get("position_percentage"),
                         "section_heading": chunk.section_heading,
                         "content_snippet": content_snippet,
+                        "highlighted_phrase": _extract_highlighted_phrase(content_snippet, topic_name),
                         "relevance_reason": f"Retrieved as reference material for {topic_name}",
                     }
                     sources.append(source)
@@ -3536,6 +3537,36 @@ Output valid JSON only."""
     )
 
 
+def _extract_highlighted_phrase(chunk_text: str, query_text: str, max_chars: int = 300) -> str:
+    """Extract the most relevant sentence(s) from a chunk matching the query."""
+    import re
+    STOPWORDS = {
+        'the', 'a', 'an', 'is', 'are', 'was', 'were', 'be', 'been', 'being',
+        'have', 'has', 'had', 'do', 'does', 'did', 'will', 'would', 'could',
+        'should', 'may', 'might', 'shall', 'can', 'of', 'in', 'on', 'at',
+        'to', 'for', 'with', 'by', 'from', 'as', 'into', 'through', 'during',
+        'what', 'which', 'who', 'how', 'when', 'where', 'why', 'if', 'and',
+        'or', 'but', 'not', 'that', 'this', 'these', 'those', 'it', 'its',
+    }
+    sentences = re.split(r'(?<=[.!?])\s+', chunk_text.strip())
+    sentences = [s.strip() for s in sentences if len(s.strip()) >= 15]
+    if not sentences:
+        return chunk_text[:max_chars]
+    q_words = set(re.sub(r'[^\w\s]', '', query_text.lower()).split()) - STOPWORDS
+    if not q_words:
+        return sentences[0][:max_chars]
+    scored = [(s, len(q_words & set(re.sub(r'[^\w\s]', '', s.lower()).split()))) for s in sentences]
+    scored.sort(key=lambda x: x[1], reverse=True)
+    result = scored[0][0]
+    if len(scored) > 1 and scored[1][1] > 0:
+        candidate = result + ' ' + scored[1][0]
+        if len(candidate) <= max_chars:
+            result = candidate
+    if len(result) > max_chars:
+        result = result[:max_chars].rsplit(' ', 1)[0] + '\u2026'
+    return result
+
+
 def _build_rubric_source_info(ref_chunks: list, topic_name: str) -> dict:
     """Build source_info dict from reference chunks for rubric-generated questions."""
     if not ref_chunks:
@@ -3559,6 +3590,7 @@ def _build_rubric_source_info(ref_chunks: list, topic_name: str) -> dict:
             "position_percentage": source_meta.get("position_percentage"),
             "section_heading": getattr(chunk, "section_heading", None),
             "content_snippet": chunk.chunk_text,
+            "highlighted_phrase": _extract_highlighted_phrase(chunk.chunk_text, topic_name),
             "relevance_reason": f"Retrieved as reference material for {topic_name}",
         }
         sources.append(source)

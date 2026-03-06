@@ -205,6 +205,24 @@ export function QuestionSources({ sourceInfo, compact = false, defaultExpanded =
       lineHeight: 16,
       fontStyle: 'italic',
     },
+    highlightBox: {
+      flexDirection: 'row' as const,
+      alignItems: 'flex-start' as const,
+      backgroundColor: isDark ? 'rgba(255, 200, 0, 0.12)' : 'rgba(255, 200, 0, 0.2)',
+      borderLeftWidth: 2,
+      borderLeftColor: isDark ? '#D4A017' : '#B8870B',
+      borderRadius: BorderRadius.sm,
+      paddingHorizontal: Spacing.xs,
+      paddingVertical: 6,
+      marginBottom: 2,
+    },
+    highlightText: {
+      flex: 1,
+      fontSize: FontSizes.sm,
+      color: isDark ? '#FFD966' : '#7A5800',
+      lineHeight: 18,
+      fontStyle: 'italic' as const,
+    },
     relevanceReason: {
       marginTop: Spacing.xs,
       paddingTop: Spacing.xs,
@@ -324,31 +342,59 @@ export function QuestionSources({ sourceInfo, compact = false, defaultExpanded =
                 </Text>
               )}
 
-              {/* Content Snippet */}
-              {source.content_snippet && (
+              {/* Content Snippet — highlighted phrase primary, full passage on expand */}
+              {(source.highlighted_phrase || source.content_snippet) && (
                 <View>
-                  <Text 
-                    style={styles.snippet} 
-                    numberOfLines={expandedSnippets[index] ? undefined : 3}
-                  >
-                    "{source.content_snippet}"
-                  </Text>
-                  {source.content_snippet.length > 150 && (
+                  {source.highlighted_phrase ? (
+                    <View style={styles.highlightBox}>
+                      <IconSymbol
+                        name="text.quote"
+                        size={11}
+                        color={isDark ? '#FFD966' : '#B8870B'}
+                        style={{ marginTop: 1, marginRight: 4, flexShrink: 0 }}
+                      />
+                      <Text style={styles.highlightText}>{source.highlighted_phrase}</Text>
+                    </View>
+                  ) : (
+                    <Text style={styles.snippet} numberOfLines={expandedSnippets[index] ? undefined : 3}>
+                      "{source.content_snippet}"
+                    </Text>
+                  )}
+                  {source.highlighted_phrase && source.content_snippet && (
+                    <>
+                      <TouchableOpacity
+                        onPress={() =>
+                          setExpandedSnippets(prev => ({ ...prev, [index]: !prev[index] }))
+                        }
+                        style={styles.showMoreButton}
+                      >
+                        <Text style={styles.showMoreText}>
+                          {expandedSnippets[index] ? 'Hide full passage' : 'View full passage'}
+                        </Text>
+                        <IconSymbol
+                          name={expandedSnippets[index] ? 'chevron.up' : 'chevron.down'}
+                          size={12}
+                          color={colors.primary}
+                        />
+                      </TouchableOpacity>
+                      {expandedSnippets[index] && (
+                        <Text style={styles.snippet}>"{source.content_snippet}"</Text>
+                      )}
+                    </>
+                  )}
+                  {!source.highlighted_phrase && source.content_snippet && source.content_snippet.length > 150 && (
                     <TouchableOpacity
-                      onPress={() => {
-                        setExpandedSnippets(prev => ({
-                          ...prev,
-                          [index]: !prev[index]
-                        }));
-                      }}
+                      onPress={() =>
+                        setExpandedSnippets(prev => ({ ...prev, [index]: !prev[index] }))
+                      }
                       style={styles.showMoreButton}
                     >
                       <Text style={styles.showMoreText}>
                         {expandedSnippets[index] ? 'Show Less' : 'Show More'}
                       </Text>
-                      <IconSymbol 
-                        name={expandedSnippets[index] ? 'chevron.up' : 'chevron.down'} 
-                        size={12} 
+                      <IconSymbol
+                        name={expandedSnippets[index] ? 'chevron.up' : 'chevron.down'}
+                        size={12}
                         color={colors.primary}
                       />
                     </TouchableOpacity>
