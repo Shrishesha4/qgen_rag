@@ -3,6 +3,7 @@
 # dependencies
 node_modules/
 *.pyc
+__pycache__/
 ios/    
 android/
 # Expo
