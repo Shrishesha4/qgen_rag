@@ -3,7 +3,7 @@
  */
 
 import { create } from 'zustand';
-import { authService, User, UpdateProfileData } from '../services/auth';
+import { authService, User, UpdateProfileData, UserRole } from '../services/auth';
 import { tokenStorage } from '../services/api';
 
 interface AuthState {
@@ -14,7 +14,7 @@ interface AuthState {
 
   // Actions
   login: (email: string, password: string) => Promise<boolean>;
-  register: (email: string, username: string, password: string, fullName?: string) => Promise<boolean>;
+  register: (email: string, username: string, password: string, fullName?: string, role?: UserRole) => Promise<boolean>;
   logout: () => Promise<void>;
   logoutAll: () => Promise<void>;
   checkAuth: () => Promise<boolean>;
@@ -23,6 +23,11 @@ interface AuthState {
   uploadAvatar: (uri: string) => Promise<void>;
   deleteAvatar: () => Promise<void>;
   clearError: () => void;
+  
+  // Role helpers
+  isVetter: () => boolean;
+  isTeacher: () => boolean;
+  isAdmin: () => boolean;
 }
 
 export const useAuthStore = create<AuthState>((set, get) => ({
@@ -50,7 +55,7 @@ export const useAuthStore = create<AuthState>((set, get) => ({
     }
   },
 
-  register: async (email: string, username: string, password: string, fullName?: string): Promise<boolean> => {
+  register: async (email: string, username: string, password: string, fullName?: string, role?: UserRole): Promise<boolean> => {
     set({ isLoading: true, error: null });
     try {
       const response = await authService.register({
@@ -58,6 +63,7 @@ export const useAuthStore = create<AuthState>((set, get) => ({
         username,
         password,
         full_name: fullName,
+        role: role || 'teacher',
       });
       set({
         user: response.user,
@@ -72,6 +78,22 @@ export const useAuthStore = create<AuthState>((set, get) => ({
       set({ error: message, isLoading: false });
       return false;
     }
+  },
+  
+  // Role helpers
+  isVetter: () => {
+    const user = get().user;
+    return user?.role === 'vetter' || user?.role === 'admin';
+  },
+  
+  isTeacher: () => {
+    const user = get().user;
+    return user?.role === 'teacher' || user?.role === 'admin';
+  },
+  
+  isAdmin: () => {
+    const user = get().user;
+    return user?.role === 'admin';
   },
 
   logout: async (): Promise<void> => {

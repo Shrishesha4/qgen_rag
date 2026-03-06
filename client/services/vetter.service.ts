@@ -1,0 +1,181 @@
+/**
+ * Vetter Portal API Service
+ */
+
+import apiClient from './api';
+
+// Types
+export interface TeacherSummary {
+  id: string;
+  username: string;
+  full_name: string | null;
+  email: string;
+  pending_count: number;
+  approved_count: number;
+  rejected_count: number;
+  subjects: string[];
+}
+
+export interface SubjectSummary {
+  id: string;
+  name: string;
+  code: string;
+  teacher_id: string;
+  teacher_name: string;
+  pending_count: number;
+  approved_count: number;
+  rejected_count: number;
+  topics: TopicInfo[];
+}
+
+export interface TopicInfo {
+  id: string;
+  name: string;
+  pending_count: number;
+}
+
+export interface TopicQuestionStats {
+  id: string;
+  name: string;
+  pending_count: number;
+  approved_count: number;
+  rejected_count: number;
+}
+
+export interface VetterDashboard {
+  total_pending: number;
+  total_approved: number;
+  total_rejected: number;
+  teachers_with_pending: number;
+  subjects_with_pending: number;
+  recent_submissions: number;
+}
+
+export interface QuestionForVetting {
+  id: string;
+  question_text: string;
+  question_type: string;
+  options: string[] | null;
+  correct_answer: string | null;
+  explanation: string | null;
+  expected_answer: string | null;
+  key_points: string[] | null;
+  marks: number | null;
+  difficulty_level: string | null;
+  bloom_taxonomy_level: string | null;
+  vetting_status: string;
+  vetting_notes: string | null;
+  learning_outcome_id: string | null;
+  course_outcome_mapping: Record<string, number> | null;
+  created_at: string;
+  teacher_id: string | null;
+  teacher_name: string | null;
+  subject_id: string | null;
+  subject_name: string | null;
+  subject_code: string | null;
+  topic_id: string | null;
+  topic_name: string | null;
+}
+
+export interface QuestionsResponse {
+  questions: QuestionForVetting[];
+  total: number;
+  page: number;
+  limit: number;
+  pages: number;
+}
+
+export interface VetQuestionRequest {
+  status: 'approved' | 'rejected';
+  notes?: string;
+  course_outcome_mapping?: Record<string, number>;
+  rejection_reasons?: string[];
+  custom_feedback?: string;
+}
+
+export interface BulkVetRequest {
+  question_ids: string[];
+  status: 'approved' | 'rejected';
+  notes?: string;
+}
+
+export interface QuestionFilters {
+  page?: number;
+  limit?: number;
+  teacher_id?: string;
+  subject_id?: string;
+  topic_id?: string;
+  question_type?: string;
+  status?: 'pending' | 'approved' | 'rejected' | 'all';
+}
+
+// API Service
+export const vetterService = {
+  /**
+   * Get vetter dashboard stats
+   */
+  async getDashboard(): Promise<VetterDashboard> {
+    const response = await apiClient.get<VetterDashboard>('/vetter/dashboard');
+    return response.data;
+  },
+
+  /**
+   * Get list of teachers with questions
+   */
+  async getTeachers(): Promise<TeacherSummary[]> {
+    const response = await apiClient.get<TeacherSummary[]>('/vetter/teachers');
+    return response.data;
+  },
+
+  /**
+   * Get list of subjects with question stats
+   */
+  async getSubjects(teacherId?: string): Promise<SubjectSummary[]> {
+    const params = teacherId ? { teacher_id: teacherId } : {};
+    const response = await apiClient.get<SubjectSummary[]>('/vetter/subjects', { params });
+    return response.data;
+  },
+
+  /**
+   * Get topic stats for a subject
+   */
+  async getTopicStats(subjectId: string): Promise<TopicQuestionStats[]> {
+    const response = await apiClient.get<TopicQuestionStats[]>(`/vetter/subjects/${subjectId}/topics`);
+    return response.data;
+  },
+
+  /**
+   * Get questions for vetting with filters
+   */
+  async getQuestions(filters: QuestionFilters = {}): Promise<QuestionsResponse> {
+    const params: Record<string, string | number> = {};
+    if (filters.page) params.page = filters.page;
+    if (filters.limit) params.limit = filters.limit;
+    if (filters.teacher_id) params.teacher_id = filters.teacher_id;
+    if (filters.subject_id) params.subject_id = filters.subject_id;
+    if (filters.topic_id) params.topic_id = filters.topic_id;
+    if (filters.question_type) params.question_type = filters.question_type;
+    if (filters.status) params.status = filters.status;
+
+    const response = await apiClient.get<QuestionsResponse>('/vetter/questions', { params });
+    return response.data;
+  },
+
+  /**
+   * Vet a single question (approve/reject)
+   */
+  async vetQuestion(questionId: string, data: VetQuestionRequest): Promise<{ message: string; question_id: string; status: string }> {
+    const response = await apiClient.post(`/vetter/questions/${questionId}/vet`, data);
+    return response.data;
+  },
+
+  /**
+   * Bulk vet multiple questions
+   */
+  async bulkVet(data: BulkVetRequest): Promise<{ message: string; count: number; status: string }> {
+    const response = await apiClient.post('/vetter/questions/bulk-vet', data);
+    return response.data;
+  },
+};
+
+export default vetterService;

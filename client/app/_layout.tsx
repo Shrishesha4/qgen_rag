@@ -17,7 +17,7 @@ export const unstable_settings = {
 function AuthGuard({ children }: { children: React.ReactNode }) {
   const segments = useSegments();
   const router = useRouter();
-  const { isAuthenticated, isLoading, checkAuth } = useAuthStore();
+  const { isAuthenticated, isLoading, checkAuth, user } = useAuthStore();
 
   useEffect(() => {
     checkAuth();
@@ -27,15 +27,27 @@ function AuthGuard({ children }: { children: React.ReactNode }) {
     if (isLoading) return;
 
     const inAuthGroup = segments[0] === '(auth)';
+    const inVetterGroup = segments[0] === '(vetter)';
+    const inTabsGroup = segments[0] === '(tabs)';
     
     if (!isAuthenticated && !inAuthGroup) {
       // Redirect to login
       router.replace('/(auth)/login');
     } else if (isAuthenticated && inAuthGroup) {
-      // Redirect to home
+      // Redirect based on role
+      if (user?.role === 'vetter') {
+        router.replace('/(vetter)/dashboard');
+      } else {
+        router.replace('/(tabs)/home');
+      }
+    } else if (isAuthenticated && user?.role === 'vetter' && inTabsGroup) {
+      // Vetter trying to access teacher tabs, redirect to vetter portal
+      router.replace('/(vetter)/dashboard');
+    } else if (isAuthenticated && user?.role !== 'vetter' && inVetterGroup) {
+      // Non-vetter trying to access vetter portal, redirect to tabs
       router.replace('/(tabs)/home');
     }
-  }, [isAuthenticated, isLoading, segments]);
+  }, [isAuthenticated, isLoading, segments, user?.role]);
 
   if (isLoading) {
     return (
@@ -64,6 +76,7 @@ export default function RootLayout() {
             >
               <Stack.Screen name="(auth)" options={{ headerShown: false }} />
               <Stack.Screen name="(tabs)" options={{ headerShown: false }} />
+              <Stack.Screen name="(vetter)" options={{ headerShown: false }} />
               <Stack.Screen name="modal" options={{ presentation: 'modal', title: 'Modal' }} />
             </Stack>
           </AuthGuard>

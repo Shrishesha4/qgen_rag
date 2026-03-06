@@ -3,10 +3,14 @@ User-related Pydantic schemas.
 """
 
 from datetime import datetime
-from typing import Optional
+from typing import Optional, Literal
 from pydantic import BaseModel, EmailStr, Field, field_validator
 import uuid
 import re
+
+
+# User role types
+RoleType = Literal["teacher", "vetter", "admin"]
 
 
 class UserBase(BaseModel):
@@ -26,6 +30,7 @@ class UserBase(BaseModel):
 class UserCreate(UserBase):
     """Schema for user registration."""
     password: str = Field(..., min_length=8, max_length=128)
+    role: RoleType = Field(default="teacher", description="User role: teacher, vetter, or admin")
 
     @field_validator("password")
     @classmethod
@@ -71,6 +76,7 @@ class UserResponse(BaseModel):
     avatar_url: Optional[str]
     timezone: str
     language: str
+    role: str = "teacher"
     is_active: bool
     created_at: datetime
     last_login_at: Optional[datetime]

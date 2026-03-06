@@ -45,12 +45,13 @@ class UserService:
         if existing_username.scalar_one_or_none():
             raise ValueError("Username already taken")
 
-        # Create user
+        # Create user with role
         user = User(
             email=user_data.email,
             username=user_data.username.lower(),
             password_hash=hash_password(user_data.password),
             full_name=user_data.full_name,
+            role=getattr(user_data, 'role', 'teacher'),  # Default to teacher if not provided
         )
         self.db.add(user)
         await self.db.commit()

@@ -4,6 +4,8 @@
 
 import apiClient, { tokenStorage } from './api';
 
+export type UserRole = 'teacher' | 'vetter' | 'admin';
+
 export interface User {
   id: string;
   email: string;
@@ -12,6 +14,7 @@ export interface User {
   avatar_url: string | null;
   timezone: string;
   language: string;
+  role: UserRole;
   is_active: boolean;
   created_at: string;
   last_login_at: string | null;
@@ -29,6 +32,7 @@ export interface RegisterData {
   username: string;
   password: string;
   full_name?: string;
+  role?: UserRole;
 }
 
 export interface TokenResponse {

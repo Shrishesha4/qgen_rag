@@ -58,6 +58,13 @@ CRITICAL RULES:
 7. STANDALONE: Write questions as standalone exam questions. NEVER reference "the document", "the content", "the passage", "the text", "according to", or "based on the provided". Questions should read naturally as if from an exam paper.
 8. FORBIDDEN: Do NOT start questions with scenario setups like "A clinician", "A patient", "A doctor", "A dentist", "A practitioner", "A student", "A researcher", "An engineer", etc. Start directly with the question using interrogatives (What, Which, How, Why, When, etc.).
 9. DEPTH OVER BREADTH: Focus on ONE concept but explore it deeply rather than superficially
+10. LEARNING OUTCOMES: If a Learning Outcome (LO) is specified, ensure the question directly assesses that outcome. The question should test the specific competency described in the LO.
+11. REFERENCE STANDARD: If reference questions are provided, match their:
+    - Complexity and cognitive level
+    - Question structure and phrasing style
+    - Depth of options and distractors quality
+    - Professional exam-like tone
+    But create ORIGINAL questions - do NOT copy or paraphrase reference questions.
 
 Output ONLY valid JSON with this exact format:
 {
@@ -92,6 +99,12 @@ CRITICAL RULES:
 5. Answers should demonstrate reasoning, not just state facts
 6. STANDALONE: Write questions AND answers as standalone exam content. NEVER use phrases like "according to the document", "based on the provided content", "as mentioned in the text", "the passage states", etc. Both questions and answers should read naturally as if from an exam paper, not referencing any source material.
 7. FORBIDDEN: Do NOT start questions with scenario setups like "A clinician", "A patient", "A doctor", "A dentist", "A practitioner", "A student", "A researcher", "An engineer", etc. Start directly with action verbs (Explain, Compare, Analyze, Justify, Evaluate, etc.).
+8. LEARNING OUTCOMES: If a Learning Outcome (LO) is specified, ensure the question directly assesses that outcome. The question should test the specific competency described in the LO.
+9. REFERENCE STANDARD: If reference questions are provided, match their:
+    - Complexity and expected answer depth
+    - Question structure and academic tone
+    - Key points coverage and marking scheme style
+    But create ORIGINAL questions - do NOT copy or paraphrase reference questions.
 
 Output ONLY valid JSON with this exact format:
 {
@@ -119,6 +132,13 @@ CRITICAL RULES:
 5. Questions should require comprehensive responses (2-3 paragraphs) with structured argumentation
 6. STANDALONE: Write questions AND answers as standalone exam content. NEVER reference "the document", "the content", "according to", "based on the provided", "as stated in", "the text mentions", etc. Both questions and answers should read naturally as professional exam questions and model answers.
 7. FORBIDDEN: Do NOT start questions with scenario setups like "A clinician", "A patient", "A doctor", "A dentist", "A practitioner", "A student", "A researcher", "An engineer", etc. Start directly with higher-order verbs (Critically analyze, Evaluate, Discuss, Assess, etc.).
+8. LEARNING OUTCOMES: If a Learning Outcome (LO) is specified, ensure the question directly assesses that outcome. The question should test the specific competency described in the LO.
+9. REFERENCE STANDARD: If reference questions are provided, match their:
+    - Analytical depth and rubric structure
+    - Question complexity and expected response length
+    - Professional academic examination style
+    - Key points coverage and marking criteria
+    But create ORIGINAL questions - do NOT copy or paraphrase reference questions.
 
 Output ONLY valid JSON with this exact format:
 {
@@ -1967,7 +1987,21 @@ Output valid JSON only."""
             # Extract session_id immediately to avoid SQLAlchemy lazy-loading issues after rollback
             session_id = session.id
 
-            # 4. Generate questions
+            # 4. Fetch reference questions for style matching (if available)
+            reference_questions: List[Dict[str, Any]] = []
+            if subject_id and self.document_service:
+                try:
+                    reference_questions = await self.document_service.get_reference_questions(
+                        user_id=user_id,
+                        subject_id=subject_id,
+                        limit=10,
+                    )
+                    if reference_questions:
+                        logger.info(f"quick_generate: Loaded {len(reference_questions)} reference questions for style matching")
+                except Exception as e:
+                    logger.warning(f"Failed to load reference questions: {e}")
+
+            # 5. Generate questions
             questions_generated = 0
             questions_failed = 0
             generated_embeddings = []  # Track embeddings for deduplication within session
@@ -2041,6 +2075,7 @@ Output valid JSON only."""
                             bloom_levels=bloom_levels,
                             previous_questions=generated_questions_text,
                             question_index=total_question_index,
+                            reference_questions=reference_questions,
                         )
 
                         total_question_index += 1
@@ -2267,8 +2302,22 @@ Output valid JSON only."""
         bloom_levels: Optional[List[str]] = None,
         previous_questions: Optional[List[str]] = None,
         question_index: int = 0,
+        reference_questions: Optional[List[Dict[str, Any]]] = None,
+        learning_outcome: Optional[str] = None,
     ) -> Optional[Dict[str, Any]]:
-        """Generate a single question for quick generation with context awareness."""
+        """Generate a single question for quick generation with context awareness.
+        
+        Args:
+            chunks: Document chunks for content
+            question_type: mcq, short_answer, or long_answer
+            difficulty: easy, medium, or hard
+            context: Topic/context string
+            bloom_levels: Target Bloom's taxonomy levels
+            previous_questions: Previously generated question texts (for deduplication)
+            question_index: Index for diversity hints
+            reference_questions: Sample questions to match style/standard
+            learning_outcome: Specific LO description to target
+        """
         import logging
         logger = logging.getLogger(__name__)
         
@@ -2319,11 +2368,40 @@ Output valid JSON only."""
                 for q in previous_questions[-5:]  # Include last 5 questions max
             )
         
+        # Build reference questions section for style matching
+        reference_section = ""
+        if reference_questions and len(reference_questions) > 0:
+            # Filter reference questions by type and take up to 3 examples
+            type_refs = [q for q in reference_questions if q.get("question_type") == question_type][:3]
+            if not type_refs:
+                type_refs = reference_questions[:2]  # Fallback to any type
+            
+            if type_refs:
+                reference_section = "\n\n=== REFERENCE QUESTIONS (match this standard and style) ===\n"
+                for i, ref in enumerate(type_refs, 1):
+                    reference_section += f"\nExample {i}:\n"
+                    reference_section += f"Question: {ref.get('question_text', '')}\n"
+                    if ref.get("options"):
+                        reference_section += f"Options: {ref.get('options')}\n"
+                    if ref.get("correct_answer"):
+                        reference_section += f"Answer: {ref.get('correct_answer')}\n"
+                    if ref.get("difficulty"):
+                        reference_section += f"Difficulty: {ref.get('difficulty')}\n"
+                    if ref.get("marks"):
+                        reference_section += f"Marks: {ref.get('marks')}\n"
+                reference_section += "\n=== END REFERENCE QUESTIONS ===\n"
+                reference_section += "Generate a NEW question matching the complexity, structure, and style of these references. Do NOT copy or paraphrase them."
+        
+        # Build Learning Outcome section
+        lo_section = ""
+        if learning_outcome:
+            lo_section = f"\n\nLEARNING OUTCOME TO ASSESS:\n{learning_outcome}\nEnsure the question directly tests this specific learning outcome."
+        
         # Build enhanced prompt with user context
         prompt = f"""Topic/Context: {context}
 
 Reference material:
-{doc_content}
+{doc_content}{reference_section}{lo_section}
 
 Generate a {question_type.replace('_', ' ')} question with the following requirements:
 - The question should be relevant to the topic: "{context}"

@@ -116,6 +116,34 @@ async def get_current_superuser(
     return current_user
 
 
+async def get_current_vetter(
+    current_user: User = Depends(get_current_user),
+) -> User:
+    """
+    Dependency to get current user with vetter or admin role.
+    """
+    if current_user.role not in ("vetter", "admin") and not current_user.is_superuser:
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="Vetter access required",
+        )
+    return current_user
+
+
+async def get_current_teacher_or_admin(
+    current_user: User = Depends(get_current_user),
+) -> User:
+    """
+    Dependency to get current user with teacher or admin role.
+    """
+    if current_user.role not in ("teacher", "admin") and not current_user.is_superuser:
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="Teacher access required",
+        )
+    return current_user
+
+
 def rate_limit(requests: int = 100, window_seconds: int = 3600):
     """
     Rate limiting dependency factory.

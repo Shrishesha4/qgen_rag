@@ -1489,3 +1489,57 @@ class DocumentService:
         scored_chunks.sort(key=lambda x: x[1], reverse=True)
         
         return [c for c, _ in scored_chunks[:top_k]]
+
+    async def get_reference_questions(
+        self,
+        user_id: uuid.UUID,
+        subject_id: uuid.UUID,
+        question_type: Optional[str] = None,
+        limit: int = 10,
+    ) -> List[Dict[str, Any]]:
+        """
+        Get parsed reference questions for a subject.
+        These are used as style/standard templates for question generation.
+        
+        Reference questions are stored as chunks in documents with index_type='reference_questions'.
+        Each chunk contains a JSON-encoded question with fields like:
+        - question_text, options, correct_answer, question_type, difficulty, marks, co, lo
+        """
+        import json
+        
+        # Get reference question document IDs
+        doc_ids = await self.get_reference_document_ids(
+            user_id=user_id,
+            subject_id=subject_id,
+            index_type="reference_questions",
+        )
+        
+        if not doc_ids:
+            return []
+        
+        # Get chunks from these documents
+        result = await self.db.execute(
+            select(DocumentChunk)
+            .where(DocumentChunk.document_id.in_(doc_ids))
+            .order_by(DocumentChunk.chunk_index)
+            .limit(limit * 3)  # Get more to filter by type
+        )
+        chunks = result.scalars().all()
+        
+        parsed_questions = []
+        for chunk in chunks:
+            try:
+                # Reference question chunks store JSON in chunk_text
+                q_data = json.loads(chunk.chunk_text)
+                if isinstance(q_data, dict) and q_data.get("question_text"):
+                    # Filter by type if specified
+                    if question_type and q_data.get("question_type") != question_type:
+                        continue
+                    parsed_questions.append(q_data)
+                    if len(parsed_questions) >= limit:
+                        break
+            except (json.JSONDecodeError, TypeError):
+                # Chunk might be plain text, skip it
+                continue
+        
+        return parsed_questions

@@ -12,6 +12,13 @@ import uuid
 from app.core.database import Base
 
 
+# User roles
+ROLE_TEACHER = "teacher"
+ROLE_VETTER = "vetter"
+ROLE_ADMIN = "admin"
+VALID_ROLES = {ROLE_TEACHER, ROLE_VETTER, ROLE_ADMIN}
+
+
 class User(Base):
     """User model for authentication and authorization."""
     
@@ -29,6 +36,9 @@ class User(Base):
     avatar_url: Mapped[Optional[str]] = mapped_column(String(500))
     timezone: Mapped[str] = mapped_column(String(50), default="UTC")
     language: Mapped[str] = mapped_column(String(10), default="en")
+    
+    # Role: "teacher" (default), "vetter", or "admin"
+    role: Mapped[str] = mapped_column(String(20), default=ROLE_TEACHER, nullable=False)
     
     # Status
     is_active: Mapped[bool] = mapped_column(Boolean, default=True)
