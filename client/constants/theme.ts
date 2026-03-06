@@ -172,3 +172,31 @@ export const Fonts = Platform.select({
     mono: "SFMono-Regular, Menlo, Monaco, Consolas, 'Liberation Mono', 'Courier New', monospace",
   },
 });
+
+// ── macOS Aqua design tokens (used by home & vetter screens) ─────────────────
+export const AquaTokens = {
+  // Blues
+  deepBlue: '#1565C0',
+  royalBlue: '#1976D2',
+  aquaBlue: '#0288D1',
+  skyBlue: '#29B6F6',
+  iceBlue: '#81D4FA',
+  // Status gel colors
+  gelGreen: '#2E7D32',
+  gelGreenLight: '#43A047',
+  gelOrange: '#E65100',
+  gelOrangeLight: '#FB8C00',
+  gelRed: '#B71C1C',
+  gelRedLight: '#E53935',
+  gelPurple: '#4527A0',
+  gelPurpleLight: '#7B1FA2',
+  // Surfaces
+  bgLight: '#EBF4FD',
+  bgDark: '#0D1B2A',
+  cardLight: '#FFFFFF',
+  cardDark: '#132F4C',
+  // Gloss / chrome
+  shine: 'rgba(255,255,255,0.55)',
+  metalBorderLight: '#A8C8E8',
+  metalBorderDark: '#1E4A72',
+} as const;

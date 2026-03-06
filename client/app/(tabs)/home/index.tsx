@@ -18,30 +18,7 @@ import { useColorScheme } from '@/hooks/use-color-scheme';
 import { useAuthStore } from '@/stores/authStore';
 import { questionsService, TeacherDashboard } from '@/services/questions';
 import { API_BASE_URL } from '@/services/api';
-
-// ── Aqua / macOS Aqua Design Tokens ──────────────────────────────────────────
-const A = {
-  deepBlue: '#1565C0',
-  royalBlue: '#1976D2',
-  aquaBlue: '#0288D1',
-  skyBlue: '#29B6F6',
-  iceBlue: '#81D4FA',
-  gelGreen: '#2E7D32',
-  gelGreenLight: '#43A047',
-  gelOrange: '#E65100',
-  gelOrangeLight: '#FB8C00',
-  gelRed: '#B71C1C',
-  gelRedLight: '#E53935',
-  gelPurple: '#4527A0',
-  gelPurpleLight: '#7B1FA2',
-  bgLight: '#EBF4FD',
-  bgDark: '#0D1B2A',
-  cardLight: '#FFFFFF',
-  cardDark: '#132F4C',
-  shine: 'rgba(255,255,255,0.55)',
-  metalBorderLight: '#A8C8E8',
-  metalBorderDark: '#1E4A72',
-};
+import { AquaTokens as A } from '@/constants/theme';
 
 export default function HomeScreen() {
   const colorScheme = useColorScheme();

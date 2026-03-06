@@ -16,33 +16,7 @@ import { IconSymbol } from '@/components/ui/icon-symbol';
 import { useColorScheme } from '@/hooks/use-color-scheme';
 import { useAuthStore } from '@/stores/authStore';
 import { vetterService, VetterDashboard as Dashboard } from '@/services/vetter.service';
-
-// ── Aqua / macOS Aqua Design Tokens ──────────────────────────────────────────
-const A = {
-  // Core aqua blues
-  deepBlue: '#1565C0',
-  royalBlue: '#1976D2',
-  aquaBlue: '#0288D1',
-  skyBlue: '#29B6F6',
-  iceBlue: '#81D4FA',
-  // Status gel colors
-  gelGreen: '#2E7D32',
-  gelGreenLight: '#66BB6A',
-  gelOrange: '#E65100',
-  gelOrangeLight: '#FFA726',
-  gelRed: '#B71C1C',
-  gelRedLight: '#EF5350',
-  // Surfaces
-  bgLight: '#EBF4FD',
-  bgDark: '#0D1B2A',
-  cardLight: '#FFFFFF',
-  cardDark: '#132F4C',
-  // Shine / gloss
-  shine: 'rgba(255,255,255,0.55)',
-  shineEdge: 'rgba(255,255,255,0.12)',
-  metalBorderLight: '#A8C8E8',
-  metalBorderDark: '#1E4A72',
-};
+import { AquaTokens as A } from '@/constants/theme';
 
 export default function VetterDashboard() {
   const colorScheme = useColorScheme();
