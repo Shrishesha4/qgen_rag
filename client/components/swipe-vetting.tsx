@@ -4,11 +4,11 @@
  * Gestures:
  * - Left swipe: Reject & Regenerate
  * - Right swipe: Approve
- * - Up swipe: Edit
+ * - Up swipe: Edit (inline)
  * - Down swipe: Skip
  */
 
-import React, { useState, useCallback, useRef } from 'react';
+import React, { useState, useCallback, useRef, useEffect } from 'react';
 import {
   View,
   Text,
@@ -21,6 +21,8 @@ import {
   ActivityIndicator,
   Animated,
   PanResponder,
+  KeyboardAvoidingView,
+  Platform,
 } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { BlurView } from 'expo-blur';
@@ -28,6 +30,7 @@ import { LinearGradient } from 'expo-linear-gradient';
 
 import { GlassCard } from '@/components/ui/glass-card';
 import { IconSymbol } from '@/components/ui/icon-symbol';
+import { QuestionSources } from '@/components/question-sources';
 import { Colors, Spacing, BorderRadius, FontSizes } from '@/constants/theme';
 import { useColorScheme } from '@/hooks/use-color-scheme';
 import { useToast } from '@/components/toast';
@@ -51,14 +54,14 @@ const COURSE_OUTCOMES = ['CO1', 'CO2', 'CO3', 'CO4', 'CO5'];
 
 // Rejection reasons
 const REJECTION_REASONS = [
-  { id: 'duplicate', label: 'Duplicate question', desc: 'Similar question already exists' },
-  { id: 'off_topic', label: 'Off topic', desc: 'Not relevant to the subject' },
-  { id: 'too_easy', label: 'Too easy', desc: 'Below expected difficulty' },
-  { id: 'too_hard', label: 'Too hard', desc: 'Above expected difficulty' },
-  { id: 'unclear', label: 'Unclear wording', desc: 'Question is confusing' },
-  { id: 'incorrect_answer', label: 'Incorrect answer', desc: 'The answer key is wrong' },
-  { id: 'poor_options', label: 'Poor MCQ options', desc: 'Options need improvement' },
-  { id: 'needs_improvement', label: 'Needs improvement', desc: 'General improvements needed' },
+  { id: 'duplicate', label: 'Duplicate', desc: 'Already exists' },
+  { id: 'off_topic', label: 'Off topic', desc: 'Not relevant' },
+  { id: 'too_easy', label: 'Too easy', desc: 'Below level' },
+  { id: 'too_hard', label: 'Too hard', desc: 'Above level' },
+  { id: 'unclear', label: 'Unclear', desc: 'Confusing' },
+  { id: 'incorrect_answer', label: 'Wrong answer', desc: 'Key is wrong' },
+  { id: 'poor_options', label: 'Bad options', desc: 'MCQ issues' },
+  { id: 'needs_improvement', label: 'Improve', desc: 'General fix' },
 ];
 
 interface SwipeVettingProps {
@@ -67,9 +70,12 @@ interface SwipeVettingProps {
   questions: QuestionForVetting[];
   onQuestionVetted: (questionId: string, status: 'approved' | 'rejected' | 'skipped') => void;
   onQuestionUpdated: (questionId: string, updates: Partial<QuestionForVetting>) => void;
+  onLoadMore?: () => void;
+  hasMore?: boolean;
+  total?: number;
 }
 
-type SwipeDirection = 'left' | 'right' | 'up' | 'down' | null;
+type ViewMode = 'question' | 'edit' | 'reject';
 
 export function SwipeVetting({
   visible,
@@ -77,6 +83,9 @@ export function SwipeVetting({
   questions,
   onQuestionVetted,
   onQuestionUpdated,
+  onLoadMore,
+  hasMore = false,
+  total,
 }: SwipeVettingProps) {
   const colorScheme = useColorScheme();
   const colors = Colors[colorScheme ?? 'light'];
@@ -85,25 +94,40 @@ export function SwipeVetting({
 
   const [currentIndex, setCurrentIndex] = useState(0);
   const [isProcessing, setIsProcessing] = useState(false);
+  const [viewMode, setViewMode] = useState<ViewMode>('question');
   
   // Edit mode state
-  const [showEditPanel, setShowEditPanel] = useState(false);
   const [editData, setEditData] = useState<VetterUpdateQuestionRequest>({});
   const [coMappings, setCoMappings] = useState<Record<string, number>>({});
+  const [editingOptionIndex, setEditingOptionIndex] = useState<number | null>(null);
+  const [editingOptionText, setEditingOptionText] = useState<string>('');
+  const [mcqOptions, setMcqOptions] = useState<string[]>([]);
 
-  // Rejection modal state
-  const [showRejectModal, setShowRejectModal] = useState(false);
+  // Rejection state
   const [selectedReasons, setSelectedReasons] = useState<string[]>([]);
   const [rejectNotes, setRejectNotes] = useState('');
 
   // Swipe animation
   const position = useRef(new Animated.ValueXY()).current;
-  const [swipeDirection, setSwipeDirection] = useState<SwipeDirection>(null);
+  const scrollViewRef = useRef<ScrollView>(null);
 
   const currentQuestion = questions[currentIndex];
+  const totalQuestions = total ?? questions.length;
 
-  // Reset edit state when question changes
-  const resetEditState = useCallback(() => {
+  // Load more when approaching end
+  useEffect(() => {
+    if (currentIndex >= questions.length - 5 && hasMore && onLoadMore) {
+      onLoadMore();
+    }
+  }, [currentIndex, questions.length, hasMore, onLoadMore]);
+
+  // Reset state when question changes
+  const resetState = useCallback(() => {
+    setViewMode('question');
+    setSelectedReasons([]);
+    setRejectNotes('');
+    setEditingOptionIndex(null);
+    setEditingOptionText('');
     if (currentQuestion) {
       setEditData({
         marks: currentQuestion.marks ?? undefined,
@@ -113,28 +137,32 @@ export function SwipeVetting({
         course_outcome_mapping: currentQuestion.course_outcome_mapping ?? undefined,
       });
       setCoMappings(currentQuestion.course_outcome_mapping || {});
+      // Initialize MCQ options if it's an MCQ
+      if (currentQuestion.question_type === 'mcq' && currentQuestion.options) {
+        setMcqOptions([...currentQuestion.options]);
+      } else {
+        setMcqOptions([]);
+      }
     }
+    scrollViewRef.current?.scrollTo({ y: 0, animated: false });
   }, [currentQuestion]);
 
-  React.useEffect(() => {
-    resetEditState();
-  }, [currentIndex, resetEditState]);
+  useEffect(() => {
+    resetState();
+  }, [currentIndex, resetState]);
 
   const panResponder = useRef(
     PanResponder.create({
-      onStartShouldSetPanResponder: () => !showEditPanel && !showRejectModal,
-      onMoveShouldSetPanResponder: () => !showEditPanel && !showRejectModal,
+      onStartShouldSetPanResponder: () => viewMode === 'question',
+      onMoveShouldSetPanResponder: () => viewMode === 'question',
       onPanResponderMove: (_, gesture) => {
         position.setValue({ x: gesture.dx, y: gesture.dy });
-        
-        // Determine swipe direction hint
-        if (Math.abs(gesture.dx) > Math.abs(gesture.dy)) {
-          setSwipeDirection(gesture.dx > 50 ? 'right' : gesture.dx < -50 ? 'left' : null);
-        } else {
-          setSwipeDirection(gesture.dy < -50 ? 'up' : gesture.dy > 50 ? 'down' : null);
-        }
       },
       onPanResponderRelease: (_, gesture) => {
+        if (viewMode !== 'question') {
+          resetPosition();
+          return;
+        }
         // Check horizontal swipe
         if (gesture.dx > SWIPE_THRESHOLD) {
           swipeOut('right');
@@ -149,7 +177,6 @@ export function SwipeVetting({
         } else {
           resetPosition();
         }
-        setSwipeDirection(null);
       },
     })
   ).current;
@@ -172,27 +199,35 @@ export function SwipeVetting({
       if (direction === 'right') {
         handleApprove();
       } else {
-        setShowRejectModal(true);
+        setViewMode('reject');
         resetPosition();
+        // Scroll to show the reject panel
+        setTimeout(() => {
+          scrollViewRef.current?.scrollTo({ y: 200, animated: true });
+        }, 100);
       }
     });
   }, [position]);
 
   const handleUpSwipe = useCallback(() => {
     Animated.timing(position, {
-      toValue: { x: 0, y: -100 },
-      duration: 200,
+      toValue: { x: 0, y: -50 },
+      duration: 150,
       useNativeDriver: false,
     }).start(() => {
-      setShowEditPanel(true);
+      setViewMode('edit');
       resetPosition();
+      // Scroll to show the edit panel
+      setTimeout(() => {
+        scrollViewRef.current?.scrollTo({ y: 200, animated: true });
+      }, 100);
     });
   }, [position, resetPosition]);
 
   const handleDownSwipe = useCallback(() => {
     Animated.timing(position, {
-      toValue: { x: 0, y: 100 },
-      duration: 200,
+      toValue: { x: 0, y: 50 },
+      duration: 150,
       useNativeDriver: false,
     }).start(() => {
       handleSkip();
@@ -230,11 +265,8 @@ export function SwipeVetting({
         notes: rejectNotes || undefined,
         rejection_reasons: selectedReasons.length > 0 ? selectedReasons : undefined,
       });
-      showSuccess('Question rejected & regeneration queued');
+      showSuccess('Question rejected');
       onQuestionVetted(currentQuestion.id, 'rejected');
-      setShowRejectModal(false);
-      setSelectedReasons([]);
-      setRejectNotes('');
       moveToNext();
     } catch (err) {
       showError('Failed to reject question');
@@ -260,10 +292,14 @@ export function SwipeVetting({
         course_outcome_mapping: Object.keys(coMappings).length > 0 ? coMappings : undefined,
       };
       
+      // For MCQs, if options were edited, we need to handle that
+      // The backend might need options update - check if the schema supports it
+      // For now, just send the correct_answer which should be one of the options
+      
       await vetterService.updateQuestion(currentQuestion.id, updates);
       showSuccess('Question updated!');
       onQuestionUpdated(currentQuestion.id, updates as Partial<QuestionForVetting>);
-      setShowEditPanel(false);
+      setViewMode('question');
     } catch (err) {
       showError('Failed to update question');
       console.error(err);
@@ -274,10 +310,10 @@ export function SwipeVetting({
 
   const moveToNext = () => {
     position.setValue({ x: 0, y: 0 });
+    setViewMode('question');
     if (currentIndex < questions.length - 1) {
       setCurrentIndex(currentIndex + 1);
-    } else {
-      // All questions done
+    } else if (!hasMore) {
       showSuccess('All questions reviewed!');
       onClose();
     }
@@ -292,14 +328,58 @@ export function SwipeVetting({
   const updateCoMapping = (co: string, level: number) => {
     setCoMappings((prev) => ({
       ...prev,
-      [co]: prev[co] === level ? 0 : level, // Toggle off if same level
+      [co]: prev[co] === level ? 0 : level,
     }));
   };
 
-  // Card rotation based on swipe
+  const handleSelectMcqOption = (option: string) => {
+    setEditData((prev) => ({ ...prev, correct_answer: option }));
+  };
+
+  // Extract the option letter prefix (e.g., "A)" from "A) Some text")
+  const extractOptionPrefix = (option: string): { prefix: string; text: string } => {
+    const match = option.match(/^([A-Z]\)|[A-Z]\.\s*|[A-Z]\s+)(.*)$/);
+    if (match) {
+      return { prefix: match[1], text: match[2] };
+    }
+    return { prefix: '', text: option };
+  };
+
+  const startEditingOption = (index: number) => {
+    setEditingOptionIndex(index);
+    const { text } = extractOptionPrefix(mcqOptions[index]);
+    setEditingOptionText(text);
+  };
+
+  const saveEditedOption = () => {
+    if (editingOptionIndex !== null && editingOptionText.trim()) {
+      const { prefix } = extractOptionPrefix(mcqOptions[editingOptionIndex]);
+      const newOptionText = prefix + editingOptionText.trim();
+      
+      const newOptions = [...mcqOptions];
+      const oldOption = newOptions[editingOptionIndex];
+      newOptions[editingOptionIndex] = newOptionText;
+      setMcqOptions(newOptions);
+      
+      // If this was the correct answer, update it
+      if (oldOption === editData.correct_answer) {
+        setEditData((prev) => ({ ...prev, correct_answer: newOptionText }));
+      }
+      
+      setEditingOptionIndex(null);
+      setEditingOptionText('');
+    }
+  };
+
+  const cancelEditingOption = () => {
+    setEditingOptionIndex(null);
+    setEditingOptionText('');
+  };
+
+  // Card animation
   const rotate = position.x.interpolate({
     inputRange: [-SCREEN_WIDTH / 2, 0, SCREEN_WIDTH / 2],
-    outputRange: ['-10deg', '0deg', '10deg'],
+    outputRange: ['-8deg', '0deg', '8deg'],
     extrapolate: 'clamp',
   });
 
@@ -324,155 +404,140 @@ export function SwipeVetting({
     extrapolate: 'clamp',
   });
 
-  const editOpacity = position.y.interpolate({
-    inputRange: [-SWIPE_THRESHOLD, 0],
-    outputRange: [1, 0],
-    extrapolate: 'clamp',
-  });
-
-  const skipOpacity = position.y.interpolate({
-    inputRange: [0, SWIPE_THRESHOLD],
-    outputRange: [0, 1],
-    extrapolate: 'clamp',
-  });
-
   if (!visible) return null;
 
   return (
     <Modal visible={visible} animationType="slide" presentationStyle="fullScreen">
-      <SafeAreaView style={[styles.container, { backgroundColor: colors.background }]}>
-        {/* Header */}
-        <View style={styles.header}>
-          <TouchableOpacity onPress={onClose} style={styles.closeButton}>
-            <IconSymbol name="xmark" size={24} color={colors.text} />
-          </TouchableOpacity>
-          <View style={styles.headerCenter}>
-            <Text style={[styles.headerTitle, { color: colors.text }]}>Vetting Mode</Text>
-            <Text style={[styles.headerSubtitle, { color: colors.textSecondary }]}>
-              {currentIndex + 1} of {questions.length}
-            </Text>
-          </View>
-          <View style={styles.progressContainer}>
-            <View
-              style={[
-                styles.progressBar,
-                { backgroundColor: colors.border },
-              ]}
-            >
-              <View
-                style={[
-                  styles.progressFill,
-                  {
-                    backgroundColor: colors.primary,
-                    width: `${((currentIndex + 1) / questions.length) * 100}%`,
-                  },
-                ]}
-              />
+      <SafeAreaView style={[styles.container, { backgroundColor: colors.background }]} edges={['top', 'left', 'right']}>
+        <KeyboardAvoidingView 
+          style={styles.flex} 
+          behavior={Platform.OS === 'ios' ? 'padding' : 'height'}
+        >
+          {/* Header */}
+          <View style={[styles.header, { backgroundColor: colors.background }]}>
+            <View style={styles.headerRow}>
+              <TouchableOpacity onPress={onClose} style={styles.closeButton}>
+                <IconSymbol name="xmark.circle.fill" size={28} color={colors.textSecondary} />
+              </TouchableOpacity>
+              <View style={styles.headerCenter}>
+                <Text style={[styles.headerTitle, { color: colors.text }]}>Vetting Mode</Text>
+                <Text style={[styles.headerSubtitle, { color: colors.textSecondary }]}>
+                  {currentIndex + 1} of {totalQuestions}
+                </Text>
+              </View>
+              <View style={{ width: 28 }} />
+            </View>
+            <View style={styles.progressContainer}>
+              <View style={[styles.progressBar, { backgroundColor: colors.border }]}>
+                <View
+                  style={[
+                    styles.progressFill,
+                    {
+                      backgroundColor: colors.primary,
+                      width: `${((currentIndex + 1) / totalQuestions) * 100}%`,
+                    },
+                  ]}
+                />
+              </View>
             </View>
           </View>
-        </View>
 
-        {/* Swipe Instructions */}
-        <View style={styles.instructionsRow}>
-          <View style={styles.instructionItem}>
-            <IconSymbol name="arrow.left" size={16} color={colors.error} />
-            <Text style={[styles.instructionText, { color: colors.textSecondary }]}>Reject</Text>
-          </View>
-          <View style={styles.instructionItem}>
-            <IconSymbol name="arrow.up" size={16} color={colors.primary} />
-            <Text style={[styles.instructionText, { color: colors.textSecondary }]}>Edit</Text>
-          </View>
-          <View style={styles.instructionItem}>
-            <IconSymbol name="arrow.down" size={16} color={colors.warning} />
-            <Text style={[styles.instructionText, { color: colors.textSecondary }]}>Skip</Text>
-          </View>
-          <View style={styles.instructionItem}>
-            <IconSymbol name="arrow.right" size={16} color={colors.success} />
-            <Text style={[styles.instructionText, { color: colors.textSecondary }]}>Approve</Text>
-          </View>
-        </View>
+          {/* Swipe Instructions (only in question mode) */}
+          {viewMode === 'question' && (
+            <View style={[styles.instructionsCard, { backgroundColor: colors.card, borderColor: colors.border }]}>
+              <Text style={[styles.instructionsTitle, { color: colors.text }]}>Swipe to decide:</Text>
+              <View style={styles.instructionsRow}>
+                <View style={styles.instructionItem}>
+                  <View style={[styles.instructionIcon, { backgroundColor: colors.error + '20' }]}>
+                    <IconSymbol name="arrow.left" size={16} color={colors.error} />
+                  </View>
+                  <Text style={[styles.instructionText, { color: colors.text }]}>Reject</Text>
+                </View>
+                <View style={styles.instructionItem}>
+                  <View style={[styles.instructionIcon, { backgroundColor: colors.primary + '20' }]}>
+                    <IconSymbol name="arrow.up" size={16} color={colors.primary} />
+                  </View>
+                  <Text style={[styles.instructionText, { color: colors.text }]}>Edit</Text>
+                </View>
+                <View style={styles.instructionItem}>
+                  <View style={[styles.instructionIcon, { backgroundColor: colors.warning + '20' }]}>
+                    <IconSymbol name="arrow.down" size={16} color={colors.warning} />
+                  </View>
+                  <Text style={[styles.instructionText, { color: colors.text }]}>Skip</Text>
+                </View>
+                <View style={styles.instructionItem}>
+                  <View style={[styles.instructionIcon, { backgroundColor: colors.success + '20' }]}>
+                    <IconSymbol name="arrow.right" size={16} color={colors.success} />
+                  </View>
+                  <Text style={[styles.instructionText, { color: colors.text }]}>Approve</Text>
+                </View>
+              </View>
+            </View>
+          )}
 
-        {/* Card Stack */}
-        <View style={styles.cardContainer}>
-          {/* Swipe Indicators */}
-          <Animated.View style={[styles.swipeIndicator, styles.approveIndicator, { opacity: approveOpacity }]}>
-            <LinearGradient colors={['#34C759', '#30B350']} style={styles.indicatorGradient}>
-              <IconSymbol name="checkmark" size={48} color="#FFFFFF" />
-              <Text style={styles.indicatorText}>APPROVE</Text>
-            </LinearGradient>
-          </Animated.View>
-
-          <Animated.View style={[styles.swipeIndicator, styles.rejectIndicator, { opacity: rejectOpacity }]}>
-            <LinearGradient colors={['#FF3B30', '#D63D2F']} style={styles.indicatorGradient}>
-              <IconSymbol name="xmark" size={48} color="#FFFFFF" />
-              <Text style={styles.indicatorText}>REJECT</Text>
-            </LinearGradient>
-          </Animated.View>
-
-          <Animated.View style={[styles.swipeIndicator, styles.editIndicator, { opacity: editOpacity }]}>
-            <LinearGradient colors={['#5856D6', '#4A4ADE']} style={styles.indicatorGradient}>
-              <IconSymbol name="pencil" size={48} color="#FFFFFF" />
-              <Text style={styles.indicatorText}>EDIT</Text>
-            </LinearGradient>
-          </Animated.View>
-
-          <Animated.View style={[styles.swipeIndicator, styles.skipIndicator, { opacity: skipOpacity }]}>
-            <LinearGradient colors={['#FF9500', '#FF8000']} style={styles.indicatorGradient}>
-              <IconSymbol name="arrow.uturn.right" size={48} color="#FFFFFF" />
-              <Text style={styles.indicatorText}>SKIP</Text>
-            </LinearGradient>
-          </Animated.View>
-
-          {/* Question Card */}
-          {currentQuestion && (
+          {/* Question Card - Outside ScrollView for swipe gestures */}
+          {currentQuestion && viewMode === 'question' && (
             <Animated.View
-              style={[styles.card, cardStyle]}
+              style={[styles.questionCardContainer, cardStyle]}
               {...panResponder.panHandlers}
             >
-              <GlassCard style={[styles.cardContent, { backgroundColor: colors.card }]}>
-                {/* Question type badge */}
-                <View style={styles.cardHeader}>
-                  <View style={[styles.typeBadge, { backgroundColor: colors.primary + '20' }]}>
-                    <Text style={[styles.typeBadgeText, { color: colors.primary }]}>
-                      {currentQuestion.question_type.replace('_', ' ').toUpperCase()}
-                    </Text>
-                  </View>
-                  <View style={styles.metaBadges}>
-                    {currentQuestion.difficulty_level && (
-                      <View style={[styles.metaBadge, { backgroundColor: colors.border }]}>
-                        <Text style={[styles.metaBadgeText, { color: colors.text }]}>
-                          {currentQuestion.difficulty_level}
-                        </Text>
-                      </View>
-                    )}
-                    {currentQuestion.marks && (
-                      <View style={[styles.metaBadge, { backgroundColor: colors.border }]}>
-                        <Text style={[styles.metaBadgeText, { color: colors.text }]}>
-                          {currentQuestion.marks} marks
-                        </Text>
-                      </View>
-                    )}
-                  </View>
-                </View>
+              {/* Swipe Indicators */}
+              <Animated.View style={[styles.swipeLabel, styles.approveLabel, { opacity: approveOpacity }]}>
+                <Text style={styles.swipeLabelText}>APPROVE</Text>
+              </Animated.View>
+              <Animated.View style={[styles.swipeLabel, styles.rejectLabel, { opacity: rejectOpacity }]}>
+                <Text style={styles.swipeLabelText}>REJECT</Text>
+              </Animated.View>
 
-                {/* Subject/Topic info */}
-                {(currentQuestion.subject_name || currentQuestion.topic_name) && (
-                  <View style={styles.subjectRow}>
-                    {currentQuestion.subject_name && (
-                      <Text style={[styles.subjectText, { color: colors.textSecondary }]}>
-                        {currentQuestion.subject_code || currentQuestion.subject_name}
+              <ScrollView 
+                style={styles.questionScrollView}
+                contentContainerStyle={styles.questionScrollContent}
+                showsVerticalScrollIndicator={false}
+                scrollEnabled={true}
+              >
+                <GlassCard style={[styles.questionCard, { backgroundColor: colors.card }]}>
+                  {/* Question Header */}
+                  <View style={styles.cardHeader}>
+                    <View style={[styles.typeBadge, { backgroundColor: colors.primary + '20' }]}>
+                      <Text style={[styles.typeBadgeText, { color: colors.primary }]}>
+                        {currentQuestion.question_type.replace('_', ' ').toUpperCase()}
                       </Text>
-                    )}
-                    {currentQuestion.topic_name && (
-                      <Text style={[styles.topicText, { color: colors.textSecondary }]}>
-                        • {currentQuestion.topic_name}
-                      </Text>
-                    )}
+                    </View>
+                    <View style={styles.metaBadges}>
+                      {currentQuestion.difficulty_level && (
+                        <View style={[styles.metaBadge, { backgroundColor: colors.border }]}>
+                          <Text style={[styles.metaBadgeText, { color: colors.text }]}>
+                            {currentQuestion.difficulty_level}
+                          </Text>
+                        </View>
+                      )}
+                      {currentQuestion.marks && (
+                        <View style={[styles.metaBadge, { backgroundColor: colors.border }]}>
+                          <Text style={[styles.metaBadgeText, { color: colors.text }]}>
+                            {currentQuestion.marks} marks
+                          </Text>
+                        </View>
+                      )}
+                    </View>
                   </View>
-                )}
 
-                {/* Question text */}
-                <ScrollView style={styles.questionScroll} showsVerticalScrollIndicator={false}>
+                  {/* Subject/Topic */}
+                  {(currentQuestion.subject_name || currentQuestion.topic_name) && (
+                    <View style={styles.subjectRow}>
+                      {currentQuestion.subject_name && (
+                        <Text style={[styles.subjectText, { color: colors.textSecondary }]}>
+                          {currentQuestion.subject_code || currentQuestion.subject_name}
+                        </Text>
+                      )}
+                      {currentQuestion.topic_name && (
+                        <Text style={[styles.topicText, { color: colors.textSecondary }]}>
+                          • {currentQuestion.topic_name}
+                        </Text>
+                      )}
+                    </View>
+                  )}
+
+                  {/* Question Text */}
                   <Text style={[styles.questionText, { color: colors.text }]}>
                     {currentQuestion.question_text}
                   </Text>
@@ -515,7 +580,7 @@ export function SwipeVetting({
                               {option}
                             </Text>
                             {isCorrect && (
-                              <IconSymbol name="checkmark.circle.fill" size={18} color={colors.success} />
+                              <IconSymbol name="checkmark.circle.fill" size={16} color={colors.success} />
                             )}
                           </View>
                         );
@@ -523,9 +588,9 @@ export function SwipeVetting({
                     </View>
                   )}
 
-                  {/* Short/Long answer */}
+                  {/* Short/Long Answer */}
                   {currentQuestion.question_type !== 'mcq' && currentQuestion.correct_answer && (
-                    <View style={[styles.answerBox, { backgroundColor: colors.success + '10', borderColor: colors.success }]}>
+                    <View style={[styles.answerBox, { borderColor: colors.success }]}>
                       <Text style={[styles.answerLabel, { color: colors.success }]}>Expected Answer:</Text>
                       <Text style={[styles.answerText, { color: colors.text }]}>
                         {currentQuestion.correct_answer}
@@ -542,311 +607,420 @@ export function SwipeVetting({
                       </Text>
                     </View>
                   )}
-                </ScrollView>
 
-                {/* Teacher info */}
-                {currentQuestion.teacher_name && (
-                  <View style={styles.teacherRow}>
-                    <IconSymbol name="person.fill" size={14} color={colors.textSecondary} />
-                    <Text style={[styles.teacherText, { color: colors.textSecondary }]}>
-                      {currentQuestion.teacher_name}
-                    </Text>
-                  </View>
-                )}
-              </GlassCard>
+                  {/* Source References */}
+                  {(currentQuestion as any).source_info && (
+                    <View style={styles.sourcesSection}>
+                      <View style={[styles.sourcesHeader, { backgroundColor: colors.primary + '15' }]}>
+                        <IconSymbol name="doc.text.fill" size={14} color={colors.primary} />
+                        <Text style={[styles.sourcesHeaderText, { color: colors.primary }]}>Source References</Text>
+                      </View>
+                      <QuestionSources sourceInfo={(currentQuestion as any).source_info} compact />
+                    </View>
+                  )}
+
+                  {/* Teacher info */}
+                  {currentQuestion.teacher_name && (
+                    <View style={[styles.teacherRow, { borderTopColor: colors.border }]}>
+                      <IconSymbol name="person.fill" size={12} color={colors.textSecondary} />
+                      <Text style={[styles.teacherText, { color: colors.textSecondary }]}>
+                        {currentQuestion.teacher_name}
+                      </Text>
+                    </View>
+                  )}
+                </GlassCard>
+              </ScrollView>
             </Animated.View>
           )}
 
-          {/* Loading overlay */}
-          {isProcessing && (
-            <View style={styles.processingOverlay}>
-              <BlurView intensity={80} tint={isDark ? 'dark' : 'light'} style={styles.processingBlur}>
-                <ActivityIndicator size="large" color={colors.primary} />
-                <Text style={[styles.processingText, { color: colors.primary }]}>Processing...</Text>
-              </BlurView>
-            </View>
-          )}
-        </View>
-
-        {/* Quick Action Buttons */}
-        <View style={styles.actionButtonsRow}>
-          <TouchableOpacity
-            style={[styles.actionButton, { backgroundColor: colors.error + '20' }]}
-            onPress={() => setShowRejectModal(true)}
-            disabled={isProcessing}
-          >
-            <IconSymbol name="xmark" size={28} color={colors.error} />
-          </TouchableOpacity>
-          <TouchableOpacity
-            style={[styles.actionButton, { backgroundColor: colors.warning + '20' }]}
-            onPress={handleSkip}
-            disabled={isProcessing}
-          >
-            <IconSymbol name="arrow.uturn.right" size={28} color={colors.warning} />
-          </TouchableOpacity>
-          <TouchableOpacity
-            style={[styles.actionButton, { backgroundColor: colors.primary + '20' }]}
-            onPress={() => setShowEditPanel(true)}
-            disabled={isProcessing}
-          >
-            <IconSymbol name="pencil" size={28} color={colors.primary} />
-          </TouchableOpacity>
-          <TouchableOpacity
-            style={[styles.actionButton, { backgroundColor: colors.success + '20' }]}
-            onPress={handleApprove}
-            disabled={isProcessing}
-          >
-            <IconSymbol name="checkmark" size={28} color={colors.success} />
-          </TouchableOpacity>
-        </View>
-
-        {/* Edit Panel Modal */}
-        <Modal
-          visible={showEditPanel}
-          animationType="slide"
-          presentationStyle="pageSheet"
-          onRequestClose={() => setShowEditPanel(false)}
-        >
-          <SafeAreaView style={[styles.editContainer, { backgroundColor: colors.background }]}>
-            <View style={styles.editHeader}>
-              <TouchableOpacity onPress={() => setShowEditPanel(false)}>
-                <Text style={[styles.cancelText, { color: colors.textSecondary }]}>Cancel</Text>
-              </TouchableOpacity>
-              <Text style={[styles.editTitle, { color: colors.text }]}>Edit Question</Text>
-              <TouchableOpacity onPress={handleSaveEdits} disabled={isProcessing}>
-                {isProcessing ? (
-                  <ActivityIndicator size="small" color={colors.primary} />
-                ) : (
-                  <Text style={[styles.saveText, { color: colors.primary }]}>Save</Text>
-                )}
-              </TouchableOpacity>
-            </View>
-
-            <ScrollView style={styles.editContent} showsVerticalScrollIndicator={false}>
-              {/* Marks */}
-              <View style={styles.editSection}>
-                <Text style={[styles.editLabel, { color: colors.text }]}>Marks</Text>
-                <View style={styles.marksRow}>
-                  <TouchableOpacity
-                    style={[styles.marksButton, { backgroundColor: colors.border }]}
-                    onPress={() => setEditData((prev) => ({ ...prev, marks: Math.max(1, (prev.marks || 1) - 1) }))}
-                  >
-                    <IconSymbol name="minus" size={16} color={colors.text} />
-                  </TouchableOpacity>
-                  <TextInput
-                    style={[styles.marksInput, { color: colors.text, borderColor: colors.border }]}
-                    value={String(editData.marks || 1)}
-                    onChangeText={(v) => setEditData((prev) => ({ ...prev, marks: parseInt(v) || 1 }))}
-                    keyboardType="numeric"
-                  />
-                  <TouchableOpacity
-                    style={[styles.marksButton, { backgroundColor: colors.border }]}
-                    onPress={() => setEditData((prev) => ({ ...prev, marks: (prev.marks || 1) + 1 }))}
-                  >
-                    <IconSymbol name="plus" size={16} color={colors.text} />
-                  </TouchableOpacity>
-                </View>
-              </View>
-
-              {/* Difficulty */}
-              <View style={styles.editSection}>
-                <Text style={[styles.editLabel, { color: colors.text }]}>Difficulty</Text>
-                <View style={styles.difficultyRow}>
-                  {['easy', 'medium', 'hard'].map((diff) => (
-                    <TouchableOpacity
-                      key={diff}
-                      style={[
-                        styles.difficultyButton,
-                        {
-                          borderColor:
-                            diff === 'easy' ? '#34C759' : diff === 'medium' ? '#FF9500' : '#FF3B30',
-                          backgroundColor:
-                            editData.difficulty_level === diff
-                              ? diff === 'easy'
-                                ? '#34C759'
-                                : diff === 'medium'
-                                ? '#FF9500'
-                                : '#FF3B30'
-                              : 'transparent',
-                        },
-                      ]}
-                      onPress={() => setEditData((prev) => ({ ...prev, difficulty_level: diff }))}
-                    >
-                      <Text
-                        style={[
-                          styles.difficultyText,
-                          {
-                            color:
-                              editData.difficulty_level === diff
-                                ? '#fff'
-                                : diff === 'easy'
-                                ? '#34C759'
-                                : diff === 'medium'
-                                ? '#FF9500'
-                                : '#FF3B30',
-                          },
-                        ]}
-                      >
-                        {diff.charAt(0).toUpperCase() + diff.slice(1)}
+          {/* Edit and Reject Panels - Scrollable */}
+          {currentQuestion && viewMode !== 'question' && (
+            <ScrollView
+              ref={scrollViewRef}
+              style={styles.panelScrollView}
+              contentContainerStyle={styles.panelScrollContent}
+              showsVerticalScrollIndicator={false}
+            >
+              {/* Dimmed Question Card */}
+              <View style={styles.dimmedQuestionContainer}>
+                <GlassCard style={[styles.questionCard, { backgroundColor: colors.card, opacity: 0.6 }]}>
+                  <View style={styles.cardHeader}>
+                    <View style={[styles.typeBadge, { backgroundColor: colors.primary + '20' }]}>
+                      <Text style={[styles.typeBadgeText, { color: colors.primary }]}>
+                        {currentQuestion.question_type.replace('_', ' ').toUpperCase()}
                       </Text>
-                    </TouchableOpacity>
-                  ))}
-                </View>
+                    </View>
+                  </View>
+                  <Text style={[styles.questionText, { color: colors.text }]} numberOfLines={3}>
+                    {currentQuestion.question_text}
+                  </Text>
+                </GlassCard>
               </View>
 
-              {/* Course Outcome Mapping */}
-              <View style={styles.editSection}>
-                <LinearGradient
-                  colors={['#5856D6', '#4A4ADE']}
-                  style={styles.sectionHeader}
-                >
-                  <IconSymbol name="list.number" size={16} color="#FFFFFF" />
-                  <Text style={styles.sectionHeaderText}>Course Outcome Mapping</Text>
-                </LinearGradient>
-                
-                <View style={styles.coGrid}>
-                  {COURSE_OUTCOMES.map((co) => (
-                    <View key={co} style={styles.coRow}>
-                      <Text style={[styles.coLabel, { color: colors.text }]}>{co}</Text>
-                      <View style={styles.coLevels}>
-                        {CO_LEVELS.map(({ level, label, color }) => (
-                          <TouchableOpacity
-                            key={level}
+            {/* Rejection Panel (Inline Floating Card) */}
+            {viewMode === 'reject' && (
+              <View style={styles.inlinePanel}>
+                <GlassCard style={[styles.rejectCard, { backgroundColor: colors.card }]}>
+                  <View style={styles.panelHeader}>
+                    <Text style={[styles.panelTitle, { color: colors.error }]}>
+                      <IconSymbol name="xmark.circle.fill" size={18} color={colors.error} /> Reject Question
+                    </Text>
+                    <TouchableOpacity onPress={() => setViewMode('question')}>
+                      <IconSymbol name="xmark" size={20} color={colors.textSecondary} />
+                    </TouchableOpacity>
+                  </View>
+
+                  <Text style={[styles.panelSubtitle, { color: colors.textSecondary }]}>
+                    Select reason(s) for rejection:
+                  </Text>
+
+                  <View style={styles.reasonsGrid}>
+                    {REJECTION_REASONS.map((reason) => {
+                      const isSelected = selectedReasons.includes(reason.id);
+                      return (
+                        <TouchableOpacity
+                          key={reason.id}
+                          style={[
+                            styles.reasonChip,
+                            {
+                              borderColor: isSelected ? colors.error : colors.border,
+                              backgroundColor: isSelected ? colors.error + '20' : 'transparent',
+                            },
+                          ]}
+                          onPress={() => toggleRejectReason(reason.id)}
+                        >
+                          <Text
                             style={[
-                              styles.coLevelButton,
+                              styles.reasonChipText,
+                              { color: isSelected ? colors.error : colors.text },
+                            ]}
+                          >
+                            {reason.label}
+                          </Text>
+                        </TouchableOpacity>
+                      );
+                    })}
+                  </View>
+
+                  <TextInput
+                    style={[
+                      styles.notesInput,
+                      { color: colors.text, borderColor: colors.border, backgroundColor: colors.background },
+                    ]}
+                    value={rejectNotes}
+                    onChangeText={setRejectNotes}
+                    placeholder="Additional notes (optional)"
+                    placeholderTextColor={colors.textTertiary}
+                    multiline
+                  />
+
+                  <View style={styles.panelButtons}>
+                    <TouchableOpacity
+                      style={[styles.panelButton, { backgroundColor: colors.border }]}
+                      onPress={() => setViewMode('question')}
+                    >
+                      <Text style={[styles.panelButtonText, { color: colors.text }]}>Cancel</Text>
+                    </TouchableOpacity>
+                    <TouchableOpacity
+                      style={[styles.panelButton, { backgroundColor: colors.error }]}
+                      onPress={handleReject}
+                      disabled={isProcessing}
+                    >
+                      {isProcessing ? (
+                        <ActivityIndicator size="small" color="#fff" />
+                      ) : (
+                        <Text style={[styles.panelButtonText, { color: '#fff' }]}>Reject</Text>
+                      )}
+                    </TouchableOpacity>
+                  </View>
+                </GlassCard>
+              </View>
+            )}
+
+            {/* Edit Panel (Inline below question) */}
+            {viewMode === 'edit' && (
+              <View style={styles.inlinePanel}>
+                <GlassCard style={[styles.editCard, { backgroundColor: colors.card }]}>
+                  <View style={styles.panelHeader}>
+                    <Text style={[styles.panelTitle, { color: colors.primary }]}>
+                      <IconSymbol name="pencil" size={18} color={colors.primary} /> Edit Question
+                    </Text>
+                    <TouchableOpacity onPress={() => setViewMode('question')}>
+                      <IconSymbol name="xmark" size={20} color={colors.textSecondary} />
+                    </TouchableOpacity>
+                  </View>
+
+                  {/* Marks */}
+                  <View style={styles.editRow}>
+                    <Text style={[styles.editLabel, { color: colors.text }]}>Marks</Text>
+                    <View style={styles.marksRow}>
+                      <TouchableOpacity
+                        style={[styles.marksButton, { backgroundColor: colors.border }]}
+                        onPress={() => setEditData((prev) => ({ ...prev, marks: Math.max(1, (prev.marks || 1) - 1) }))}
+                      >
+                        <IconSymbol name="minus" size={14} color={colors.text} />
+                      </TouchableOpacity>
+                      <TextInput
+                        style={[styles.marksInput, { color: colors.text, borderColor: colors.border }]}
+                        value={String(editData.marks || 1)}
+                        onChangeText={(v) => setEditData((prev) => ({ ...prev, marks: parseInt(v) || 1 }))}
+                        keyboardType="numeric"
+                      />
+                      <TouchableOpacity
+                        style={[styles.marksButton, { backgroundColor: colors.border }]}
+                        onPress={() => setEditData((prev) => ({ ...prev, marks: (prev.marks || 1) + 1 }))}
+                      >
+                        <IconSymbol name="plus" size={14} color={colors.text} />
+                      </TouchableOpacity>
+                    </View>
+                  </View>
+
+                  {/* Difficulty */}
+                  <View style={styles.editRow}>
+                    <Text style={[styles.editLabel, { color: colors.text }]}>Difficulty</Text>
+                    <View style={styles.difficultyRow}>
+                      {['easy', 'medium', 'hard'].map((diff) => {
+                        const diffColor = diff === 'easy' ? '#34C759' : diff === 'medium' ? '#FF9500' : '#FF3B30';
+                        return (
+                          <TouchableOpacity
+                            key={diff}
+                            style={[
+                              styles.difficultyButton,
                               {
-                                borderColor: color,
-                                backgroundColor: coMappings[co] === level ? color : 'transparent',
+                                borderColor: diffColor,
+                                backgroundColor: editData.difficulty_level === diff ? diffColor : 'transparent',
                               },
                             ]}
-                            onPress={() => updateCoMapping(co, level)}
+                            onPress={() => setEditData((prev) => ({ ...prev, difficulty_level: diff }))}
                           >
                             <Text
                               style={[
-                                styles.coLevelText,
-                                { color: coMappings[co] === level ? '#fff' : color },
+                                styles.difficultyText,
+                                { color: editData.difficulty_level === diff ? '#fff' : diffColor },
                               ]}
                             >
-                              {label}
+                              {diff.charAt(0).toUpperCase() + diff.slice(1)}
                             </Text>
                           </TouchableOpacity>
-                        ))}
-                      </View>
+                        );
+                      })}
                     </View>
-                  ))}
-                </View>
-              </View>
+                  </View>
 
-              {/* Answer Edit */}
-              <View style={styles.editSection}>
-                <Text style={[styles.editLabel, { color: colors.text }]}>Answer</Text>
-                <TextInput
-                  style={[
-                    styles.answerInput,
-                    { color: colors.text, borderColor: colors.border, backgroundColor: colors.card },
-                  ]}
-                  value={editData.correct_answer || ''}
-                  onChangeText={(v) => setEditData((prev) => ({ ...prev, correct_answer: v }))}
-                  placeholder="Enter expected answer..."
-                  placeholderTextColor={colors.textSecondary}
-                  multiline
-                />
-              </View>
-            </ScrollView>
-          </SafeAreaView>
-        </Modal>
-
-        {/* Rejection Modal */}
-        <Modal
-          visible={showRejectModal}
-          animationType="fade"
-          transparent
-          onRequestClose={() => setShowRejectModal(false)}
-        >
-          <View style={styles.rejectModalOverlay}>
-            <View style={[styles.rejectModalContent, { backgroundColor: colors.card }]}>
-              <View style={styles.rejectModalHeader}>
-                <Text style={[styles.rejectModalTitle, { color: colors.text }]}>Reject Question</Text>
-                <TouchableOpacity onPress={() => setShowRejectModal(false)}>
-                  <IconSymbol name="xmark.circle.fill" size={24} color={colors.textSecondary} />
-                </TouchableOpacity>
-              </View>
-
-              <Text style={[styles.rejectModalSubtitle, { color: colors.textSecondary }]}>
-                Select rejection reasons (optional)
-              </Text>
-
-              <ScrollView style={styles.reasonsList}>
-                {REJECTION_REASONS.map((reason) => {
-                  const isSelected = selectedReasons.includes(reason.id);
-                  return (
-                    <TouchableOpacity
-                      key={reason.id}
-                      style={[
-                        styles.reasonItem,
-                        {
-                          borderColor: isSelected ? colors.error : colors.border,
-                          backgroundColor: isSelected ? colors.error + '10' : 'transparent',
-                        },
-                      ]}
-                      onPress={() => toggleRejectReason(reason.id)}
-                    >
-                      <View
-                        style={[
-                          styles.reasonCheckbox,
-                          {
-                            borderColor: isSelected ? colors.error : colors.border,
-                            backgroundColor: isSelected ? colors.error : 'transparent',
-                          },
-                        ]}
-                      >
-                        {isSelected && <IconSymbol name="checkmark" size={12} color="#fff" />}
+                  {/* CO Mapping */}
+                  <View style={styles.coSection}>
+                    <Text style={[styles.editLabel, { color: colors.text, marginBottom: Spacing.sm }]}>
+                      Course Outcome Mapping
+                    </Text>
+                    {COURSE_OUTCOMES.map((co) => (
+                      <View key={co} style={styles.coRow}>
+                        <Text style={[styles.coLabel, { color: colors.text }]}>{co}</Text>
+                        <View style={styles.coLevels}>
+                          {CO_LEVELS.map(({ level, label, color }) => (
+                            <TouchableOpacity
+                              key={level}
+                              style={[
+                                styles.coLevelButton,
+                                {
+                                  borderColor: color,
+                                  backgroundColor: coMappings[co] === level ? color : 'transparent',
+                                },
+                              ]}
+                              onPress={() => updateCoMapping(co, level)}
+                            >
+                              <Text
+                                style={[
+                                  styles.coLevelText,
+                                  { color: coMappings[co] === level ? '#fff' : color },
+                                ]}
+                              >
+                                {level}
+                              </Text>
+                            </TouchableOpacity>
+                          ))}
+                        </View>
                       </View>
-                      <View style={styles.reasonContent}>
-                        <Text style={[styles.reasonLabel, { color: colors.text }]}>{reason.label}</Text>
-                        <Text style={[styles.reasonDesc, { color: colors.textSecondary }]}>
-                          {reason.desc}
+                    ))}
+                  </View>
+
+                  {/* Answer Edit */}
+                  <View style={styles.answerSection}>
+                    <Text style={[styles.editLabel, { color: colors.text, marginBottom: Spacing.sm }]}>Answer</Text>
+                    
+                    {currentQuestion.question_type === 'mcq' && mcqOptions.length > 0 ? (
+                      // MCQ: Show options to tap and select correct answer
+                      <View style={styles.mcqEditContainer}>
+                        {mcqOptions.map((option, idx) => {
+                          const isCorrect = option === editData.correct_answer;
+                          const isEditing = editingOptionIndex === idx;
+                          const { prefix, text } = extractOptionPrefix(option);
+                          
+                          return (
+                            <View key={idx} style={styles.mcqEditOptionRow}>
+                              {isEditing ? (
+                                // Edit mode for this option - only edit text after prefix
+                                <View style={[styles.mcqEditInput, { backgroundColor: colors.background, borderColor: colors.primary }]}>
+                                  <View style={styles.mcqEditInputRow}>
+                                    <Text style={[styles.mcqEditPrefix, { color: colors.textSecondary }]}>{prefix}</Text>
+                                    <TextInput
+                                      style={[styles.mcqEditTextInput, { color: colors.text }]}
+                                      value={editingOptionText}
+                                      onChangeText={setEditingOptionText}
+                                      placeholder="Option text..."
+                                      placeholderTextColor={colors.textTertiary}
+                                      autoFocus
+                                      multiline
+                                    />
+                                  </View>
+                                  <View style={styles.mcqEditActions}>
+                                    <TouchableOpacity
+                                      style={[styles.mcqEditActionButton, { backgroundColor: colors.border }]}
+                                      onPress={cancelEditingOption}
+                                    >
+                                      <IconSymbol name="xmark" size={14} color={colors.text} />
+                                    </TouchableOpacity>
+                                    <TouchableOpacity
+                                      style={[styles.mcqEditActionButton, { backgroundColor: colors.success }]}
+                                      onPress={saveEditedOption}
+                                    >
+                                      <IconSymbol name="checkmark" size={14} color="#fff" />
+                                    </TouchableOpacity>
+                                  </View>
+                                </View>
+                              ) : (
+                                // Display mode - tap to select as correct
+                                <TouchableOpacity
+                                  style={[
+                                    styles.mcqEditOption,
+                                    {
+                                      backgroundColor: isCorrect ? colors.success + '20' : colors.background,
+                                      borderColor: isCorrect ? colors.success : colors.border,
+                                    },
+                                  ]}
+                                  onPress={() => handleSelectMcqOption(option)}
+                                >
+                                  <View style={[
+                                    styles.optionLetter,
+                                    { backgroundColor: isCorrect ? colors.success : colors.border }
+                                  ]}>
+                                    <Text style={[
+                                      styles.optionLetterText,
+                                      { color: isCorrect ? '#fff' : colors.textSecondary }
+                                    ]}>
+                                      {String.fromCharCode(65 + idx)}
+                                    </Text>
+                                  </View>
+                                  <Text style={[
+                                    styles.mcqEditOptionText,
+                                    { color: isCorrect ? colors.success : colors.text }
+                                  ]}>
+                                    {text}
+                                  </Text>
+                                  {isCorrect && (
+                                    <IconSymbol name="checkmark.circle.fill" size={18} color={colors.success} />
+                                  )}
+                                  <TouchableOpacity
+                                    style={[styles.mcqEditButton, { backgroundColor: colors.primary + '15' }]}
+                                    onPress={(e) => {
+                                      e.stopPropagation();
+                                      startEditingOption(idx);
+                                    }}
+                                  >
+                                    <IconSymbol name="pencil" size={14} color={colors.primary} />
+                                  </TouchableOpacity>
+                                </TouchableOpacity>
+                              )}
+                            </View>
+                          );
+                        })}
+                        <Text style={[styles.mcqEditHint, { color: colors.textSecondary }]}>
+                          Tap an option to mark it as correct. Tap the pencil icon to edit only the option text.
                         </Text>
                       </View>
+                    ) : (
+                      // Short/Long Answer: Show text input
+                      <TextInput
+                        style={[
+                          styles.answerInput,
+                          { color: colors.text, borderColor: colors.border, backgroundColor: colors.background },
+                        ]}
+                        value={editData.correct_answer || ''}
+                        onChangeText={(v) => setEditData((prev) => ({ ...prev, correct_answer: v }))}
+                        placeholder="Expected answer..."
+                        placeholderTextColor={colors.textTertiary}
+                        multiline
+                      />
+                    )}
+                  </View>
+
+                  <View style={styles.panelButtons}>
+                    <TouchableOpacity
+                      style={[styles.panelButton, { backgroundColor: colors.border }]}
+                      onPress={() => setViewMode('question')}
+                    >
+                      <Text style={[styles.panelButtonText, { color: colors.text }]}>Cancel</Text>
                     </TouchableOpacity>
-                  );
-                })}
-              </ScrollView>
-
-              <TextInput
-                style={[
-                  styles.rejectNotesInput,
-                  { color: colors.text, borderColor: colors.border, backgroundColor: colors.background },
-                ]}
-                value={rejectNotes}
-                onChangeText={setRejectNotes}
-                placeholder="Additional notes (optional)..."
-                placeholderTextColor={colors.textSecondary}
-                multiline
-              />
-
-              <View style={styles.rejectModalButtons}>
-                <TouchableOpacity
-                  style={[styles.rejectCancelButton, { backgroundColor: colors.border }]}
-                  onPress={() => setShowRejectModal(false)}
-                >
-                  <Text style={[styles.rejectCancelText, { color: colors.text }]}>Cancel</Text>
-                </TouchableOpacity>
-                <TouchableOpacity
-                  style={[styles.rejectConfirmButton, { backgroundColor: colors.error }]}
-                  onPress={handleReject}
-                  disabled={isProcessing}
-                >
-                  {isProcessing ? (
-                    <ActivityIndicator size="small" color="#fff" />
-                  ) : (
-                    <Text style={styles.rejectConfirmText}>Reject & Regenerate</Text>
-                  )}
-                </TouchableOpacity>
+                    <TouchableOpacity
+                      style={[styles.panelButton, { backgroundColor: colors.primary }]}
+                      onPress={handleSaveEdits}
+                      disabled={isProcessing}
+                    >
+                      {isProcessing ? (
+                        <ActivityIndicator size="small" color="#fff" />
+                      ) : (
+                        <Text style={[styles.panelButtonText, { color: '#fff' }]}>Save</Text>
+                      )}
+                    </TouchableOpacity>
+                  </View>
+                </GlassCard>
               </View>
+            )}
+          </ScrollView>
+          )}
+
+          {/* Quick Action Buttons */}
+          {viewMode === 'question' && (
+            <View style={styles.actionButtonsRow}>
+              <TouchableOpacity
+                style={[styles.actionButton, { backgroundColor: colors.error + '20' }]}
+                onPress={() => setViewMode('reject')}
+                disabled={isProcessing}
+              >
+                <IconSymbol name="xmark" size={24} color={colors.error} />
+              </TouchableOpacity>
+              <TouchableOpacity
+                style={[styles.actionButton, { backgroundColor: colors.warning + '20' }]}
+                onPress={handleSkip}
+                disabled={isProcessing}
+              >
+                <IconSymbol name="arrow.uturn.right" size={24} color={colors.warning} />
+              </TouchableOpacity>
+              <TouchableOpacity
+                style={[styles.actionButton, { backgroundColor: colors.primary + '20' }]}
+                onPress={() => setViewMode('edit')}
+                disabled={isProcessing}
+              >
+                <IconSymbol name="pencil" size={24} color={colors.primary} />
+              </TouchableOpacity>
+              <TouchableOpacity
+                style={[styles.actionButton, { backgroundColor: colors.success + '20' }]}
+                onPress={handleApprove}
+                disabled={isProcessing}
+              >
+                <IconSymbol name="checkmark" size={24} color={colors.success} />
+              </TouchableOpacity>
             </View>
-          </View>
-        </Modal>
+          )}
+
+          {/* Processing Overlay */}
+          {isProcessing && (
+            <View style={styles.processingOverlay}>
+              <BlurView intensity={60} tint={isDark ? 'dark' : 'light'} style={styles.processingBlur}>
+                <ActivityIndicator size="large" color={colors.primary} />
+              </BlurView>
+            </View>
+          )}
+        </KeyboardAvoidingView>
       </SafeAreaView>
     </Modal>
   );
@@ -856,19 +1030,82 @@ const styles = StyleSheet.create({
   container: {
     flex: 1,
   },
+  flex: {
+    flex: 1,
+  },
+  instructionsCard: {
+    marginHorizontal: Spacing.md,
+    marginTop: Spacing.sm,
+    marginBottom: Spacing.md,
+    paddingHorizontal: Spacing.md,
+    paddingVertical: Spacing.sm,
+    borderRadius: BorderRadius.md,
+    borderWidth: 1,
+  },
+  instructionsTitle: {
+    fontSize: FontSizes.xs,
+    fontWeight: '600',
+    marginBottom: Spacing.xs,
+  },
+  instructionsRow: {
+    flexDirection: 'row',
+    justifyContent: 'space-around',
+  },
+  instructionItem: {
+    alignItems: 'center',
+    gap: Spacing.xs,
+  },
+  instructionIcon: {
+    width: 32,
+    height: 32,
+    borderRadius: 16,
+    justifyContent: 'center',
+    alignItems: 'center',
+  },
+  instructionText: {
+    fontSize: FontSizes.xs,
+    fontWeight: '500',
+  },
+  questionCardContainer: {
+    flex: 1,
+    marginHorizontal: Spacing.md,
+    marginBottom: Spacing.md,
+  },
+  questionScrollView: {
+    flex: 1,
+  },
+  questionScrollContent: {
+    flexGrow: 1,
+  },
+  panelScrollView: {
+    flex: 1,
+  },
+  panelScrollContent: {
+    paddingHorizontal: Spacing.md,
+    paddingBottom: 140,
+  },
+  dimmedQuestionContainer: {
+    marginBottom: Spacing.md,
+  },
   header: {
-    paddingHorizontal: Spacing.lg,
-    paddingVertical: Spacing.md,
+    paddingHorizontal: Spacing.md,
+    paddingTop: Spacing.xs,
+    paddingBottom: Spacing.sm,
+    borderBottomWidth: 1,
+    borderBottomColor: 'rgba(0,0,0,0.05)',
+  },
+  headerRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    marginBottom: Spacing.sm,
   },
   closeButton: {
-    position: 'absolute',
-    left: Spacing.lg,
-    top: Spacing.md,
-    zIndex: 10,
-    padding: Spacing.sm,
+    padding: Spacing.xs,
   },
   headerCenter: {
     alignItems: 'center',
+    flex: 1,
   },
   headerTitle: {
     fontSize: FontSizes.lg,
@@ -879,11 +1116,10 @@ const styles = StyleSheet.create({
     marginTop: 2,
   },
   progressContainer: {
-    marginTop: Spacing.sm,
-    paddingHorizontal: Spacing.xl,
+    paddingHorizontal: Spacing.sm,
   },
   progressBar: {
-    height: 4,
+    height: 3,
     borderRadius: 2,
     overflow: 'hidden',
   },
@@ -891,41 +1127,19 @@ const styles = StyleSheet.create({
     height: '100%',
     borderRadius: 2,
   },
-  instructionsRow: {
-    flexDirection: 'row',
-    justifyContent: 'space-around',
-    paddingHorizontal: Spacing.lg,
-    paddingBottom: Spacing.sm,
-  },
-  instructionItem: {
-    alignItems: 'center',
-    gap: 4,
-  },
-  instructionText: {
-    fontSize: FontSizes.xs,
-  },
-  cardContainer: {
-    flex: 1,
-    justifyContent: 'center',
-    alignItems: 'center',
-  },
-  card: {
-    width: SCREEN_WIDTH - 40,
-    maxHeight: SCREEN_HEIGHT * 0.55,
-  },
-  cardContent: {
-    padding: Spacing.lg,
+  questionCard: {
+    padding: Spacing.md,
     borderRadius: BorderRadius.lg,
   },
   cardHeader: {
     flexDirection: 'row',
     justifyContent: 'space-between',
     alignItems: 'center',
-    marginBottom: Spacing.md,
+    marginBottom: Spacing.sm,
   },
   typeBadge: {
     paddingHorizontal: Spacing.sm,
-    paddingVertical: Spacing.xs,
+    paddingVertical: 4,
     borderRadius: BorderRadius.sm,
   },
   typeBadgeText: {
@@ -938,7 +1152,7 @@ const styles = StyleSheet.create({
   },
   metaBadge: {
     paddingHorizontal: Spacing.sm,
-    paddingVertical: Spacing.xs,
+    paddingVertical: 4,
     borderRadius: BorderRadius.sm,
   },
   metaBadgeText: {
@@ -946,7 +1160,7 @@ const styles = StyleSheet.create({
   },
   subjectRow: {
     flexDirection: 'row',
-    marginBottom: Spacing.sm,
+    marginBottom: Spacing.xs,
   },
   subjectText: {
     fontSize: FontSizes.sm,
@@ -956,12 +1170,9 @@ const styles = StyleSheet.create({
     fontSize: FontSizes.sm,
     marginLeft: Spacing.xs,
   },
-  questionScroll: {
-    maxHeight: SCREEN_HEIGHT * 0.35,
-  },
   questionText: {
     fontSize: FontSizes.md,
-    lineHeight: 24,
+    lineHeight: 22,
     marginBottom: Spacing.md,
   },
   optionsContainer: {
@@ -970,21 +1181,21 @@ const styles = StyleSheet.create({
   optionRow: {
     flexDirection: 'row',
     alignItems: 'center',
-    paddingVertical: Spacing.sm,
+    paddingVertical: Spacing.xs,
     paddingHorizontal: Spacing.sm,
     borderRadius: BorderRadius.sm,
-    marginBottom: Spacing.xs,
+    marginBottom: 4,
   },
   optionLetter: {
-    width: 28,
-    height: 28,
-    borderRadius: 14,
+    width: 24,
+    height: 24,
+    borderRadius: 12,
     justifyContent: 'center',
     alignItems: 'center',
     marginRight: Spacing.sm,
   },
   optionLetterText: {
-    fontSize: FontSizes.sm,
+    fontSize: FontSizes.xs,
     fontWeight: '600',
   },
   optionText: {
@@ -992,83 +1203,325 @@ const styles = StyleSheet.create({
     fontSize: FontSizes.sm,
   },
   answerBox: {
-    padding: Spacing.md,
+    padding: Spacing.sm,
     borderRadius: BorderRadius.sm,
     borderWidth: 1,
-    marginBottom: Spacing.md,
+    marginBottom: Spacing.sm,
   },
   answerLabel: {
     fontSize: FontSizes.xs,
     fontWeight: '600',
-    marginBottom: Spacing.xs,
+    marginBottom: 4,
   },
   answerText: {
     fontSize: FontSizes.sm,
-    lineHeight: 20,
+    lineHeight: 18,
   },
   explanationBox: {
-    padding: Spacing.md,
+    padding: Spacing.sm,
     borderRadius: BorderRadius.sm,
-    marginBottom: Spacing.md,
+    marginBottom: Spacing.sm,
   },
   explanationLabel: {
     fontSize: FontSizes.xs,
     fontWeight: '600',
-    marginBottom: Spacing.xs,
+    marginBottom: 4,
   },
   explanationText: {
     fontSize: FontSizes.sm,
-    lineHeight: 20,
+    lineHeight: 18,
+  },
+  sourcesSection: {
+    marginTop: Spacing.md,
+    paddingTop: Spacing.md,
+    borderTopWidth: 1,
+    borderTopColor: 'rgba(0,0,0,0.05)',
+  },
+  sourcesHeader: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: Spacing.xs,
+    paddingHorizontal: Spacing.sm,
+    paddingVertical: Spacing.xs,
+    borderRadius: BorderRadius.sm,
+    marginBottom: Spacing.sm,
+  },
+  sourcesHeaderText: {
+    fontSize: FontSizes.xs,
+    fontWeight: '600',
   },
   teacherRow: {
     flexDirection: 'row',
     alignItems: 'center',
-    gap: Spacing.xs,
+    gap: 4,
     marginTop: Spacing.sm,
     paddingTop: Spacing.sm,
     borderTopWidth: 1,
-    borderTopColor: 'rgba(0,0,0,0.1)',
   },
   teacherText: {
     fontSize: FontSizes.xs,
   },
-  swipeIndicator: {
+  swipeLabel: {
     position: 'absolute',
-    width: 120,
-    height: 120,
-    borderRadius: 60,
-    overflow: 'hidden',
+    top: 10,
+    paddingHorizontal: Spacing.md,
+    paddingVertical: Spacing.xs,
+    borderRadius: BorderRadius.sm,
+    borderWidth: 2,
+    zIndex: 10,
   },
-  approveIndicator: {
-    right: 20,
-    top: '50%',
-    marginTop: -60,
+  approveLabel: {
+    right: 10,
+    borderColor: '#34C759',
+    backgroundColor: 'rgba(52, 199, 89, 0.1)',
   },
-  rejectIndicator: {
-    left: 20,
-    top: '50%',
-    marginTop: -60,
+  rejectLabel: {
+    left: 10,
+    borderColor: '#FF3B30',
+    backgroundColor: 'rgba(255, 59, 48, 0.1)',
   },
-  editIndicator: {
-    top: 20,
-    left: '50%',
-    marginLeft: -60,
+  swipeLabelText: {
+    fontSize: FontSizes.sm,
+    fontWeight: '700',
+    color: '#fff',
   },
-  skipIndicator: {
-    bottom: 20,
-    left: '50%',
-    marginLeft: -60,
+  // Inline Panels
+  inlinePanel: {
+    marginTop: Spacing.sm,
+    marginBottom: Spacing.lg,
   },
-  indicatorGradient: {
+  rejectCard: {
+    padding: Spacing.md,
+    borderRadius: BorderRadius.lg,
+    borderWidth: 2,
+    borderColor: '#FF3B30',
+  },
+  editCard: {
+    padding: Spacing.md,
+    borderRadius: BorderRadius.lg,
+    borderWidth: 2,
+    borderColor: '#5856D6',
+  },
+  panelHeader: {
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    alignItems: 'center',
+    marginBottom: Spacing.sm,
+  },
+  panelTitle: {
+    fontSize: FontSizes.md,
+    fontWeight: '700',
+  },
+  panelSubtitle: {
+    fontSize: FontSizes.sm,
+    marginBottom: Spacing.sm,
+  },
+  reasonsGrid: {
+    flexDirection: 'row',
+    flexWrap: 'wrap',
+    gap: Spacing.xs,
+    marginBottom: Spacing.sm,
+  },
+  reasonChip: {
+    paddingHorizontal: Spacing.sm,
+    paddingVertical: Spacing.xs,
+    borderRadius: BorderRadius.full,
+    borderWidth: 1,
+  },
+  reasonChipText: {
+    fontSize: FontSizes.xs,
+    fontWeight: '500',
+  },
+  notesInput: {
+    borderWidth: 1,
+    borderRadius: BorderRadius.md,
+    padding: Spacing.sm,
+    minHeight: 60,
+    fontSize: FontSizes.sm,
+    textAlignVertical: 'top',
+    marginBottom: Spacing.sm,
+  },
+  panelButtons: {
+    flexDirection: 'row',
+    gap: Spacing.sm,
+  },
+  panelButton: {
     flex: 1,
+    paddingVertical: Spacing.sm,
+    borderRadius: BorderRadius.md,
+    alignItems: 'center',
+  },
+  panelButtonText: {
+    fontSize: FontSizes.sm,
+    fontWeight: '600',
+  },
+  // Edit Panel
+  editRow: {
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    alignItems: 'center',
+    marginBottom: Spacing.sm,
+  },
+  editLabel: {
+    fontSize: FontSizes.sm,
+    fontWeight: '500',
+  },
+  marksRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: Spacing.xs,
+  },
+  marksButton: {
+    width: 32,
+    height: 32,
+    borderRadius: BorderRadius.sm,
     justifyContent: 'center',
     alignItems: 'center',
   },
-  indicatorText: {
-    color: '#FFFFFF',
+  marksInput: {
+    width: 50,
+    height: 32,
+    borderWidth: 1,
+    borderRadius: BorderRadius.sm,
+    textAlign: 'center',
+    fontSize: FontSizes.sm,
+    fontWeight: '600',
+  },
+  difficultyRow: {
+    flexDirection: 'row',
+    gap: Spacing.xs,
+  },
+  difficultyButton: {
+    paddingVertical: 4,
+    paddingHorizontal: Spacing.sm,
+    borderRadius: BorderRadius.sm,
+    borderWidth: 2,
+  },
+  difficultyText: {
+    fontSize: FontSizes.xs,
+    fontWeight: '600',
+  },
+  coSection: {
+    marginBottom: Spacing.sm,
+  },
+  coRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    marginBottom: Spacing.xs,
+  },
+  coLabel: {
+    fontSize: FontSizes.sm,
+    fontWeight: '600',
+    width: 40,
+  },
+  coLevels: {
+    flexDirection: 'row',
+    gap: Spacing.xs,
+  },
+  coLevelButton: {
+    width: 28,
+    height: 28,
+    borderRadius: 14,
+    borderWidth: 2,
+    justifyContent: 'center',
+    alignItems: 'center',
+  },
+  coLevelText: {
     fontSize: FontSizes.xs,
     fontWeight: '700',
-    marginTop: 4,
+  },
+  answerSection: {
+    marginBottom: Spacing.sm,
+  },
+  mcqEditContainer: {
+    gap: Spacing.sm,
+  },
+  mcqEditOptionRow: {
+    marginBottom: Spacing.xs,
+  },
+  mcqEditOption: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    padding: Spacing.sm,
+    borderRadius: BorderRadius.md,
+    borderWidth: 2,
+    gap: Spacing.sm,
+  },
+  mcqEditOptionText: {
+    flex: 1,
+    fontSize: FontSizes.sm,
+  },
+  mcqEditButton: {
+    padding: Spacing.xs,
+    borderRadius: BorderRadius.sm,
+  },
+  mcqEditInput: {
+    padding: Spacing.sm,
+    borderRadius: BorderRadius.md,
+    borderWidth: 2,
+  },
+  mcqEditInputRow: {
+    flexDirection: 'row',
+    alignItems: 'flex-start',
+    gap: Spacing.xs,
+  },
+  mcqEditPrefix: {
+    fontSize: FontSizes.sm,
+    fontWeight: '600',
+    paddingTop: 2,
+  },
+  mcqEditTextInput: {
+    flex: 1,
+    fontSize: FontSizes.sm,
+    minHeight: 40,
+    textAlignVertical: 'top',
+  },
+  mcqEditActions: {
+    flexDirection: 'row',
+    gap: Spacing.sm,
+    marginTop: Spacing.sm,
+    justifyContent: 'flex-end',
+  },
+  mcqEditActionButton: {
+    padding: Spacing.sm,
+    borderRadius: BorderRadius.sm,
+    width: 32,
+    height: 32,
+    justifyContent: 'center',
+    alignItems: 'center',
+  },
+  mcqEditHint: {
+    fontSize: FontSizes.xs,
+    fontStyle: 'italic',
+    marginTop: Spacing.xs,
+  },
+  answerInput: {
+    borderWidth: 1,
+    borderRadius: BorderRadius.md,
+    padding: Spacing.sm,
+    minHeight: 80,
+    fontSize: FontSizes.sm,
+    textAlignVertical: 'top',
+    marginBottom: Spacing.sm,
+  },
+  // Action Buttons
+  actionButtonsRow: {
+    position: 'absolute',
+    bottom: 30,
+    left: 0,
+    right: 0,
+    flexDirection: 'row',
+    justifyContent: 'center',
+    gap: Spacing.lg,
+    paddingHorizontal: Spacing.lg,
+  },
+  actionButton: {
+    width: 52,
+    height: 52,
+    borderRadius: 26,
+    justifyContent: 'center',
+    alignItems: 'center',
   },
   processingOverlay: {
     ...StyleSheet.absoluteFillObject,
@@ -1078,246 +1531,6 @@ const styles = StyleSheet.create({
   processingBlur: {
     padding: Spacing.xl,
     borderRadius: BorderRadius.lg,
-    alignItems: 'center',
-  },
-  processingText: {
-    marginTop: Spacing.md,
-    fontSize: FontSizes.md,
-    fontWeight: '600',
-  },
-  actionButtonsRow: {
-    flexDirection: 'row',
-    justifyContent: 'center',
-    gap: Spacing.lg,
-    paddingVertical: Spacing.lg,
-    paddingBottom: Spacing.xl,
-  },
-  actionButton: {
-    width: 56,
-    height: 56,
-    borderRadius: 28,
-    justifyContent: 'center',
-    alignItems: 'center',
-  },
-  // Edit Modal Styles
-  editContainer: {
-    flex: 1,
-  },
-  editHeader: {
-    flexDirection: 'row',
-    justifyContent: 'space-between',
-    alignItems: 'center',
-    paddingHorizontal: Spacing.lg,
-    paddingVertical: Spacing.md,
-    borderBottomWidth: 1,
-    borderBottomColor: 'rgba(0,0,0,0.1)',
-  },
-  cancelText: {
-    fontSize: FontSizes.md,
-  },
-  editTitle: {
-    fontSize: FontSizes.lg,
-    fontWeight: '600',
-  },
-  saveText: {
-    fontSize: FontSizes.md,
-    fontWeight: '600',
-  },
-  editContent: {
-    flex: 1,
-    padding: Spacing.lg,
-  },
-  editSection: {
-    marginBottom: Spacing.lg,
-  },
-  editLabel: {
-    fontSize: FontSizes.sm,
-    fontWeight: '500',
-    marginBottom: Spacing.sm,
-  },
-  marksRow: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    gap: Spacing.sm,
-  },
-  marksButton: {
-    width: 40,
-    height: 40,
-    borderRadius: BorderRadius.sm,
-    justifyContent: 'center',
-    alignItems: 'center',
-  },
-  marksInput: {
-    width: 60,
-    height: 40,
-    borderWidth: 1,
-    borderRadius: BorderRadius.sm,
-    textAlign: 'center',
-    fontSize: FontSizes.md,
-    fontWeight: '600',
-  },
-  difficultyRow: {
-    flexDirection: 'row',
-    gap: Spacing.sm,
-  },
-  difficultyButton: {
-    flex: 1,
-    paddingVertical: Spacing.sm,
-    borderRadius: BorderRadius.sm,
-    borderWidth: 2,
-    alignItems: 'center',
-  },
-  difficultyText: {
-    fontSize: FontSizes.sm,
-    fontWeight: '600',
-  },
-  sectionHeader: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    padding: Spacing.sm,
-    borderRadius: BorderRadius.sm,
-    marginBottom: Spacing.md,
-    gap: Spacing.sm,
-  },
-  sectionHeaderText: {
-    color: '#FFFFFF',
-    fontSize: FontSizes.sm,
-    fontWeight: '600',
-  },
-  coGrid: {
-    gap: Spacing.sm,
-  },
-  coRow: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    justifyContent: 'space-between',
-  },
-  coLabel: {
-    fontSize: FontSizes.md,
-    fontWeight: '600',
-    width: 50,
-  },
-  coLevels: {
-    flexDirection: 'row',
-    flex: 1,
-    gap: Spacing.xs,
-    justifyContent: 'flex-end',
-  },
-  coLevelButton: {
-    paddingVertical: Spacing.xs,
-    paddingHorizontal: Spacing.sm,
-    borderRadius: BorderRadius.sm,
-    borderWidth: 2,
-  },
-  coLevelText: {
-    fontSize: FontSizes.xs,
-    fontWeight: '600',
-  },
-  answerInput: {
-    minHeight: 100,
-    padding: Spacing.md,
-    borderWidth: 1,
-    borderRadius: BorderRadius.md,
-    fontSize: FontSizes.sm,
-    textAlignVertical: 'top',
-  },
-  // Reject Modal Styles
-  rejectModalOverlay: {
-    flex: 1,
-    backgroundColor: 'rgba(0,0,0,0.5)',
-    justifyContent: 'flex-end',
-  },
-  rejectModalContent: {
-    borderTopLeftRadius: BorderRadius.xl,
-    borderTopRightRadius: BorderRadius.xl,
-    maxHeight: '80%',
-    paddingBottom: 34,
-  },
-  rejectModalHeader: {
-    flexDirection: 'row',
-    justifyContent: 'space-between',
-    alignItems: 'center',
-    padding: Spacing.lg,
-    borderBottomWidth: 1,
-    borderBottomColor: 'rgba(0,0,0,0.1)',
-  },
-  rejectModalTitle: {
-    fontSize: FontSizes.lg,
-    fontWeight: '600',
-  },
-  rejectModalSubtitle: {
-    fontSize: FontSizes.sm,
-    paddingHorizontal: Spacing.lg,
-    paddingTop: Spacing.md,
-  },
-  reasonsList: {
-    paddingHorizontal: Spacing.lg,
-    paddingVertical: Spacing.sm,
-    maxHeight: 300,
-  },
-  reasonItem: {
-    flexDirection: 'row',
-    alignItems: 'flex-start',
-    padding: Spacing.md,
-    borderWidth: 1,
-    borderRadius: BorderRadius.md,
-    marginBottom: Spacing.sm,
-  },
-  reasonCheckbox: {
-    width: 22,
-    height: 22,
-    borderRadius: BorderRadius.sm,
-    borderWidth: 2,
-    justifyContent: 'center',
-    alignItems: 'center',
-    marginRight: Spacing.sm,
-  },
-  reasonContent: {
-    flex: 1,
-  },
-  reasonLabel: {
-    fontSize: FontSizes.md,
-    fontWeight: '500',
-  },
-  reasonDesc: {
-    fontSize: FontSizes.sm,
-    marginTop: 2,
-  },
-  rejectNotesInput: {
-    marginHorizontal: Spacing.lg,
-    marginTop: Spacing.sm,
-    minHeight: 80,
-    padding: Spacing.md,
-    borderWidth: 1,
-    borderRadius: BorderRadius.md,
-    fontSize: FontSizes.sm,
-    textAlignVertical: 'top',
-  },
-  rejectModalButtons: {
-    flexDirection: 'row',
-    padding: Spacing.lg,
-    gap: Spacing.sm,
-  },
-  rejectCancelButton: {
-    flex: 1,
-    paddingVertical: Spacing.md,
-    borderRadius: BorderRadius.md,
-    alignItems: 'center',
-  },
-  rejectCancelText: {
-    fontSize: FontSizes.md,
-    fontWeight: '600',
-  },
-  rejectConfirmButton: {
-    flex: 1,
-    paddingVertical: Spacing.md,
-    borderRadius: BorderRadius.md,
-    alignItems: 'center',
-  },
-  rejectConfirmText: {
-    color: '#FFFFFF',
-    fontSize: FontSizes.md,
-    fontWeight: '600',
   },
 });
 

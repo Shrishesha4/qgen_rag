@@ -26,11 +26,8 @@ import { useToast } from '@/components/toast';
 import {
   vetterService,
   QuestionForVetting,
-  QuestionsResponse,
   SubjectSummary,
 } from '@/services/vetter.service';
-
-const { width: SCREEN_WIDTH } = Dimensions.get('window');
 
 type StatusFilter = 'pending' | 'approved' | 'rejected' | 'all';
 
@@ -176,6 +173,31 @@ export default function QuestionsForVetting() {
       fetchQuestions(page + 1, false);
     }
   }, [isLoading, hasMore, page, fetchQuestions]);
+
+  // Load more questions for swipe mode if needed
+  const loadAllPendingQuestions = useCallback(async () => {
+    try {
+      setIsLoading(true);
+      // Fetch a reasonable batch (100 questions) - SwipeVetting will call onLoadMore for more
+      const data = await vetterService.getQuestions({
+        page: 1,
+        limit: 100,
+        status: 'pending',
+        teacher_id: teacherFilter,
+        subject_id: subjectFilter,
+      });
+      setQuestions(data.questions);
+      setTotal(data.total);
+      setHasMore(data.pages > 1);
+      setPage(1);
+      setShowSwipeVetting(true);
+    } catch (err) {
+      setError('Failed to load questions');
+      console.error(err);
+    } finally {
+      setIsLoading(false);
+    }
+  }, [teacherFilter, subjectFilter]);
 
   const handleVet = async () => {
     if (!selectedQuestion) return;
@@ -864,7 +886,7 @@ export default function QuestionsForVetting() {
       {pendingQuestions.length > 0 && statusFilter === 'pending' && (
         <TouchableOpacity
           style={styles.floatingButton}
-          onPress={() => setShowSwipeVetting(true)}
+          onPress={loadAllPendingQuestions}
           activeOpacity={0.9}
         >
           <LinearGradient
@@ -892,6 +914,9 @@ export default function QuestionsForVetting() {
         questions={pendingQuestions}
         onQuestionVetted={handleQuestionVetted}
         onQuestionUpdated={handleQuestionUpdated}
+        onLoadMore={loadMore}
+        hasMore={hasMore}
+        total={total}
       />
     </SafeAreaView>
   );
