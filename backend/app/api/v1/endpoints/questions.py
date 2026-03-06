@@ -3269,6 +3269,8 @@ class ChapterGenerationRequest(BaseModel):
     """Schema for generating questions from a single chapter."""
     topic_id: uuid.UUID
     question_types: dict  # e.g. {"mcq": {"count": 5, "marks_each": 2}, ...}
+    difficulty: Optional[str] = "medium"  # easy | medium | hard
+    lo_filter: Optional[List[str]] = None  # restrict to these LO ids, e.g. ["LO1", "LO2"]
 
 
 @router.post("/generate-chapter")
@@ -3583,17 +3585,30 @@ Background knowledge (use to inform the question, do NOT cite or reference it):
                         # Pick a unique starter for this question
                         starter = _pick_starter(q_type, used_starters_chapter)
 
+                        difficulty_label = (request.difficulty or "medium").capitalize()
+                        difficulty_guidance = {
+                            "easy": "straightforward recall or recognition; suitable for introductory assessment",
+                            "medium": "application or understanding; requires connecting concepts",
+                            "hard": "analysis, synthesis, or evaluation; requires deep understanding and critical thinking",
+                        }.get((request.difficulty or "medium").lower(), "application or understanding")
+
+                        lo_restriction = ""
+                        if request.lo_filter:
+                            lo_restriction = f"\n- REQUIRED: This question MUST map to one of the following Learning Outcomes: {', '.join(request.lo_filter)}. Choose the most relevant one."
+
                         prompt += f"""
 Generate a {q_type.replace('_', ' ')} question based STRICTLY on the chapter "{topic_name}" content above.
 - Marks: {marks}
+- Difficulty level: {difficulty_label} — {difficulty_guidance}
 - The question MUST be about the topic "{topic_name}" — do NOT use content from other chapters
 - REQUIRED: Your question MUST start with the word/phrase "{starter}" — this is non-negotiable
 - FORBIDDEN: Do NOT start all the questions with "A clinician", "A patient", "A doctor", "A dentist", "A practitioner", "A student", "A researcher", "An engineer", or similar scenario setups. Also start directly with the required starter word.
 - The question text must be fully self-contained — do NOT mention "the text", "the reference", "the provided material", "reference [N]", or any source
 - Avoid questions similar to: {', '.join([q[:50] for q in generated_texts[-5:]]) if generated_texts else 'None yet'}
 {lo_context}
-{co_context}
+{co_context}{lo_restriction}
 - In your JSON output, include "learning_outcome" (the most relevant LO for this question based on content) and "course_outcome" (the most relevant CO for this question based on content). Analyze the question content and choose the LO/CO that best matches what the question tests.
+- Also include "bloom_level" (one of: remember, understand, apply, analyze, evaluate, create) matching the difficulty.
 
 Output valid JSON only."""
 
@@ -3672,7 +3687,7 @@ Output valid JSON only."""
                                 "learning_outcome_id": assigned_lo,
                                 "course_outcome_mapping": assigned_co_map,
                                 "bloom_taxonomy_level": (resp.get("bloom_level") if resp else "understand"),
-                                "difficulty_level": "medium",
+                                "difficulty_level": (request.difficulty or "medium"),
                             })
                             assigned_lo = _s["learning_outcome_id"]
                             assigned_co_map = _s["course_outcome_mapping"]

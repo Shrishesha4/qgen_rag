@@ -196,6 +196,8 @@ export const rubricsService = {
     onProgress: (progress: GenerationProgress) => void,
     onComplete: () => void,
     onError: (error: Error) => void,
+    difficulty: string = 'medium',
+    loFilter?: string[],
   ): () => void {
     let cancelled = false;
     let cancelFn = () => { cancelled = true; };
@@ -262,7 +264,12 @@ export const rubricsService = {
           xhr.abort();
         };
 
-        xhr.send(JSON.stringify({ topic_id: topicId, question_types: questionTypes }));
+        xhr.send(JSON.stringify({
+          topic_id: topicId,
+          question_types: questionTypes,
+          difficulty,
+          lo_filter: loFilter && loFilter.length > 0 ? loFilter : undefined,
+        }));
       } catch (error) {
         if (!cancelled) onError(error as Error);
       }

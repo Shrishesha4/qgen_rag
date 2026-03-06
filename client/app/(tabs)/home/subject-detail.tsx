@@ -81,8 +81,10 @@ export default function SubjectDetailScreen() {
   const [qgShortCount, setQgShortCount] = useState('0');
   const [qgLongCount, setQgLongCount] = useState('0');
   const [qgMcqMarks, setQgMcqMarks] = useState('1');
-  const [qgShortMarks, setQgShortMarks] = useState('2');
-  const [qgLongMarks, setQgLongMarks] = useState('5');
+  const [qgShortMarks, setQgShortMarks] = useState('3');
+  const [qgLongMarks, setQgLongMarks] = useState('10');
+  const [qgDifficulty, setQgDifficulty] = useState<'easy' | 'medium' | 'hard'>('medium');
+  const [qgLoFilter, setQgLoFilter] = useState<string[]>([]);
 
   // Import state
   const [isImporting, setIsImporting] = useState(false);
@@ -317,8 +319,8 @@ export default function SubjectDetailScreen() {
       genProgressAnim.setValue(0);
 
       const dist: Record<string, { count: number; marks_each: number }> = {};
-      if (mcq > 0) dist.mcq = { count: mcq, marks_each: parseInt(qgMcqMarks) || 2 };
-      if (short > 0) dist.short_notes = { count: short, marks_each: parseInt(qgShortMarks) || 5 };
+      if (mcq > 0) dist.mcq = { count: mcq, marks_each: parseInt(qgMcqMarks) || 1 };
+      if (short > 0) dist.short_notes = { count: short, marks_each: parseInt(qgShortMarks) || 3 };
       if (long > 0) dist.essay = { count: long, marks_each: parseInt(qgLongMarks) || 10 };
 
       console.log('[SubjectDetail] Starting generation with dist:', JSON.stringify(dist));
@@ -357,6 +359,8 @@ export default function SubjectDetailScreen() {
             console.error('[SubjectDetail] Error in error callback:', errorCallbackError);
           }
         },
+        qgDifficulty,
+        qgLoFilter.length > 0 ? qgLoFilter : undefined,
       );
       cancelGenRef.current = cancel;
     } catch (error) {
@@ -1390,6 +1394,73 @@ export default function SubjectDetailScreen() {
                           </View>
                         </View>
                       </View>
+
+                      {/* Difficulty */}
+                      <View style={[styles.genSection, { backgroundColor: colors.card }]}>
+                        <Text style={[styles.genSectionLabel, { color: colors.textSecondary }]}>DIFFICULTY</Text>
+                        <View style={{ flexDirection: 'row', gap: Spacing.sm }}>
+                          {(['easy', 'medium', 'hard'] as const).map((level) => {
+                            const cfg = {
+                              easy: { color: '#34C759', label: 'Easy' },
+                              medium: { color: '#FF9500', label: 'Medium' },
+                              hard: { color: '#FF3B30', label: 'Hard' },
+                            }[level];
+                            const active = qgDifficulty === level;
+                            return (
+                              <TouchableOpacity
+                                key={level}
+                                style={{
+                                  flex: 1, paddingVertical: 10, borderRadius: 10, alignItems: 'center',
+                                  backgroundColor: active ? cfg.color + '22' : colors.background,
+                                  borderWidth: 1.5,
+                                  borderColor: active ? cfg.color : colors.border,
+                                }}
+                                onPress={() => { selectionImpact(); setQgDifficulty(level); }}
+                              >
+                                <Text style={{ fontSize: FontSizes.sm, fontWeight: active ? '700' : '500', color: active ? cfg.color : colors.textSecondary }}>
+                                  {cfg.label}
+                                </Text>
+                              </TouchableOpacity>
+                            );
+                          })}
+                        </View>
+                      </View>
+
+                      {/* LO Filter */}
+                      {subject?.learning_outcomes?.outcomes && subject.learning_outcomes.outcomes.length > 0 && (
+                        <View style={[styles.genSection, { backgroundColor: colors.card }]}>
+                          <Text style={[styles.genSectionLabel, { color: colors.textSecondary }]}>LEARNING OUTCOMES (optional)</Text>
+                          <Text style={{ color: colors.textTertiary, fontSize: FontSizes.xs, marginBottom: Spacing.sm }}>
+                            Select to restrict questions to specific LOs. Leave empty for all.
+                          </Text>
+                          <View style={{ flexDirection: 'row', flexWrap: 'wrap', gap: Spacing.xs }}>
+                            {subject.learning_outcomes.outcomes.map((lo) => {
+                              const active = qgLoFilter.includes(lo.id);
+                              return (
+                                <TouchableOpacity
+                                  key={lo.id}
+                                  style={{
+                                    paddingHorizontal: 12, paddingVertical: 6, borderRadius: 20,
+                                    backgroundColor: active ? colors.primary + '20' : colors.background,
+                                    borderWidth: 1.5,
+                                    borderColor: active ? colors.primary : colors.border,
+                                  }}
+                                  onPress={() => {
+                                    selectionImpact();
+                                    setQgLoFilter(prev =>
+                                      prev.includes(lo.id) ? prev.filter(x => x !== lo.id) : [...prev, lo.id]
+                                    );
+                                  }}
+                                >
+                                  <Text style={{ fontSize: FontSizes.xs, fontWeight: active ? '700' : '500', color: active ? colors.primary : colors.textSecondary }}>
+                                    {lo.id}{lo.name ? ` · ${lo.name}` : ''}
+                                  </Text>
+                                </TouchableOpacity>
+                              );
+                            })}
+                          </View>
+                        </View>
+                      )}
 
                       <TouchableOpacity
                         style={[styles.genStartButton, { backgroundColor: colors.primary }]}
