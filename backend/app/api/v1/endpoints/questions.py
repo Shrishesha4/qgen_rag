@@ -300,6 +300,12 @@ async def quick_generate_questions(
         yield f"data: {QuickGenerateProgress(status='uploading', progress=5, message='Uploading document...').model_dump_json()}\n\n"
         
         try:
+            # Enhance focus prompt with LLM
+            from app.services.llm_service import LLMService
+            llm = LLMService()
+            enhanced_context = await _enhance_focus_prompt(context, llm)
+            logger.info(f"Quick generate: original context='{context}' enhanced='{enhanced_context}'")
+
             yield f"data: {QuickGenerateProgress(status='processing', progress=10, message='Processing document content...').model_dump_json()}\n\n"
             
             # Upload and process synchronously
@@ -309,7 +315,7 @@ async def quick_generate_questions(
                 filename=filename,
                 file_content=content,
                 mime_type=mime_type,
-                context=context,
+                context=enhanced_context,
             )
             
             # Extract document_id immediately to avoid session issues
@@ -338,7 +344,7 @@ async def quick_generate_questions(
                 generator = question_service.quick_generate(
                     user_id=current_user.id,
                     document_id=doc_id,
-                    context=context,
+                    context=enhanced_context,
                     count=count,
                     types=type_list,
                     difficulty=difficulty,
@@ -381,6 +387,134 @@ async def quick_generate_questions(
             logger.exception(f"Quick generate: Exception - {e}")
             yield f"data: {QuickGenerateProgress(status='error', progress=0, message=f'An error occurred: {str(e)}').model_dump_json()}\n\n"
     
+    return StreamingResponse(
+        event_generator(),
+        media_type="text/event-stream",
+        headers={
+            "Cache-Control": "no-cache",
+            "Connection": "keep-alive",
+            "X-Accel-Buffering": "no",
+        },
+    )
+
+
+async def _enhance_focus_prompt(context: str, llm_service) -> str:
+    """Use LLM to improve the user's focus prompt before generation."""
+    try:
+        enhanced = await llm_service.generate(
+            prompt=(
+                f'Improve this academic topic description for question generation:\n'
+                f'"{context}"\n\n'
+                f'Rules: make it specific and concise (1-2 sentences), preserve the original intent, '
+                f'use clear academic language. Return ONLY the improved text, no explanations.'
+            ),
+            temperature=0.3,
+            max_tokens=150,
+        )
+        result = enhanced.strip().strip('"').strip("'")
+        return result if result else context
+    except Exception:
+        return context
+
+
+@router.post("/quick-generate-from-subject")
+async def quick_generate_from_subject(
+    subject_id: str = Form(..., description="Subject ID to generate questions from"),
+    context: str = Form(..., min_length=3, max_length=500, description="Focus topic or description"),
+    count: int = Form(default=5, ge=1, le=20, description="Number of questions to generate"),
+    types: Optional[str] = Form(default="mcq,short_answer", description="Comma-separated question types"),
+    difficulty: str = Form(default="medium", description="Difficulty level: easy, medium, hard"),
+    marks_mcq: Optional[int] = Form(default=1, ge=1, le=100),
+    marks_short: Optional[int] = Form(default=2, ge=1, le=100),
+    marks_long: Optional[int] = Form(default=5, ge=1, le=100),
+    topic_id: Optional[str] = Form(default=None, description="Topic/Chapter ID (optional)"),
+    current_user: User = Depends(rate_limit(requests=50, window_seconds=86400)),
+    db: AsyncSession = Depends(get_db),
+):
+    """
+    Quick question generation from a subject's indexed documents (no file upload needed).
+
+    The LLM will first enhance the focus prompt before generating questions.
+    Returns Server-Sent Events (SSE) stream with progress updates.
+    """
+    import logging
+    logger = logging.getLogger(__name__)
+
+    # Validate inputs
+    type_list = [t.strip() for t in types.split(",")] if types else ["mcq", "short_answer"]
+    valid_types = {"mcq", "short_answer", "long_answer"}
+    for t in type_list:
+        if t not in valid_types:
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail=f"Invalid question type: {t}. Valid types: {', '.join(valid_types)}",
+            )
+
+    if difficulty not in {"easy", "medium", "hard"}:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="Invalid difficulty. Must be: easy, medium, or hard",
+        )
+
+    try:
+        parsed_subject_id = uuid.UUID(subject_id)
+    except ValueError:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Invalid subject_id format")
+
+    parsed_topic_id: Optional[uuid.UUID] = None
+    if topic_id:
+        try:
+            parsed_topic_id = uuid.UUID(topic_id)
+        except ValueError:
+            raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Invalid topic_id format")
+
+    marks_by_type = {"mcq": marks_mcq, "short_answer": marks_short, "long_answer": marks_long}
+
+    async def event_generator():
+        question_service = QuestionGenerationService(db)
+
+        yield f"data: {QuickGenerateProgress(status='processing', progress=5, message='Enhancing focus prompt with AI...').model_dump_json()}\n\n"
+
+        # Enhance focus prompt
+        from app.services.llm_service import LLMService
+        llm = LLMService()
+        enhanced_context = await _enhance_focus_prompt(context, llm)
+        logger.info(f"Quick generate from subject: original='{context}' enhanced='{enhanced_context}'")
+
+        yield f"data: {QuickGenerateProgress(status='processing', progress=10, message='Searching subject content...').model_dump_json()}\n\n"
+
+        try:
+            generation_started = False
+            generator = question_service.quick_generate_from_subject(
+                user_id=current_user.id,
+                subject_id=parsed_subject_id,
+                context=enhanced_context,
+                count=count,
+                types=type_list,
+                difficulty=difficulty,
+                marks_by_type=marks_by_type,
+                topic_id=parsed_topic_id,
+            )
+
+            async for progress in generator:
+                generation_started = True
+                if progress.status == "generating":
+                    adjusted = 10 + int(progress.progress * 0.9)
+                    progress.progress = min(adjusted, 100)
+                logger.info(f"Quick generate from subject: {progress.status} - {progress.message}")
+                yield f"data: {progress.model_dump_json()}\n\n"
+
+            logger.info("Quick generate from subject: Complete")
+
+        except ValueError as e:
+            logger.error(f"Quick generate from subject: ValueError - {e}")
+            yield f"data: {QuickGenerateProgress(status='error', progress=0, message=str(e)).model_dump_json()}\n\n"
+        except GeneratorExit:
+            raise
+        except Exception as e:
+            logger.exception(f"Quick generate from subject: Exception - {e}")
+            yield f"data: {QuickGenerateProgress(status='error', progress=0, message=f'An error occurred: {str(e)}').model_dump_json()}\n\n"
+
     return StreamingResponse(
         event_generator(),
         media_type="text/event-stream",

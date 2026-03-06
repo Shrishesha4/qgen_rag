@@ -111,6 +111,18 @@ export interface QuickGenerateRequest {
   topic_id?: string;
 }
 
+export interface QuickGenerateFromSubjectRequest {
+  subject_id: string;
+  topic_id?: string;
+  context: string;
+  count?: number;
+  types?: ('mcq' | 'short_answer' | 'long_answer')[];
+  difficulty?: 'easy' | 'medium' | 'hard';
+  marks_mcq?: number;
+  marks_short?: number;
+  marks_long?: number;
+}
+
 export interface QuestionUpdateRequest {
   marks?: number;
   difficulty_level?: 'easy' | 'medium' | 'hard';
@@ -580,6 +592,132 @@ export const questionsService = {
       isCancelled = true;
       if (xhr) {
         console.log('[QuickGenerate] Aborting XHR request');
+        xhr.abort();
+      }
+    };
+  },
+  /**
+   * Quick generate questions from a subject (no file needed) with SSE streaming
+   */
+  quickGenerateFromSubject(
+    request: QuickGenerateFromSubjectRequest,
+    onProgress: (progress: QuickGenerateProgress) => void,
+    onComplete: (documentId: string | null) => void,
+    onError: (error: Error) => void
+  ): () => void {
+    let xhr: XMLHttpRequest | null = null;
+    let isCancelled = false;
+    let lastDocumentId: string | null = null;
+
+    (async () => {
+      try {
+        onProgress({
+          status: 'processing',
+          progress: 0,
+          current_question: null,
+          total_questions: null,
+          question: null,
+          message: 'Preparing subject content...',
+          document_id: null,
+        });
+
+        const formData = new FormData();
+        formData.append('subject_id', request.subject_id);
+        if (request.topic_id) formData.append('topic_id', request.topic_id);
+        formData.append('context', request.context);
+        if (request.count) formData.append('count', request.count.toString());
+        if (request.types) formData.append('types', request.types.join(','));
+        if (request.difficulty) formData.append('difficulty', request.difficulty);
+        if (request.marks_mcq) formData.append('marks_mcq', request.marks_mcq.toString());
+        if (request.marks_short) formData.append('marks_short', request.marks_short.toString());
+        if (request.marks_long) formData.append('marks_long', request.marks_long.toString());
+
+        const accessToken = await tokenStorage.getAccessToken();
+        const baseUrl = apiClient.defaults.baseURL || '';
+
+        await new Promise<void>((resolve, reject) => {
+          xhr = new XMLHttpRequest();
+          let buffer = '';
+          let processedLength = 0;
+
+          xhr.onprogress = () => {
+            if (isCancelled || !xhr) return;
+            const responseText = xhr.responseText || '';
+            const newData = responseText.slice(processedLength);
+            processedLength = responseText.length;
+            if (!newData) return;
+            buffer += newData;
+            const events = buffer.split('\n\n');
+            buffer = events.pop() || '';
+            for (const event of events) {
+              if (event.startsWith('data: ')) {
+                try {
+                  const json = event.slice(6).trim();
+                  if (json) {
+                    const progress = JSON.parse(json) as QuickGenerateProgress;
+                    console.log('[QuickGenerateFromSubject] SSE Event:', progress.status, progress.message);
+                    if (progress.document_id) lastDocumentId = progress.document_id;
+                    onProgress(progress);
+                  }
+                } catch (parseError) {
+                  console.warn('[QuickGenerateFromSubject] Failed to parse event:', event.substring(0, 100));
+                }
+              }
+            }
+          };
+
+          xhr.onload = () => {
+            if (isCancelled || !xhr) return;
+            console.log('[QuickGenerateFromSubject] Request completed, status:', xhr.status);
+            if (xhr.status === 200) {
+              if (buffer && buffer.startsWith('data: ')) {
+                try {
+                  const json = buffer.slice(6).trim();
+                  if (json) {
+                    const progress = JSON.parse(json) as QuickGenerateProgress;
+                    if (progress.document_id) lastDocumentId = progress.document_id;
+                    onProgress(progress);
+                  }
+                } catch (e) { /* ignore incomplete final event */ }
+              }
+              onComplete(lastDocumentId);
+              resolve();
+            } else {
+              reject(new Error(`Request failed: ${xhr.status} - ${xhr.responseText?.substring(0, 200)}`));
+            }
+          };
+
+          xhr.onerror = () => {
+            console.error('[QuickGenerateFromSubject] Network error');
+            reject(new Error('Network error'));
+          };
+
+          xhr.ontimeout = () => {
+            console.error('[QuickGenerateFromSubject] Request timeout');
+            reject(new Error('Request timeout'));
+          };
+
+          xhr.open('POST', `${baseUrl}/questions/quick-generate-from-subject`);
+          xhr.timeout = 300000;
+          xhr.setRequestHeader('Accept', 'text/event-stream');
+          if (accessToken) xhr.setRequestHeader('Authorization', `Bearer ${accessToken}`);
+
+          console.log('[QuickGenerateFromSubject] Starting request to:', `${baseUrl}/questions/quick-generate-from-subject`);
+          xhr.send(formData);
+        });
+
+      } catch (error) {
+        if (!isCancelled) {
+          console.error('[QuickGenerateFromSubject] Error:', error);
+          onError(error as Error);
+        }
+      }
+    })();
+
+    return () => {
+      isCancelled = true;
+      if (xhr) {
+        console.log('[QuickGenerateFromSubject] Aborting XHR request');
         xhr.abort();
       }
     };

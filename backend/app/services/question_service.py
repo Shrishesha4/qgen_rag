@@ -951,7 +951,7 @@ Output valid JSON only."""
 
     async def _save_question(
         self,
-        document_id: uuid.UUID,
+        document_id: Optional[uuid.UUID],
         session_id: uuid.UUID,
         question_data: Dict[str, Any],
         question_type: str,
@@ -2325,6 +2325,298 @@ Output valid JSON only."""
             # Release lock
             await self.redis_service.release_generation_lock(
                 str(user_id), str(document_id)
+            )
+
+    async def quick_generate_from_subject(
+        self,
+        user_id: uuid.UUID,
+        subject_id: uuid.UUID,
+        context: str,
+        count: int = 5,
+        types: Optional[List[str]] = None,
+        difficulty: str = "medium",
+        marks_by_type: Optional[dict] = None,
+        topic_id: Optional[uuid.UUID] = None,
+    ) -> AsyncGenerator[QuickGenerateProgress, None]:
+        """
+        Generate questions from all primary documents in a subject (no file upload needed).
+        Uses the same RAG pipeline as quick_generate but sources chunks from
+        every processed primary document linked to the subject.
+        """
+        import logging
+        logger = logging.getLogger(__name__)
+
+        if types is None:
+            types = ["mcq", "short_answer"]
+        if marks_by_type is None:
+            marks_by_type = {"mcq": 1, "short_answer": 2, "long_answer": 5}
+
+        # Lock keyed on (user_id, subject_id) to prevent concurrent runs
+        lock_acquired = await self.redis_service.acquire_generation_lock(
+            str(user_id), str(subject_id)
+        )
+        if not lock_acquired:
+            yield QuickGenerateProgress(
+                status="error",
+                progress=0,
+                message="Another generation is already in progress for this subject",
+            )
+            return
+
+        try:
+            logger.info(f"quick_generate_from_subject: user={user_id}, subject={subject_id}, count={count}")
+
+            yield QuickGenerateProgress(
+                status="generating",
+                progress=5,
+                message="Finding subject documents...",
+            )
+
+            # 1. Fetch all completed primary documents for the subject
+            doc_query = select(Document).where(
+                and_(
+                    Document.user_id == user_id,
+                    Document.subject_id == subject_id,
+                    Document.index_type == "primary",
+                    Document.processing_status == "completed",
+                )
+            )
+            doc_result = await self.db.execute(doc_query)
+            primary_docs = doc_result.scalars().all()
+
+            if not primary_docs:
+                yield QuickGenerateProgress(
+                    status="error",
+                    progress=0,
+                    message="No processed documents found for this subject. Please upload and index a document first.",
+                )
+                return
+
+            primary_doc_ids = [d.id for d in primary_docs]
+            logger.info(f"quick_generate_from_subject: found {len(primary_doc_ids)} primary docs")
+
+            # 2. Get reference document IDs for style/scope context
+            reference_doc_ids: List[uuid.UUID] = []
+            if self.document_service:
+                reference_doc_ids = await self.document_service.get_reference_document_ids(
+                    user_id=user_id,
+                    subject_id=subject_id,
+                    index_type="reference_book",
+                )
+
+            all_search_doc_ids = primary_doc_ids + reference_doc_ids
+
+            # 3. Get all chunks from primary documents
+            chunk_result = await self.db.execute(
+                select(DocumentChunk)
+                .options(selectinload(DocumentChunk.document))
+                .where(DocumentChunk.document_id.in_(primary_doc_ids))
+                .order_by(DocumentChunk.document_id, DocumentChunk.chunk_index)
+            )
+            all_chunks = chunk_result.scalars().all()
+
+            if not all_chunks:
+                yield QuickGenerateProgress(
+                    status="error",
+                    progress=0,
+                    message="No content chunks found. Try re-processing the subject documents.",
+                )
+                return
+
+            logger.info(f"quick_generate_from_subject: {len(all_chunks)} total chunks across {len(primary_doc_ids)} docs")
+
+            yield QuickGenerateProgress(
+                status="generating",
+                progress=15,
+                message=f"Generating {count} questions from {len(all_chunks)} content sections...",
+                total_questions=count,
+            )
+
+            # 4. Create generation session (no document_id since spanning multiple)
+            reference_questions: List[Dict[str, Any]] = []
+            if self.document_service:
+                try:
+                    reference_questions = await self.document_service.get_reference_questions(
+                        user_id=user_id,
+                        subject_id=subject_id,
+                        limit=10,
+                    )
+                except Exception as e:
+                    logger.warning(f"Failed to load reference questions: {e}")
+
+            session = GenerationSession(
+                document_id=None,
+                user_id=user_id,
+                subject_id=subject_id,
+                topic_id=topic_id,
+                generation_method="quick_from_subject",
+                requested_count=count,
+                requested_types=types,
+                requested_difficulty=difficulty,
+                focus_topics=[context],
+                status="in_progress",
+                generation_config={
+                    "mode": "quick_generate_from_subject",
+                    "context": context,
+                    "primary_document_ids": [str(d) for d in primary_doc_ids],
+                },
+            )
+            self.db.add(session)
+            await self.db.commit()
+            await self.db.refresh(session)
+            session_id = session.id
+
+            # 5. Generation loop (mirrors quick_generate)
+            questions_generated = 0
+            questions_failed = 0
+            generated_embeddings = []
+            generated_questions_text = []
+            total_question_index = 0
+
+            query_aspects = [
+                context,
+                f"{context} definition and concepts",
+                f"{context} operations and methods",
+                f"{context} advantages disadvantages",
+                f"{context} implementation details",
+                f"{context} examples and applications",
+                f"{context} comparison differences",
+                f"{context} performance complexity",
+            ]
+
+            type_distribution = self._distribute_types(count, types)
+            logger.info(f"quick_generate_from_subject: type distribution={type_distribution}")
+
+            for q_type, type_count in type_distribution.items():
+                for i in range(type_count):
+                    try:
+                        varied_query = query_aspects[total_question_index % len(query_aspects)]
+                        context_embedding = await self.embedding_service.get_embedding(varied_query)
+
+                        candidates = await self.document_service.hybrid_search_multi_document(
+                            document_ids=all_search_doc_ids,
+                            query=varied_query,
+                            query_embedding=context_embedding,
+                            top_k=8,
+                            alpha=0.6,
+                        )
+
+                        if self.reranker_service and len(candidates) > 3:
+                            selected_chunks = self.reranker_service.rerank(
+                                query=varied_query,
+                                chunks=candidates,
+                                top_k=3,
+                            )
+                        else:
+                            offset = (total_question_index % 2) * 2
+                            selected_chunks = candidates[offset:offset + 3] if len(candidates) > offset + 2 else candidates[:3]
+
+                        if not selected_chunks:
+                            import random
+                            selected_chunks = random.sample(all_chunks, min(3, len(all_chunks)))
+
+                        question_data = await self._generate_quick_question(
+                            chunks=selected_chunks,
+                            question_type=q_type,
+                            difficulty=difficulty,
+                            context=context,
+                            previous_questions=generated_questions_text,
+                            question_index=total_question_index,
+                            reference_questions=reference_questions,
+                        )
+
+                        total_question_index += 1
+
+                        if not question_data:
+                            questions_failed += 1
+                            continue
+
+                        q_text = question_data.get("question_text", "")
+
+                        if generated_embeddings:
+                            new_embedding = await self.embedding_service.get_embedding(q_text)
+                            similarities = self.embedding_service.compute_similarity_batch(
+                                new_embedding, generated_embeddings
+                            )
+                            if any(s > 0.85 for s in similarities):
+                                questions_failed += 1
+                                continue
+
+                        generated_questions_text.append(q_text)
+
+                        try:
+                            type_marks = marks_by_type.get(q_type, 1)
+                            question, question_response = await self._save_question(
+                                document_id=None,
+                                session_id=session_id,
+                                question_data=question_data,
+                                question_type=q_type,
+                                marks=type_marks,
+                                difficulty=difficulty,
+                                chunk_ids=[c.id for c in selected_chunks],
+                                chunks=selected_chunks,
+                                subject_id=subject_id,
+                                topic_id=topic_id,
+                            )
+                            questions_generated += 1
+                            generated_embeddings.append(question.question_embedding)
+
+                            progress_val = 15 + int(((questions_generated + questions_failed) / count) * 80)
+                            yield QuickGenerateProgress(
+                                status="generating",
+                                progress=min(progress_val, 95),
+                                current_question=questions_generated,
+                                total_questions=count,
+                                question=question_response,
+                                message=f"Generated question {questions_generated}/{count}",
+                            )
+                        except ValueError as ve:
+                            logger.warning(str(ve))
+                            questions_failed += 1
+                        except Exception as save_error:
+                            await self.db.rollback()
+                            logger.exception(f"Failed to save question: {save_error}")
+                            questions_failed += 1
+
+                    except Exception as e:
+                        logger.exception(f"Exception during generation: {e}")
+                        questions_failed += 1
+
+            # 6. Finalise session
+            session_result = await self.db.execute(
+                select(GenerationSession).where(GenerationSession.id == session_id)
+            )
+            session = session_result.scalar_one_or_none()
+            if session:
+                session.questions_generated = questions_generated
+                session.questions_failed = questions_failed
+                session.status = "completed"
+                session.completed_at = datetime.now(timezone.utc)
+                if session.started_at:
+                    session.total_duration_seconds = (
+                        session.completed_at - session.started_at
+                    ).total_seconds()
+                await self.db.commit()
+
+            yield QuickGenerateProgress(
+                status="complete",
+                progress=100,
+                current_question=questions_generated,
+                total_questions=count,
+                message=f"Successfully generated {questions_generated} questions",
+            )
+
+        except Exception as e:
+            await self.db.rollback()
+            logger.exception(f"Error in quick_generate_from_subject: {e}")
+            yield QuickGenerateProgress(
+                status="error",
+                progress=0,
+                message=f"Generation failed: {str(e)}",
+            )
+        finally:
+            await self.redis_service.release_generation_lock(
+                str(user_id), str(subject_id)
             )
 
     async def _generate_quick_question(

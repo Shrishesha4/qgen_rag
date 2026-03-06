@@ -29,13 +29,17 @@ import { QuestionSources } from '@/components/question-sources';
 
 type QuestionType = 'mcq' | 'short_answer' | 'long_answer';
 type Difficulty = 'easy' | 'medium' | 'hard';
+type InputMode = 'pdf' | 'subject';
 
 export default function QuickGenerateScreen() {
   const colorScheme = useColorScheme();
   const colors = Colors[colorScheme ?? 'light'];
   const isDark = colorScheme === 'dark';
   const { showError, showSuccess, showWarning } = useToast();
-  
+
+  // Input mode (PDF tab vs Subject tab)
+  const [inputMode, setInputMode] = useState<InputMode>('pdf');
+
   // Form state
   const [selectedFile, setSelectedFile] = useState<{ uri: string; name: string; type: string } | null>(null);
   const [context, setContext] = useState('');
@@ -44,13 +48,13 @@ export default function QuickGenerateScreen() {
   const [showCustomInput, setShowCustomInput] = useState(false);
   const [selectedTypes, setSelectedTypes] = useState<QuestionType[]>(['mcq']);
   const [difficulty, setDifficulty] = useState<Difficulty>('medium');
-  
+
   // Marks per question type
   const [marksMcq, setMarksMcq] = useState(1);
   const [marksShort, setMarksShort] = useState(2);
   const [marksLong, setMarksLong] = useState(5);
-  
-  // Subject/Topic linking
+
+  // Subject/Topic (now inline in Subject tab)
   const [subjects, setSubjects] = useState<Subject[]>([]);
   const [topics, setTopics] = useState<Topic[]>([]);
   const [selectedSubjectId, setSelectedSubjectId] = useState<string | null>(null);
@@ -60,7 +64,7 @@ export default function QuickGenerateScreen() {
   const [loadingSubjects, setLoadingSubjects] = useState(false);
   const [loadingTopics, setLoadingTopics] = useState(false);
   const [isRefreshing, setIsRefreshing] = useState(false);
-  
+
   // Generation state
   const [isGenerating, setIsGenerating] = useState(false);
   const [progress, setProgress] = useState<QuickGenerateProgress | null>(null);
@@ -93,10 +97,7 @@ export default function QuickGenerateScreen() {
       setSubjects(response.subjects);
     } catch (error) {
       const details = extractErrorDetails(error);
-      if (details.isAuthError) {
-        // Auth interceptor already redirected to login — suppress noisy log
-        return;
-      }
+      if (details.isAuthError) return;
       console.error('Failed to load subjects:', error);
       showError(error, 'Failed to load subjects');
     } finally {
@@ -130,7 +131,6 @@ export default function QuickGenerateScreen() {
       showWarning('Please wait for the current file selection to complete', 'File Picker Busy');
       return;
     }
-
     setIsPickingDocument(true);
     try {
       mediumImpact();
@@ -138,7 +138,6 @@ export default function QuickGenerateScreen() {
         type: 'application/pdf',
         copyToCacheDirectory: true,
       });
-      
       if (!result.canceled && result.assets[0]) {
         setSelectedFile({
           uri: result.assets[0].uri,
@@ -161,12 +160,21 @@ export default function QuickGenerateScreen() {
   const handleGenerate = () => {
     try {
       mediumImpact();
-      if (!selectedFile) {
-        showWarning('Please upload a PDF document first', 'Missing File');
-        return;
+
+      if (inputMode === 'pdf') {
+        if (!selectedFile) {
+          showWarning('Please upload a PDF document first', 'Missing File');
+          return;
+        }
+      } else {
+        if (!selectedSubjectId) {
+          showWarning('Please select a subject first', 'Missing Subject');
+          return;
+        }
       }
+
       if (!context.trim()) {
-        showWarning('Please provide a context or title for generation', 'Missing Context');
+        showWarning('Please provide a focus topic or description', 'Missing Focus');
         return;
       }
       if (selectedTypes.length === 0) {
@@ -179,55 +187,77 @@ export default function QuickGenerateScreen() {
       setProgress(null);
       progressAnim.setValue(0);
 
-      cancelRef.current = questionsService.quickGenerate(
-        {
-          file: selectedFile,
-          context: context.trim(),
-          count,
-          types: selectedTypes,
-          difficulty,
-          marks_mcq: selectedTypes.includes('mcq') ? marksMcq : undefined,
-          marks_short: selectedTypes.includes('short_answer') ? marksShort : undefined,
-          marks_long: selectedTypes.includes('long_answer') ? marksLong : undefined,
-          subject_id: selectedSubjectId || undefined,
-          topic_id: selectedTopicId || undefined,
-        },
-        (progressUpdate) => {
-          try {
-            console.log('[QuickGenerate UI] Progress update:', progressUpdate.status, progressUpdate.progress);
-            setProgress(progressUpdate);
-            Animated.timing(progressAnim, {
-              toValue: progressUpdate.progress / 100,
-              duration: 300,
-              useNativeDriver: false,
-            }).start();
-            
-            if (progressUpdate.question) {
-              console.log('[QuickGenerate UI] New question received:', progressUpdate.question.id);
-              setGeneratedQuestions(prev => [...prev, progressUpdate.question!]);
-            }
-          } catch (callbackError) {
-            console.error('[QuickGenerate UI] Error in progress callback:', callbackError);
+      const marks_by_type = {
+        marks_mcq: selectedTypes.includes('mcq') ? marksMcq : undefined,
+        marks_short: selectedTypes.includes('short_answer') ? marksShort : undefined,
+        marks_long: selectedTypes.includes('long_answer') ? marksLong : undefined,
+      };
+
+      const onProgress = (progressUpdate: QuickGenerateProgress) => {
+        try {
+          setProgress(progressUpdate);
+          Animated.timing(progressAnim, {
+            toValue: progressUpdate.progress / 100,
+            duration: 300,
+            useNativeDriver: false,
+          }).start();
+          if (progressUpdate.question) {
+            setGeneratedQuestions(prev => [...prev, progressUpdate.question!]);
           }
-        },
-        (documentId) => {
-          try {
-            console.log('[QuickGenerate UI] Complete, documentId:', documentId);
-            setIsGenerating(false);
-          } catch (completeError) {
-            console.error('[QuickGenerate UI] Error in complete callback:', completeError);
-          }
-        },
-        (error) => {
-          try {
-            console.log('[QuickGenerate UI] Error:', error.message);
-            setIsGenerating(false);
-            showError(error, 'Generation Failed');
-          } catch (errorCallbackError) {
-            console.error('[QuickGenerate UI] Error in error callback:', errorCallbackError);
-          }
+        } catch (callbackError) {
+          console.error('[QuickGenerate UI] Error in progress callback:', callbackError);
         }
-      );
+      };
+
+      const onComplete = (_documentId: string | null) => {
+        try {
+          setIsGenerating(false);
+        } catch (completeError) {
+          console.error('[QuickGenerate UI] Error in complete callback:', completeError);
+        }
+      };
+
+      const onError = (error: Error) => {
+        try {
+          setIsGenerating(false);
+          showError(error, 'Generation Failed');
+        } catch (errorCallbackError) {
+          console.error('[QuickGenerate UI] Error in error callback:', errorCallbackError);
+        }
+      };
+
+      if (inputMode === 'pdf') {
+        cancelRef.current = questionsService.quickGenerate(
+          {
+            file: selectedFile!,
+            context: context.trim(),
+            count,
+            types: selectedTypes,
+            difficulty,
+            ...marks_by_type,
+            subject_id: selectedSubjectId || undefined,
+            topic_id: selectedTopicId || undefined,
+          },
+          onProgress,
+          onComplete,
+          onError,
+        );
+      } else {
+        cancelRef.current = questionsService.quickGenerateFromSubject(
+          {
+            subject_id: selectedSubjectId!,
+            topic_id: selectedTopicId || undefined,
+            context: context.trim(),
+            count,
+            types: selectedTypes,
+            difficulty,
+            ...marks_by_type,
+          },
+          onProgress,
+          onComplete,
+          onError,
+        );
+      }
     } catch (error) {
       console.error('[QuickGenerate UI] Unexpected error in handleGenerate:', error);
       setIsGenerating(false);
@@ -242,11 +272,14 @@ export default function QuickGenerateScreen() {
 
   const toggleType = (type: QuestionType) => {
     selectionImpact();
-    setSelectedTypes(prev => 
-      prev.includes(type) 
-        ? prev.filter(t => t !== type)
-        : [...prev, type]
+    setSelectedTypes(prev =>
+      prev.includes(type) ? prev.filter(t => t !== type) : [...prev, type]
     );
+  };
+
+  const switchTab = (mode: InputMode) => {
+    selectionImpact();
+    setInputMode(mode);
   };
 
   return (
@@ -263,7 +296,7 @@ export default function QuickGenerateScreen() {
         />
       }
     >
-      {/* Header */}
+      {/* ── Header ──────────────────────────────────────────────────── */}
       <BlurView intensity={95} style={styles.headerBlur}>
         <LinearGradient
           colors={['#4A90D9', '#357ABD'] as [string, string]}
@@ -274,40 +307,142 @@ export default function QuickGenerateScreen() {
           <IconSymbol name="sparkles" size={48} color="#FFFFFF" weight="semibold" />
           <Text style={styles.headerTitle}>Quick Generate</Text>
           <Text style={styles.headerSubtitle}>
-            Upload a PDF and describe what you need
+            Upload a PDF or pick a subject
           </Text>
         </LinearGradient>
       </BlurView>
 
-      {/* Upload Section */}
+      {/* ── Input Source Card (tabbed) ───────────────────────────────── */}
       <GlassCard style={styles.section}>
-        {/* <Text style={[styles.sectionTitle, { color: colors.text }]}>Document</Text> */}
-        <TouchableOpacity
-          style={[
-            styles.uploadButton,
-            selectedFile && styles.uploadButtonSelected,
-            { borderColor: selectedFile ? colors.success : colors.border }
-          ]}
-          onPress={handlePickDocument}
-          disabled={isGenerating}
-        >
-          <IconSymbol 
-            name={selectedFile ? "checkmark.circle.fill" : "doc.badge.plus"} 
-            size={32} 
-            color={selectedFile ? colors.success : colors.primary} 
-          />
-          <View style={styles.uploadTextContainer}>
-            <Text style={[styles.uploadTitle, { color: colors.text }]}>
-              {selectedFile ? selectedFile.name : 'Upload PDF'}
+        {/* Tab bar */}
+        <View style={[styles.tabBar, { backgroundColor: isDark ? 'rgba(255,255,255,0.06)' : 'rgba(0,0,0,0.05)', borderColor: colors.border }]}>
+          <TouchableOpacity
+            style={[
+              styles.tab,
+              inputMode === 'pdf' && [styles.tabActive, { backgroundColor: colors.primary }],
+            ]}
+            onPress={() => switchTab('pdf')}
+            disabled={isGenerating}
+          >
+            <IconSymbol
+              name="doc.fill"
+              size={14}
+              color={inputMode === 'pdf' ? '#FFFFFF' : colors.textSecondary}
+            />
+            <Text style={[styles.tabText, { color: inputMode === 'pdf' ? '#FFFFFF' : colors.textSecondary }]}>
+              Upload PDF
             </Text>
-            <Text style={[styles.uploadSubtitle, { color: colors.textSecondary }]}>
-              {selectedFile ? 'Tap to change' : 'Tap to select a file'}
+          </TouchableOpacity>
+          <TouchableOpacity
+            style={[
+              styles.tab,
+              inputMode === 'subject' && [styles.tabActive, { backgroundColor: colors.primary }],
+            ]}
+            onPress={() => switchTab('subject')}
+            disabled={isGenerating}
+          >
+            <IconSymbol
+              name="book.fill"
+              size={14}
+              color={inputMode === 'subject' ? '#FFFFFF' : colors.textSecondary}
+            />
+            <Text style={[styles.tabText, { color: inputMode === 'subject' ? '#FFFFFF' : colors.textSecondary }]}>
+              From Subject
             </Text>
+          </TouchableOpacity>
+        </View>
+
+        {/* PDF Tab */}
+        {inputMode === 'pdf' && (
+          <TouchableOpacity
+            style={[
+              styles.uploadButton,
+              selectedFile && styles.uploadButtonSelected,
+              { borderColor: selectedFile ? colors.success : colors.border },
+            ]}
+            onPress={handlePickDocument}
+            disabled={isGenerating}
+          >
+            <IconSymbol
+              name={selectedFile ? 'checkmark.circle.fill' : 'doc.badge.plus'}
+              size={32}
+              color={selectedFile ? colors.success : colors.primary}
+            />
+            <View style={styles.uploadTextContainer}>
+              <Text style={[styles.uploadTitle, { color: colors.text }]}>
+                {selectedFile ? selectedFile.name : 'Upload PDF'}
+              </Text>
+              <Text style={[styles.uploadSubtitle, { color: colors.textSecondary }]}>
+                {selectedFile ? 'Tap to change' : 'Tap to select a file'}
+              </Text>
+            </View>
+          </TouchableOpacity>
+        )}
+
+        {/* Subject Tab */}
+        {inputMode === 'subject' && (
+          <View style={styles.subjectTabContent}>
+            {/* Subject picker button */}
+            <TouchableOpacity
+              style={[styles.pickerButton, {
+                backgroundColor: isDark ? 'rgba(255,255,255,0.08)' : 'rgba(0,0,0,0.04)',
+                borderColor: selectedSubjectId ? colors.primary : colors.border,
+              }]}
+              onPress={() => { selectionImpact(); setShowSubjectPicker(true); }}
+              disabled={isGenerating || loadingSubjects}
+            >
+              {loadingSubjects ? (
+                <ActivityIndicator size="small" color={colors.primary} />
+              ) : (
+                <>
+                  <IconSymbol name="book.fill" size={18} color={selectedSubjectId ? colors.primary : colors.textSecondary} />
+                  <Text style={[styles.pickerText, { color: selectedSubjectId ? colors.text : colors.textTertiary }]}>
+                    {getSelectedSubject()?.name || 'Select subject…'}
+                  </Text>
+                  <IconSymbol name="chevron.right" size={14} color={colors.textSecondary} />
+                </>
+              )}
+            </TouchableOpacity>
+
+            {/* Topic picker (shows after subject selected) */}
+            {selectedSubjectId && (
+              <TouchableOpacity
+                style={[styles.pickerButton, {
+                  backgroundColor: isDark ? 'rgba(255,255,255,0.08)' : 'rgba(0,0,0,0.04)',
+                  borderColor: selectedTopicId ? colors.primary : colors.border,
+                  marginTop: 8,
+                }]}
+                onPress={() => { selectionImpact(); setShowTopicPicker(true); }}
+                disabled={isGenerating || loadingTopics}
+              >
+                {loadingTopics ? (
+                  <ActivityIndicator size="small" color={colors.primary} />
+                ) : (
+                  <>
+                    <IconSymbol name="doc.text.fill" size={18} color={selectedTopicId ? colors.primary : colors.textSecondary} />
+                    <Text style={[styles.pickerText, { color: selectedTopicId ? colors.text : colors.textTertiary }]}>
+                      {getSelectedTopic()?.name || 'Select chapter / topic (optional)'}
+                    </Text>
+                    <IconSymbol name="chevron.right" size={14} color={colors.textSecondary} />
+                  </>
+                )}
+              </TouchableOpacity>
+            )}
+
+            {/* Clear link */}
+            {selectedSubjectId && (
+              <TouchableOpacity
+                onPress={() => { setSelectedSubjectId(null); setSelectedTopicId(null); }}
+                style={styles.clearBtn}
+              >
+                <Text style={[styles.clearBtnText, { color: colors.error }]}>Clear selection</Text>
+              </TouchableOpacity>
+            )}
           </View>
-        </TouchableOpacity>
+        )}
       </GlassCard>
 
-      {/* Context Section */}
+      {/* ── Focus On (context input) ─────────────────────────────────── */}
       <GlassCard style={styles.section}>
         <Text style={[styles.sectionTitle, { color: colors.text }]}>Focus On</Text>
         <TextInput
@@ -317,7 +452,7 @@ export default function QuickGenerateScreen() {
               backgroundColor: isDark ? 'rgba(255,255,255,0.08)' : 'rgba(0,0,0,0.04)',
               color: colors.text,
               borderColor: colors.border,
-            }
+            },
           ]}
           placeholder="e.g., Chapter 5: Binary Trees and Tree Traversal"
           placeholderTextColor={colors.textTertiary}
@@ -327,17 +462,14 @@ export default function QuickGenerateScreen() {
           numberOfLines={3}
           editable={!isGenerating}
         />
-        {/* <Text style={[styles.helperText, { color: colors.textTertiary }]}>
-          Describe the topic or provide a title for question generation
-        </Text> */}
+        <Text style={[styles.helperText, { color: colors.textTertiary }]}>
+          The AI will enhance your focus description before generating questions
+        </Text>
       </GlassCard>
 
-      {/* Options Section */}
+      {/* ── Options ─────────────────────────────────────────────────── */}
       <GlassCard style={styles.section}>
-        {/* <Text style={[styles.sectionTitle, { color: colors.text }]}>Options</Text> */}
-        
         {/* Question Types */}
-        {/* <Text style={[styles.optionLabel, { color: colors.textSecondary }]}>Question Types</Text> */}
         <View style={styles.typesContainer}>
           {[
             { type: 'mcq' as QuestionType, label: 'MCQ', icon: 'list.bullet' },
@@ -349,27 +481,24 @@ export default function QuickGenerateScreen() {
               style={[
                 styles.typeButton,
                 selectedTypes.includes(type) && { backgroundColor: colors.primary },
-                { borderColor: selectedTypes.includes(type) ? colors.primary : colors.border }
+                { borderColor: selectedTypes.includes(type) ? colors.primary : colors.border },
               ]}
               onPress={() => toggleType(type)}
               disabled={isGenerating}
             >
-              <IconSymbol 
-                name={icon as any} 
-                size={18} 
-                color={selectedTypes.includes(type) ? '#FFFFFF' : colors.textSecondary} 
+              <IconSymbol
+                name={icon as any}
+                size={18}
+                color={selectedTypes.includes(type) ? '#FFFFFF' : colors.textSecondary}
               />
-              <Text style={[
-                styles.typeButtonText,
-                { color: selectedTypes.includes(type) ? '#FFFFFF' : colors.text }
-              ]}>
+              <Text style={[styles.typeButtonText, { color: selectedTypes.includes(type) ? '#FFFFFF' : colors.text }]}>
                 {label}
               </Text>
             </TouchableOpacity>
           ))}
         </View>
 
-        {/* Count */}
+        {/* Question Count */}
         <Text style={[styles.optionLabel, { color: colors.textSecondary, marginTop: Spacing.lg }]}>
           Number of Questions: {count}
         </Text>
@@ -381,13 +510,8 @@ export default function QuickGenerateScreen() {
             maximumValue={50}
             step={1}
             value={count}
-            onValueChange={(val: number) => {
-              lightImpact();
-              setCount(Math.round(val));
-            }}
-            onSlidingComplete={() => {
-              mediumImpact();
-            }}
+            onValueChange={(val: number) => { lightImpact(); setCount(Math.round(val)); }}
+            onSlidingComplete={() => mediumImpact()}
             minimumTrackTintColor={colors.primary}
             maximumTrackTintColor={colors.border}
             thumbTintColor={colors.primary}
@@ -397,10 +521,7 @@ export default function QuickGenerateScreen() {
         </View>
         <TouchableOpacity
           style={[styles.customButton, { borderColor: colors.border, backgroundColor: colors.card }]}
-          onPress={() => {
-            selectionImpact();
-            setShowCustomInput(true);
-          }}
+          onPress={() => { selectionImpact(); setShowCustomInput(true); }}
           disabled={isGenerating}
         >
           <IconSymbol name="pencil" size={16} color={colors.primary} />
@@ -422,18 +543,12 @@ export default function QuickGenerateScreen() {
               style={[
                 styles.difficultyButton,
                 difficulty === value && { backgroundColor: color, borderColor: color },
-                { borderColor: difficulty === value ? color : colors.border }
+                { borderColor: difficulty === value ? color : colors.border },
               ]}
-              onPress={() => {
-                selectionImpact();
-                setDifficulty(value);
-              }}
+              onPress={() => { selectionImpact(); setDifficulty(value); }}
               disabled={isGenerating}
             >
-              <Text style={[
-                styles.difficultyButtonText,
-                { color: difficulty === value ? '#FFFFFF' : colors.text }
-              ]}>
+              <Text style={[styles.difficultyButtonText, { color: difficulty === value ? '#FFFFFF' : colors.text }]}>
                 {label}
               </Text>
             </TouchableOpacity>
@@ -449,31 +564,11 @@ export default function QuickGenerateScreen() {
             <View style={styles.marksInputRow}>
               <Text style={[styles.marksLabel, { color: colors.text }]}>MCQ</Text>
               <View style={styles.marksInputWrapper}>
-                <TouchableOpacity
-                  style={[styles.marksButton, { backgroundColor: colors.border }]}
-                  onPress={() => {
-                    mediumImpact();
-                    setMarksMcq(Math.max(1, marksMcq - 1));
-                  }}
-                  disabled={isGenerating}
-                >
+                <TouchableOpacity style={[styles.marksButton, { backgroundColor: colors.border }]} onPress={() => { mediumImpact(); setMarksMcq(Math.max(1, marksMcq - 1)); }} disabled={isGenerating}>
                   <IconSymbol name="minus" size={14} color={colors.text} />
                 </TouchableOpacity>
-                <TextInput
-                  style={[styles.marksInput, { backgroundColor: isDark ? 'rgba(255,255,255,0.08)' : 'rgba(0,0,0,0.04)', color: colors.text, borderColor: colors.border }]}
-                  value={marksMcq.toString()}
-                  onChangeText={(v) => setMarksMcq(parseInt(v) || 1)}
-                  keyboardType="numeric"
-                  editable={!isGenerating}
-                />
-                <TouchableOpacity
-                  style={[styles.marksButton, { backgroundColor: colors.border }]}
-                  onPress={() => {
-                    mediumImpact();
-                    setMarksMcq(marksMcq + 1);
-                  }}
-                  disabled={isGenerating}
-                >
+                <TextInput style={[styles.marksInput, { backgroundColor: isDark ? 'rgba(255,255,255,0.08)' : 'rgba(0,0,0,0.04)', color: colors.text, borderColor: colors.border }]} value={marksMcq.toString()} onChangeText={(v) => setMarksMcq(parseInt(v) || 1)} keyboardType="numeric" editable={!isGenerating} />
+                <TouchableOpacity style={[styles.marksButton, { backgroundColor: colors.border }]} onPress={() => { mediumImpact(); setMarksMcq(marksMcq + 1); }} disabled={isGenerating}>
                   <IconSymbol name="plus" size={14} color={colors.text} />
                 </TouchableOpacity>
               </View>
@@ -483,28 +578,11 @@ export default function QuickGenerateScreen() {
             <View style={styles.marksInputRow}>
               <Text style={[styles.marksLabel, { color: colors.text }]}>Short Answer</Text>
               <View style={styles.marksInputWrapper}>
-                <TouchableOpacity
-                  style={[styles.marksButton, { backgroundColor: colors.border }]}
-                  onPress={() => {
-                    mediumImpact();
-                    setMarksShort(Math.max(1, marksShort - 1));
-                  }}
-                  disabled={isGenerating}
-                >
+                <TouchableOpacity style={[styles.marksButton, { backgroundColor: colors.border }]} onPress={() => { mediumImpact(); setMarksShort(Math.max(1, marksShort - 1)); }} disabled={isGenerating}>
                   <IconSymbol name="minus" size={14} color={colors.text} />
                 </TouchableOpacity>
-                <TextInput
-                  style={[styles.marksInput, { backgroundColor: isDark ? 'rgba(255,255,255,0.08)' : 'rgba(0,0,0,0.04)', color: colors.text, borderColor: colors.border }]}
-                  value={marksShort.toString()}
-                  onChangeText={(v) => setMarksShort(parseInt(v) || 1)}
-                  keyboardType="numeric"
-                  editable={!isGenerating}
-                />
-                <TouchableOpacity
-                  style={[styles.marksButton, { backgroundColor: colors.border }]}
-                  onPress={() => setMarksShort(marksShort + 1)}
-                  disabled={isGenerating}
-                >
+                <TextInput style={[styles.marksInput, { backgroundColor: isDark ? 'rgba(255,255,255,0.08)' : 'rgba(0,0,0,0.04)', color: colors.text, borderColor: colors.border }]} value={marksShort.toString()} onChangeText={(v) => setMarksShort(parseInt(v) || 1)} keyboardType="numeric" editable={!isGenerating} />
+                <TouchableOpacity style={[styles.marksButton, { backgroundColor: colors.border }]} onPress={() => setMarksShort(marksShort + 1)} disabled={isGenerating}>
                   <IconSymbol name="plus" size={14} color={colors.text} />
                 </TouchableOpacity>
               </View>
@@ -514,31 +592,11 @@ export default function QuickGenerateScreen() {
             <View style={styles.marksInputRow}>
               <Text style={[styles.marksLabel, { color: colors.text }]}>Long Answer</Text>
               <View style={styles.marksInputWrapper}>
-                <TouchableOpacity
-                  style={[styles.marksButton, { backgroundColor: colors.border }]}
-                  onPress={() => {
-                    mediumImpact();
-                    setMarksLong(Math.max(1, marksLong - 1));
-                  }}
-                  disabled={isGenerating}
-                >
+                <TouchableOpacity style={[styles.marksButton, { backgroundColor: colors.border }]} onPress={() => { mediumImpact(); setMarksLong(Math.max(1, marksLong - 1)); }} disabled={isGenerating}>
                   <IconSymbol name="minus" size={14} color={colors.text} />
                 </TouchableOpacity>
-                <TextInput
-                  style={[styles.marksInput, { backgroundColor: isDark ? 'rgba(255,255,255,0.08)' : 'rgba(0,0,0,0.04)', color: colors.text, borderColor: colors.border }]}
-                  value={marksLong.toString()}
-                  onChangeText={(v) => setMarksLong(parseInt(v) || 1)}
-                  keyboardType="numeric"
-                  editable={!isGenerating}
-                />
-                <TouchableOpacity
-                  style={[styles.marksButton, { backgroundColor: colors.border }]}
-                  onPress={() => {
-                    mediumImpact();
-                    setMarksLong(marksLong + 1);
-                  }}
-                  disabled={isGenerating}
-                >
+                <TextInput style={[styles.marksInput, { backgroundColor: isDark ? 'rgba(255,255,255,0.08)' : 'rgba(0,0,0,0.04)', color: colors.text, borderColor: colors.border }]} value={marksLong.toString()} onChangeText={(v) => setMarksLong(parseInt(v) || 1)} keyboardType="numeric" editable={!isGenerating} />
+                <TouchableOpacity style={[styles.marksButton, { backgroundColor: colors.border }]} onPress={() => { mediumImpact(); setMarksLong(marksLong + 1); }} disabled={isGenerating}>
                   <IconSymbol name="plus" size={14} color={colors.text} />
                 </TouchableOpacity>
               </View>
@@ -547,226 +605,64 @@ export default function QuickGenerateScreen() {
         </View>
       </GlassCard>
 
-      {/* Subject/Topic Linking Section */}
-      <GlassCard style={styles.section}>
-        <Text style={[styles.sectionTitle, { color: colors.text }]}>Link to Subject (Optional)</Text>
-        <Text style={[styles.helperText, { color: colors.textTertiary, marginBottom: Spacing.md }]}>
-          Associate generated questions with a subject and optionally a specific chapter
-        </Text>
-        
-        {/* Subject Picker */}
-        <Text style={[styles.optionLabel, { color: colors.textSecondary }]}>Subject</Text>
-        <TouchableOpacity
-          style={[
-            styles.pickerButton,
-            { 
-              backgroundColor: isDark ? 'rgba(255,255,255,0.08)' : 'rgba(0,0,0,0.04)',
-              borderColor: colors.border,
-            }
-          ]}
-          onPress={() => setShowSubjectPicker(true)}
-          disabled={isGenerating || loadingSubjects}
-        >
-          {loadingSubjects ? (
-            <ActivityIndicator size="small" color={colors.primary} />
-          ) : (
-            <>
-              <IconSymbol name="book.fill" size={18} color={selectedSubjectId ? colors.primary : colors.textSecondary} />
-              <Text style={[styles.pickerText, { color: selectedSubjectId ? colors.text : colors.textTertiary }]}>
-                {getSelectedSubject()?.name || 'Select a subject (optional)'}
-              </Text>
-              <IconSymbol name="chevron.down" size={14} color={colors.textSecondary} />
-            </>
-          )}
-        </TouchableOpacity>
-        {selectedSubjectId && (
-          <TouchableOpacity
-            style={styles.clearButton}
-            onPress={() => {
-              setSelectedSubjectId(null);
-              setSelectedTopicId(null);
-            }}
-          >
-            <Text style={[styles.clearButtonText, { color: colors.error }]}>Clear subject</Text>
-          </TouchableOpacity>
-        )}
-
-        {/* Topic Picker - Only show if subject is selected */}
-        {selectedSubjectId && (
-          <>
-            <Text style={[styles.optionLabel, { color: colors.textSecondary, marginTop: Spacing.lg }]}>Chapter/Topic</Text>
-            <TouchableOpacity
-              style={[
-                styles.pickerButton,
-                { 
-                  backgroundColor: isDark ? 'rgba(255,255,255,0.08)' : 'rgba(0,0,0,0.04)',
-                  borderColor: colors.border,
-                }
-              ]}
-              onPress={() => setShowTopicPicker(true)}
-              disabled={isGenerating || loadingTopics}
-            >
-              {loadingTopics ? (
-                <ActivityIndicator size="small" color={colors.primary} />
-              ) : (
-                <>
-                  <IconSymbol name="doc.text.fill" size={18} color={selectedTopicId ? colors.primary : colors.textSecondary} />
-                  <Text style={[styles.pickerText, { color: selectedTopicId ? colors.text : colors.textTertiary }]}>
-                    {getSelectedTopic()?.name || 'Select a chapter (optional)'}
-                  </Text>
-                  <IconSymbol name="chevron.down" size={14} color={colors.textSecondary} />
-                </>
-              )}
-            </TouchableOpacity>
-            {selectedTopicId && (
-              <TouchableOpacity
-                style={styles.clearButton}
-                onPress={() => setSelectedTopicId(null)}
-              >
-                <Text style={[styles.clearButtonText, { color: colors.error }]}>Clear chapter</Text>
-              </TouchableOpacity>
-            )}
-          </>
-        )}
-      </GlassCard>
-
-      {/* Subject Picker Modal */}
-      <Modal
-        visible={showSubjectPicker}
-        animationType="slide"
-        presentationStyle="pageSheet"
-        onRequestClose={() => setShowSubjectPicker(false)}
-      >
+      {/* Subject/Topic Picker Modals */}
+      <Modal visible={showSubjectPicker} animationType="slide" presentationStyle="pageSheet" onRequestClose={() => setShowSubjectPicker(false)}>
         <View style={[styles.modalContainer, { backgroundColor: colors.background }]}>
-          <View style={styles.modalHeaderBar}>
-            <View style={[styles.modalHandle, { backgroundColor: colors.border }]} />
-          </View>
+          <View style={styles.modalHeaderBar}><View style={[styles.modalHandle, { backgroundColor: colors.border }]} /></View>
           <View style={styles.modalTop}>
             <Text style={[styles.modalTitle, { color: colors.text }]}>Select Subject</Text>
-            <TouchableOpacity onPress={() => setShowSubjectPicker(false)}>
-              <IconSymbol name="xmark.circle.fill" size={28} color={colors.textSecondary} />
-            </TouchableOpacity>
+            <TouchableOpacity onPress={() => setShowSubjectPicker(false)}><IconSymbol name="xmark.circle.fill" size={28} color={colors.textSecondary} /></TouchableOpacity>
           </View>
           <View style={styles.modalDivider} />
           <ScrollView style={styles.modalScrollContent}>
-
-              {subjects.length === 0 ? (
-                <View style={styles.emptyList}>
-                  <Text style={[styles.emptyListText, { color: colors.textSecondary }]}>
-                    No subjects available. Create a subject first.
-                  </Text>
+            {subjects.length === 0 ? (
+              <View style={styles.emptyList}><Text style={[styles.emptyListText, { color: colors.textSecondary }]}>No subjects available. Create a subject first.</Text></View>
+            ) : subjects.map((subject) => (
+              <TouchableOpacity key={subject.id} style={[styles.modalItem, { borderBottomColor: colors.border }, selectedSubjectId === subject.id && { backgroundColor: colors.primary + '15' }]} onPress={() => { setSelectedSubjectId(subject.id); setSelectedTopicId(null); setShowSubjectPicker(false); }}>
+                <View style={styles.modalItemContent}>
+                  <Text style={[styles.modalItemTitle, { color: colors.text }]}>{subject.name}</Text>
+                  <Text style={[styles.modalItemSubtitle, { color: colors.textSecondary }]}>{subject.code} • {subject.total_topics} topics</Text>
                 </View>
-              ) : (
-                subjects.map((subject) => (
-                  <TouchableOpacity
-                    key={subject.id}
-                    style={[
-                      styles.modalItem,
-                      { borderBottomColor: colors.border },
-                      selectedSubjectId === subject.id && { backgroundColor: colors.primary + '15' }
-                    ]}
-                    onPress={() => {
-                      setSelectedSubjectId(subject.id);
-                      setSelectedTopicId(null);
-                      setShowSubjectPicker(false);
-                    }}
-                  >
-                    <View style={styles.modalItemContent}>
-                      <Text style={[styles.modalItemTitle, { color: colors.text }]}>{subject.name}</Text>
-                      <Text style={[styles.modalItemSubtitle, { color: colors.textSecondary }]}>
-                        {subject.code} • {subject.total_topics} topics
-                      </Text>
-                    </View>
-                    {selectedSubjectId === subject.id && (
-                      <IconSymbol name="checkmark.circle.fill" size={22} color={colors.primary} />
-                    )}
-                  </TouchableOpacity>
-                ))
-              )}
+                {selectedSubjectId === subject.id && <IconSymbol name="checkmark.circle.fill" size={22} color={colors.primary} />}
+              </TouchableOpacity>
+            ))}
           </ScrollView>
         </View>
       </Modal>
 
-      {/* Topic Picker Modal */}
-      <Modal
-        visible={showTopicPicker}
-        animationType="slide"
-        presentationStyle="pageSheet"
-        onRequestClose={() => setShowTopicPicker(false)}
-      >
+      <Modal visible={showTopicPicker} animationType="slide" presentationStyle="pageSheet" onRequestClose={() => setShowTopicPicker(false)}>
         <View style={[styles.modalContainer, { backgroundColor: colors.background }]}>
-          <View style={styles.modalHeaderBar}>
-            <View style={[styles.modalHandle, { backgroundColor: colors.border }]} />
-          </View>
+          <View style={styles.modalHeaderBar}><View style={[styles.modalHandle, { backgroundColor: colors.border }]} /></View>
           <View style={styles.modalTop}>
             <Text style={[styles.modalTitle, { color: colors.text }]}>Select Chapter</Text>
-            <TouchableOpacity onPress={() => setShowTopicPicker(false)}>
-              <IconSymbol name="xmark.circle.fill" size={28} color={colors.textSecondary} />
-            </TouchableOpacity>
+            <TouchableOpacity onPress={() => setShowTopicPicker(false)}><IconSymbol name="xmark.circle.fill" size={28} color={colors.textSecondary} /></TouchableOpacity>
           </View>
           <View style={styles.modalDivider} />
           <ScrollView style={styles.modalScrollContent}>
-
-              {topics.length === 0 ? (
-                <View style={styles.emptyList}>
-                  <Text style={[styles.emptyListText, { color: colors.textSecondary }]}>
-                    No topics available for this subject.
-                  </Text>
+            {topics.length === 0 ? (
+              <View style={styles.emptyList}><Text style={[styles.emptyListText, { color: colors.textSecondary }]}>No topics available for this subject.</Text></View>
+            ) : topics.map((topic) => (
+              <TouchableOpacity key={topic.id} style={[styles.modalItem, { borderBottomColor: colors.border }, selectedTopicId === topic.id && { backgroundColor: colors.primary + '15' }]} onPress={() => { setSelectedTopicId(topic.id); setShowTopicPicker(false); }}>
+                <View style={styles.modalItemContent}>
+                  <Text style={[styles.modalItemTitle, { color: colors.text }]}>{topic.name}</Text>
+                  {topic.description && <Text style={[styles.modalItemSubtitle, { color: colors.textSecondary }]} numberOfLines={1}>{topic.description}</Text>}
                 </View>
-              ) : (
-                topics.map((topic) => (
-                  <TouchableOpacity
-                    key={topic.id}
-                    style={[
-                      styles.modalItem,
-                      { borderBottomColor: colors.border },
-                      selectedTopicId === topic.id && { backgroundColor: colors.primary + '15' }
-                    ]}
-                    onPress={() => {
-                      setSelectedTopicId(topic.id);
-                      setShowTopicPicker(false);
-                    }}
-                  >
-                    <View style={styles.modalItemContent}>
-                      <Text style={[styles.modalItemTitle, { color: colors.text }]}>{topic.name}</Text>
-                      {topic.description && (
-                        <Text style={[styles.modalItemSubtitle, { color: colors.textSecondary }]} numberOfLines={1}>
-                          {topic.description}
-                        </Text>
-                      )}
-                    </View>
-                    {selectedTopicId === topic.id && (
-                      <IconSymbol name="checkmark.circle.fill" size={22} color={colors.primary} />
-                    )}
-                  </TouchableOpacity>
-                ))
-              )}
+                {selectedTopicId === topic.id && <IconSymbol name="checkmark.circle.fill" size={22} color={colors.primary} />}
+              </TouchableOpacity>
+            ))}
           </ScrollView>
         </View>
       </Modal>
 
-      {/* Progress Section */}
+      {/* ── Progress ─────────────────────────────────────────────────── */}
       {isGenerating && progress && (
         <GlassCard style={styles.section}>
           <Text style={[styles.sectionTitle, { color: colors.text }]}>Generating...</Text>
           <View style={styles.progressContainer}>
             <View style={[styles.progressBar, { backgroundColor: colors.border }]}>
-              <Animated.View 
-                style={[
-                  styles.progressFill,
-                  { 
-                    backgroundColor: colors.primary,
-                    width: progressAnim.interpolate({
-                      inputRange: [0, 1],
-                      outputRange: ['0%', '100%'],
-                    })
-                  }
-                ]} 
-              />
+              <Animated.View style={[styles.progressFill, { backgroundColor: colors.primary, width: progressAnim.interpolate({ inputRange: [0, 1], outputRange: ['0%', '100%'] }) }]} />
             </View>
-            <Text style={[styles.progressText, { color: colors.textSecondary }]}>
-              {progress.message || `${progress.progress}%`}
-            </Text>
+            <Text style={[styles.progressText, { color: colors.textSecondary }]}>{progress.message || `${progress.progress}%`}</Text>
           </View>
           {progress.current_question && progress.total_questions && (
             <Text style={[styles.progressCount, { color: colors.primary }]}>
@@ -776,67 +672,39 @@ export default function QuickGenerateScreen() {
         </GlassCard>
       )}
 
-      {/* Generated Questions Preview */}
+      {/* ── Generated Questions Preview ──────────────────────────────── */}
       {generatedQuestions.length > 0 && (
         <GlassCard style={styles.section}>
           <Text style={[styles.sectionTitle, { color: colors.text }]}>
             Generated Questions ({generatedQuestions.length})
           </Text>
-          {generatedQuestions.map((q, index) => (
+          {generatedQuestions.map((q) => (
             <View key={q.id} style={[styles.questionPreview, { borderColor: colors.border }]}>
               <View style={styles.questionHeader}>
                 <View style={[styles.questionBadge, { backgroundColor: colors.primary }]}>
                   <Text style={styles.questionBadgeText}>{q.question_type?.toUpperCase()}</Text>
                 </View>
                 {q.difficulty_level && (
-                  <View style={[styles.difficultyBadge, { 
-                    backgroundColor: q.difficulty_level === 'easy' ? '#34C759' : 
-                      q.difficulty_level === 'medium' ? '#FF9500' : '#FF3B30' 
-                  }]}>
+                  <View style={[styles.difficultyBadge, { backgroundColor: q.difficulty_level === 'easy' ? '#34C759' : q.difficulty_level === 'medium' ? '#FF9500' : '#FF3B30' }]}>
                     <Text style={styles.questionBadgeText}>{q.difficulty_level.toUpperCase()}</Text>
                   </View>
                 )}
               </View>
-              <Text style={[styles.questionText, { color: colors.text }]}>
-                {q.question_text}
-              </Text>
-
-              {/* Source References */}
+              <Text style={[styles.questionText, { color: colors.text }]}>{q.question_text}</Text>
               {q.source_info && <QuestionSources sourceInfo={q.source_info} compact />}
-
-              {/* Assigned LO / CO / Topic badges (if present) */}
               <View style={styles.generatedMetaRow}>
-                { (q as any).learning_outcome_id ? (
-                  <Text style={[styles.generatedMetaText, { color: colors.textSecondary }]}>{(q as any).learning_outcome_id}</Text>
-                ) : null }
-
-                { (q as any).course_outcome_mapping && Object.keys((q as any).course_outcome_mapping).length ? (
-                  <Text style={[styles.generatedMetaText, { color: colors.textSecondary }]}>{Object.keys((q as any).course_outcome_mapping).join(', ')}</Text>
-                ) : null }
-
-                { q.topic_tags && q.topic_tags.length ? (
-                  <Text style={[styles.generatedMetaText, { color: colors.textSecondary }]}>{q.topic_tags[0]}</Text>
-                ) : null }
+                {(q as any).learning_outcome_id ? <Text style={[styles.generatedMetaText, { color: colors.textSecondary }]}>{(q as any).learning_outcome_id}</Text> : null}
+                {(q as any).course_outcome_mapping && Object.keys((q as any).course_outcome_mapping).length ? <Text style={[styles.generatedMetaText, { color: colors.textSecondary }]}>{Object.keys((q as any).course_outcome_mapping).join(', ')}</Text> : null}
+                {q.topic_tags && q.topic_tags.length ? <Text style={[styles.generatedMetaText, { color: colors.textSecondary }]}>{q.topic_tags[0]}</Text> : null}
               </View>
-
               {q.options && q.options.length > 0 && (
                 <View style={styles.optionsContainer}>
                   {q.options.map((opt, optIdx) => {
                     const isCorrect = q.correct_answer && opt.startsWith(q.correct_answer);
                     return (
-                      <View 
-                        key={optIdx} 
-                        style={[
-                          styles.optionRow,
-                          isCorrect && { backgroundColor: colors.success + '20', borderRadius: BorderRadius.sm, padding: 4 }
-                        ]}
-                      >
-                        <Text style={[styles.optionText, { color: isCorrect ? colors.success : colors.textSecondary }]}>
-                          {opt}
-                        </Text>
-                        {isCorrect && (
-                          <IconSymbol name="checkmark.circle.fill" size={16} color={colors.success} />
-                        )}
+                      <View key={optIdx} style={[styles.optionRow, isCorrect && { backgroundColor: colors.success + '20', borderRadius: BorderRadius.sm, padding: 4 }]}>
+                        <Text style={[styles.optionText, { color: isCorrect ? colors.success : colors.textSecondary }]}>{opt}</Text>
+                        {isCorrect && <IconSymbol name="checkmark.circle.fill" size={16} color={colors.success} />}
                       </View>
                     );
                   })}
@@ -850,26 +718,13 @@ export default function QuickGenerateScreen() {
               )}
             </View>
           ))}
-          
-          {/* Action Buttons after generation */}
           {progress?.status === 'complete' && (
             <View style={styles.actionButtons}>
-              <TouchableOpacity
-                style={[styles.actionButton, { backgroundColor: colors.primary }]}
-                onPress={() => router.push('/(tabs)/home/vetting')}
-              >
+              <TouchableOpacity style={[styles.actionButton, { backgroundColor: colors.primary }]} onPress={() => router.push('/(tabs)/home/vetting')}>
                 <IconSymbol name="checkmark.shield.fill" size={20} color="#FFFFFF" />
                 <Text style={styles.actionButtonText}>Review & Validate</Text>
               </TouchableOpacity>
-              <TouchableOpacity
-                style={[styles.actionButton, { backgroundColor: colors.success }]}
-                onPress={() => {
-                  setGeneratedQuestions([]);
-                  setProgress(null);
-                  setSelectedFile(null);
-                  setContext('');
-                }}
-              >
+              <TouchableOpacity style={[styles.actionButton, { backgroundColor: colors.success }]} onPress={() => { setGeneratedQuestions([]); setProgress(null); setSelectedFile(null); setContext(''); }}>
                 <IconSymbol name="plus.circle.fill" size={20} color="#FFFFFF" />
                 <Text style={styles.actionButtonText}>Generate More</Text>
               </TouchableOpacity>
@@ -878,7 +733,7 @@ export default function QuickGenerateScreen() {
         </GlassCard>
       )}
 
-      {/* Generate Button */}
+      {/* ── Generate Button ─────────────────────────────────────────── */}
       <TouchableOpacity
         style={[styles.generateButton, isGenerating && styles.generateButtonDisabled]}
         onPress={isGenerating ? handleCancel : handleGenerate}
@@ -904,27 +759,15 @@ export default function QuickGenerateScreen() {
         </LinearGradient>
       </TouchableOpacity>
 
-      {/* Bottom padding for tab bar */}
       <View style={{ height: 100 }} />
 
       {/* Custom Count Input Modal */}
-      <Modal
-        visible={showCustomInput}
-        transparent
-        animationType="fade"
-        onRequestClose={() => setShowCustomInput(false)}
-      >
+      <Modal visible={showCustomInput} transparent animationType="fade" onRequestClose={() => setShowCustomInput(false)}>
         <View style={styles.customInputModal}>
           <View style={[styles.customInputContainer, { backgroundColor: colors.card }]}>
-            <Text style={[styles.customInputTitle, { color: colors.text }]}>
-              Enter Number of Questions
-            </Text>
+            <Text style={[styles.customInputTitle, { color: colors.text }]}>Enter Number of Questions</Text>
             <TextInput
-              style={[styles.customInput, { 
-                borderColor: colors.border, 
-                color: colors.text,
-                backgroundColor: isDark ? 'rgba(255,255,255,0.05)' : 'rgba(0,0,0,0.02)',
-              }]}
+              style={[styles.customInput, { borderColor: colors.border, color: colors.text, backgroundColor: isDark ? 'rgba(255,255,255,0.05)' : 'rgba(0,0,0,0.02)' }]}
               value={customCount}
               onChangeText={setCustomCount}
               keyboardType="number-pad"
@@ -934,31 +777,21 @@ export default function QuickGenerateScreen() {
               selectTextOnFocus
             />
             <View style={styles.customInputButtons}>
-              <TouchableOpacity
-                style={[styles.customInputButton, { backgroundColor: colors.border }]}
-                onPress={() => {
-                  selectionImpact();
-                  setShowCustomInput(false);
-                  setCustomCount('');
-                }}
-              >
+              <TouchableOpacity style={[styles.customInputButton, { backgroundColor: colors.border }]} onPress={() => { selectionImpact(); setShowCustomInput(false); setCustomCount(''); }}>
                 <Text style={[styles.customInputButtonText, { color: colors.text }]}>Cancel</Text>
               </TouchableOpacity>
-              <TouchableOpacity
-                style={[styles.customInputButton, { backgroundColor: colors.primary }]}
-                onPress={() => {
-                  mediumImpact();
-                  const num = parseInt(customCount, 10);
-                  if (!isNaN(num) && num >= 1 && num <= 150) {
-                    setCount(num);
-                    setShowCustomInput(false);
-                    setCustomCount('');
-                  } else {
-                    showError(new Error('Please enter a number between 1 and 150'), 'Invalid input');
-                  }
-                }}
-              >
-                <Text style={[styles.customInputButtonText, { color: '#FFFFFF' }]}>Set</Text>
+              <TouchableOpacity style={[styles.customInputButton, { backgroundColor: colors.primary }]} onPress={() => {
+                mediumImpact();
+                const num = parseInt(customCount, 10);
+                if (!isNaN(num) && num >= 1 && num <= 150) {
+                  setCount(num);
+                  setShowCustomInput(false);
+                  setCustomCount('');
+                } else {
+                  showError(new Error('Please enter a number between 1 and 150'), 'Invalid input');
+                }
+              }}>
+                <Text style={[styles.customInputButtonText, { color: '#FFFFFF' }]}>Apply</Text>
               </TouchableOpacity>
             </View>
           </View>
@@ -969,456 +802,117 @@ export default function QuickGenerateScreen() {
 }
 
 const styles = StyleSheet.create({
-  container: {
-    flex: 1,
-  },
-  contentContainer: {
-    paddingBottom: Spacing.xxl,
-  },
-  headerBlur: {
-    overflow: 'hidden',
-    borderRadius: BorderRadius.xxl,
-    marginTop: Spacing.lg,
-    marginBottom: Spacing.lg,
-    marginHorizontal: Spacing.md,
-    ...Shadows.medium,
-  },
-  header: {
-    paddingTop: 20,
-    paddingBottom: Spacing.xxxl,
-    paddingHorizontal: Spacing.lg,
-    alignItems: 'center',
-  },
-  headerTitle: {
-    fontSize: FontSizes.xxxl,
-    fontWeight: '700',
-    color: '#FFFFFF',
-    marginTop: Spacing.md,
-  },
-  headerSubtitle: {
-    fontSize: FontSizes.md,
-    color: 'rgba(255, 255, 255, 0.85)',
-    marginTop: Spacing.xs,
-    textAlign: 'center',
-  },
-  glassCardContainer: {
-    marginHorizontal: Spacing.lg,
-    marginTop: Spacing.lg,
-    borderRadius: BorderRadius.lg,
-    overflow: 'hidden',
-    ...Shadows.medium,
-  },
-  glassCard: {
-    padding: Spacing.lg,
-    borderWidth: 1,
-    borderRadius: BorderRadius.lg,
-  },
-  section: {
-    marginBottom: Spacing.lg,
-    marginRight: Spacing.lg,
-    marginLeft: Spacing.lg,
-  },
-  sectionTitle: {
-    fontSize: FontSizes.lg,
-    fontWeight: '600',
-    marginBottom: Spacing.md,
-  },
-  uploadButton: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    padding: Spacing.lg,
-    borderRadius: BorderRadius.md,
-    borderWidth: 2,
-    borderStyle: 'dashed',
-  },
-  uploadButtonSelected: {
-    borderStyle: 'solid',
-  },
-  uploadTextContainer: {
-    marginLeft: Spacing.md,
-    flex: 1,
-  },
-  uploadTitle: {
-    fontSize: FontSizes.md,
-    fontWeight: '600',
-  },
-  uploadSubtitle: {
-    fontSize: FontSizes.sm,
-    marginTop: 2,
-  },
-  contextInput: {
-    borderWidth: 1,
-    borderRadius: BorderRadius.md,
-    padding: Spacing.md,
-    fontSize: FontSizes.md,
-    minHeight: 100,
-    textAlignVertical: 'top',
-  },
-  helperText: {
-    fontSize: FontSizes.xs,
-    marginTop: Spacing.sm,
-  },
-  optionLabel: {
-    fontSize: FontSizes.sm,
-    fontWeight: '500',
-    marginBottom: Spacing.sm,
-  },
-  typesContainer: {
-    flexDirection: 'row',
-    gap: Spacing.sm,
-  },
-  typeButton: {
-    flex: 1,
-    flexDirection: 'row',
-    alignItems: 'center',
-    justifyContent: 'center',
-    paddingVertical: Spacing.md,
-    paddingHorizontal: Spacing.sm,
-    borderRadius: BorderRadius.md,
-    borderWidth: 1,
-    gap: Spacing.xs,
-  },
-  typeButtonText: {
-    fontSize: FontSizes.sm,
-    fontWeight: '500',
-  },
-  sliderRow: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    gap: Spacing.sm,
-  },
-  sliderLabel: {
-    fontSize: FontSizes.sm,
-    minWidth: 20,
-  },
-  slider: {
-    flex: 1,
-    height: 40,
-  },
-  sliderValue: {
-    fontSize: FontSizes.lg,
-    fontWeight: '700',
-    minWidth: 40,
-    textAlign: 'right',
-  },
-  customButton: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    justifyContent: 'center',
-    gap: Spacing.xs,
-    paddingVertical: Spacing.sm,
-    paddingHorizontal: Spacing.md,
-    borderRadius: BorderRadius.md,
-    borderWidth: 1,
-    marginTop: Spacing.sm,
-  },
-  customButtonText: {
-    fontSize: FontSizes.sm,
-    fontWeight: '500',
-  },
-  customInputModal: {
-    flex: 1,
-    justifyContent: 'center',
-    alignItems: 'center',
-    backgroundColor: 'rgba(0,0,0,0.5)',
-  },
-  customInputContainer: {
-    width: '80%',
-    padding: Spacing.xl,
-    borderRadius: BorderRadius.lg,
-    gap: Spacing.md,
-  },
-  customInputTitle: {
-    fontSize: FontSizes.lg,
-    fontWeight: '600',
-    textAlign: 'center',
-  },
-  customInput: {
-    borderWidth: 1,
-    borderRadius: BorderRadius.md,
-    paddingVertical: Spacing.md,
-    paddingHorizontal: Spacing.md,
-    fontSize: FontSizes.lg,
-    fontWeight: '600',
-    textAlign: 'center',
-  },
-  customInputButtons: {
-    flexDirection: 'row',
-    gap: Spacing.sm,
-  },
-  customInputButton: {
-    flex: 1,
-    paddingVertical: Spacing.md,
-    borderRadius: BorderRadius.md,
-    alignItems: 'center',
-  },
-  customInputButtonText: {
-    fontSize: FontSizes.md,
-    fontWeight: '600',
-  },
-  difficultyContainer: {
-    flexDirection: 'row',
-    gap: Spacing.sm,
-  },
-  difficultyButton: {
-    flex: 1,
-    alignItems: 'center',
-    paddingVertical: Spacing.md,
-    borderRadius: BorderRadius.md,
-    borderWidth: 1,
-  },
-  difficultyButtonText: {
-    fontSize: FontSizes.sm,
-    fontWeight: '600',
-  },
-  marksContainer: {
-    gap: Spacing.sm,
-  },
-  marksInputRow: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    justifyContent: 'space-between',
-  },
-  marksLabel: {
-    fontSize: FontSizes.sm,
-    fontWeight: '500',
-    flex: 1,
-  },
-  marksInputWrapper: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    gap: Spacing.xs,
-  },
-  marksButton: {
-    width: 32,
-    height: 32,
-    borderRadius: BorderRadius.sm,
-    alignItems: 'center',
-    justifyContent: 'center',
-  },
-  marksInput: {
-    width: 50,
-    height: 36,
-    borderWidth: 1,
-    borderRadius: BorderRadius.sm,
-    textAlign: 'center',
-    fontSize: FontSizes.md,
-    fontWeight: '600',
-  },
-  pickerButton: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    padding: Spacing.md,
-    borderRadius: BorderRadius.md,
-    borderWidth: 1,
-    gap: Spacing.sm,
-  },
-  pickerText: {
-    flex: 1,
-    fontSize: FontSizes.md,
-  },
-  clearButton: {
-    marginTop: Spacing.xs,
-    paddingVertical: Spacing.xs,
-  },
-  clearButtonText: {
-    fontSize: FontSizes.sm,
-  },
-  modalContainer: {
-    flex: 1,
-  },
-  modalHeaderBar: {
-    paddingVertical: Spacing.sm,
-    alignItems: 'center',
-  },
-  modalHandle: {
-    width: 40,
-    height: 4,
-    borderRadius: 2,
-  },
-  modalTop: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    justifyContent: 'space-between',
-    paddingHorizontal: Spacing.lg,
-    paddingVertical: Spacing.md,
-  },
-  modalTitle: {
-    fontSize: FontSizes.xl,
-    fontWeight: '700',
-  },
-  modalDivider: {
-    height: 1,
-    backgroundColor: 'rgba(128, 128, 128, 0.2)',
-    marginHorizontal: Spacing.lg,
-  },
-  modalScrollContent: {
-    flex: 1,
-    paddingHorizontal: Spacing.lg,
-    paddingTop: Spacing.md,
-  },
-  modalItem: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    paddingVertical: Spacing.md,
-    borderBottomWidth: 1,
-  },
-  modalItemContent: {
-    flex: 1,
-  },
-  modalItemTitle: {
-    fontSize: FontSizes.md,
-    fontWeight: '500',
-  },
-  modalItemSubtitle: {
-    fontSize: FontSizes.sm,
-    marginTop: 2,
-  },
-  emptyList: {
-    padding: Spacing.xl,
-    alignItems: 'center',
-  },
-  emptyListText: {
-    fontSize: FontSizes.sm,
-    textAlign: 'center',
-  },
-  progressContainer: {
-    marginTop: Spacing.sm,
-  },
-  progressBar: {
-    height: 8,
-    borderRadius: 4,
-    overflow: 'hidden',
-  },
-  progressFill: {
-    height: '100%',
-    borderRadius: 4,
-  },
-  progressText: {
-    fontSize: FontSizes.sm,
-    marginTop: Spacing.sm,
-    textAlign: 'center',
-  },
-  progressCount: {
-    fontSize: FontSizes.lg,
-    fontWeight: '600',
-    textAlign: 'center',
-    marginTop: Spacing.sm,
-  },
-  questionPreview: {
-    padding: Spacing.md,
-    borderRadius: BorderRadius.sm,
-    borderWidth: 1,
-    marginBottom: Spacing.sm,
-  },
-  questionBadge: {
-    alignSelf: 'flex-start',
-    paddingHorizontal: Spacing.sm,
-    paddingVertical: 2,
-    borderRadius: BorderRadius.sm,
-    marginBottom: Spacing.xs,
-  },
-  questionBadgeText: {
-    color: '#FFFFFF',
-    fontSize: FontSizes.xs,
-    fontWeight: '600',
-  },
-  questionText: {
-    fontSize: FontSizes.sm,
-    lineHeight: 20,
-  },
-  optionsContainer: {
-    marginTop: Spacing.sm,
-    paddingLeft: Spacing.sm,
-  },
-  optionText: {
-    fontSize: FontSizes.xs,
-    lineHeight: 18,
-    marginBottom: 4,
-  },
-  questionHeader: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    gap: Spacing.sm,
-    marginBottom: Spacing.xs,
-  },
-  generatedMetaRow: {
-    flexDirection: 'row',
-    flexWrap: 'wrap',
-    gap: Spacing.sm,
-    marginTop: Spacing.sm,
-  },
-  generatedMetaText: {
-    fontSize: FontSizes.xs,
-    paddingHorizontal: Spacing.sm,
-    paddingVertical: 2,
-    borderRadius: BorderRadius.sm,
-    backgroundColor: 'rgba(128, 128, 128, 0.15)',
-    overflow: 'hidden',
-  },
-  difficultyBadge: {
-    paddingHorizontal: Spacing.sm,
-    paddingVertical: 2,
-    borderRadius: BorderRadius.sm,
-  },
-  optionRow: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    justifyContent: 'space-between',
-    marginBottom: 4,
-  },
-  answerContainer: {
-    marginTop: Spacing.md,
-    padding: Spacing.sm,
-    borderRadius: BorderRadius.sm,
-    borderWidth: 1,
-  },
-  answerLabel: {
-    fontSize: FontSizes.xs,
-    fontWeight: '600',
-    marginBottom: 4,
-  },
-  answerText: {
-    fontSize: FontSizes.sm,
-    lineHeight: 18,
-  },
-  actionButtons: {
-    flexDirection: 'row',
-    gap: Spacing.md,
-    marginTop: Spacing.lg,
-  },
-  actionButton: {
-    flex: 1,
-    flexDirection: 'row',
-    alignItems: 'center',
-    justifyContent: 'center',
-    paddingVertical: Spacing.md,
-    borderRadius: BorderRadius.md,
-    gap: Spacing.xs,
-  },
-  actionButtonText: {
-    color: '#FFFFFF',
-    fontSize: FontSizes.sm,
-    fontWeight: '600',
-  },
-  generateButton: {
-    marginHorizontal: Spacing.xxxl + 60,
-    marginTop: Spacing.xl,
-    borderRadius: BorderRadius.lg,
-    overflow: 'hidden',
-    ...Shadows.large,
-  },
+  container: { flex: 1 },
+  contentContainer: { paddingBottom: Spacing.xxl },
+
+  // Header
+  headerBlur: { overflow: 'hidden', borderRadius: BorderRadius.xxl, marginTop: Spacing.lg, marginBottom: Spacing.lg, marginHorizontal: Spacing.md, ...Shadows.medium },
+  header: { paddingTop: 20, paddingBottom: Spacing.xxxl, paddingHorizontal: Spacing.lg, alignItems: 'center' },
+  headerTitle: { fontSize: FontSizes.xxxl, fontWeight: '700', color: '#FFFFFF', marginTop: Spacing.md },
+  headerSubtitle: { fontSize: FontSizes.md, color: 'rgba(255,255,255,0.85)', marginTop: Spacing.xs, textAlign: 'center' },
+
+  section: { marginBottom: Spacing.lg, marginRight: Spacing.lg, marginLeft: Spacing.lg },
+  sectionTitle: { fontSize: FontSizes.lg, fontWeight: '600', marginBottom: Spacing.md },
+
+  // Tab bar
+  tabBar: { flexDirection: 'row', borderRadius: BorderRadius.md, borderWidth: 1, marginBottom: Spacing.md, overflow: 'hidden' },
+  tab: { flex: 1, flexDirection: 'row', alignItems: 'center', justifyContent: 'center', gap: 6, paddingVertical: 10, paddingHorizontal: 12 },
+  tabActive: { borderRadius: BorderRadius.md - 1 },
+  tabText: { fontSize: FontSizes.sm, fontWeight: '600' },
+
+  // Upload
+  uploadButton: { flexDirection: 'row', alignItems: 'center', padding: Spacing.lg, borderRadius: BorderRadius.md, borderWidth: 2, borderStyle: 'dashed' },
+  uploadButtonSelected: { borderStyle: 'solid' },
+  uploadTextContainer: { marginLeft: Spacing.md, flex: 1 },
+  uploadTitle: { fontSize: FontSizes.md, fontWeight: '600' },
+  uploadSubtitle: { fontSize: FontSizes.sm, marginTop: 2 },
+
+  // Subject tab
+  subjectTabContent: {},
+  pickerButton: { flexDirection: 'row', alignItems: 'center', padding: Spacing.md, borderRadius: BorderRadius.md, borderWidth: 1, gap: Spacing.sm },
+  pickerText: { flex: 1, fontSize: FontSizes.md },
+  clearBtn: { marginTop: 6, paddingVertical: 4 },
+  clearBtnText: { fontSize: FontSizes.sm, fontWeight: '500' },
+
+  // Context input
+  contextInput: { borderWidth: 1, borderRadius: BorderRadius.md, padding: Spacing.md, fontSize: FontSizes.md, minHeight: 100, textAlignVertical: 'top' },
+  helperText: { fontSize: FontSizes.xs, marginTop: Spacing.sm },
+
+  // Options
+  optionLabel: { fontSize: FontSizes.sm, fontWeight: '500', marginBottom: Spacing.sm },
+  typesContainer: { flexDirection: 'row', gap: Spacing.sm },
+  typeButton: { flex: 1, flexDirection: 'row', alignItems: 'center', justifyContent: 'center', paddingVertical: Spacing.md, paddingHorizontal: Spacing.sm, borderRadius: BorderRadius.md, borderWidth: 1, gap: Spacing.xs },
+  typeButtonText: { fontSize: FontSizes.sm, fontWeight: '500' },
+  sliderRow: { flexDirection: 'row', alignItems: 'center', gap: Spacing.sm },
+  sliderLabel: { fontSize: FontSizes.sm, minWidth: 20 },
+  slider: { flex: 1, height: 40 },
+  sliderValue: { fontSize: FontSizes.lg, fontWeight: '700', minWidth: 40, textAlign: 'right' },
+  customButton: { flexDirection: 'row', alignItems: 'center', justifyContent: 'center', gap: Spacing.xs, paddingVertical: Spacing.sm, paddingHorizontal: Spacing.md, borderRadius: BorderRadius.md, borderWidth: 1, marginTop: Spacing.sm },
+  customButtonText: { fontSize: FontSizes.sm, fontWeight: '500' },
+  difficultyContainer: { flexDirection: 'row', gap: Spacing.sm },
+  difficultyButton: { flex: 1, alignItems: 'center', paddingVertical: Spacing.md, borderRadius: BorderRadius.md, borderWidth: 1 },
+  difficultyButtonText: { fontSize: FontSizes.sm, fontWeight: '600' },
+  marksContainer: { gap: Spacing.sm },
+  marksInputRow: { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between' },
+  marksLabel: { fontSize: FontSizes.sm, fontWeight: '500', flex: 1 },
+  marksInputWrapper: { flexDirection: 'row', alignItems: 'center', gap: Spacing.xs },
+  marksButton: { width: 32, height: 32, borderRadius: BorderRadius.sm, alignItems: 'center', justifyContent: 'center' },
+  marksInput: { width: 50, height: 36, borderWidth: 1, borderRadius: BorderRadius.sm, textAlign: 'center', fontSize: FontSizes.md, fontWeight: '600' },
+
+  // Modals
+  modalContainer: { flex: 1 },
+  modalHeaderBar: { paddingVertical: Spacing.sm, alignItems: 'center' },
+  modalHandle: { width: 40, height: 4, borderRadius: 2 },
+  modalTop: { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', paddingHorizontal: Spacing.lg, paddingVertical: Spacing.md },
+  modalTitle: { fontSize: FontSizes.xl, fontWeight: '700' },
+  modalDivider: { height: 1, backgroundColor: 'rgba(128,128,128,0.2)', marginHorizontal: Spacing.lg },
+  modalScrollContent: { flex: 1, paddingHorizontal: Spacing.lg, paddingTop: Spacing.md },
+  modalItem: { flexDirection: 'row', alignItems: 'center', paddingVertical: Spacing.md, borderBottomWidth: 1 },
+  modalItemContent: { flex: 1 },
+  modalItemTitle: { fontSize: FontSizes.md, fontWeight: '500' },
+  modalItemSubtitle: { fontSize: FontSizes.sm, marginTop: 2 },
+  emptyList: { padding: Spacing.xl, alignItems: 'center' },
+  emptyListText: { fontSize: FontSizes.sm, textAlign: 'center' },
+
+  // Progress
+  progressContainer: { marginTop: Spacing.sm },
+  progressBar: { height: 8, borderRadius: 4, overflow: 'hidden' },
+  progressFill: { height: '100%', borderRadius: 4 },
+  progressText: { fontSize: FontSizes.sm, marginTop: Spacing.sm, textAlign: 'center' },
+  progressCount: { fontSize: FontSizes.lg, fontWeight: '600', textAlign: 'center', marginTop: Spacing.sm },
+
+  // Question cards
+  questionPreview: { padding: Spacing.md, borderRadius: BorderRadius.sm, borderWidth: 1, marginBottom: Spacing.sm },
+  questionBadge: { alignSelf: 'flex-start', paddingHorizontal: Spacing.sm, paddingVertical: 2, borderRadius: BorderRadius.sm, marginBottom: Spacing.xs },
+  questionBadgeText: { color: '#FFFFFF', fontSize: FontSizes.xs, fontWeight: '600' },
+  questionText: { fontSize: FontSizes.sm, lineHeight: 20 },
+  questionHeader: { flexDirection: 'row', alignItems: 'center', gap: Spacing.sm, marginBottom: Spacing.xs },
+  generatedMetaRow: { flexDirection: 'row', flexWrap: 'wrap', gap: Spacing.sm, marginTop: Spacing.sm },
+  generatedMetaText: { fontSize: FontSizes.xs, paddingHorizontal: Spacing.sm, paddingVertical: 2, borderRadius: BorderRadius.sm, backgroundColor: 'rgba(128,128,128,0.15)', overflow: 'hidden' },
+  difficultyBadge: { paddingHorizontal: Spacing.sm, paddingVertical: 2, borderRadius: BorderRadius.sm },
+  optionsContainer: { marginTop: Spacing.sm, paddingLeft: Spacing.sm },
+  optionRow: { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', marginBottom: 4 },
+  optionText: { fontSize: FontSizes.xs, lineHeight: 18, marginBottom: 4 },
+  answerContainer: { marginTop: Spacing.md, padding: Spacing.sm, borderRadius: BorderRadius.sm, borderWidth: 1 },
+  answerLabel: { fontSize: FontSizes.xs, fontWeight: '600', marginBottom: 4 },
+  answerText: { fontSize: FontSizes.sm, lineHeight: 18 },
+  actionButtons: { flexDirection: 'row', gap: Spacing.md, marginTop: Spacing.lg },
+  actionButton: { flex: 1, flexDirection: 'row', alignItems: 'center', justifyContent: 'center', paddingVertical: Spacing.md, borderRadius: BorderRadius.md, gap: Spacing.xs },
+  actionButtonText: { color: '#FFFFFF', fontSize: FontSizes.sm, fontWeight: '600' },
+
+  // Generate button
+  generateButton: { marginHorizontal: Spacing.xxxl + 60, marginTop: Spacing.xl, borderRadius: BorderRadius.lg, overflow: 'hidden', ...Shadows.large },
   generateButtonDisabled: {},
-  generateButtonGradient: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    justifyContent: 'center',
-    paddingVertical: Spacing.lg,
-    gap: Spacing.sm,
-  },
-  generateButtonText: {
-    color: '#FFFFFF',
-    fontSize: FontSizes.lg,
-    fontWeight: '600',
-  },
+  generateButtonGradient: { flexDirection: 'row', alignItems: 'center', justifyContent: 'center', paddingVertical: Spacing.lg, gap: Spacing.sm },
+  generateButtonText: { color: '#FFFFFF', fontSize: FontSizes.lg, fontWeight: '600' },
+
+  // Custom count modal
+  customInputModal: { flex: 1, justifyContent: 'center', alignItems: 'center', backgroundColor: 'rgba(0,0,0,0.5)' },
+  customInputContainer: { width: '80%', padding: Spacing.xl, borderRadius: BorderRadius.lg, gap: Spacing.md },
+  customInputTitle: { fontSize: FontSizes.lg, fontWeight: '600', textAlign: 'center' },
+  customInput: { borderWidth: 1, borderRadius: BorderRadius.md, paddingVertical: Spacing.md, paddingHorizontal: Spacing.md, fontSize: FontSizes.lg, fontWeight: '600', textAlign: 'center' },
+  customInputButtons: { flexDirection: 'row', gap: Spacing.sm },
+  customInputButton: { flex: 1, paddingVertical: Spacing.md, borderRadius: BorderRadius.md, alignItems: 'center' },
+  customInputButtonText: { fontSize: FontSizes.md, fontWeight: '600' },
 });
+
