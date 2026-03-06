@@ -33,6 +33,7 @@ import { QuestionSources } from '@/components/question-sources';
 import { Colors, Spacing, BorderRadius, FontSizes } from '@/constants/theme';
 import { useColorScheme } from '@/hooks/use-color-scheme';
 import { useToast } from '@/components/toast';
+import { lightImpact, mediumImpact, heavyImpact, successNotification, selectionImpact } from '@/utils/haptics';
 import {
   vetterService,
   QuestionForVetting,
@@ -168,12 +169,33 @@ export function SwipeVetting({
     resetState();
   }, [currentIndex, resetState]);
 
+  // Tracks which swipe directions have already fired a threshold haptic this gesture
+  const swipeHapticFiredRef = useRef({ left: false, right: false, up: false, down: false });
+
   const panResponder = useRef(
     PanResponder.create({
       onStartShouldSetPanResponder: () => viewModeRef.current === 'question',
       onMoveShouldSetPanResponder: () => viewModeRef.current === 'question',
+      onPanResponderGrant: () => {
+        swipeHapticFiredRef.current = { left: false, right: false, up: false, down: false };
+        lightImpact();
+      },
       onPanResponderMove: (_, gesture) => {
         position.setValue({ x: gesture.dx, y: gesture.dy });
+        // Fire a medium haptic once each time a threshold is crossed
+        if (gesture.dx > SWIPE_THRESHOLD && !swipeHapticFiredRef.current.right) {
+          swipeHapticFiredRef.current.right = true;
+          mediumImpact();
+        } else if (gesture.dx < -SWIPE_THRESHOLD && !swipeHapticFiredRef.current.left) {
+          swipeHapticFiredRef.current.left = true;
+          mediumImpact();
+        } else if (gesture.dy < -SWIPE_THRESHOLD && !swipeHapticFiredRef.current.up) {
+          swipeHapticFiredRef.current.up = true;
+          lightImpact();
+        } else if (gesture.dy > SWIPE_THRESHOLD && !swipeHapticFiredRef.current.down) {
+          swipeHapticFiredRef.current.down = true;
+          lightImpact();
+        }
       },
       onPanResponderRelease: (_, gesture) => {
         if (viewModeRef.current !== 'question') {
@@ -204,6 +226,7 @@ export function SwipeVetting({
   }, [position]);
 
   const swipeOut = (direction: 'left' | 'right') => {
+    heavyImpact();
     const x = direction === 'right' ? SCREEN_WIDTH + 100 : -SCREEN_WIDTH - 100;
     Animated.timing(position, {
       toValue: { x, y: 0 },
@@ -223,6 +246,7 @@ export function SwipeVetting({
   };
 
   const handleUpSwipe = () => {
+    mediumImpact();
     Animated.timing(position, {
       toValue: { x: 0, y: -50 },
       duration: 150,
@@ -256,6 +280,7 @@ export function SwipeVetting({
         status: 'approved',
         course_outcome_mapping: Object.keys(coMappings).length > 0 ? coMappings : undefined,
       });
+      successNotification();
       showSuccess('Question approved!');
       onQuestionVetted(currentQuestion.id, 'approved');
       moveToNext();
@@ -276,6 +301,7 @@ export function SwipeVetting({
         notes: rejectNotes || undefined,
         rejection_reasons: selectedReasons.length > 0 ? selectedReasons : undefined,
       });
+      successNotification();
       if (result.regenerated) {
         showSuccess('Question rejected & regenerated for the teacher');
       } else {
@@ -293,6 +319,7 @@ export function SwipeVetting({
 
   const handleSkip = () => {
     if (!currentQuestion) return;
+    lightImpact();
     onQuestionVetted(currentQuestion.id, 'skipped');
     moveToNext();
   };
@@ -312,6 +339,7 @@ export function SwipeVetting({
       // For now, just send the correct_answer which should be one of the options
       
       await vetterService.updateQuestion(currentQuestion.id, updates);
+      successNotification();
       showSuccess('Question updated!');
       onQuestionUpdated(currentQuestion.id, updates as Partial<QuestionForVetting>);
       resetPosition();
@@ -336,6 +364,7 @@ export function SwipeVetting({
   };
 
   const toggleRejectReason = (reasonId: string) => {
+    selectionImpact();
     setSelectedReasons((prev) =>
       prev.includes(reasonId) ? prev.filter((r) => r !== reasonId) : [...prev, reasonId]
     );
