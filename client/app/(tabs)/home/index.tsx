@@ -326,6 +326,29 @@ export default function HomeScreen() {
         {dashboard && (
           <>
             {/* ── Section Label ────────────────────────────────────────── */}
+            <View style={[styles.sectionHeader, { marginTop: 24 }]}>
+              <View style={[styles.sectionAccent, { backgroundColor: A.aquaBlue }]} />
+              <Text style={[styles.sectionTitle, { color: isDark ? A.iceBlue : A.deepBlue }]}>
+                Quick Actions
+              </Text>
+            </View>
+
+            {/* ── Aqua Menu Grid ────────────────────────────────────────── */}
+            <View style={styles.menuGrid}>
+              {menuItems.map((item) => (
+                <MenuCard
+                  key={item.title}
+                  title={item.title}
+                  subtitle={item.subtitle}
+                  iconName={item.icon}
+                  gradientTop={item.gradientTop}
+                  gradientBottom={item.gradientBottom}
+                  onPress={() => router.push(item.route as never)}
+                />
+              ))}
+            </View>
+            
+            {/* ── Section Label ────────────────────────────────────────── */}
             <View style={styles.sectionHeader}>
               <View style={[styles.sectionAccent, { backgroundColor: A.aquaBlue }]} />
               <Text style={[styles.sectionTitle, { color: isDark ? A.iceBlue : A.deepBlue }]}>
@@ -379,29 +402,7 @@ export default function HomeScreen() {
                 gradientBottom={dashboard.approval_rate >= 70 ? A.gelGreenLight : A.gelOrangeLight}
               />
             </View>
-
-            {/* ── Section Label ────────────────────────────────────────── */}
-            <View style={[styles.sectionHeader, { marginTop: 24 }]}>
-              <View style={[styles.sectionAccent, { backgroundColor: A.aquaBlue }]} />
-              <Text style={[styles.sectionTitle, { color: isDark ? A.iceBlue : A.deepBlue }]}>
-                Quick Actions
-              </Text>
-            </View>
-
-            {/* ── Aqua Menu Grid ────────────────────────────────────────── */}
-            <View style={styles.menuGrid}>
-              {menuItems.map((item) => (
-                <MenuCard
-                  key={item.title}
-                  title={item.title}
-                  subtitle={item.subtitle}
-                  iconName={item.icon}
-                  gradientTop={item.gradientTop}
-                  gradientBottom={item.gradientBottom}
-                  onPress={() => router.push(item.route as never)}
-                />
-              ))}
-            </View>
+            
             {/* ── Chrome Summary Card ───────────────────────────────────── */}
             <View style={styles.sectionHeader}>
               <View style={[styles.sectionAccent, { backgroundColor: A.aquaBlue }]} />
