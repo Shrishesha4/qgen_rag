@@ -11,6 +11,7 @@ import {
   TextInput,
   ScrollView,
   Dimensions,
+  Platform,
 } from 'react-native';
 import { SafeAreaView, useSafeAreaInsets } from 'react-native-safe-area-context';
 import { useLocalSearchParams } from 'expo-router';
@@ -43,6 +44,22 @@ const REJECTION_REASONS = [
   { id: 'poor_options', label: 'Poor MCQ options' },
   { id: 'needs_improvement', label: 'Needs improvement' },
 ];
+
+const CO_LEVELS = [
+  { level: 1, label: 'Basic', color: '#34C759' },
+  { level: 2, label: 'Intermediate', color: '#FF9500' },
+  { level: 3, label: 'Advanced', color: '#FF3B30' },
+];
+
+const COURSE_OUTCOMES = ['CO1', 'CO2', 'CO3', 'CO4', 'CO5'];
+
+const CO_DESCRIPTIONS: Record<string, string> = {
+  CO1: 'Analyze',
+  CO2: 'Knowledge',
+  CO3: 'Apply',
+  CO4: 'Evaluate',
+  CO5: 'Create',
+};
 
 export default function QuestionsForVetting() {
   const colorScheme = useColorScheme();
@@ -100,7 +117,11 @@ export default function QuestionsForVetting() {
   const [editQuestionText, setEditQuestionText] = useState('');
   const [editCorrectAnswer, setEditCorrectAnswer] = useState('');
   const [editOptions, setEditOptions] = useState<string[]>([]);
-  const [editCoMapping, setEditCoMapping] = useState<Array<{ key: string; value: string }>>([]);
+const [editCoMapping, setEditCoMapping] = useState<Record<string, number>>({});
+  const [isEditingQuestion, setIsEditingQuestion] = useState(false);
+  const [isEditingAnswer, setIsEditingAnswer] = useState(false);
+  const [showSources, setShowSources] = useState(false);
+  const [expandedSnippets, setExpandedSnippets] = useState<Set<number>>(new Set());
 
   // Fuzzy search filter for subjects
   const filteredSubjects = useMemo(() => {
@@ -127,12 +148,16 @@ export default function QuestionsForVetting() {
       setEditQuestionText(selectedQuestion.question_text);
       setEditCorrectAnswer(selectedQuestion.correct_answer ?? '');
       setEditOptions(selectedQuestion.options ?? []);
-      setEditCoMapping(
-        Object.entries(selectedQuestion.course_outcome_mapping ?? {}).map(([k, v]) => ({
-          key: k,
-          value: String(v),
-        }))
-      );
+      const coMap: Record<string, number> = {};
+      COURSE_OUTCOMES.forEach((co) => {
+        const val = (selectedQuestion.course_outcome_mapping ?? {})[co];
+        if (val !== undefined) coMap[co] = Number(val);
+      });
+      setEditCoMapping(coMap);
+      setIsEditingQuestion(false);
+      setIsEditingAnswer(false);
+      setShowSources(false);
+      setExpandedSnippets(new Set());
     }
   }, [selectedQuestion?.id]);
 
@@ -238,9 +263,9 @@ export default function QuestionsForVetting() {
     if (!selectedQuestion) return;
     setIsVetting(true);
     try {
-      const coMapping = editCoMapping
-        .filter((e) => e.key.trim())
-        .reduce((acc, e) => ({ ...acc, [e.key.trim()]: parseFloat(e.value) || 0 }), {} as Record<string, number>);
+      const coMapping = Object.entries(editCoMapping)
+        .filter(([, v]) => v > 0)
+        .reduce((acc, [k, v]) => ({ ...acc, [k]: v }), {} as Record<string, number>);
 
       // Save any edits first
       const hasTextEdit = editQuestionText.trim() !== selectedQuestion.question_text.trim();
@@ -448,6 +473,19 @@ export default function QuestionsForVetting() {
     setShowSubjectPicker(false);
     setSubjectSearch('');
   }, []);
+
+  // Robust MCQ correct-answer matching (mirrors teacher vetting screen)
+  const optionMatchesCorrect = (option: string, correct: string | null | undefined, index: number): boolean => {
+    if (!correct) return false;
+    const trimmedCorrect = correct.trim();
+    const trimmedOption = option.trim();
+    if (trimmedOption === trimmedCorrect) return true;
+    if (trimmedOption.startsWith(trimmedCorrect)) return true;
+    const letter = String.fromCharCode(65 + index);
+    if (trimmedCorrect.length === 1 && trimmedCorrect.toUpperCase() === letter) return true;
+    if (/^[A-Za-z][.)]?$/.test(trimmedCorrect) && trimmedOption.toUpperCase().startsWith(trimmedCorrect.toUpperCase())) return true;
+    return false;
+  };
 
   // Get pending questions for swipe mode
   const pendingQuestions = useMemo(() => {
@@ -864,14 +902,26 @@ export default function QuestionsForVetting() {
                     )}
                   </View>
 
-                  <Text style={[styles.detailLabel, { color: colors.textSecondary }]}>Question:</Text>
-                  <TextInput
-                    style={[styles.editableField, { color: colors.text, borderColor: colors.border, backgroundColor: colors.background }]}
-                    value={editQuestionText}
-                    onChangeText={setEditQuestionText}
-                    multiline
-                    textAlignVertical="top"
-                  />
+                  <View style={{ flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', marginBottom: 4 }}>
+                    <Text style={[styles.detailLabel, { color: colors.textSecondary }]}>Question:</Text>
+                    <TouchableOpacity onPress={() => setIsEditingQuestion((v) => !v)} style={{ padding: 4 }}>
+                      <IconSymbol name={isEditingQuestion ? 'checkmark' : 'pencil'} size={16} color={colors.primary} />
+                    </TouchableOpacity>
+                  </View>
+                  {isEditingQuestion ? (
+                    <TextInput
+                      style={[styles.editableField, { color: colors.text, borderColor: colors.border, backgroundColor: colors.background }]}
+                      value={editQuestionText}
+                      onChangeText={setEditQuestionText}
+                      multiline
+                      textAlignVertical="top"
+                      autoFocus
+                    />
+                  ) : (
+                    <Text style={[styles.detailValue, { color: colors.text, marginTop: 4, lineHeight: 22 }]}>
+                      {editQuestionText}
+                    </Text>
+                  )}
 
                   {/* MCQ: tappable options */}
                   {selectedQuestion.question_type === 'mcq' && editOptions.length > 0 && (
@@ -883,7 +933,7 @@ export default function QuestionsForVetting() {
                         </Text>
                       </Text>
                       {editOptions.map((opt, idx) => {
-                        const isCorrect = opt === editCorrectAnswer || opt.startsWith(editCorrectAnswer ?? '~~~');
+                        const isCorrect = optionMatchesCorrect(opt, editCorrectAnswer, idx);
                         return (
                           <TouchableOpacity
                             key={idx}
@@ -920,18 +970,28 @@ export default function QuestionsForVetting() {
                   {/* Non-MCQ: editable answer */}
                   {selectedQuestion.question_type !== 'mcq' && (
                     <>
-                      <Text style={[styles.detailLabel, { color: colors.textSecondary, marginTop: Spacing.md }]}>
-                        Answer:
-                      </Text>
-                      <TextInput
-                        style={[styles.editableField, { color: colors.text, borderColor: colors.border, backgroundColor: colors.background }]}
-                        value={editCorrectAnswer}
-                        onChangeText={setEditCorrectAnswer}
-                        multiline
-                        textAlignVertical="top"
-                        placeholder="Expected answer..."
-                        placeholderTextColor={colors.textTertiary}
-                      />
+                      <View style={{ flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', marginTop: Spacing.md, marginBottom: 4 }}>
+                        <Text style={[styles.detailLabel, { color: colors.textSecondary }]}>Answer:</Text>
+                        <TouchableOpacity onPress={() => setIsEditingAnswer((v) => !v)} style={{ padding: 4 }}>
+                          <IconSymbol name={isEditingAnswer ? 'checkmark' : 'pencil'} size={16} color={colors.primary} />
+                        </TouchableOpacity>
+                      </View>
+                      {isEditingAnswer ? (
+                        <TextInput
+                          style={[styles.editableField, { color: colors.text, borderColor: colors.border, backgroundColor: colors.background }]}
+                          value={editCorrectAnswer}
+                          onChangeText={setEditCorrectAnswer}
+                          multiline
+                          textAlignVertical="top"
+                          placeholder="Expected answer..."
+                          placeholderTextColor={colors.textTertiary}
+                          autoFocus
+                        />
+                      ) : (
+                        <Text style={[styles.detailValue, { color: editCorrectAnswer ? colors.text : colors.textTertiary, lineHeight: 22, fontStyle: editCorrectAnswer ? 'normal' : 'italic' }]}>
+                          {editCorrectAnswer || 'No answer — tap ✏ to edit'}
+                        </Text>
+                      )}
                     </>
                   )}
 
@@ -947,96 +1007,129 @@ export default function QuestionsForVetting() {
                   )}
                 </GlassCard>
 
-                {/* ── Source References ── */}
+                {/* ── Source References (collapsible) ── */}
                 {selectedQuestion.source_info && selectedQuestion.source_info.sources.length > 0 && (
                   <GlassCard style={styles.detailCard}>
-                    <Text style={[styles.detailLabel, { color: colors.text, marginBottom: Spacing.sm }]}>
-                      Source References
-                    </Text>
-                    {selectedQuestion.source_info.sources.map((src, idx) => (
-                      <View
-                        key={idx}
-                        style={[
-                          styles.sourceRow,
-                          { borderLeftColor: colors.primary, backgroundColor: colors.primary + '08' },
-                          idx > 0 && { marginTop: Spacing.sm },
-                        ]}
-                      >
-                        <View style={{ flexDirection: 'row', alignItems: 'center', gap: Spacing.xs, marginBottom: 2 }}>
-                          <IconSymbol name="doc.text" size={13} color={colors.primary} />
-                          <Text style={[styles.sourceDoc, { color: colors.primary }]}>
-                            {src.document_name ?? 'Document'}
-                            {src.page_number != null ? `  ·  p.${src.page_number}` : ''}
-                            {src.page_range != null ? `  ·  pp.${src.page_range[0]}–${src.page_range[1]}` : ''}
-                          </Text>
-                        </View>
-                        {src.section_heading ? (
-                          <Text style={[styles.sourceSection, { color: colors.textSecondary }]}>
-                            {src.section_heading}
-                          </Text>
-                        ) : null}
-                        {src.content_snippet ? (
-                          <Text style={[styles.sourceSnippet, { color: colors.textTertiary }]} numberOfLines={3}>
-                            "{src.content_snippet}"
+                    <TouchableOpacity
+                      activeOpacity={0.7}
+                      onPress={() => setShowSources((v) => !v)}
+                      style={{ flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between' }}
+                    >
+                      <View style={{ flexDirection: 'row', alignItems: 'center', gap: Spacing.xs }}>
+                        <IconSymbol name="doc.text" size={14} color={colors.primary} />
+                        <Text style={[styles.detailLabel, { color: colors.text, marginBottom: 0 }]}>
+                          Source References ({selectedQuestion.source_info.sources.length})
+                        </Text>
+                      </View>
+                      <IconSymbol name={showSources ? 'chevron.up' : 'chevron.down'} size={14} color={colors.textSecondary} />
+                    </TouchableOpacity>
+                    {showSources && (
+                      <View style={{ marginTop: Spacing.sm }}>
+                        {selectedQuestion.source_info.sources.map((src, idx) => (
+                          <View
+                            key={idx}
+                            style={[
+                              styles.sourceRow,
+                              { borderLeftColor: colors.primary, backgroundColor: colors.primary + '1A' },
+                              idx > 0 && { marginTop: Spacing.sm },
+                            ]}
+                          >
+                            <View style={{ flexDirection: 'row', alignItems: 'center', gap: Spacing.xs, marginBottom: 2 }}>
+                              <IconSymbol name="doc.text" size={13} color={colors.primary} />
+                              <Text style={[styles.sourceDoc, { color: colors.primary }]}>
+                                {src.document_name ?? 'Document'}
+                                {src.page_number != null ? `  ·  p.${src.page_number}` : ''}
+                                {src.page_range != null ? `  ·  pp.${src.page_range[0]}–${src.page_range[1]}` : ''}
+                              </Text>
+                            </View>
+                            {src.section_heading ? (
+                              <Text style={[styles.sourceSection, { color: colors.textSecondary }]}>
+                                {src.section_heading}
+                              </Text>
+                            ) : null}
+                            {src.content_snippet ? (
+                              <>
+                                <Text
+                                  style={[styles.sourceSnippet, { color: colors.textTertiary }]}
+                                  numberOfLines={expandedSnippets.has(idx) ? undefined : 3}
+                                >
+                                  "{src.content_snippet}"
+                                </Text>
+                                {src.content_snippet.length > 120 && (
+                                  <TouchableOpacity
+                                    onPress={() =>
+                                      setExpandedSnippets((prev) => {
+                                        const next = new Set(prev);
+                                        next.has(idx) ? next.delete(idx) : next.add(idx);
+                                        return next;
+                                      })
+                                    }
+                                    style={{ marginTop: 4 }}
+                                  >
+                                    <Text style={{ fontSize: FontSizes.xs, color: colors.primary, fontWeight: '600' }}>
+                                      {expandedSnippets.has(idx) ? 'Show less' : 'Show more'}
+                                    </Text>
+                                  </TouchableOpacity>
+                                )}
+                              </>
+                            ) : null}
+                          </View>
+                        ))}
+                        {selectedQuestion.source_info.generation_reasoning ? (
+                          <Text style={[styles.metaText, { color: colors.textSecondary, marginTop: Spacing.sm, fontStyle: 'italic' }]}>
+                            {selectedQuestion.source_info.generation_reasoning}
                           </Text>
                         ) : null}
                       </View>
-                    ))}
-                    {selectedQuestion.source_info.generation_reasoning ? (
-                      <Text style={[styles.metaText, { color: colors.textSecondary, marginTop: Spacing.sm, fontStyle: 'italic' }]}>
-                        {selectedQuestion.source_info.generation_reasoning}
-                      </Text>
-                    ) : null}
+                    )}
                   </GlassCard>
                 )}
 
                 {/* ── CO Mapping ── */}
                 <GlassCard style={styles.detailCard}>
-                  <View style={{ flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', marginBottom: Spacing.sm }}>
-                    <Text style={[styles.detailLabel, { color: colors.text }]}>CO Mapping</Text>
-                    <TouchableOpacity
-                      activeOpacity={0.7}
-                      onPress={() => setEditCoMapping((prev) => [...prev, { key: '', value: '' }])}
-                      style={[styles.addCoButton, { borderColor: colors.primary }]}
-                    >
-                      <IconSymbol name="plus" size={13} color={colors.primary} />
-                      <Text style={{ fontSize: FontSizes.xs, color: colors.primary, fontWeight: '600' }}>Add CO</Text>
-                    </TouchableOpacity>
-                  </View>
-                  {editCoMapping.length === 0 ? (
-                    <Text style={{ color: colors.textTertiary, fontSize: FontSizes.sm }}>No CO mappings — tap Add CO</Text>
-                  ) : (
-                    editCoMapping.map((entry, idx) => (
-                      <View key={idx} style={styles.coRow}>
-                        <TextInput
-                          style={[styles.coKeyInput, { color: colors.text, borderColor: colors.border, backgroundColor: colors.background }]}
-                          value={entry.key}
-                          onChangeText={(v) =>
-                            setEditCoMapping((prev) => prev.map((e, i) => (i === idx ? { ...e, key: v } : e)))
-                          }
-                          placeholder="CO1"
-                          placeholderTextColor={colors.textTertiary}
-                          autoCapitalize="characters"
-                        />
-                        <TextInput
-                          style={[styles.coValueInput, { color: colors.text, borderColor: colors.border, backgroundColor: colors.background }]}
-                          value={entry.value}
-                          onChangeText={(v) =>
-                            setEditCoMapping((prev) => prev.map((e, i) => (i === idx ? { ...e, value: v } : e)))
-                          }
-                          placeholder="1–3"
-                          placeholderTextColor={colors.textTertiary}
-                          keyboardType="decimal-pad"
-                        />
-                        <TouchableOpacity
-                          activeOpacity={0.7}
-                          onPress={() => setEditCoMapping((prev) => prev.filter((_, i) => i !== idx))}
-                        >
-                          <IconSymbol name="xmark.circle.fill" size={22} color={colors.error} />
-                        </TouchableOpacity>
+                  <LinearGradient
+                    colors={['#5856D6', '#4A4ADE'] as const}
+                    style={[styles.coSectionHeader, { marginBottom: Spacing.md }]}
+                  >
+                    <IconSymbol name="list.number" size={16} color="#FFFFFF" />
+                    <Text style={styles.coSectionHeaderText}>Course Outcome Mapping</Text>
+                  </LinearGradient>
+                  <View style={styles.coMappingGrid}>
+                    {COURSE_OUTCOMES.map((co) => (
+                      <View key={co} style={styles.coMappingRow}>
+                        <View style={styles.coLabelColumn}>
+                          <Text style={[styles.coLabel, { color: colors.text }]}>{co}</Text>
+                          <Text style={[styles.coDesc, { color: colors.textSecondary }]}>{CO_DESCRIPTIONS[co]}</Text>
+                        </View>
+                        <View style={styles.levelButtons}>
+                          {CO_LEVELS.map(({ level, label, color }) => {
+                            const isActive = editCoMapping[co] === level;
+                            return (
+                              <TouchableOpacity
+                                key={level}
+                                activeOpacity={0.7}
+                                style={[
+                                  styles.levelButton,
+                                  { borderColor: color },
+                                  isActive && { backgroundColor: color },
+                                ]}
+                                onPress={() =>
+                                  setEditCoMapping((prev) => ({
+                                    ...prev,
+                                    [co]: isActive ? 0 : level,
+                                  }))
+                                }
+                              >
+                                <Text style={[styles.levelButtonText, { color: isActive ? '#FFFFFF' : color }]}>
+                                  {label}
+                                </Text>
+                              </TouchableOpacity>
+                            );
+                          })}
+                        </View>
                       </View>
-                    ))
-                  )}
+                    ))}
+                  </View>
                 </GlassCard>
 
                 {/* ── Notes ── */}
@@ -1232,7 +1325,7 @@ export default function QuestionsForVetting() {
       {/* Floating Start Vetting Button */}
       {pendingQuestions.length > 0 && statusFilter === 'pending' && (
         <TouchableOpacity
-          style={[styles.floatingButton, { bottom: Spacing.md }]}
+          style={[styles.floatingButton, { bottom: Platform.OS === 'ios' ? 90 + Spacing.md : Spacing.md }]}
           onPress={loadAllPendingQuestions}
           activeOpacity={0.9}
         >
@@ -1674,5 +1767,53 @@ const styles = StyleSheet.create({
     paddingVertical: Spacing.xs,
     width: 60,
     fontSize: FontSizes.sm,
+  },
+  // Teacher-style CO mapping
+  coSectionHeader: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    padding: Spacing.sm,
+    borderRadius: BorderRadius.sm,
+    gap: Spacing.sm,
+  },
+  coSectionHeaderText: {
+    fontSize: FontSizes.sm,
+    fontWeight: '600',
+    color: '#FFFFFF',
+  },
+  coMappingGrid: {
+    marginBottom: Spacing.xs,
+  },
+  coMappingRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    marginBottom: Spacing.sm,
+  },
+  coLabelColumn: {
+    width: 80,
+  },
+  coLabel: {
+    fontSize: FontSizes.md,
+    fontWeight: '600',
+  },
+  coDesc: {
+    fontSize: FontSizes.xs,
+    marginTop: 2,
+  },
+  levelButtons: {
+    flexDirection: 'row',
+    flex: 1,
+    gap: Spacing.xs,
+  },
+  levelButton: {
+    flex: 1,
+    paddingVertical: Spacing.xs,
+    borderRadius: BorderRadius.sm,
+    borderWidth: 2,
+    alignItems: 'center',
+  },
+  levelButtonText: {
+    fontSize: FontSizes.xs,
+    fontWeight: '600',
   },
 });
