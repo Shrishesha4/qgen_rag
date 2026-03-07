@@ -2783,6 +2783,16 @@ async def generate_from_rubric(
     # Pre-fetch subject attributes that might not be loaded in the new session
     subject_lo_mappings = getattr(subject, "learning_outcome_mappings", {}) or {}
     subject_cos = (subject.course_outcomes or {}).get("outcomes") if subject.course_outcomes else None
+    # Build LO description map so the prompt can name what each LO actually means
+    subject_lo_descriptions: dict = {}
+    _los_raw = (subject.learning_outcomes or {})
+    if isinstance(_los_raw, dict):
+        for _item in _los_raw.get("outcomes", []):
+            if isinstance(_item, dict):
+                _lo_id = _item.get("id") or _item.get("code")
+                _lo_desc = _item.get("description") or _item.get("name") or ""
+                if _lo_id:
+                    subject_lo_descriptions[_lo_id] = _lo_desc
 
     logger.info(f"[{request_id}] Rubric generation starting: {rubric_name}, {total_questions} questions, topic_id={request.topic_id}, topics_found={len(topic_data)}")
     for td in topic_data:
@@ -2899,25 +2909,22 @@ async def generate_from_rubric(
             except Exception as e:
                 logger.warning(f"[{request_id}] RAG lookup failed ({e}); continuing without reference context")
 
-            # Build LO/CO context strings for prompts
-            lo_context = ""
-            all_lo_keys = set()
-            for td in topic_data:
-                if td.get("lo_mappings"):
-                    all_lo_keys.update(td["lo_mappings"].keys())
-            if all_lo_keys:
-                lo_context = f"\nAvailable Learning Outcomes: {', '.join(sorted(all_lo_keys))}"
+            # Build CO context string for prompts
             co_context = ""
             if subject_cos and isinstance(subject_cos, list):
                 co_ids = [co.get('id', f'CO{i+1}') if isinstance(co, dict) else str(co) for i, co in enumerate(subject_cos)]
-                co_context = f"\nAvailable Course Outcomes: {', '.join(co_ids)}"
+                co_context = f"\nAvailable Course Outcomes (map the question to ALL relevant ones): {', '.join(co_ids)}"
             elif subject_lo_mappings:
                 all_cos = set()
                 for lo_key, co_map in subject_lo_mappings.items():
                     if isinstance(co_map, dict):
                         all_cos.update(co_map.keys())
                 if all_cos:
-                    co_context = f"\nAvailable Course Outcomes: {', '.join(sorted(all_cos))}"
+                    co_context = f"\nAvailable Course Outcomes (map the question to ALL relevant ones): {', '.join(sorted(all_cos))}"
+
+            # Pre-compute per-slot LO assignments from the rubric distribution
+            all_lo_slots = _compute_lo_question_slots(lo_distribution, total_questions)
+            lo_slot_index = 0  # global counter across all question types
 
             yield f"data: {json.dumps({'status': 'processing', 'progress': 10, 'message': f'Prepared {len(all_chunks)} content sections from {len(topic_data)} topics + {ref_count} reference excerpts'})}\n\n"
             
@@ -2975,7 +2982,18 @@ async def generate_from_rubric(
             RETRY_LIMIT = 5
 
             cancelled = False
-            
+
+            # ── Topic setup (shared globally across ALL question types) ──
+            # This ensures topic spread is even across the whole exam, not per-type.
+            topic_ids_ordered = list(dict.fromkeys(c["topic_id"] for c in all_chunks))
+            chunks_by_topic: dict[str, list] = {tid: [] for tid in topic_ids_ordered}
+            for c in all_chunks:
+                chunks_by_topic[c["topic_id"]].append(c)
+            # Rotating chunk cursor per topic (advances as questions are taken from that topic)
+            topic_chunk_cursors: dict[str, int] = {tid: 0 for tid in topic_ids_ordered}
+            # Count how many questions have been assigned to each topic (for LO-aware balancing)
+            topic_question_counts: dict[str, int] = {tid: 0 for tid in topic_ids_ordered}
+
             # Generate questions for each type
             for q_type, config in question_distribution.items():
                 if cancelled:
@@ -2989,29 +3007,24 @@ async def generate_from_rubric(
                 
                 logger.info(f"[{request_id}] Generating {count} {mapped_type} questions")
                 
-                # ── Topic-aware round-robin distribution ──
-                # Group chunks by topic for even distribution across ALL topics
-                topic_ids_ordered = list(dict.fromkeys(c["topic_id"] for c in all_chunks))  # preserve order, dedupe
-                chunks_by_topic: dict[str, list] = {tid: [] for tid in topic_ids_ordered}
-                for c in all_chunks:
-                    chunks_by_topic[c["topic_id"]].append(c)
-                
-                # Each topic gets a rotating index so consecutive questions
-                # from the same topic use different chunks
-                topic_chunk_cursors: dict[str, int] = {tid: 0 for tid in topic_ids_ordered}
-                
                 for i in range(count):
-                    # Get a fresh session connection for each question
-                    # Check if client has disconnected (cancelled)
                     if await raw_request.is_disconnected():
                         logger.info(f"[{request_id}] Client disconnected, cancelling generation")
                         cancelled = True
                         break
 
                     try:
-                        # Round-robin across topics to ensure even coverage
-                        topic_idx = i % len(topic_ids_ordered)
-                        selected_topic_id = topic_ids_ordered[topic_idx]
+                        # ── LO-aware topic selection ──
+                        # Consume the next pre-assigned LO slot from the global list
+                        required_lo = all_lo_slots[lo_slot_index] if lo_slot_index < len(all_lo_slots) else None
+                        lo_slot_index += 1
+
+                        # Pick a topic that has content mapped to this LO (least-used first)
+                        selected_topic_id = _select_lo_aware_topic(
+                            required_lo, topic_ids_ordered, chunks_by_topic, topic_question_counts
+                        )
+                        topic_question_counts[selected_topic_id] = topic_question_counts.get(selected_topic_id, 0) + 1
+
                         topic_chunks = chunks_by_topic[selected_topic_id]
                         cursor = topic_chunk_cursors[selected_topic_id]
                         selected_chunk = topic_chunks[cursor % len(topic_chunks)]
@@ -3019,6 +3032,21 @@ async def generate_from_rubric(
                         
                         # Pick a unique starter for this question
                         starter = _pick_starter(mapped_type, used_starters_rubric)
+
+                        # Build LO-specific requirement for the prompt
+                        lo_requirement = ""
+                        if required_lo:
+                            lo_desc = subject_lo_descriptions.get(required_lo, "")
+                            lo_requirement = (
+                                f"\n- REQUIRED Learning Outcome: This question MUST specifically assess "
+                                f"{required_lo}"
+                            )
+                            if lo_desc:
+                                lo_requirement += f' — "{lo_desc}"'
+                            lo_requirement += (
+                                "\n- Design the question to test the competency described by this LO, "
+                                "not just mention the topic"
+                            )
 
                         # Build enhanced prompt
                         system_prompt = _get_rubric_system_prompt(mapped_type)
@@ -3039,10 +3067,9 @@ Generate a {mapped_type.replace('_', ' ')} question based on this content.
 - REQUIRED: Your question MUST start with the word/phrase "{starter}" — this is non-negotiable
 - FORBIDDEN: Do NOT start all the questions with "A clinician", "A patient", "A doctor", "A dentist", "A practitioner", "A student", "A researcher", "An engineer", or similar scenario setups. Also start directly with the required starter word.
 - The question text must be fully self-contained — do NOT mention "the text", "the reference", "the provided material", "reference [N]", or any source
-- Avoid questions that are too similar to: {', '.join([q[:50] for q in generated_questions[-5:]]) if generated_questions else 'None yet'}
-{lo_context}
+- Avoid questions that are too similar to: {', '.join([q[:50] for q in generated_questions[-5:]]) if generated_questions else 'None yet'}{lo_requirement}
 {co_context}
-- In your JSON output, include "learning_outcome" (the most relevant LO based on the question content) and "course_outcome" (the most relevant CO based on the question content). Analyze what the question tests and choose accordingly.
+- For "course_outcome_mapping" in your JSON: include EVERY CO this question addresses, not just one. Use Bloom level as value (1=remember/understand, 2=apply/analyze, 3=evaluate/create).
 
 Output valid JSON only."""
 
@@ -3110,43 +3137,37 @@ Output valid JSON only."""
                         assigned_lo = None
                         assigned_co_map = {}
 
-                        # 1) Prefer explicit LO returned by the LLM
-                        if response_obj and isinstance(response_obj.get("learning_outcome_id"), str):
-                            assigned_lo = response_obj.get("learning_outcome_id")
-                        elif response_obj and isinstance(response_obj.get("learning_outcome"), str):
-                            assigned_lo = response_obj.get("learning_outcome")
+                        # 1) Use the pre-assigned LO slot (from rubric distribution) as the primary source.
+                        #    Accept a matching LO from the LLM only if it agrees.
+                        if required_lo:
+                            # LLM may return a more specific LO; only override if it reports the same one
+                            llm_lo = (response_obj or {}).get("learning_outcome_id") or (response_obj or {}).get("learning_outcome")
+                            assigned_lo = llm_lo if llm_lo == required_lo else required_lo
+                        else:
+                            # No pre-assigned slot: trust whatever the LLM returned
+                            if response_obj and isinstance(response_obj.get("learning_outcome_id"), str):
+                                assigned_lo = response_obj.get("learning_outcome_id")
+                            elif response_obj and isinstance(response_obj.get("learning_outcome"), str):
+                                assigned_lo = response_obj.get("learning_outcome")
+                            # Fallback to topic mappings
+                            topic_lo_map = selected_chunk.get("lo_mappings") or {}
+                            if not assigned_lo and topic_lo_map:
+                                try:
+                                    assigned_lo = max(topic_lo_map.items(), key=lambda kv: (kv[1] or 0))[0]
+                                except Exception:
+                                    assigned_lo = None
 
-                        # 2) If no LO from LLM, prefer topic's LO mappings (highest weight)
-                        topic_lo_map = selected_chunk.get("lo_mappings") or {}
-                        if not assigned_lo and topic_lo_map:
-                            try:
-                                assigned_lo = max(topic_lo_map.items(), key=lambda kv: (kv[1] or 0))[0]
-                            except Exception:
-                                assigned_lo = None
-
-                        # 3) If still no LO, fall back to rubric LO distribution (weighted random)
-                        if not assigned_lo and lo_distribution:
-                            items = [(k, float(v or 0)) for k, v in lo_distribution.items() if (v or 0) > 0]
-                            if items:
-                                total_w = sum(w for _, w in items)
-                                if total_w > 0:
-                                    import random as _rand
-                                    pick = _rand.random() * total_w
-                                    acc = 0.0
-                                    for k, w in items:
-                                        acc += w
-                                        if pick <= acc:
-                                            assigned_lo = k
-                                            break
-
-                        # 4) CO mapping — prefer LLM's intelligent choice
-                        if response_obj and isinstance(response_obj.get("course_outcome"), str):
-                            assigned_co_map = {response_obj["course_outcome"]: 1}
+                        # 2) CO mapping — prefer LLM's multi-CO dict (course_outcome_mapping)
+                        if response_obj and isinstance(response_obj.get("course_outcome_mapping"), dict) and response_obj["course_outcome_mapping"]:
+                            assigned_co_map = response_obj["course_outcome_mapping"]
                         elif response_obj and isinstance(response_obj.get("course_outcome"), dict):
                             assigned_co_map = response_obj["course_outcome"]
-                        elif assigned_lo and subject_lo_mappings and isinstance(subject_lo_mappings.get(assigned_lo), dict):
+                        elif response_obj and isinstance(response_obj.get("course_outcome"), str) and response_obj["course_outcome"]:
+                            assigned_co_map = {response_obj["course_outcome"]: 1}
+                        # 3) Build CO map from subject LO→CO mappings when LLM didn't supply one
+                        if not assigned_co_map and assigned_lo and subject_lo_mappings and isinstance(subject_lo_mappings.get(assigned_lo), dict):
                             assigned_co_map = subject_lo_mappings.get(assigned_lo)
-                        elif assigned_lo and subject_cos and isinstance(subject_cos, list) and len(subject_cos) > 0:
+                        if not assigned_co_map and assigned_lo and subject_cos and isinstance(subject_cos, list) and len(subject_cos) > 0:
                             m = re.search(r"LO(\d+)", str(assigned_lo))
                             if m:
                                 idx = (int(m.group(1)) - 1) % len(subject_cos)
@@ -3886,6 +3907,63 @@ def _normalize_mcq_options(options, question_type: str = "mcq"):
     return normalized if normalized else options
 
 
+def _compute_lo_question_slots(lo_distribution: dict, total_questions: int) -> list:
+    """
+    Pre-assign an LO to each question slot based on the rubric LO distribution.
+
+    The lo_distribution values are percentage weights (may sum > 100% when questions
+    address multiple LOs). We normalize them and use the largest-remainder method
+    so every slot has a mandated LO that the LLM MUST target.
+
+    Returns a shuffled list of LO IDs of length == total_questions.
+    """
+    import random
+    if not lo_distribution or total_questions == 0:
+        return [None] * total_questions
+    lo_items = [(k, float(v or 0)) for k, v in lo_distribution.items() if (v or 0) > 0]
+    if not lo_items:
+        return [None] * total_questions
+    total_weight = sum(w for _, w in lo_items)
+    if total_weight == 0:
+        return [None] * total_questions
+    # Largest remainder method for fair rounding
+    quotients = [(k, w / total_weight * total_questions) for k, w in lo_items]
+    floor_counts = {k: int(q) for k, q in quotients}
+    remainders = sorted(quotients, key=lambda x: -(x[1] - int(x[1])))
+    extra = total_questions - sum(floor_counts.values())
+    for k, _ in remainders[:extra]:
+        floor_counts[k] = floor_counts.get(k, 0) + 1
+    # Build interleaved list
+    slots: list = []
+    for lo_id, count in floor_counts.items():
+        slots.extend([lo_id] * count)
+    random.shuffle(slots)
+    return slots
+
+
+def _select_lo_aware_topic(
+    required_lo: "str | None",
+    topic_ids_ordered: list,
+    chunks_by_topic: dict,
+    topic_question_counts: dict,
+) -> str:
+    """
+    Select the best topic ID for a given required LO.
+
+    Priority:
+    1. Topics that have a mapping for required_lo → pick the least-used one.
+    2. Fall back to the globally least-used topic.
+    """
+    if required_lo and topic_ids_ordered:
+        lo_mapped = [
+            tid for tid in topic_ids_ordered
+            if required_lo in (chunks_by_topic.get(tid, [{}])[0].get("lo_mappings") or {})
+        ]
+        if lo_mapped:
+            return min(lo_mapped, key=lambda t: topic_question_counts.get(t, 0))
+    return min(topic_ids_ordered, key=lambda t: topic_question_counts.get(t, 0))
+
+
 def _get_rubric_system_prompt(question_type: str) -> str:
     """Get system prompt for rubric-based question generation."""
     if question_type == "mcq":
@@ -3913,8 +3991,9 @@ Output format (JSON):
     "topic_tags": ["topic1"],
     "bloom_level": "apply",
     "learning_outcome": "LO1",
-    "course_outcome": "CO1"
-}"""
+    "course_outcome_mapping": {"CO1": 2, "CO2": 1}
+}
+NOTE: course_outcome_mapping must be a JSON object mapping CO IDs to Bloom level (1=remember/understand, 2=apply/analyze, 3=evaluate/create). Include ALL COs this question addresses — a question often maps to multiple COs."""
     elif question_type == "short_answer":
         return """You are an expert educator creating THOUGHT-PROVOKING examination questions.
 Generate a short-answer question requiring ANALYSIS or EVALUATION, not just description.
@@ -3938,8 +4017,9 @@ Output format (JSON):
     "topic_tags": ["topic1"],
     "bloom_level": "analyze",
     "learning_outcome": "LO1",
-    "course_outcome": "CO1"
-}"""
+    "course_outcome_mapping": {"CO1": 2, "CO2": 1}
+}
+NOTE: course_outcome_mapping must be a JSON object mapping CO IDs to Bloom level (1=remember/understand, 2=apply/analyze, 3=evaluate/create). Include ALL COs this question addresses — a question often maps to multiple COs."""
     else:
         return """You are an expert educator creating ANALYTICALLY RIGOROUS examination questions.
 Generate a long-answer question requiring CRITICAL ANALYSIS or EVALUATION.
@@ -3962,8 +4042,9 @@ Output format (JSON):
     "topic_tags": ["topic1"],
     "bloom_level": "evaluate",
     "learning_outcome": "LO1",
-    "course_outcome": "CO1"
-}"""
+    "course_outcome_mapping": {"CO1": 3, "CO2": 2}
+}
+NOTE: course_outcome_mapping must be a JSON object mapping CO IDs to Bloom level (1=remember/understand, 2=apply/analyze, 3=evaluate/create). Include ALL COs this question addresses — a question often maps to multiple COs."""
 
 
 
