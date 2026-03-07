@@ -133,6 +133,15 @@ const MAPPING: IconMapping = {
 
   // settings
   'gearshape.fill': 'settings',
+
+  // drawing / annotation
+  'hand.draw.fill': 'edit',
+
+  // alerts / notifications
+  'exclamationmark.bubble.fill': 'notification-important',
+
+  // logout
+  'rectangle.portrait.and.arrow.right': 'exit-to-app',
 };
 
 /**

@@ -12,7 +12,7 @@ import {
   ScrollView,
   Dimensions,
 } from 'react-native';
-import { SafeAreaView } from 'react-native-safe-area-context';
+import { SafeAreaView, useSafeAreaInsets } from 'react-native-safe-area-context';
 import { useLocalSearchParams } from 'expo-router';
 import { LinearGradient } from 'expo-linear-gradient';
 
@@ -48,6 +48,7 @@ export default function QuestionsForVetting() {
   const colorScheme = useColorScheme();
   const colors = Colors[colorScheme ?? 'light'];
   const { showSuccess, showError } = useToast();
+  const insets = useSafeAreaInsets();
   const params = useLocalSearchParams<{
     teacher_id?: string;
     subject_id?: string;
@@ -416,6 +417,7 @@ export default function QuestionsForVetting() {
 
     return (
       <TouchableOpacity
+        activeOpacity={0.7}
         onPress={() => {
           setSelectedQuestion(question);
           setVetStatus('approved');
@@ -1119,7 +1121,7 @@ export default function QuestionsForVetting() {
       {/* Floating Start Vetting Button */}
       {pendingQuestions.length > 0 && statusFilter === 'pending' && (
         <TouchableOpacity
-          style={styles.floatingButton}
+          style={[styles.floatingButton, { bottom: insets.bottom + Spacing.md }]}
           onPress={loadAllPendingQuestions}
           activeOpacity={0.9}
         >
@@ -1452,7 +1454,6 @@ const styles = StyleSheet.create({
   // Floating Button styles
   floatingButton: {
     position: 'absolute',
-    bottom: 100,
     left: Spacing.lg,
     right: Spacing.lg,
     borderRadius: BorderRadius.lg,
