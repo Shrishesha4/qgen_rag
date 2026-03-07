@@ -2805,7 +2805,6 @@ async def generate_from_rubric(
         """Generate SSE events with questions."""
         from app.core.database import AsyncSessionLocal
         db = AsyncSessionLocal()
-        
         try:
             yield f"data: {json.dumps({'status': 'processing', 'progress': 5, 'message': 'Analyzing syllabus content...'})}\n\n"
             
@@ -3267,6 +3266,10 @@ Output valid JSON only."""
             logger.error(f"[{request_id}] Rubric generation failed: {e}")
             yield f"data: {json.dumps({'status': 'error', 'progress': 0, 'message': f'Generation failed: {str(e)}'})}\n\n"
         finally:
+            try:
+                await db.rollback()
+            except Exception:
+                pass
             try:
                 await db.close()
             except Exception:
@@ -3827,6 +3830,10 @@ Output valid JSON only."""
             logger.error(f"[{request_id}] Chapter generation failed: {e}")
             yield f"data: {json.dumps({'status': 'error', 'progress': 0, 'message': f'Generation failed: {str(e)}'})}\n\n"
         finally:
+            try:
+                await db.rollback()
+            except Exception:
+                pass
             try:
                 await db.close()
             except Exception:
