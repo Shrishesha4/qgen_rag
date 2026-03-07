@@ -198,6 +198,7 @@ export const rubricsService = {
     onError: (error: Error) => void,
     difficulty: string = 'medium',
     loFilter?: string[],
+    loDistribution?: Record<string, number>,
   ): () => void {
     let cancelled = false;
     let cancelFn = () => { cancelled = true; };
@@ -269,6 +270,7 @@ export const rubricsService = {
           question_types: questionTypes,
           difficulty,
           lo_filter: loFilter && loFilter.length > 0 ? loFilter : undefined,
+          lo_distribution: loDistribution && Object.keys(loDistribution).length > 0 ? loDistribution : undefined,
         }));
       } catch (error) {
         if (!cancelled) onError(error as Error);

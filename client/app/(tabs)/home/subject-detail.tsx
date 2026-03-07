@@ -85,6 +85,7 @@ export default function SubjectDetailScreen() {
   const [qgLongMarks, setQgLongMarks] = useState('10');
   const [qgDifficulty, setQgDifficulty] = useState<'easy' | 'medium' | 'hard'>('medium');
   const [qgLoFilter, setQgLoFilter] = useState<string[]>([]);
+  const [qgLoDistribution, setQgLoDistribution] = useState<Record<string, number>>({});
 
   // Import state
   const [isImporting, setIsImporting] = useState(false);
@@ -222,6 +223,18 @@ export default function SubjectDetailScreen() {
     setQgMcqMarks('2');
     setQgShortMarks('5');
     setQgLongMarks('10');
+    // Initialise LO distribution from subject's LOs with equal weights
+    if (subject?.learning_outcomes?.outcomes && subject.learning_outcomes.outcomes.length > 0) {
+      const los = subject.learning_outcomes.outcomes;
+      const equal = Math.round(100 / los.length);
+      const dist: Record<string, number> = {};
+      los.forEach((lo, idx) => {
+        dist[lo.id] = idx === los.length - 1 ? 100 - equal * (los.length - 1) : equal;
+      });
+      setQgLoDistribution(dist);
+    } else {
+      setQgLoDistribution({});
+    }
     setShowGenerateModal(true);
     // Load existing rubrics for this subject
     setIsLoadingRubrics(true);
@@ -238,6 +251,7 @@ export default function SubjectDetailScreen() {
     setIsGenerating(false);
     setGenProgress(null);
     setGenQuestions([]);
+    setQgLoDistribution({});
     setGenerateTopic(null);
     loadData(); // refresh data only after modal is closed
   };
@@ -361,6 +375,7 @@ export default function SubjectDetailScreen() {
         },
         qgDifficulty,
         qgLoFilter.length > 0 ? qgLoFilter : undefined,
+        Object.keys(qgLoDistribution).length > 0 ? qgLoDistribution : undefined,
       );
       cancelGenRef.current = cancel;
     } catch (error) {
@@ -1459,6 +1474,44 @@ export default function SubjectDetailScreen() {
                               );
                             })}
                           </View>
+                        </View>
+                      )}
+
+                      {/* LO Distribution */}
+                      {subject?.learning_outcomes?.outcomes && subject.learning_outcomes.outcomes.length > 0 && (
+                        <View style={[styles.genSection, { backgroundColor: colors.card }]}>
+                          <Text style={[styles.genSectionLabel, { color: colors.textSecondary }]}>LO DISTRIBUTION</Text>
+                          <Text style={{ color: colors.textTertiary, fontSize: FontSizes.xs, marginBottom: Spacing.sm }}>
+                            Set the weight (%) for each learning outcome. Values are treated as relative weights.
+                          </Text>
+                          {subject.learning_outcomes.outcomes.map((lo, loIdx) => {
+                            const LO_COLORS = ['#6C63FF','#FF6584','#43AA8B','#F9A825','#5C85D6','#E06C75'];
+                            const loColor = LO_COLORS[loIdx % LO_COLORS.length];
+                            const pct = qgLoDistribution[lo.id] ?? 0;
+                            return (
+                              <View key={lo.id} style={{ flexDirection: 'row', alignItems: 'center', marginBottom: Spacing.sm }}>
+                                <View style={{ width: 28, height: 28, borderRadius: 14, backgroundColor: loColor + '22', alignItems: 'center', justifyContent: 'center', marginRight: Spacing.sm }}>
+                                  <Text style={{ fontSize: 10, fontWeight: '700', color: loColor }}>{lo.id.replace(/^LO\s*/i,'')}</Text>
+                                </View>
+                                <Text style={{ flex: 1, fontSize: FontSizes.xs, color: colors.textSecondary }} numberOfLines={1}>
+                                  {lo.name || lo.id}
+                                </Text>
+                                <TouchableOpacity
+                                  onPress={() => { selectionImpact(); setQgLoDistribution(prev => ({ ...prev, [lo.id]: Math.max(0, (prev[lo.id] ?? 0) - 5) })); }}
+                                  style={{ width: 28, height: 28, borderRadius: 14, borderWidth: 1.5, borderColor: colors.border, alignItems: 'center', justifyContent: 'center' }}
+                                >
+                                  <Text style={{ fontSize: 16, color: colors.textSecondary, lineHeight: 20 }}>−</Text>
+                                </TouchableOpacity>
+                                <Text style={{ width: 42, textAlign: 'center', fontSize: FontSizes.sm, fontWeight: '700', color: colors.text }}>{pct}%</Text>
+                                <TouchableOpacity
+                                  onPress={() => { selectionImpact(); setQgLoDistribution(prev => ({ ...prev, [lo.id]: Math.min(100, (prev[lo.id] ?? 0) + 5) })); }}
+                                  style={{ width: 28, height: 28, borderRadius: 14, borderWidth: 1.5, borderColor: colors.border, alignItems: 'center', justifyContent: 'center' }}
+                                >
+                                  <Text style={{ fontSize: 16, color: colors.textSecondary, lineHeight: 20 }}>+</Text>
+                                </TouchableOpacity>
+                              </View>
+                            );
+                          })}
                         </View>
                       )}
 

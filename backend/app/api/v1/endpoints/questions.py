@@ -3292,6 +3292,7 @@ class ChapterGenerationRequest(BaseModel):
     question_types: dict  # e.g. {"mcq": {"count": 5, "marks_each": 2}, ...}
     difficulty: Optional[str] = "medium"  # easy | medium | hard
     lo_filter: Optional[List[str]] = None  # restrict to these LO ids, e.g. ["LO1", "LO2"]
+    lo_distribution: Optional[dict] = None  # {"LO1": 25, "LO2": 25, ...} percentage weights
 
 
 @router.post("/generate-chapter")
@@ -3346,6 +3347,17 @@ async def generate_chapter(
     subject_cos = (subject.course_outcomes or {}).get("outcomes") if subject.course_outcomes else None
     user_id = current_user.id
 
+    # Build LO description map from subject.learning_outcomes
+    subject_lo_descriptions_ch: dict = {}
+    _los_raw_ch = (subject.learning_outcomes or {})
+    if isinstance(_los_raw_ch, dict):
+        for _item in _los_raw_ch.get("outcomes", []):
+            if isinstance(_item, dict):
+                _lo_id = _item.get("id") or _item.get("code")
+                _lo_desc = _item.get("description") or _item.get("name") or ""
+                if _lo_id:
+                    subject_lo_descriptions_ch[_lo_id] = _lo_desc
+
     # ── Parse question types ──
     type_mapping = {
         "mcq": "mcq", "short_notes": "short_answer",
@@ -3368,7 +3380,13 @@ async def generate_chapter(
     llm_service = LLMService()
     embedding_service = EmbeddingService()
 
-    logger.info(f"[{request_id}] Chapter gen: topic={topic_name} ({topic_id_str}), {total_questions} questions")
+    # Pre-compute LO slots from distribution (if provided)
+    chapter_lo_slots = _compute_lo_question_slots(
+        request.lo_distribution or {}, total_questions
+    )
+    chapter_lo_slot_index = 0  # consumed inside event_generator
+
+    logger.info(f"[{request_id}] Chapter gen: topic={topic_name} ({topic_id_str}), {total_questions} questions, lo_distribution={request.lo_distribution}")
 
     # ── Chunk the syllabus ──
     # Multi-level splitting: try double newlines first, then single newlines,
@@ -3549,8 +3567,22 @@ async def generate_chapter(
             generated_texts = []
             used_starters_chapter: list[str] = []  # Track starters for variety
             generated_embeddings = []
+            lo_slot_idx_ch = chapter_lo_slot_index  # local counter for this session
 
             RETRY_LIMIT = 5
+
+            # Build CO context string once (reused per question)
+            co_context_ch = ""
+            if subject_cos and isinstance(subject_cos, list):
+                co_ids_ch = [co.get('id', f'CO{i+1}') if isinstance(co, dict) else str(co) for i, co in enumerate(subject_cos)]
+                co_context_ch = f"\nAvailable Course Outcomes (map the question to ALL relevant ones): {', '.join(co_ids_ch)}"
+            elif subject_lo_mappings_data:
+                all_cos_ch = set()
+                for lo_key, co_map in subject_lo_mappings_data.items():
+                    if isinstance(co_map, dict):
+                        all_cos_ch.update(co_map.keys())
+                if all_cos_ch:
+                    co_context_ch = f"\nAvailable Course Outcomes (map the question to ALL relevant ones): {', '.join(sorted(all_cos_ch))}"
 
             cancelled = False
 
@@ -3576,6 +3608,10 @@ async def generate_chapter(
 
                         system_prompt = _get_rubric_system_prompt(q_type)
 
+                        # Consume next pre-assigned LO slot
+                        required_lo_ch = chapter_lo_slots[lo_slot_idx_ch] if lo_slot_idx_ch < len(chapter_lo_slots) else None
+                        lo_slot_idx_ch += 1
+
                         prompt = f"""Chapter: "{topic_name}"
 
 Syllabus content:
@@ -3586,22 +3622,23 @@ Syllabus content:
 Background knowledge (use to inform the question, do NOT cite or reference it):
 {reference_context}
 """
-                        # Build LO/CO context for the LLM
-                        lo_context = ""
-                        if topic_lo_mappings:
+                        # LO requirement — either mandated by distribution or restricted by lo_filter
+                        lo_requirement_ch = ""
+                        if required_lo_ch:
+                            lo_desc_ch = subject_lo_descriptions_ch.get(required_lo_ch, "")
+                            lo_requirement_ch = (
+                                f"\n- REQUIRED Learning Outcome: This question MUST specifically assess {required_lo_ch}"
+                            )
+                            if lo_desc_ch:
+                                lo_requirement_ch += f' \u2014 "{lo_desc_ch}"'
+                            lo_requirement_ch += (
+                                "\n- Design the question to test the competency described by this LO, not just mention the topic"
+                            )
+                        elif request.lo_filter:
+                            lo_requirement_ch = f"\n- REQUIRED: This question MUST map to one of the following Learning Outcomes: {', '.join(request.lo_filter)}. Choose the most relevant one."
+                        elif topic_lo_mappings:
                             lo_list = ', '.join(topic_lo_mappings.keys())
-                            lo_context += f"\nAvailable Learning Outcomes for this chapter: {lo_list}"
-                        co_context = ""
-                        if subject_cos and isinstance(subject_cos, list):
-                            co_ids = [co.get('id', f'CO{i+1}') if isinstance(co, dict) else str(co) for i, co in enumerate(subject_cos)]
-                            co_context += f"\nAvailable Course Outcomes for this subject: {', '.join(co_ids)}"
-                        elif subject_lo_mappings_data:
-                            all_cos = set()
-                            for lo_key, co_map in subject_lo_mappings_data.items():
-                                if isinstance(co_map, dict):
-                                    all_cos.update(co_map.keys())
-                            if all_cos:
-                                co_context += f"\nAvailable Course Outcomes for this subject: {', '.join(sorted(all_cos))}"
+                            lo_requirement_ch = f"\nAvailable Learning Outcomes for this chapter: {lo_list}"
 
                         # Pick a unique starter for this question
                         starter = _pick_starter(q_type, used_starters_chapter)
@@ -3613,10 +3650,6 @@ Background knowledge (use to inform the question, do NOT cite or reference it):
                             "hard": "analysis, synthesis, or evaluation; requires deep understanding and critical thinking",
                         }.get((request.difficulty or "medium").lower(), "application or understanding")
 
-                        lo_restriction = ""
-                        if request.lo_filter:
-                            lo_restriction = f"\n- REQUIRED: This question MUST map to one of the following Learning Outcomes: {', '.join(request.lo_filter)}. Choose the most relevant one."
-
                         prompt += f"""
 Generate a {q_type.replace('_', ' ')} question based STRICTLY on the chapter "{topic_name}" content above.
 - Marks: {marks}
@@ -3625,10 +3658,9 @@ Generate a {q_type.replace('_', ' ')} question based STRICTLY on the chapter "{t
 - REQUIRED: Your question MUST start with the word/phrase "{starter}" — this is non-negotiable
 - FORBIDDEN: Do NOT start all the questions with "A clinician", "A patient", "A doctor", "A dentist", "A practitioner", "A student", "A researcher", "An engineer", or similar scenario setups. Also start directly with the required starter word.
 - The question text must be fully self-contained — do NOT mention "the text", "the reference", "the provided material", "reference [N]", or any source
-- Avoid questions similar to: {', '.join([q[:50] for q in generated_texts[-5:]]) if generated_texts else 'None yet'}
-{lo_context}
-{co_context}{lo_restriction}
-- In your JSON output, include "learning_outcome" (the most relevant LO for this question based on content) and "course_outcome" (the most relevant CO for this question based on content). Analyze the question content and choose the LO/CO that best matches what the question tests.
+- Avoid questions similar to: {', '.join([q[:50] for q in generated_texts[-5:]]) if generated_texts else 'None yet'}{lo_requirement_ch}
+{co_context_ch}
+- For "course_outcome_mapping" in your JSON: include EVERY CO this question addresses, not just one. Use Bloom level as value (1=remember/understand, 2=apply/analyze, 3=evaluate/create).
 - Also include "bloom_level" (one of: remember, understand, apply, analyze, evaluate, create) matching the difficulty.
 
 Output valid JSON only."""
@@ -3674,29 +3706,34 @@ Output valid JSON only."""
 
                             accepted = True
 
-                            # LO / CO assignment — use LLM response, then fallback to topic data
-                            assigned_lo = None
-                            if isinstance(resp.get("learning_outcome_id"), str):
-                                assigned_lo = resp["learning_outcome_id"]
-                            elif isinstance(resp.get("learning_outcome"), str):
-                                assigned_lo = resp["learning_outcome"]
-                            if not assigned_lo and topic_lo_mappings:
-                                try:
-                                    assigned_lo = max(topic_lo_mappings.items(), key=lambda kv: (kv[1] or 0))[0]
-                                except Exception:
-                                    pass
+                            # LO / CO assignment
+                            # 1) If a required LO was pre-assigned from distribution, honour it
+                            if required_lo_ch:
+                                llm_lo_ch = resp.get("learning_outcome_id") or resp.get("learning_outcome")
+                                assigned_lo = llm_lo_ch if llm_lo_ch == required_lo_ch else required_lo_ch
+                            else:
+                                assigned_lo = None
+                                if isinstance(resp.get("learning_outcome_id"), str):
+                                    assigned_lo = resp["learning_outcome_id"]
+                                elif isinstance(resp.get("learning_outcome"), str):
+                                    assigned_lo = resp["learning_outcome"]
+                                if not assigned_lo and topic_lo_mappings:
+                                    try:
+                                        assigned_lo = max(topic_lo_mappings.items(), key=lambda kv: (kv[1] or 0))[0]
+                                    except Exception:
+                                        pass
 
-                            # CO — prefer LLM's intelligent choice, then subject mappings
+                            # CO — prefer multi-CO dict from LLM, then fallbacks
                             assigned_co_map = {}
-                            if isinstance(resp.get("course_outcome"), str):
-                                # LLM chose a CO — use it
-                                assigned_co_map = {resp["course_outcome"]: 1}
+                            if isinstance(resp.get("course_outcome_mapping"), dict) and resp["course_outcome_mapping"]:
+                                assigned_co_map = resp["course_outcome_mapping"]
                             elif isinstance(resp.get("course_outcome"), dict):
                                 assigned_co_map = resp["course_outcome"]
-                            elif assigned_lo and subject_lo_mappings_data and isinstance(subject_lo_mappings_data.get(assigned_lo), dict):
-                                # Subject has explicit LO→CO mapping
+                            elif isinstance(resp.get("course_outcome"), str) and resp["course_outcome"]:
+                                assigned_co_map = {resp["course_outcome"]: 1}
+                            if not assigned_co_map and assigned_lo and subject_lo_mappings_data and isinstance(subject_lo_mappings_data.get(assigned_lo), dict):
                                 assigned_co_map = subject_lo_mappings_data.get(assigned_lo)
-                            elif assigned_lo and subject_cos and isinstance(subject_cos, list) and len(subject_cos) > 0:
+                            if not assigned_co_map and assigned_lo and subject_cos and isinstance(subject_cos, list) and len(subject_cos) > 0:
                                 m = re.search(r"LO(\d+)", str(assigned_lo))
                                 if m:
                                     idx = (int(m.group(1)) - 1) % len(subject_cos)
