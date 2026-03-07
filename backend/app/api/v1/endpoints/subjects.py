@@ -8,7 +8,7 @@ import logging
 from typing import Optional, List
 import uuid
 
-from fastapi import APIRouter, Depends, HTTPException, status, Query, UploadFile, File
+from fastapi import APIRouter, Depends, HTTPException, status, Query, UploadFile, File, BackgroundTasks
 from sqlalchemy import select, func
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import selectinload
@@ -448,6 +448,7 @@ async def upload_topic_syllabus(
     subject_id: uuid.UUID,
     topic_id: uuid.UUID,
     file: UploadFile = File(...),
+    background_tasks: BackgroundTasks = BackgroundTasks(),
     current_user: User = Depends(get_current_user),
     db: AsyncSession = Depends(get_db),
 ):
@@ -544,24 +545,100 @@ async def upload_topic_syllabus(
     
     await db.commit()
     await db.refresh(topic)
-    
+
+    # Trigger LO generation in the background so upload response is instant
+    background_tasks.add_task(_bg_generate_los, subject_id=subject_id, user_id=current_user.id)
+
     return TopicResponse.model_validate(topic)
 
 
+async def _bg_generate_los(subject_id: uuid.UUID, user_id: uuid.UUID) -> None:
+    """Background task: regenerate LOs for a subject after new syllabus content is added."""
+    from app.core.database import AsyncSessionLocal
+    try:
+        async with AsyncSessionLocal() as db:
+            subj_result = await db.execute(
+                select(Subject).where(Subject.id == subject_id, Subject.user_id == user_id)
+            )
+            subject = subj_result.scalar_one_or_none()
+            if not subject:
+                return
+
+            topics_result = await db.execute(
+                select(Topic).where(Topic.subject_id == subject_id).order_by(Topic.order_index)
+            )
+            topics = topics_result.scalars().all()
+
+            parts = []
+            for t in topics:
+                if t.syllabus_content:
+                    parts.append(f"Chapter: {t.name}\n{t.syllabus_content[:1500]}")
+                else:
+                    parts.append(f"Chapter: {t.name}")
+            combined = "\n\n".join(parts).strip()
+
+            if len(combined) > 100:
+                los = await _generate_los_with_llm(subject.name, subject.code, combined)
+            else:
+                los = list(_GENERIC_LOS)
+
+            subject.learning_outcomes = {"outcomes": los}
+            await db.commit()
+            logger.info(f"Background LO generation complete for subject {subject_id}")
+    except Exception as e:
+        logger.error(f"Background LO generation failed for subject {subject_id}: {e}")
+
+
 async def _extract_text_from_file(content: bytes, extension: str) -> str:
-    """Extract text from file content based on file type."""
-    
+    """Extract text from file content based on file type.
+
+    For PDFs, native text extraction is attempted first (PyMuPDF).
+    If the result is too sparse (scanned/image-based PDF), OCR via
+    pytesseract is used as a fallback on a page-by-page basis.
+    """
+
     if extension == ".pdf":
         import fitz  # PyMuPDF
         text_parts = []
+        ocr_pages = []  # pages where native extraction yielded nothing
+
         with fitz.open(stream=content, filetype="pdf") as doc:
-            for page in doc:
-                text_parts.append(page.get_text())
-        return "\n\n".join(text_parts)
-    
+            for page_num, page in enumerate(doc):
+                native = page.get_text().strip()
+                if native:
+                    text_parts.append(native)
+                else:
+                    # Render page to image for OCR
+                    ocr_pages.append((page_num, page.get_pixmap(dpi=200)))
+
+        native_text = "\n\n".join(text_parts)
+
+        # If we have OCR pages (scanned PDF or mixed)
+        if ocr_pages:
+            try:
+                import pytesseract
+                from PIL import Image
+                import io as _io
+
+                ocr_parts = []
+                for page_num, pix in ocr_pages:
+                    img_bytes = pix.tobytes("png")
+                    img = Image.open(_io.BytesIO(img_bytes))
+                    ocr_text = pytesseract.image_to_string(img, lang="eng").strip()
+                    if ocr_text:
+                        ocr_parts.append(ocr_text)
+
+                if ocr_parts:
+                    ocr_combined = "\n\n".join(ocr_parts)
+                    return (native_text + "\n\n" + ocr_combined).strip() if native_text else ocr_combined
+            except Exception as e:
+                logger.warning(f"OCR fallback failed for PDF: {e}")
+
+        return native_text
+
     elif extension == ".txt":
         return content.decode("utf-8", errors="ignore")
-    
+
     elif extension == ".docx":
         from docx import Document
         doc = Document(io.BytesIO(content))
@@ -570,7 +647,7 @@ async def _extract_text_from_file(content: bytes, extension: str) -> str:
             if paragraph.text.strip():
                 text_parts.append(paragraph.text)
         return "\n\n".join(text_parts)
-    
+
     return ""
 
 

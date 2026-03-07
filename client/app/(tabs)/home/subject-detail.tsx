@@ -219,12 +219,12 @@ export default function SubjectDetailScreen() {
     setGenProgress(null);
     setGenQuestions([]);
     setIsGenerating(false);
-    setQgMcqCount('5');
-    setQgShortCount('3');
+    setQgMcqCount('10');
+    setQgShortCount('0');
     setQgLongCount('0');
-    setQgMcqMarks('2');
-    setQgShortMarks('5');
-    setQgLongMarks('10');
+    setQgMcqMarks('1');
+    setQgShortMarks('3');
+    setQgLongMarks('5');
     // Initialise LO distribution from subject's LOs with equal weights
     if (subject?.learning_outcomes?.outcomes && subject.learning_outcomes.outcomes.length > 0) {
       const los = subject.learning_outcomes.outcomes;
@@ -838,30 +838,6 @@ export default function SubjectDetailScreen() {
                 </Text>
                 <View style={styles.sectionActions}>
                   <TouchableOpacity
-                    style={[styles.addButton, { backgroundColor: '#AF52DE' + '20' }]}
-                    onPress={async () => {
-                      if (!id) return;
-                      mediumImpact();
-                      setIsGeneratingLOs(true);
-                      try {
-                        const updated = await subjectsService.generateLearningOutcomes(id);
-                        setSubject(prev => prev ? { ...prev, learning_outcomes: updated.learning_outcomes } : prev);
-                        showSuccess('Learning outcomes generated');
-                      } catch (err) {
-                        showError(err, 'Failed to Generate LOs');
-                      } finally {
-                        setIsGeneratingLOs(false);
-                      }
-                    }}
-                    disabled={isGeneratingLOs}
-                  >
-                    {isGeneratingLOs
-                      ? <ActivityIndicator size="small" color="#AF52DE" />
-                      : <IconSymbol name="sparkles" size={14} color="#AF52DE" />
-                    }
-                    <Text style={[styles.addButtonText, { color: '#AF52DE' }]}>Gen LOs</Text>
-                  </TouchableOpacity>
-                  <TouchableOpacity
                     style={[styles.addButton, { backgroundColor: '#34C759' + '20' }]}
                     onPress={() => {
                       mediumImpact();
@@ -1419,7 +1395,7 @@ export default function SubjectDetailScreen() {
                       <View style={[styles.genSection, { backgroundColor: colors.card }]}>
                         <Text style={[styles.genSectionLabel, { color: colors.textSecondary }]}>QUESTION TYPES & MARKS</Text>
                         <Text style={{ color: colors.textTertiary, fontSize: FontSizes.xs, marginBottom: Spacing.md }}>
-                          Set count and marks per question type. No limits.
+                          Set count and marks per question type.
                         </Text>
 
                         {/* MCQ */}
@@ -1554,7 +1530,7 @@ export default function SubjectDetailScreen() {
                             <Text style={{ color: colors.textTertiary, fontSize: FontSizes.xs, marginBottom: Spacing.sm }}>
                               {qgLoFilter.length > 0
                                 ? `Showing ${activeLos.length} selected LO${activeLos.length !== 1 ? 's' : ''} — sliders sum to 100%.`
-                                : 'Sliders are linked — total always sums to 100%.'}
+                                : 'All LOs active — adjust sliders to set relative distribution.'}
                             </Text>
                             {activeLos.map((lo, loIdx) => {
                               const colorIdx = los.findIndex(l => l.id === lo.id);
