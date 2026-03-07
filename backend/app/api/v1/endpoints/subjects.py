@@ -18,6 +18,7 @@ from app.core.config import settings
 from app.models.subject import Subject, Topic
 from app.models.question import Question
 from app.models.user import User
+from app.models.document import Document, DocumentChunk
 from app.schemas.subject import (
     SubjectCreate,
     SubjectUpdate,
@@ -793,3 +794,145 @@ async def extract_chapters_from_syllabus(
         "chapters_created": len(created_topics),
         "topics": [TopicResponse.model_validate(t) for t in created_topics],
     }
+
+
+# ── Learning Outcomes auto-generation ───────────────────────────────────────
+
+_GENERIC_LOS = [
+    {"id": "LO1", "name": "Knowledge & Understanding",
+     "description": "Recall and explain fundamental concepts, theories, and principles of the subject."},
+    {"id": "LO2", "name": "Application",
+     "description": "Apply acquired knowledge and techniques to solve standard problems in the domain."},
+    {"id": "LO3", "name": "Analysis & Evaluation",
+     "description": "Analyse complex scenarios, interpret data, and critically evaluate proposed solutions."},
+    {"id": "LO4", "name": "Synthesis & Design",
+     "description": "Design and construct solutions or systems by integrating knowledge from multiple areas."},
+    {"id": "LO5", "name": "Communication",
+     "description": "Communicate ideas, methods, and findings clearly in written and oral forms."},
+]
+
+
+async def _generate_los_with_llm(subject_name: str, subject_code: str, syllabus_text: str) -> list:
+    """Use LLM to derive 5-7 LOs from aggregated syllabus content; falls back to generic LOs."""
+    llm_service = LLMService()
+    truncated = syllabus_text[:12000]
+
+    system_prompt = (
+        "You are an expert curriculum designer specialising in Outcome-Based Education (OBE). "
+        "Generate 5 to 7 Learning Outcomes (LOs) for a university subject from its syllabus.\n\n"
+        "Each LO must:\n"
+        "- Be specific to this subject's domain\n"
+        "- Start with a Bloom's taxonomy action verb (e.g. Understand, Apply, Analyse, Design, Evaluate)\n"
+        "- Be measurable and distinct from the others\n\n"
+        "Return ONLY a valid JSON array:\n"
+        '[{"id":"LO1","name":"Short 2-5 word label","description":"Full LO statement."},...]\n'
+        "No markdown, no extra text."
+    )
+    prompt = (
+        f"Subject: {subject_name} ({subject_code})\n\n"
+        f"Syllabus content:\n{truncated}\n\n"
+        "Generate 5-7 specific, measurable Learning Outcomes."
+    )
+
+    try:
+        result = await llm_service.generate_json(prompt=prompt, system_prompt=system_prompt, temperature=0.3)
+        los_raw = result if isinstance(result, list) else next(
+            (v for v in result.values() if isinstance(v, list)), None
+        )
+        if not los_raw:
+            return _GENERIC_LOS
+        validated = []
+        for i, lo in enumerate(los_raw[:7], start=1):
+            if isinstance(lo, dict):
+                validated.append({
+                    "id": str(lo.get("id") or f"LO{i}")[:10],
+                    "name": str(lo.get("name") or f"LO{i}")[:100],
+                    "description": str(lo["description"])[:500] if lo.get("description") else None,
+                })
+        return validated or _GENERIC_LOS
+    except Exception as e:
+        logger.error(f"LO generation LLM failed: {e}")
+        return _GENERIC_LOS
+
+
+@router.post("/{subject_id}/generate-learning-outcomes", response_model=SubjectResponse)
+async def generate_learning_outcomes(
+    subject_id: uuid.UUID,
+    current_user: User = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+):
+    """
+    Auto-generate Learning Outcomes for a subject.
+
+    Content priority (highest → lowest):
+    1. Topic syllabus_content (all chapters concatenated)
+    2. Reference book chunks linked to this subject (up to 30 chunks × 400 chars each)
+    3. Generic fallback LOs if nothing meaningful is found or the LLM fails
+    """
+    subj_result = await db.execute(
+        select(Subject).where(Subject.id == subject_id, Subject.user_id == current_user.id)
+    )
+    subject = subj_result.scalar_one_or_none()
+    if not subject:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Subject not found")
+
+    # ── 1. Topic syllabus content ────────────────────────────────────────────
+    topics_result = await db.execute(
+        select(Topic).where(Topic.subject_id == subject_id).order_by(Topic.order_index)
+    )
+    topics = topics_result.scalars().all()
+
+    topic_parts = []
+    for t in topics:
+        if t.syllabus_content:
+            topic_parts.append(f"Chapter: {t.name}\n{t.syllabus_content[:1500]}")
+        else:
+            topic_parts.append(f"Chapter: {t.name}")
+    syllabus_text = "\n\n".join(topic_parts)
+    has_syllabus = any(t.syllabus_content for t in topics)
+
+    # ── 2. Reference book chunks ─────────────────────────────────────────────
+    ref_text = ""
+    ref_docs_result = await db.execute(
+        select(Document.id, Document.filename).where(
+            Document.subject_id == subject_id,
+            Document.index_type == "reference_book",
+            Document.processing_status == "completed",
+        )
+    )
+    ref_docs = ref_docs_result.all()
+    if ref_docs:
+        doc_ids = [row.id for row in ref_docs]
+        # Pull first 30 meaningful chunks (evenly spread across books)
+        chunks_result = await db.execute(
+            select(DocumentChunk.chunk_text, Document.filename)
+            .join(Document, DocumentChunk.document_id == Document.id)
+            .where(DocumentChunk.document_id.in_(doc_ids))
+            .order_by(Document.id, DocumentChunk.chunk_index)
+            .limit(60)
+        )
+        chunk_rows = chunks_result.all()
+        # Deduplicate by book, take up to 30 chunks total
+        seen_docs: dict = {}
+        selected = []
+        for chunk_text, filename in chunk_rows:
+            seen_docs[filename] = seen_docs.get(filename, 0) + 1
+            if seen_docs[filename] <= max(1, 30 // len(doc_ids)):
+                selected.append(chunk_text[:400])
+            if len(selected) >= 30:
+                break
+        if selected:
+            ref_text = "\n\nREFERENCE BOOK EXCERPTS:\n" + "\n---\n".join(selected)
+
+    combined = (syllabus_text + ref_text).strip()
+    has_real_content = has_syllabus or bool(ref_text)
+
+    if has_real_content and len(combined) > 100:
+        los = await _generate_los_with_llm(subject.name, subject.code, combined)
+    else:
+        los = list(_GENERIC_LOS)  # generic fallback
+
+    subject.learning_outcomes = {"outcomes": los}
+    await db.commit()
+    await db.refresh(subject)
+    return SubjectResponse.model_validate(subject)

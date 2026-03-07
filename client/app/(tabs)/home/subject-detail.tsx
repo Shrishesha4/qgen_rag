@@ -12,6 +12,7 @@ import {
   Modal,
   Animated,
 } from 'react-native';
+import Slider from '@react-native-community/slider';
 import { router, useLocalSearchParams, Stack } from 'expo-router';
 import { LinearGradient } from 'expo-linear-gradient';
 import { IconSymbol } from '@/components/ui/icon-symbol';
@@ -86,6 +87,7 @@ export default function SubjectDetailScreen() {
   const [qgDifficulty, setQgDifficulty] = useState<'easy' | 'medium' | 'hard'>('medium');
   const [qgLoFilter, setQgLoFilter] = useState<string[]>([]);
   const [qgLoDistribution, setQgLoDistribution] = useState<Record<string, number>>({});
+  const [isGeneratingLOs, setIsGeneratingLOs] = useState(false);
 
   // Import state
   const [isImporting, setIsImporting] = useState(false);
@@ -836,6 +838,30 @@ export default function SubjectDetailScreen() {
                 </Text>
                 <View style={styles.sectionActions}>
                   <TouchableOpacity
+                    style={[styles.addButton, { backgroundColor: '#AF52DE' + '20' }]}
+                    onPress={async () => {
+                      if (!id) return;
+                      mediumImpact();
+                      setIsGeneratingLOs(true);
+                      try {
+                        const updated = await subjectsService.generateLearningOutcomes(id);
+                        setSubject(prev => prev ? { ...prev, learning_outcomes: updated.learning_outcomes } : prev);
+                        showSuccess('Learning outcomes generated');
+                      } catch (err) {
+                        showError(err, 'Failed to Generate LOs');
+                      } finally {
+                        setIsGeneratingLOs(false);
+                      }
+                    }}
+                    disabled={isGeneratingLOs}
+                  >
+                    {isGeneratingLOs
+                      ? <ActivityIndicator size="small" color="#AF52DE" />
+                      : <IconSymbol name="sparkles" size={14} color="#AF52DE" />
+                    }
+                    <Text style={[styles.addButtonText, { color: '#AF52DE' }]}>Gen LOs</Text>
+                  </TouchableOpacity>
+                  <TouchableOpacity
                     style={[styles.addButton, { backgroundColor: '#34C759' + '20' }]}
                     onPress={() => {
                       mediumImpact();
@@ -1017,35 +1043,79 @@ export default function SubjectDetailScreen() {
             </View>
           )}
 
-          {/* Learning Outcomes (if any) */}
-          {activeTab === 'chapters' && subject.learning_outcomes?.outcomes && subject.learning_outcomes.outcomes.length > 0 && (
+          {/* Learning Outcomes */}
+          {activeTab === 'chapters' && (
             <View style={styles.section}>
-              <Text style={[styles.sectionTitle, { color: colors.textSecondary }]}>
-                LEARNING OUTCOMES
-              </Text>
-              <View style={[styles.loList, { backgroundColor: colors.card }]}>
-                {subject.learning_outcomes.outcomes.map((lo, index) => (
-                  <View
-                    key={lo.id}
-                    style={[
-                      styles.loItem,
-                      index < subject.learning_outcomes!.outcomes.length - 1 && { borderBottomWidth: 1, borderBottomColor: colors.border },
-                    ]}
-                  >
-                    <View style={[styles.loBadge, { backgroundColor: getTopicColor(index) }]}>
-                      <Text style={styles.loBadgeText}>{lo.id}</Text>
-                    </View>
-                    <View style={styles.loContent}>
-                      <Text style={[styles.loName, { color: colors.text }]}>{lo.name}</Text>
-                      {lo.description && (
-                        <Text style={[styles.loDescription, { color: colors.textSecondary }]}>
-                          {lo.description}
-                        </Text>
-                      )}
-                    </View>
-                  </View>
-                ))}
+              <View style={{ flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', marginBottom: Spacing.sm }}>
+                <Text style={[styles.sectionTitle, { color: colors.textSecondary, marginBottom: 0 }]}>
+                  LEARNING OUTCOMES
+                </Text>
+                <TouchableOpacity
+                  onPress={async () => {
+                    if (!id) return;
+                    mediumImpact();
+                    setIsGeneratingLOs(true);
+                    try {
+                      const updated = await subjectsService.generateLearningOutcomes(id);
+                      setSubject(prev => prev ? { ...prev, learning_outcomes: updated.learning_outcomes } : prev);
+                      showSuccess('Learning outcomes generated');
+                    } catch (err) {
+                      showError(err, 'Failed to Generate LOs');
+                    } finally {
+                      setIsGeneratingLOs(false);
+                    }
+                  }}
+                  disabled={isGeneratingLOs}
+                  style={{
+                    flexDirection: 'row', alignItems: 'center', gap: 4,
+                    paddingHorizontal: 10, paddingVertical: 5, borderRadius: 14,
+                    backgroundColor: colors.primary + '18',
+                  }}
+                >
+                  {isGeneratingLOs
+                    ? <ActivityIndicator size="small" color={colors.primary} />
+                    : <IconSymbol name="sparkles" size={13} color={colors.primary} />
+                  }
+                  <Text style={{ fontSize: FontSizes.xs, fontWeight: '600', color: colors.primary }}>
+                    {subject?.learning_outcomes?.outcomes?.length ? 'Regenerate' : 'Generate'}
+                  </Text>
+                </TouchableOpacity>
               </View>
+              {subject?.learning_outcomes?.outcomes && subject.learning_outcomes.outcomes.length > 0 ? (
+                <View style={[styles.loList, { backgroundColor: colors.card }]}>
+                  {subject.learning_outcomes.outcomes.map((lo, index) => (
+                    <View
+                      key={lo.id}
+                      style={[
+                        styles.loItem,
+                        index < subject.learning_outcomes!.outcomes.length - 1 && { borderBottomWidth: 1, borderBottomColor: colors.border },
+                      ]}
+                    >
+                      <View style={[styles.loBadge, { backgroundColor: getTopicColor(index) }]}>
+                        <Text style={styles.loBadgeText}>{lo.id}</Text>
+                      </View>
+                      <View style={styles.loContent}>
+                        <Text style={[styles.loName, { color: colors.text }]}>{lo.name}</Text>
+                        {lo.description && (
+                          <Text style={[styles.loDescription, { color: colors.textSecondary }]}>
+                            {lo.description}
+                          </Text>
+                        )}
+                      </View>
+                    </View>
+                  ))}
+                </View>
+              ) : (
+                <View style={[styles.loList, { backgroundColor: colors.card, alignItems: 'center', paddingVertical: Spacing.lg }]}>
+                  <IconSymbol name="list.bullet.clipboard" size={28} color={colors.textTertiary} />
+                  <Text style={{ color: colors.textSecondary, fontSize: FontSizes.sm, marginTop: Spacing.sm }}>
+                    No learning outcomes yet
+                  </Text>
+                  <Text style={{ color: colors.textTertiary, fontSize: FontSizes.xs, marginTop: 4, textAlign: 'center' }}>
+                    Tap Generate to auto-create from syllabus, or use generic academic LOs as fallback.
+                  </Text>
+                </View>
+              )}
             </View>
           )}
         </ScrollView>
@@ -1441,10 +1511,89 @@ export default function SubjectDetailScreen() {
                         </View>
                       </View>
 
+                      {/* LO Distribution */}
+                      {subject?.learning_outcomes?.outcomes && subject.learning_outcomes.outcomes.length > 0 && (() => {
+                        const LO_COLORS = ['#6C63FF','#FF6584','#43AA8B','#F9A825','#5C85D6','#E06C75'];
+                        const los = subject.learning_outcomes!.outcomes;
+                        // Only show sliders for selected LOs (or all if none selected)
+                        const activeLos = qgLoFilter.length > 0
+                          ? los.filter(l => qgLoFilter.includes(l.id))
+                          : los;
+                        // Redistribute remaining % among other *active* LOs proportionally
+                        const handleLoSlide = (changedId: string, newVal: number) => {
+                          selectionImpact();
+                          const clamped = Math.round(newVal);
+                          const others = activeLos.filter(l => l.id !== changedId);
+                          if (others.length === 0) {
+                            setQgLoDistribution(prev => ({ ...prev, [changedId]: 100 }));
+                            return;
+                          }
+                          const remaining = Math.max(0, 100 - clamped);
+                          const prevOthersTotal = others.reduce((s, l) => s + (qgLoDistribution[l.id] ?? 0), 0);
+                          const next: Record<string, number> = { ...qgLoDistribution, [changedId]: clamped };
+                          if (prevOthersTotal === 0) {
+                            const even = Math.floor(remaining / others.length);
+                            others.forEach((l, i) => { next[l.id] = i === others.length - 1 ? remaining - even * (others.length - 1) : even; });
+                          } else {
+                            let distributed = 0;
+                            others.forEach((l, i) => {
+                              if (i === others.length - 1) {
+                                next[l.id] = remaining - distributed;
+                              } else {
+                                const share = Math.round(((qgLoDistribution[l.id] ?? 0) / prevOthersTotal) * remaining);
+                                next[l.id] = share;
+                                distributed += share;
+                              }
+                            });
+                          }
+                          setQgLoDistribution(next);
+                        };
+                        return (
+                          <View style={[styles.genSection, { backgroundColor: colors.card }]}>
+                            <Text style={[styles.genSectionLabel, { color: colors.textSecondary }]}>LO DISTRIBUTION</Text>
+                            <Text style={{ color: colors.textTertiary, fontSize: FontSizes.xs, marginBottom: Spacing.sm }}>
+                              {qgLoFilter.length > 0
+                                ? `Showing ${activeLos.length} selected LO${activeLos.length !== 1 ? 's' : ''} — sliders sum to 100%.`
+                                : 'Sliders are linked — total always sums to 100%.'}
+                            </Text>
+                            {activeLos.map((lo, loIdx) => {
+                              const colorIdx = los.findIndex(l => l.id === lo.id);
+                              const loColor = LO_COLORS[colorIdx % LO_COLORS.length];
+                              const pct = qgLoDistribution[lo.id] ?? 0;
+                              return (
+                                <View key={lo.id} style={{ marginBottom: Spacing.md }}>
+                                  <View style={{ flexDirection: 'row', alignItems: 'center', marginBottom: 4 }}>
+                                    <View style={{ width: 26, height: 26, borderRadius: 13, backgroundColor: loColor + '22', alignItems: 'center', justifyContent: 'center', marginRight: Spacing.sm }}>
+                                      <Text style={{ fontSize: 9, fontWeight: '700', color: loColor }}>{lo.id.replace(/^LO\s*/i,'')}</Text>
+                                    </View>
+                                    <Text style={{ flex: 1, fontSize: FontSizes.xs, fontWeight: '600', color: colors.text }} numberOfLines={1}>
+                                      {lo.name || lo.id}
+                                    </Text>
+                                    <Text style={{ fontSize: FontSizes.sm, fontWeight: '700', color: loColor, minWidth: 38, textAlign: 'right' }}>{pct}%</Text>
+                                  </View>
+                                  <Slider
+                                    style={{ width: '100%', height: 32 }}
+                                    minimumValue={0}
+                                    maximumValue={100}
+                                    step={1}
+                                    value={pct}
+                                    minimumTrackTintColor={loColor}
+                                    maximumTrackTintColor={colors.border}
+                                    thumbTintColor={loColor}
+                                    onValueChange={(v) => handleLoSlide(lo.id, v)}
+                                    onSlidingComplete={() => heavyImpact()}
+                                  />
+                                </View>
+                              );
+                            })}
+                          </View>
+                        );
+                      })()}
+
                       {/* LO Filter */}
                       {subject?.learning_outcomes?.outcomes && subject.learning_outcomes.outcomes.length > 0 && (
                         <View style={[styles.genSection, { backgroundColor: colors.card }]}>
-                          <Text style={[styles.genSectionLabel, { color: colors.textSecondary }]}>LEARNING OUTCOMES (optional)</Text>
+                          <Text style={[styles.genSectionLabel, { color: colors.textSecondary }]}>USE ONLY (optional)</Text>
                           <Text style={{ color: colors.textTertiary, fontSize: FontSizes.xs, marginBottom: Spacing.sm }}>
                             Select to restrict questions to specific LOs. Leave empty for all.
                           </Text>
@@ -1462,9 +1611,21 @@ export default function SubjectDetailScreen() {
                                   }}
                                   onPress={() => {
                                     selectionImpact();
-                                    setQgLoFilter(prev =>
-                                      prev.includes(lo.id) ? prev.filter(x => x !== lo.id) : [...prev, lo.id]
-                                    );
+                                    const allLos = subject.learning_outcomes!.outcomes;
+                                    const newFilter = qgLoFilter.includes(lo.id)
+                                      ? qgLoFilter.filter(x => x !== lo.id)
+                                      : [...qgLoFilter, lo.id];
+                                    setQgLoFilter(newFilter);
+                                    // Re-initialise distribution with equal weights for the new active set
+                                    const activeIds = newFilter.length > 0
+                                      ? newFilter
+                                      : allLos.map(l => l.id);
+                                    const even = Math.floor(100 / activeIds.length);
+                                    const newDist: Record<string, number> = {};
+                                    activeIds.forEach((loId, i) => {
+                                      newDist[loId] = i === activeIds.length - 1 ? 100 - even * (activeIds.length - 1) : even;
+                                    });
+                                    setQgLoDistribution(newDist);
                                   }}
                                 >
                                   <Text style={{ fontSize: FontSizes.xs, fontWeight: active ? '700' : '500', color: active ? colors.primary : colors.textSecondary }}>
@@ -1474,44 +1635,6 @@ export default function SubjectDetailScreen() {
                               );
                             })}
                           </View>
-                        </View>
-                      )}
-
-                      {/* LO Distribution */}
-                      {subject?.learning_outcomes?.outcomes && subject.learning_outcomes.outcomes.length > 0 && (
-                        <View style={[styles.genSection, { backgroundColor: colors.card }]}>
-                          <Text style={[styles.genSectionLabel, { color: colors.textSecondary }]}>LO DISTRIBUTION</Text>
-                          <Text style={{ color: colors.textTertiary, fontSize: FontSizes.xs, marginBottom: Spacing.sm }}>
-                            Set the weight (%) for each learning outcome. Values are treated as relative weights.
-                          </Text>
-                          {subject.learning_outcomes.outcomes.map((lo, loIdx) => {
-                            const LO_COLORS = ['#6C63FF','#FF6584','#43AA8B','#F9A825','#5C85D6','#E06C75'];
-                            const loColor = LO_COLORS[loIdx % LO_COLORS.length];
-                            const pct = qgLoDistribution[lo.id] ?? 0;
-                            return (
-                              <View key={lo.id} style={{ flexDirection: 'row', alignItems: 'center', marginBottom: Spacing.sm }}>
-                                <View style={{ width: 28, height: 28, borderRadius: 14, backgroundColor: loColor + '22', alignItems: 'center', justifyContent: 'center', marginRight: Spacing.sm }}>
-                                  <Text style={{ fontSize: 10, fontWeight: '700', color: loColor }}>{lo.id.replace(/^LO\s*/i,'')}</Text>
-                                </View>
-                                <Text style={{ flex: 1, fontSize: FontSizes.xs, color: colors.textSecondary }} numberOfLines={1}>
-                                  {lo.name || lo.id}
-                                </Text>
-                                <TouchableOpacity
-                                  onPress={() => { selectionImpact(); setQgLoDistribution(prev => ({ ...prev, [lo.id]: Math.max(0, (prev[lo.id] ?? 0) - 5) })); }}
-                                  style={{ width: 28, height: 28, borderRadius: 14, borderWidth: 1.5, borderColor: colors.border, alignItems: 'center', justifyContent: 'center' }}
-                                >
-                                  <Text style={{ fontSize: 16, color: colors.textSecondary, lineHeight: 20 }}>−</Text>
-                                </TouchableOpacity>
-                                <Text style={{ width: 42, textAlign: 'center', fontSize: FontSizes.sm, fontWeight: '700', color: colors.text }}>{pct}%</Text>
-                                <TouchableOpacity
-                                  onPress={() => { selectionImpact(); setQgLoDistribution(prev => ({ ...prev, [lo.id]: Math.min(100, (prev[lo.id] ?? 0) + 5) })); }}
-                                  style={{ width: 28, height: 28, borderRadius: 14, borderWidth: 1.5, borderColor: colors.border, alignItems: 'center', justifyContent: 'center' }}
-                                >
-                                  <Text style={{ fontSize: 16, color: colors.textSecondary, lineHeight: 20 }}>+</Text>
-                                </TouchableOpacity>
-                              </View>
-                            );
-                          })}
                         </View>
                       )}
 

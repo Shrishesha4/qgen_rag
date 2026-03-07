@@ -245,6 +245,11 @@ export const subjectsService = {
 
     return response.data;
   },
+
+  async generateLearningOutcomes(subjectId: string): Promise<Subject> {
+    const response = await apiClient.post<Subject>(`/subjects/${subjectId}/generate-learning-outcomes`);
+    return response.data;
+  },
 };
 
 export default subjectsService;
