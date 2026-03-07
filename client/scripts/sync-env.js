@@ -11,7 +11,7 @@ const path = require('path');
 
 // Calculate paths relative to workspace root
 const WORKSPACE_ROOT = path.join(__dirname, '../../');
-const ROOT_ENV_PATH = path.join(WORKSPACE_ROOT, '.env');
+const ROOT_ENV_PATH = path.join(WORKSPACE_ROOT, '.env.local');
 const CLIENT_DIR = path.join(WORKSPACE_ROOT, 'client');
 const CLIENT_ENV_LOCAL_PATH = path.join(CLIENT_DIR, '.env.local');
 
