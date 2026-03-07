@@ -938,7 +938,17 @@ const [editCoMapping, setEditCoMapping] = useState<Record<string, number>>({});
                           <TouchableOpacity
                             key={idx}
                             activeOpacity={0.7}
-                            onPress={() => setEditCorrectAnswer(opt)}
+                            onPress={async () => {
+                              setEditCorrectAnswer(opt);
+                              // Save immediately so other UIs see the change right away
+                              try {
+                                await vetterService.updateQuestion(selectedQuestion.id, { correct_answer: opt });
+                                setSelectedQuestion((prev) => prev ? { ...prev, correct_answer: opt } : prev);
+                                setQuestions((prev) => prev.map((q) => q.id === selectedQuestion.id ? { ...q, correct_answer: opt } : q));
+                              } catch (err) {
+                                console.error('Failed to save correct answer:', err);
+                              }
+                            }}
                             style={[
                               styles.optionSelectRow,
                               {

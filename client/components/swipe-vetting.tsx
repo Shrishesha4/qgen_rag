@@ -52,6 +52,19 @@ const CO_LEVELS = [
 ];
 const COURSE_OUTCOMES = ['CO1', 'CO2', 'CO3', 'CO4', 'CO5'];
 
+// Robust MCQ correct-answer matching (handles "B", "B.", "B. Paris" formats)
+const optionMatchesCorrect = (option: string, correct: string | null | undefined, index: number): boolean => {
+  if (!correct) return false;
+  const trimmedCorrect = correct.trim();
+  const trimmedOption = option.trim();
+  if (trimmedOption === trimmedCorrect) return true;
+  if (trimmedOption.startsWith(trimmedCorrect)) return true;
+  const letter = String.fromCharCode(65 + index);
+  if (trimmedCorrect.length === 1 && trimmedCorrect.toUpperCase() === letter) return true;
+  if (/^[A-Za-z][.)]?$/.test(trimmedCorrect) && trimmedOption.toUpperCase().startsWith(trimmedCorrect.toUpperCase())) return true;
+  return false;
+};
+
 // Rejection reasons
 const REJECTION_REASONS = [
   { id: 'duplicate', label: 'Duplicate', desc: 'Already exists' },
@@ -632,8 +645,7 @@ export function SwipeVetting({
                   {currentQuestion.question_type === 'mcq' && currentQuestion.options && (
                     <View style={styles.optionsContainer}>
                       {currentQuestion.options.map((option, idx) => {
-                        const isCorrect = option === currentQuestion.correct_answer ||
-                          option.startsWith(currentQuestion.correct_answer || '');
+                        const isCorrect = optionMatchesCorrect(option, currentQuestion.correct_answer, idx);
                         return (
                           <View
                             key={idx}
@@ -950,8 +962,7 @@ export function SwipeVetting({
                       // MCQ: Show options to tap and select correct answer
                       <View style={styles.mcqEditContainer}>
                         {mcqOptions.map((option, idx) => {
-                          const isCorrect = option === editData.correct_answer ||
-                            (!!editData.correct_answer && option.startsWith(editData.correct_answer));
+                          const isCorrect = optionMatchesCorrect(option, editData.correct_answer, idx);
                           const isEditing = editingOptionIndex === idx;
                           const { prefix, text } = extractOptionPrefix(option);
                           
