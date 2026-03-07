@@ -96,6 +96,12 @@ export default function QuestionsForVetting() {
   const [isLoadingHistory, setIsLoadingHistory] = useState(false);
   const [isRestoringVersion, setIsRestoringVersion] = useState<string | null>(null);
 
+  // Inline edit state (populated when modal opens)
+  const [editQuestionText, setEditQuestionText] = useState('');
+  const [editCorrectAnswer, setEditCorrectAnswer] = useState('');
+  const [editOptions, setEditOptions] = useState<string[]>([]);
+  const [editCoMapping, setEditCoMapping] = useState<Array<{ key: string; value: string }>>([]);
+
   // Fuzzy search filter for subjects
   const filteredSubjects = useMemo(() => {
     if (!subjectSearch.trim()) return subjects;
@@ -114,6 +120,21 @@ export default function QuestionsForVetting() {
     const subject = subjects.find((s) => s.id === subjectFilter);
     return subject ? `${subject.code} - ${subject.name}` : 'All Subjects';
   }, [subjectFilter, subjects]);
+
+  // Initialise editable fields whenever the selected question changes
+  useEffect(() => {
+    if (selectedQuestion) {
+      setEditQuestionText(selectedQuestion.question_text);
+      setEditCorrectAnswer(selectedQuestion.correct_answer ?? '');
+      setEditOptions(selectedQuestion.options ?? []);
+      setEditCoMapping(
+        Object.entries(selectedQuestion.course_outcome_mapping ?? {}).map(([k, v]) => ({
+          key: k,
+          value: String(v),
+        }))
+      );
+    }
+  }, [selectedQuestion?.id]);
 
   const fetchQuestions = useCallback(
     async (pageNum = 1, showLoader = true) => {
@@ -213,92 +234,113 @@ export default function QuestionsForVetting() {
     }
   }, [teacherFilter, subjectFilter]);
 
-  const handleVet = async () => {
+  const handleApprove = async () => {
     if (!selectedQuestion) return;
-
     setIsVetting(true);
     try {
-      if (vetStatus === 'rejected') {
-        const result = await vetterService.rejectAndRegenerate(selectedQuestion.id, {
-          notes: vetNotes || undefined,
-          rejection_reasons: selectedReasons.length > 0 ? selectedReasons : undefined,
+      const coMapping = editCoMapping
+        .filter((e) => e.key.trim())
+        .reduce((acc, e) => ({ ...acc, [e.key.trim()]: parseFloat(e.value) || 0 }), {} as Record<string, number>);
+
+      // Save any edits first
+      const hasTextEdit = editQuestionText.trim() !== selectedQuestion.question_text.trim();
+      const hasAnswerEdit = editCorrectAnswer !== (selectedQuestion.correct_answer ?? '');
+      const hasOptionsEdit = JSON.stringify(editOptions) !== JSON.stringify(selectedQuestion.options ?? []);
+      const existingCo = JSON.stringify(selectedQuestion.course_outcome_mapping ?? {});
+      const hasCoEdit = JSON.stringify(coMapping) !== existingCo;
+
+      if (hasTextEdit || hasAnswerEdit || hasOptionsEdit || hasCoEdit) {
+        await vetterService.updateQuestion(selectedQuestion.id, {
+          ...(hasTextEdit && { question_text: editQuestionText }),
+          ...(hasAnswerEdit && { correct_answer: editCorrectAnswer || undefined }),
+          ...(hasOptionsEdit && { options: editOptions }),
+          ...(hasCoEdit && { course_outcome_mapping: coMapping }),
         });
+      }
 
-        if (result.regenerated && result.new_question) {
-          // Build the replacement question object
-          const newQ: QuestionForVetting = {
-            ...selectedQuestion,
-            id: result.new_question.id,
-            question_text: result.new_question.question_text,
-            question_type: result.new_question.question_type,
-            options: result.new_question.options,
-            correct_answer: result.new_question.correct_answer,
-            explanation: null,
-            marks: result.new_question.marks,
-            difficulty_level: result.new_question.difficulty_level,
-            bloom_taxonomy_level: result.new_question.bloom_taxonomy_level,
-            vetting_status: result.new_question.vetting_status,
-            vetting_notes: null,
-            version_number: result.new_question.version_number,
-            replaces_id: selectedQuestion.id,
-            replaced_by_id: null,
-            source_info: result.new_question.source_info ?? null,
-          };
+      await vetterService.vetQuestion(selectedQuestion.id, {
+        status: 'approved',
+        notes: vetNotes || undefined,
+        ...(Object.keys(coMapping).length > 0 && { course_outcome_mapping: coMapping }),
+      });
 
-          // Keep modal open, swap in the replacement question for inline review
-          setSelectedQuestion(newQ);
-          setVetStatus('approved');
-          setVetNotes('');
-          setSelectedReasons([]);
+      setShowVetModal(false);
+      setSelectedQuestion(null);
+      setVetNotes('');
+      setSelectedReasons([]);
+      setVetStatus('approved');
+      showSuccess('Question approved');
 
-          // Update list in the background
-          if (statusFilter === 'pending') {
-            setQuestions((prev) =>
-              prev.map((q) => (q.id === selectedQuestion.id ? newQ : q))
-            );
-          } else {
-            fetchQuestions(1, false);
-          }
-
-          showSuccess('Rejected — review the replacement below');
-        } else {
-          // Regeneration failed — just close and remove
-          setShowVetModal(false);
-          setSelectedQuestion(null);
-          setVetNotes('');
-          setSelectedReasons([]);
-
-          if (statusFilter === 'pending') {
-            setQuestions((prev) => prev.filter((q) => q.id !== selectedQuestion.id));
-            setTotal((prev) => prev - 1);
-          } else {
-            fetchQuestions(1, false);
-          }
-          showSuccess('Question rejected');
-        }
+      if (statusFilter === 'pending') {
+        setQuestions((prev) => prev.filter((q) => q.id !== selectedQuestion.id));
+        setTotal((prev) => prev - 1);
       } else {
-        await vetterService.vetQuestion(selectedQuestion.id, {
-          status: vetStatus,
-          notes: vetNotes || undefined,
-        });
+        fetchQuestions(1, false);
+      }
+    } catch (err) {
+      showError('Failed to approve question');
+      console.error(err);
+    } finally {
+      setIsVetting(false);
+    }
+  };
 
+  const handleReject = async () => {
+    if (!selectedQuestion) return;
+    setIsVetting(true);
+    try {
+      const result = await vetterService.rejectAndRegenerate(selectedQuestion.id, {
+        notes: vetNotes || undefined,
+        rejection_reasons: selectedReasons.length > 0 ? selectedReasons : undefined,
+      });
+
+      if (result.regenerated && result.new_question) {
+        const newQ: QuestionForVetting = {
+          ...selectedQuestion,
+          id: result.new_question.id,
+          question_text: result.new_question.question_text,
+          question_type: result.new_question.question_type,
+          options: result.new_question.options,
+          correct_answer: result.new_question.correct_answer,
+          explanation: null,
+          marks: result.new_question.marks,
+          difficulty_level: result.new_question.difficulty_level,
+          bloom_taxonomy_level: result.new_question.bloom_taxonomy_level,
+          vetting_status: result.new_question.vetting_status,
+          vetting_notes: null,
+          version_number: result.new_question.version_number,
+          replaces_id: selectedQuestion.id,
+          replaced_by_id: null,
+          source_info: result.new_question.source_info ?? null,
+        };
+        setSelectedQuestion(newQ);
+        setVetStatus('approved');
+        setVetNotes('');
+        setSelectedReasons([]);
+
+        if (statusFilter === 'pending') {
+          setQuestions((prev) => prev.map((q) => (q.id === selectedQuestion.id ? newQ : q)));
+        } else {
+          fetchQuestions(1, false);
+        }
+        showSuccess('Rejected — review the replacement below');
+      } else {
         setShowVetModal(false);
         setSelectedQuestion(null);
         setVetNotes('');
         setSelectedReasons([]);
+        setVetStatus('approved');
 
-        showSuccess(`Question ${vetStatus}`);
-
-        // Remove from pending list or refresh
         if (statusFilter === 'pending') {
           setQuestions((prev) => prev.filter((q) => q.id !== selectedQuestion.id));
           setTotal((prev) => prev - 1);
         } else {
           fetchQuestions(1, false);
         }
+        showSuccess('Question rejected');
       }
     } catch (err) {
-      showError('Failed to vet question');
+      showError('Failed to reject question');
       console.error(err);
     } finally {
       setIsVetting(false);
@@ -805,79 +847,97 @@ export default function QuestionsForVetting() {
             /* ── Normal review panel ── */
             selectedQuestion && (
               <>
+                {/* ── Question content ── */}
                 <GlassCard style={styles.detailCard}>
                   <View style={styles.cardHeader}>
-                    <View
-                      style={[
-                        styles.typeTag,
-                        { backgroundColor: colors.primary + '20' },
-                      ]}
-                    >
+                    <View style={[styles.typeTag, { backgroundColor: colors.primary + '20' }]}>
                       <Text style={[styles.typeText, { color: colors.primary }]}>
                         {selectedQuestion.question_type.replace('_', ' ').toUpperCase()}
                       </Text>
                     </View>
+                    {selectedQuestion.version_number > 1 && (
+                      <View style={[styles.typeTag, { backgroundColor: colors.primary + '20' }]}>
+                        <Text style={[styles.typeText, { color: colors.primary }]}>
+                          v{selectedQuestion.version_number}
+                        </Text>
+                      </View>
+                    )}
                   </View>
 
-                  <Text style={[styles.detailLabel, { color: colors.textSecondary }]}>
-                    Question:
-                  </Text>
-                  <Text style={[styles.detailValue, { color: colors.text }]}>
-                    {selectedQuestion.question_text}
-                  </Text>
+                  <Text style={[styles.detailLabel, { color: colors.textSecondary }]}>Question:</Text>
+                  <TextInput
+                    style={[styles.editableField, { color: colors.text, borderColor: colors.border, backgroundColor: colors.background }]}
+                    value={editQuestionText}
+                    onChangeText={setEditQuestionText}
+                    multiline
+                    textAlignVertical="top"
+                  />
 
-                  {selectedQuestion.options && (
+                  {/* MCQ: tappable options */}
+                  {selectedQuestion.question_type === 'mcq' && editOptions.length > 0 && (
                     <>
-                      <Text
-                        style={[
-                          styles.detailLabel,
-                          { color: colors.textSecondary, marginTop: Spacing.md },
-                        ]}
-                      >
-                        Options:
-                      </Text>
-                      {selectedQuestion.options.map((opt, idx) => (
-                        <Text
-                          key={idx}
-                          style={[
-                            styles.optionText,
-                            { color: colors.text },
-                            opt.startsWith(selectedQuestion.correct_answer || '') && {
-                              color: colors.success,
-                              fontWeight: '600',
-                            },
-                          ]}
-                        >
-                          {opt}
+                      <Text style={[styles.detailLabel, { color: colors.textSecondary, marginTop: Spacing.md }]}>
+                        Options{'  '}
+                        <Text style={{ fontWeight: '400', fontSize: FontSizes.xs, color: colors.textTertiary }}>
+                          tap to mark correct
                         </Text>
-                      ))}
+                      </Text>
+                      {editOptions.map((opt, idx) => {
+                        const isCorrect = opt === editCorrectAnswer || opt.startsWith(editCorrectAnswer ?? '~~~');
+                        return (
+                          <TouchableOpacity
+                            key={idx}
+                            activeOpacity={0.7}
+                            onPress={() => setEditCorrectAnswer(opt)}
+                            style={[
+                              styles.optionSelectRow,
+                              {
+                                backgroundColor: isCorrect ? colors.success + '15' : 'transparent',
+                                borderColor: isCorrect ? colors.success : colors.border,
+                              },
+                            ]}
+                          >
+                            <IconSymbol
+                              name={isCorrect ? 'checkmark.circle.fill' : 'circle'}
+                              size={18}
+                              color={isCorrect ? colors.success : colors.textTertiary}
+                            />
+                            <Text
+                              style={[
+                                styles.optionText,
+                                { flex: 1, color: isCorrect ? colors.success : colors.text },
+                                isCorrect && { fontWeight: '600' },
+                              ]}
+                            >
+                              {opt}
+                            </Text>
+                          </TouchableOpacity>
+                        );
+                      })}
                     </>
                   )}
 
-                  {selectedQuestion.correct_answer && (
+                  {/* Non-MCQ: editable answer */}
+                  {selectedQuestion.question_type !== 'mcq' && (
                     <>
-                      <Text
-                        style={[
-                          styles.detailLabel,
-                          { color: colors.textSecondary, marginTop: Spacing.md },
-                        ]}
-                      >
+                      <Text style={[styles.detailLabel, { color: colors.textSecondary, marginTop: Spacing.md }]}>
                         Answer:
                       </Text>
-                      <Text style={[styles.detailValue, { color: colors.success }]}>
-                        {selectedQuestion.correct_answer}
-                      </Text>
+                      <TextInput
+                        style={[styles.editableField, { color: colors.text, borderColor: colors.border, backgroundColor: colors.background }]}
+                        value={editCorrectAnswer}
+                        onChangeText={setEditCorrectAnswer}
+                        multiline
+                        textAlignVertical="top"
+                        placeholder="Expected answer..."
+                        placeholderTextColor={colors.textTertiary}
+                      />
                     </>
                   )}
 
                   {selectedQuestion.explanation && (
                     <>
-                      <Text
-                        style={[
-                          styles.detailLabel,
-                          { color: colors.textSecondary, marginTop: Spacing.md },
-                        ]}
-                      >
+                      <Text style={[styles.detailLabel, { color: colors.textSecondary, marginTop: Spacing.md }]}>
                         Explanation:
                       </Text>
                       <Text style={[styles.detailValue, { color: colors.text }]}>
@@ -887,103 +947,103 @@ export default function QuestionsForVetting() {
                   )}
                 </GlassCard>
 
-                {/* Decision buttons */}
-                <View style={styles.decisionRow}>
-                  <TouchableOpacity
-                    style={[
-                      styles.decisionButton,
-                      {
-                        backgroundColor:
-                          vetStatus === 'approved' ? colors.success : colors.card,
-                        borderColor: colors.success,
-                      },
-                    ]}
-                    onPress={() => setVetStatus('approved')}
-                  >
-                    <Text
-                      style={[
-                        styles.decisionText,
-                        { color: vetStatus === 'approved' ? '#fff' : colors.success },
-                      ]}
-                    >
-                      Approve
+                {/* ── Source References ── */}
+                {selectedQuestion.source_info && selectedQuestion.source_info.sources.length > 0 && (
+                  <GlassCard style={styles.detailCard}>
+                    <Text style={[styles.detailLabel, { color: colors.text, marginBottom: Spacing.sm }]}>
+                      Source References
                     </Text>
-                  </TouchableOpacity>
-                  <TouchableOpacity
-                    style={[
-                      styles.decisionButton,
-                      {
-                        backgroundColor:
-                          vetStatus === 'rejected' ? colors.error : colors.card,
-                        borderColor: colors.error,
-                      },
-                    ]}
-                    onPress={() => setVetStatus('rejected')}
-                  >
-                    <Text
-                      style={[
-                        styles.decisionText,
-                        { color: vetStatus === 'rejected' ? '#fff' : colors.error },
-                      ]}
-                    >
-                      Reject
-                    </Text>
-                  </TouchableOpacity>
-                </View>
-
-                {/* Rejection reasons */}
-                {vetStatus === 'rejected' && (
-                  <GlassCard style={styles.reasonsCard}>
-                    <Text style={[styles.detailLabel, { color: colors.text }]}>
-                      Rejection Reasons:
-                    </Text>
-                    <View style={styles.reasonsGrid}>
-                      {REJECTION_REASONS.map((reason) => (
-                        <TouchableOpacity
-                          key={reason.id}
-                          style={[
-                            styles.reasonChip,
-                            {
-                              backgroundColor: selectedReasons.includes(reason.id)
-                                ? colors.error
-                                : colors.card,
-                              borderColor: colors.error,
-                            },
-                          ]}
-                          onPress={() => toggleReason(reason.id)}
-                        >
-                          <Text
-                            style={[
-                              styles.reasonText,
-                              {
-                                color: selectedReasons.includes(reason.id)
-                                  ? '#fff'
-                                  : colors.text,
-                              },
-                            ]}
-                          >
-                            {reason.label}
+                    {selectedQuestion.source_info.sources.map((src, idx) => (
+                      <View
+                        key={idx}
+                        style={[
+                          styles.sourceRow,
+                          { borderLeftColor: colors.primary, backgroundColor: colors.primary + '08' },
+                          idx > 0 && { marginTop: Spacing.sm },
+                        ]}
+                      >
+                        <View style={{ flexDirection: 'row', alignItems: 'center', gap: Spacing.xs, marginBottom: 2 }}>
+                          <IconSymbol name="doc.text" size={13} color={colors.primary} />
+                          <Text style={[styles.sourceDoc, { color: colors.primary }]}>
+                            {src.document_name ?? 'Document'}
+                            {src.page_number != null ? `  ·  p.${src.page_number}` : ''}
+                            {src.page_range != null ? `  ·  pp.${src.page_range[0]}–${src.page_range[1]}` : ''}
                           </Text>
-                        </TouchableOpacity>
-                      ))}
-                    </View>
+                        </View>
+                        {src.section_heading ? (
+                          <Text style={[styles.sourceSection, { color: colors.textSecondary }]}>
+                            {src.section_heading}
+                          </Text>
+                        ) : null}
+                        {src.content_snippet ? (
+                          <Text style={[styles.sourceSnippet, { color: colors.textTertiary }]} numberOfLines={3}>
+                            "{src.content_snippet}"
+                          </Text>
+                        ) : null}
+                      </View>
+                    ))}
+                    {selectedQuestion.source_info.generation_reasoning ? (
+                      <Text style={[styles.metaText, { color: colors.textSecondary, marginTop: Spacing.sm, fontStyle: 'italic' }]}>
+                        {selectedQuestion.source_info.generation_reasoning}
+                      </Text>
+                    ) : null}
                   </GlassCard>
                 )}
 
-                {/* Notes */}
+                {/* ── CO Mapping ── */}
+                <GlassCard style={styles.detailCard}>
+                  <View style={{ flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', marginBottom: Spacing.sm }}>
+                    <Text style={[styles.detailLabel, { color: colors.text }]}>CO Mapping</Text>
+                    <TouchableOpacity
+                      activeOpacity={0.7}
+                      onPress={() => setEditCoMapping((prev) => [...prev, { key: '', value: '' }])}
+                      style={[styles.addCoButton, { borderColor: colors.primary }]}
+                    >
+                      <IconSymbol name="plus" size={13} color={colors.primary} />
+                      <Text style={{ fontSize: FontSizes.xs, color: colors.primary, fontWeight: '600' }}>Add CO</Text>
+                    </TouchableOpacity>
+                  </View>
+                  {editCoMapping.length === 0 ? (
+                    <Text style={{ color: colors.textTertiary, fontSize: FontSizes.sm }}>No CO mappings — tap Add CO</Text>
+                  ) : (
+                    editCoMapping.map((entry, idx) => (
+                      <View key={idx} style={styles.coRow}>
+                        <TextInput
+                          style={[styles.coKeyInput, { color: colors.text, borderColor: colors.border, backgroundColor: colors.background }]}
+                          value={entry.key}
+                          onChangeText={(v) =>
+                            setEditCoMapping((prev) => prev.map((e, i) => (i === idx ? { ...e, key: v } : e)))
+                          }
+                          placeholder="CO1"
+                          placeholderTextColor={colors.textTertiary}
+                          autoCapitalize="characters"
+                        />
+                        <TextInput
+                          style={[styles.coValueInput, { color: colors.text, borderColor: colors.border, backgroundColor: colors.background }]}
+                          value={entry.value}
+                          onChangeText={(v) =>
+                            setEditCoMapping((prev) => prev.map((e, i) => (i === idx ? { ...e, value: v } : e)))
+                          }
+                          placeholder="1–3"
+                          placeholderTextColor={colors.textTertiary}
+                          keyboardType="decimal-pad"
+                        />
+                        <TouchableOpacity
+                          activeOpacity={0.7}
+                          onPress={() => setEditCoMapping((prev) => prev.filter((_, i) => i !== idx))}
+                        >
+                          <IconSymbol name="xmark.circle.fill" size={22} color={colors.error} />
+                        </TouchableOpacity>
+                      </View>
+                    ))
+                  )}
+                </GlassCard>
+
+                {/* ── Notes ── */}
                 <GlassCard style={styles.notesCard}>
-                  <Text style={[styles.detailLabel, { color: colors.text }]}>
-                    Notes (optional):
-                  </Text>
+                  <Text style={[styles.detailLabel, { color: colors.text }]}>Notes (optional):</Text>
                   <TextInput
-                    style={[
-                      styles.notesInput,
-                      {
-                        backgroundColor: colors.card,
-                        color: colors.text,
-                        borderColor: colors.border,
-                      },
-                    ]}
+                    style={[styles.notesInput, { backgroundColor: colors.card, color: colors.text, borderColor: colors.border }]}
                     placeholder="Add notes for the teacher..."
                     placeholderTextColor={colors.textTertiary}
                     value={vetNotes}
@@ -993,28 +1053,79 @@ export default function QuestionsForVetting() {
                   />
                 </GlassCard>
 
-                {/* Submit button */}
-                <NativeButton
-                  title={vetStatus === 'approved' ? 'Approve Question' : 'Reject Question'}
-                  onPress={handleVet}
-                  loading={isVetting}
-                  disabled={isVetting}
-                  fullWidth
-                  size="large"
-                  style={{
-                    backgroundColor:
-                      vetStatus === 'approved' ? colors.success : colors.error,
-                    marginTop: Spacing.md,
-                  }}
-                />
+                {/* ── Rejection reasons — expanded when Reject tapped ── */}
+                {vetStatus === 'rejected' && (
+                  <GlassCard style={[styles.reasonsCard, { borderWidth: 1, borderColor: colors.error + '40' }]}>
+                    <Text style={[styles.detailLabel, { color: colors.text }]}>Rejection Reasons:</Text>
+                    <View style={styles.reasonsGrid}>
+                      {REJECTION_REASONS.map((reason) => (
+                        <TouchableOpacity
+                          key={reason.id}
+                          activeOpacity={0.7}
+                          style={[
+                            styles.reasonChip,
+                            {
+                              backgroundColor: selectedReasons.includes(reason.id) ? colors.error : colors.card,
+                              borderColor: colors.error,
+                            },
+                          ]}
+                          onPress={() => toggleReason(reason.id)}
+                        >
+                          <Text style={[styles.reasonText, { color: selectedReasons.includes(reason.id) ? '#fff' : colors.text }]}>
+                            {reason.label}
+                          </Text>
+                        </TouchableOpacity>
+                      ))}
+                    </View>
+                    <NativeButton
+                      title="Confirm Rejection"
+                      onPress={handleReject}
+                      loading={isVetting}
+                      disabled={isVetting}
+                      fullWidth
+                      size="large"
+                      style={{ backgroundColor: colors.error, marginTop: Spacing.md }}
+                    />
+                  </GlassCard>
+                )}
+
+                {/* ── Decision buttons ── */}
+                <View style={[styles.decisionRow, { marginBottom: Spacing.xl }]}>
+                  <TouchableOpacity
+                    activeOpacity={0.7}
+                    style={[styles.decisionButton, { backgroundColor: colors.success, borderColor: colors.success }]}
+                    onPress={handleApprove}
+                    disabled={isVetting}
+                  >
+                    {isVetting && vetStatus !== 'rejected' ? (
+                      <ActivityIndicator size="small" color="#fff" />
+                    ) : (
+                      <Text style={[styles.decisionText, { color: '#fff' }]}>✓ Approve</Text>
+                    )}
+                  </TouchableOpacity>
+                  <TouchableOpacity
+                    activeOpacity={0.7}
+                    style={[
+                      styles.decisionButton,
+                      {
+                        backgroundColor: vetStatus === 'rejected' ? colors.error : colors.card,
+                        borderColor: colors.error,
+                      },
+                    ]}
+                    onPress={() => setVetStatus((s) => (s === 'rejected' ? 'approved' : 'rejected'))}
+                    disabled={isVetting}
+                  >
+                    <Text style={[styles.decisionText, { color: vetStatus === 'rejected' ? '#fff' : colors.error }]}>
+                      ✕ Reject
+                    </Text>
+                  </TouchableOpacity>
+                </View>
               </>
             )
             )}
           </ScrollView>
         </SafeAreaView>
       </Modal>
-
-      {/* Version History Modal — removed; now rendered inline in the vetting modal */}
 
       {/* Subject Picker Modal */}
       <Modal
@@ -1121,7 +1232,7 @@ export default function QuestionsForVetting() {
       {/* Floating Start Vetting Button */}
       {pendingQuestions.length > 0 && statusFilter === 'pending' && (
         <TouchableOpacity
-          style={[styles.floatingButton, { bottom: insets.bottom + Spacing.md }]}
+          style={[styles.floatingButton, { bottom: Spacing.md }]}
           onPress={loadAllPendingQuestions}
           activeOpacity={0.9}
         >
@@ -1488,5 +1599,80 @@ const styles = StyleSheet.create({
     color: '#FFFFFF',
     fontSize: FontSizes.xs,
     fontWeight: '700',
+  },
+  // Editable field
+  editableField: {
+    borderWidth: 1,
+    borderRadius: BorderRadius.md,
+    padding: Spacing.md,
+    minHeight: 70,
+    textAlignVertical: 'top',
+    fontSize: FontSizes.md,
+    lineHeight: 22,
+    marginTop: 4,
+  },
+  // Option selection row (MCQ)
+  optionSelectRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: Spacing.sm,
+    padding: Spacing.sm,
+    borderRadius: BorderRadius.md,
+    borderWidth: 1,
+    marginBottom: Spacing.xs,
+  },
+  // Source references
+  sourceRow: {
+    borderLeftWidth: 3,
+    paddingLeft: Spacing.sm,
+    paddingVertical: Spacing.sm,
+    paddingRight: Spacing.xs,
+    borderRadius: 4,
+  },
+  sourceDoc: {
+    fontSize: FontSizes.sm,
+    fontWeight: '600',
+  },
+  sourceSection: {
+    fontSize: FontSizes.xs,
+    fontStyle: 'italic',
+    marginBottom: 2,
+  },
+  sourceSnippet: {
+    fontSize: FontSizes.xs,
+    lineHeight: 16,
+    marginTop: 2,
+  },
+  // CO Mapping
+  addCoButton: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 4,
+    paddingHorizontal: Spacing.sm,
+    paddingVertical: 4,
+    borderWidth: 1,
+    borderRadius: BorderRadius.sm,
+  },
+  coRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: Spacing.sm,
+    marginBottom: Spacing.sm,
+  },
+  coKeyInput: {
+    borderWidth: 1,
+    borderRadius: BorderRadius.sm,
+    paddingHorizontal: Spacing.sm,
+    paddingVertical: Spacing.xs,
+    width: 72,
+    fontSize: FontSizes.sm,
+  },
+  coValueInput: {
+    borderWidth: 1,
+    borderRadius: BorderRadius.sm,
+    paddingHorizontal: Spacing.sm,
+    paddingVertical: Spacing.xs,
+    width: 60,
+    fontSize: FontSizes.sm,
   },
 });
