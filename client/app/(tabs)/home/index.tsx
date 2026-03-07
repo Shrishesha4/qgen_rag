@@ -191,7 +191,7 @@ export default function HomeScreen() {
   const menuItems = [
     {
       title: 'Subjects',
-      subtitle: 'Manage your subjects & chapters',
+      subtitle: 'Manage your subjects',
       icon: 'books.vertical.fill',
       gradientTop: A.royalBlue,
       gradientBottom: A.aquaBlue,
