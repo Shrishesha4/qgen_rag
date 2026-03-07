@@ -198,7 +198,7 @@ export default function HomeScreen() {
       route: '/(tabs)/home/subjects',
     },
     {
-      title: 'Generate',
+      title: 'Rubrics',
       subtitle: 'Create questions from rubrics',
       icon: 'sparkles',
       gradientTop: A.gelPurple,

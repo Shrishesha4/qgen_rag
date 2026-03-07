@@ -10,6 +10,7 @@ import {
   TextInput,
   Switch,
   Platform,
+  StatusBar,
   ActivityIndicator,
   Image,
 } from 'react-native';
@@ -53,7 +54,9 @@ export default function ProfileScreen() {
         tabBarStyle: {
           backgroundColor: colors.card,
           borderTopColor: colors.border,
-          height: 60,
+          height: 76,
+          paddingBottom: 12,
+          paddingTop: 8,
         },
       });
     };
@@ -818,7 +821,7 @@ const styles = StyleSheet.create({
     flex: 1,
   },
   contentContainer: {
-    paddingTop: Spacing.lg,
+    paddingTop: Platform.OS === 'android' ? (StatusBar.currentHeight ?? 24) + Spacing.lg : Spacing.lg,
   },
   headerCard: {
     marginHorizontal: Spacing.lg,

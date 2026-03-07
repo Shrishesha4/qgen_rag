@@ -839,14 +839,8 @@ async def reject_and_regenerate_question(
         db.add(fallback_session)
         await db.flush()
         session_id_to_use = fallback_session.id
-    else:
-        # Bump questions_generated count on the original session
-        orig_session_result = await db.execute(
-            select(GenerationSession).where(GenerationSession.id == session_id_to_use)
-        )
-        orig_session = orig_session_result.scalar_one_or_none()
-        if orig_session:
-            orig_session.questions_generated = (orig_session.questions_generated or 0) + 1
+    # NOTE: Do NOT increment questions_generated — the vetter replacement is a 1-for-1 swap,
+    # not a new generation. Bumping the count inflates the teacher's history totals.
 
     # 8. Save the new question
     try:

@@ -1936,7 +1936,7 @@ Output valid JSON only."""
                             logger.error(f"Quick regen failed after {max_retries} attempts")
 
             if replacement:
-                return QR.model_validate(replacement)
+                return QR.from_orm_with_sources(replacement)
 
         # ═══════════════════════════════════════════════
         # PATH B: Chapter Generate (syllabus content + RAG)
@@ -2119,7 +2119,7 @@ Output valid JSON only."""
                             logger.error(f"Chapter regen failed after {max_retries} attempts")
 
             if replacement:
-                return QR.model_validate(replacement)
+                return QR.from_orm_with_sources(replacement)
 
         # ═══════════════════════════════════════════════
         # PATH C: Rubric Generate (syllabus chunks + LO/CO)
@@ -2302,7 +2302,7 @@ Output valid JSON only."""
                                 logger.error(f"Rubric regen failed after {max_retries} attempts")
 
             if replacement:
-                return QR.model_validate(replacement)
+                return QR.from_orm_with_sources(replacement)
 
         # ═══════════════════════════════════════════════
         # PATH D: Import — no automatic replacement

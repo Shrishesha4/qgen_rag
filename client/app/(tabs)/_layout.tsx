@@ -62,13 +62,15 @@ export default function TabLayout() {
         tabBarStyle: {
           backgroundColor: colors.card,
           borderTopColor: colors.border,
-          height: 60,
+          height: 66,
+          paddingBottom: 12,
+          paddingTop: 8,
         },
         tabBarBackground: TabBarBackground,
         tabBarLabelStyle: {
-          fontSize: 10,
+          fontSize: 11,
           fontWeight: '600',
-          marginBottom: 4,
+          marginBottom: 2,
         },
         tabBarButton: HapticTab,
       }}

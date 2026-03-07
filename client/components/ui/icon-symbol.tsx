@@ -110,6 +110,29 @@ const MAPPING: IconMapping = {
   'tablecells': 'table-chart',
   'trash': 'delete',
   'trash.fill': 'delete',
+
+  // navigation arrows
+  'arrow.left': 'arrow-back',
+  'arrow.right': 'arrow-forward',
+  'arrow.up': 'arrow-upward',
+  'arrow.down': 'arrow-downward',
+  'arrow.uturn.right': 'redo',
+
+  // document upload/download
+  'arrow.up.doc': 'upload-file',
+  'arrow.down.doc': 'file-download',
+
+  // people / groups
+  'person.2.fill': 'group',
+
+  // text / formatting
+  'text.quote': 'format-quote',
+
+  // clipboard / lists
+  'list.bullet.clipboard.fill': 'assignment',
+
+  // settings
+  'gearshape.fill': 'settings',
 };
 
 /**
