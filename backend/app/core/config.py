@@ -84,8 +84,8 @@ class Settings(BaseSettings):
 
     # Question Generation
     MAX_QUESTIONS_PER_REQUEST: int = Field(default=50)
-    CHUNK_SIZE: int = Field(default=1000)
-    CHUNK_OVERLAP: int = Field(default=200)
+    CHUNK_SIZE: int = Field(default=1500)
+    CHUNK_OVERLAP: int = Field(default=300)
 
     # OCR Settings (for scanned PDFs)
     OCR_ENABLED: bool = Field(default=True)

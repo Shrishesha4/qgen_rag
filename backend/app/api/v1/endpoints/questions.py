@@ -117,7 +117,7 @@ def _sanitize_question_fields(kwargs: dict) -> dict:
     elif lo and isinstance(lo, str):
         kwargs["learning_outcome_id"] = lo[:50]
 
-    # Sanitize CO mapping keys (truncate verbose keys)
+    # Sanitize CO mapping keys (truncate verbose keys) and cap at 2 COs
     co_map = kwargs.get("course_outcome_mapping")
     if co_map and isinstance(co_map, dict):
         clean_map = {}
@@ -126,6 +126,9 @@ def _sanitize_question_fields(kwargs: dict) -> dict:
                 m = _re.match(r"(CO\d+)", k)
                 k = m.group(1) if m else k[:20]
             clean_map[k] = v
+        # Hard-cap: keep at most the 2 COs with the highest Bloom level value
+        if len(clean_map) > 2:
+            clean_map = dict(sorted(clean_map.items(), key=lambda x: x[1], reverse=True)[:2])
         kwargs["course_outcome_mapping"] = clean_map
 
     # Truncate other VARCHAR fields to their column limits
@@ -2913,14 +2916,14 @@ async def generate_from_rubric(
             co_context = ""
             if subject_cos and isinstance(subject_cos, list):
                 co_ids = [co.get('id', f'CO{i+1}') if isinstance(co, dict) else str(co) for i, co in enumerate(subject_cos)]
-                co_context = f"\nAvailable Course Outcomes (map the question to ALL relevant ones): {', '.join(co_ids)}"
+                co_context = f"\nAvailable Course Outcomes (pick 1–2 most relevant): {', '.join(co_ids)}"
             elif subject_lo_mappings:
                 all_cos = set()
                 for lo_key, co_map in subject_lo_mappings.items():
                     if isinstance(co_map, dict):
                         all_cos.update(co_map.keys())
                 if all_cos:
-                    co_context = f"\nAvailable Course Outcomes (map the question to ALL relevant ones): {', '.join(sorted(all_cos))}"
+                    co_context = f"\nAvailable Course Outcomes (pick 1–2 most relevant): {', '.join(sorted(all_cos))}"
 
             # Pre-compute per-slot LO assignments from the rubric distribution
             all_lo_slots = _compute_lo_question_slots(lo_distribution, total_questions)
@@ -3069,7 +3072,7 @@ Generate a {mapped_type.replace('_', ' ')} question based on this content.
 - The question text must be fully self-contained — do NOT mention "the text", "the reference", "the provided material", "reference [N]", or any source
 - Avoid questions that are too similar to: {', '.join([q[:50] for q in generated_questions[-5:]]) if generated_questions else 'None yet'}{lo_requirement}
 {co_context}
-- For "course_outcome_mapping" in your JSON: include EVERY CO this question addresses, not just one. Use Bloom level as value (1=remember/understand, 2=apply/analyze, 3=evaluate/create).
+- For "course_outcome_mapping" in your JSON: assign 1 CO for most questions, at most 2 COs for genuinely cross-cutting questions. Do NOT map to 3 or more COs. Use Bloom level as value (1=remember/understand, 2=apply/analyze, 3=evaluate/create).
 
 Output valid JSON only."""
 
@@ -3575,14 +3578,14 @@ async def generate_chapter(
             co_context_ch = ""
             if subject_cos and isinstance(subject_cos, list):
                 co_ids_ch = [co.get('id', f'CO{i+1}') if isinstance(co, dict) else str(co) for i, co in enumerate(subject_cos)]
-                co_context_ch = f"\nAvailable Course Outcomes (map the question to ALL relevant ones): {', '.join(co_ids_ch)}"
+                co_context_ch = f"\nAvailable Course Outcomes (pick 1–2 most relevant): {', '.join(co_ids_ch)}"
             elif subject_lo_mappings_data:
                 all_cos_ch = set()
                 for lo_key, co_map in subject_lo_mappings_data.items():
                     if isinstance(co_map, dict):
                         all_cos_ch.update(co_map.keys())
                 if all_cos_ch:
-                    co_context_ch = f"\nAvailable Course Outcomes (map the question to ALL relevant ones): {', '.join(sorted(all_cos_ch))}"
+                    co_context_ch = f"\nAvailable Course Outcomes (pick 1–2 most relevant): {', '.join(sorted(all_cos_ch))}"
 
             cancelled = False
 
@@ -3660,7 +3663,7 @@ Generate a {q_type.replace('_', ' ')} question based STRICTLY on the chapter "{t
 - The question text must be fully self-contained — do NOT mention "the text", "the reference", "the provided material", "reference [N]", or any source
 - Avoid questions similar to: {', '.join([q[:50] for q in generated_texts[-5:]]) if generated_texts else 'None yet'}{lo_requirement_ch}
 {co_context_ch}
-- For "course_outcome_mapping" in your JSON: include EVERY CO this question addresses, not just one. Use Bloom level as value (1=remember/understand, 2=apply/analyze, 3=evaluate/create).
+- For "course_outcome_mapping" in your JSON: assign 1 CO for most questions, at most 2 COs for genuinely cross-cutting questions. Do NOT map to 3 or more COs. Use Bloom level as value (1=remember/understand, 2=apply/analyze, 3=evaluate/create).
 - Also include "bloom_level" (one of: remember, understand, apply, analyze, evaluate, create) matching the difficulty.
 
 Output valid JSON only."""
@@ -4030,7 +4033,7 @@ Output format (JSON):
     "learning_outcome": "LO1",
     "course_outcome_mapping": {"CO1": 2, "CO2": 1}
 }
-NOTE: course_outcome_mapping must be a JSON object mapping CO IDs to Bloom level (1=remember/understand, 2=apply/analyze, 3=evaluate/create). Include ALL COs this question addresses — a question often maps to multiple COs."""
+NOTE: course_outcome_mapping must be a JSON object mapping CO IDs to Bloom level (1=remember/understand, 2=apply/analyze, 3=evaluate/create). Assign 1 CO for most questions; use 2 COs only when the question is genuinely cross-cutting. NEVER assign 3 or more COs."""
     elif question_type == "short_answer":
         return """You are an expert educator creating THOUGHT-PROVOKING examination questions.
 Generate a short-answer question requiring ANALYSIS or EVALUATION, not just description.
@@ -4056,7 +4059,7 @@ Output format (JSON):
     "learning_outcome": "LO1",
     "course_outcome_mapping": {"CO1": 2, "CO2": 1}
 }
-NOTE: course_outcome_mapping must be a JSON object mapping CO IDs to Bloom level (1=remember/understand, 2=apply/analyze, 3=evaluate/create). Include ALL COs this question addresses — a question often maps to multiple COs."""
+NOTE: course_outcome_mapping must be a JSON object mapping CO IDs to Bloom level (1=remember/understand, 2=apply/analyze, 3=evaluate/create). Assign 1 CO for most questions; use 2 COs only when the question is genuinely cross-cutting. NEVER assign 3 or more COs."""
     else:
         return """You are an expert educator creating ANALYTICALLY RIGOROUS examination questions.
 Generate a long-answer question requiring CRITICAL ANALYSIS or EVALUATION.
@@ -4081,7 +4084,7 @@ Output format (JSON):
     "learning_outcome": "LO1",
     "course_outcome_mapping": {"CO1": 3, "CO2": 2}
 }
-NOTE: course_outcome_mapping must be a JSON object mapping CO IDs to Bloom level (1=remember/understand, 2=apply/analyze, 3=evaluate/create). Include ALL COs this question addresses — a question often maps to multiple COs."""
+NOTE: course_outcome_mapping must be a JSON object mapping CO IDs to Bloom level (1=remember/understand, 2=apply/analyze, 3=evaluate/create). Assign 1 CO for most questions; use 2 COs only when the question is genuinely cross-cutting. NEVER assign 3 or more COs."""
 
 
 

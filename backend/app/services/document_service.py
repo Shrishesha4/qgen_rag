@@ -632,7 +632,7 @@ class DocumentService:
                             })
                 
                 page_height = page.rect.height
-                full_text = page.get_text()
+                full_text = page.get_text().replace('\x00', '')  # strip null bytes (PG rejects them)
                 
                 pages_data.append({
                     "page_number": page_num,
@@ -912,7 +912,8 @@ class DocumentService:
         
         for page in pages_data:
             page_num = page["page_number"]
-            page_text = page["text"]
+            # Strip null bytes — PostgreSQL rejects \x00 in VARCHAR/TEXT columns
+            page_text = page["text"].replace('\x00', '')
             document_name = page.get("document_name", "Unknown")
             
             start_idx = len(full_text)
