@@ -10,7 +10,7 @@
 
 **A stateful RAG-based question generation system for educators**
 
-[Features](#-features) • [Architecture](#-architecture) • [Quick Start](#-quick-start) • [API Reference](#-api-reference) • [Configuration](#-configuration)
+[Features](#-features) • [Quick Start](#-quick-start) • [API Reference](#-api-reference) • [Configuration](#-configuration)
 
 </div>
 
