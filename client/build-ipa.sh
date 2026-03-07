@@ -30,6 +30,17 @@ step 1 "Installing JS dependencies..."
 cd "$PROJECT_ROOT"
 npm install --silent
 
+# ─── Sync environment variables ─────────────────────────────────
+bold "[env] Syncing environment variables..."
+node scripts/sync-env.js
+
+# Warn if PRODUCTION_API_URL is not set
+PROD_URL=$(grep ^EXPO_PUBLIC_PRODUCTION_API_URL "$PROJECT_ROOT/.env.local" 2>/dev/null | cut -d= -f2)
+if [[ -z "$PROD_URL" ]]; then
+  red "Warning: EXPO_PUBLIC_PRODUCTION_API_URL is empty in client/.env.local."
+  red "  The release IPA will use the fallback URL baked into config/env.ts."
+fi
+
 # ─── Step 2: Clean old build artifacts ──────────────────────────
 step 2 "Cleaning old build artifacts..."
 rm -rf "$ARCHIVE_PATH" "$EXPORT_PATH"

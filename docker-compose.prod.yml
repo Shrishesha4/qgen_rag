@@ -1,0 +1,26 @@
+# Production overrides for docker-compose.yml
+#
+# Usage:
+#   docker-compose --env-file .env.local -f docker-compose.yml -f docker-compose.prod.yml up -d --build
+#
+# Key differences from development:
+#   - No --reload (uvicorn does NOT watch for file changes)
+#   - No source-code volume mount (runs the image as built, not live code)
+#   - 4 uvicorn workers for concurrency
+#   - LOG_JSON=true for structured logs
+
+services:
+  api:
+    command: >
+      uvicorn app.main:app
+      --host 0.0.0.0
+      --port 8000
+      --workers 4
+      --log-level ${LOG_LEVEL:-info}
+    volumes:
+      # Remove the source-code mount — use the image as built.
+      # Only keep persistent data volumes.
+      - upload_data:/app/uploads
+      - model_cache:/root/.cache
+    environment:
+      - LOG_JSON=true

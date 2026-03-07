@@ -3,10 +3,10 @@
 #   - redis: Redis 7 for caching, sessions, and rate limiting
 #   - api: FastAPI backend with ML models
 # Usage:
-#   Development:  docker-compose up -d
-#   Production:   docker-compose -f docker-compose.yml -f docker-compose.prod.yml up -d
+#   Development:  docker-compose --env-file .env.local up -d
+#   Production:   docker-compose --env-file .env.local -f docker-compose.yml -f docker-compose.prod.yml up -d --build
 #   Logs:         docker-compose logs -f api
-#   Rebuild:      docker-compose up -d --build
+#   Rebuild:      docker-compose --env-file .env.local up -d --build
 #
 # Production Deployment (Cloudflare Tunnel):
 #   1. Set PRODUCTION_API_URL in .env (e.g., https://qglm.shrishesha.space/api/v1)
@@ -105,8 +105,8 @@ services:
         - PYTHON_VERSION=3.11
     container_name: qgen_api
     restart: unless-stopped
-    # Load environment variables from .env file
-    env_file: .env
+    # Load environment variables from .env.local file
+    env_file: .env.local
     command: >
       uvicorn app.main:app
       --host 0.0.0.0
