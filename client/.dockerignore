@@ -1,0 +1,12 @@
+# Exclude mobile-specific env files — Expo loads these at startup and they
+# contain DEV_MACHINE_IP / USE_SIMULATOR which break Metro in a container.
+.env.local
+.env.*.local
+
+# runtime/build artifacts
+node_modules/
+android/
+ios/
+.expo/
+dist/
+build/

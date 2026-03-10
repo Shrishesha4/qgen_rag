@@ -1,6 +1,8 @@
+# ==============================================================================
 # Services:
 #   - db: PostgreSQL 16 with pgvector for vector similarity search
 #   - redis: Redis 7 for caching, sessions, and rate limiting
+#   - expo-web: Expo web dev server (React Native web)
 #   - api: FastAPI backend with ML models
 # Usage:
 #   Development:  docker-compose --env-file .env.local up -d
@@ -48,6 +50,7 @@ services:
           memory: 2G
         reservations:
           memory: 512M
+
   redis:
     image: redis:7-alpine
     container_name: qgen_redis
@@ -97,6 +100,7 @@ services:
   #   #         - driver: nvidia
   #   #           count: 1
   #   #           capabilities: [gpu]
+
   api:
     build:
       context: ./backend

@@ -20,14 +20,22 @@ step() {
 }
 
 # ─── Pre-flight checks ──────────────────────────────────────────
-[[ -d "$ANDROID_HOME" ]] || { red "Error: Android SDK not found at $ANDROID_HOME"; exit 1; }
 command -v node >/dev/null 2>&1  || { red "Error: node not found."; exit 1; }
+command -v npx >/dev/null 2>&1   || { red "Error: npx not found."; exit 1; }
 command -v java >/dev/null 2>&1  || { red "Error: java not found."; exit 1; }
+[[ -d "$ANDROID_HOME" ]] || { red "Error: Android SDK not found at $ANDROID_HOME"; exit 1; }
+command -v "$ANDROID_HOME/tools/bin/sdkmanager" >/dev/null 2>&1 || { red "Error: Android SDK tools not properly installed."; exit 1; }
 
-# ─── Step 1: Install JS dependencies ────────────────────────────
-step 1 "Installing JS dependencies..."
+# ─── Step 1: Install JS dependencies & generate native dirs ────
+step 1 "Preparing build environment..."
 cd "$PROJECT_ROOT"
 npm install --silent
+
+# Generate native directories if missing
+if [[ ! -d "$ANDROID_DIR" ]]; then
+  bold "[native] Generating android/ via expo prebuild..."
+  npx expo prebuild --clean --platform android
+fi
 
 # ─── Sync environment variables ─────────────────────────────────
 bold "[env] Syncing environment variables..."

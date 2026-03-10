@@ -9,7 +9,7 @@ SCHEME="client"
 ARCHIVE_PATH="$IOS_DIR/build/client.xcarchive"
 EXPORT_OPTIONS="$IOS_DIR/ExportOptions.plist"
 EXPORT_PATH="$IOS_DIR/build/ipa"
-TEAM_ID="U7TNVB7U48"
+TEAM_ID="${APPLE_TEAM_ID:-}"  # Set via env var or update here
 
 # ─── Helpers ─────────────────────────────────────────────────────
 bold()  { printf "\033[1m%s\033[0m\n" "$1"; }
@@ -24,11 +24,18 @@ step() {
 command -v xcodebuild >/dev/null 2>&1 || { red "Error: xcodebuild not found. Install Xcode."; exit 1; }
 command -v node >/dev/null 2>&1       || { red "Error: node not found."; exit 1; }
 command -v npx >/dev/null 2>&1        || { red "Error: npx not found."; exit 1; }
+[[ -n "$TEAM_ID" ]] || { red "Error: Set APPLE_TEAM_ID env var (e.g., export APPLE_TEAM_ID=ABC1234567)"; exit 1; }
 
-# ─── Step 1: Install JS dependencies ────────────────────────────
-step 1 "Installing JS dependencies..."
+# ─── Step 1: Install JS dependencies & generate native dirs ────
+step 1 "Preparing build environment..."
 cd "$PROJECT_ROOT"
 npm install --silent
+
+# Generate native directories if missing
+if [[ ! -d "$IOS_DIR" ]]; then
+  bold "[native] Generating ios/ via expo prebuild..."
+  npx expo prebuild --clean --platform ios
+fi
 
 # ─── Sync environment variables ─────────────────────────────────
 bold "[env] Syncing environment variables..."
