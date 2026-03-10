@@ -283,19 +283,20 @@ export default function QuickGenerateScreen() {
   };
 
   return (
-    <ScrollView
-      style={[styles.container, { backgroundColor: colors.background }]}
-      contentContainerStyle={styles.contentContainer}
-      showsVerticalScrollIndicator={false}
-      refreshControl={
-        <RefreshControl
-          refreshing={isRefreshing}
-          onRefresh={handleRefresh}
-          tintColor={colors.primary}
-          colors={[colors.primary]}
-        />
-      }
-    >
+    <View style={[styles.container, { backgroundColor: colors.background }]}>
+      <ScrollView
+        style={styles.scrollContent}
+        contentContainerStyle={styles.contentContainer}
+        showsVerticalScrollIndicator={false}
+        refreshControl={
+          <RefreshControl
+            refreshing={isRefreshing}
+            onRefresh={handleRefresh}
+            tintColor={colors.primary}
+            colors={[colors.primary]}
+          />
+        }
+      >
       {/* ── Header ──────────────────────────────────────────────────── */}
       <BlurView intensity={95} style={styles.headerBlur}>
         <LinearGradient
@@ -730,33 +731,7 @@ export default function QuickGenerateScreen() {
         </GlassCard>
       )}
 
-      {/* ── Generate Button ─────────────────────────────────────────── */}
-      <TouchableOpacity
-        style={[styles.generateButton, isGenerating && styles.generateButtonDisabled]}
-        onPress={isGenerating ? handleCancel : handleGenerate}
-        activeOpacity={0.8}
-      >
-        <LinearGradient
-          colors={isGenerating ? ['#FF3B30', '#FF453A'] : ['#4A90D9', '#357ABD'] as [string, string]}
-          start={{ x: 0, y: 0 }}
-          end={{ x: 1, y: 0 }}
-          style={styles.generateButtonGradient}
-        >
-          {isGenerating ? (
-            <>
-              <ActivityIndicator color="#FFFFFF" style={{ marginRight: Spacing.sm }} />
-              <Text style={styles.generateButtonText}>Cancel</Text>
-            </>
-          ) : (
-            <>
-              <IconSymbol name="sparkles" size={32} color="#FFFFFF" weight="semibold" />
-              <Text style={styles.generateButtonText}>Generate Questions</Text>
-            </>
-          )}
-        </LinearGradient>
-      </TouchableOpacity>
-
-      <View style={{ height: 100 }} />
+      <View style={{ height: 120 }} />
 
       {/* Custom Count Input Modal */}
       <Modal visible={showCustomInput} transparent animationType="fade" onRequestClose={() => setShowCustomInput(false)}>
@@ -794,12 +769,39 @@ export default function QuickGenerateScreen() {
           </View>
         </View>
       </Modal>
-    </ScrollView>
+      </ScrollView>
+
+      {/* ── Floating Generate Button ──────────────────────────────── */}
+      <TouchableOpacity
+        style={[styles.floatingGenerateButton, isGenerating && styles.floatingGenerateButtonDisabled]}
+        onPress={isGenerating ? handleCancel : handleGenerate}
+        activeOpacity={0.8}
+      >
+        <LinearGradient
+          colors={isGenerating ? ['#FF3B30', '#FF453A'] : ['#4A90D9', '#357ABD'] as [string, string]}
+          start={{ x: 0, y: 0 }}
+          end={{ x: 1, y: 0 }}
+          style={styles.generateButtonGradient}
+        >
+          {isGenerating ? (
+            <>
+              <ActivityIndicator color="#FFFFFF" style={{ marginRight: Spacing.sm, marginBottom: 20}} />
+              <Text style={styles.generateButtonText}>Cancel</Text>
+            </>
+          ) : (
+            <>
+              <Text style={styles.generateButtonText}>Generate Questions</Text>
+            </>
+          )}
+        </LinearGradient>
+      </TouchableOpacity>
+    </View>
   );
 }
 
 const styles = StyleSheet.create({
-  container: { flex: 1 },
+  container: { flex: 1, position: 'relative' },
+  scrollContent: { flex: 1 },
   contentContainer: { paddingBottom: Spacing.xxl },
 
   // Header
@@ -901,7 +903,11 @@ const styles = StyleSheet.create({
   generateButton: { marginHorizontal: Spacing.xxxl + 60, marginTop: Spacing.xl, borderRadius: BorderRadius.lg, overflow: 'hidden', ...Shadows.large },
   generateButtonDisabled: {},
   generateButtonGradient: { flexDirection: 'row', alignItems: 'center', justifyContent: 'center', paddingVertical: Spacing.lg, gap: Spacing.sm },
-  generateButtonText: { color: '#FFFFFF', fontSize: FontSizes.lg, fontWeight: '600' },
+  generateButtonText: { color: '#FFFFFF', fontSize: FontSizes.lg, fontWeight: '600', paddingBottom: 40 },
+
+  // Floating generate button
+  floatingGenerateButton: { position: 'absolute', bottom: Spacing.lg, left: Spacing.lg, right: Spacing.lg, marginBottom: 80, borderRadius: BorderRadius.xxl, overflow: 'hidden', zIndex: 100, ...Shadows.large, maxWidth: 300, alignSelf: 'center', marginLeft: 100, maxHeight: 50 },
+  floatingGenerateButtonDisabled: {},
 
   // Custom count modal
   customInputModal: { flex: 1, justifyContent: 'center', alignItems: 'center', backgroundColor: 'rgba(0,0,0,0.5)' },
