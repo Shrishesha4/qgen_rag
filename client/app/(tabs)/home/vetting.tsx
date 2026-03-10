@@ -515,8 +515,8 @@ export default function VettingScreen() {
     const mapping = coMappings[question.id] || {};
 
     // Debug logging
-    console.log('Rendering question:', question.id);
-    console.log('Question has source_info?', !!(question as any).source_info);
+    // console.log('Rendering question:', question.id);
+    // console.log('Question has source_info?', !!(question as any).source_info);
     if ((question as any).source_info) {
       console.log('Source info:', JSON.stringify((question as any).source_info, null, 2));
     }

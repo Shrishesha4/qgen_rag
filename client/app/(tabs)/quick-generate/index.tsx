@@ -1,4 +1,4 @@
-import React, { useState, useRef, useEffect } from 'react';
+import React, { useState, useRef, useEffect, useCallback } from 'react';
 import {
   View,
   Text,
@@ -10,6 +10,7 @@ import {
   Animated,
   Modal,
   RefreshControl,
+  Platform,
 } from 'react-native';
 import { LinearGradient } from 'expo-linear-gradient';
 import { BlurView } from 'expo-blur';
@@ -78,6 +79,56 @@ export default function QuickGenerateScreen() {
 
   // Track if document picker is currently open
   const [isPickingDocument, setIsPickingDocument] = useState(false);
+
+  // Web Speech API voice input for Focus On field (web only)
+  const [isFocusRecording, setIsFocusRecording] = useState(false);
+  const [webSpeechAvailable, setWebSpeechAvailable] = useState(false);
+  const focusSpeechRef = useRef<any>(null);
+
+  useEffect(() => {
+    if (Platform.OS === 'web') {
+      const SR = (window as any).SpeechRecognition || (window as any).webkitSpeechRecognition;
+      const isSecure = window.location.protocol === 'https:' ||
+        window.location.hostname === 'localhost' ||
+        window.location.hostname === '127.0.0.1';
+      setWebSpeechAvailable(!!SR && isSecure);
+    }
+  }, []);
+
+  const toggleFocusSpeech = useCallback(() => {
+    if (isFocusRecording) {
+      focusSpeechRef.current?.stop();
+      setIsFocusRecording(false);
+      return;
+    }
+    const SR = (window as any).SpeechRecognition || (window as any).webkitSpeechRecognition;
+    if (!SR) return;
+    const recognition = new SR();
+    recognition.lang = 'en-US';
+    recognition.interimResults = false;
+    recognition.maxAlternatives = 1;
+    recognition.continuous = true;
+    recognition.onresult = (event: any) => {
+      for (let i = event.resultIndex; i < event.results.length; i++) {
+        if (event.results[i].isFinal) {
+          const transcript = event.results[i][0].transcript.trim();
+          if (transcript) setContext((prev) => (prev ? `${prev} ${transcript}` : transcript));
+        }
+      }
+    };
+    recognition.onerror = (event: any) => {
+      setIsFocusRecording(false);
+      if (event.error === 'not-allowed' || event.error === 'permission-denied') {
+        showError('Microphone access denied. Please allow it in your browser settings.');
+      } else if (event.error === 'network') {
+        showError('Speech recognition unavailable. Your browser may be blocking access to Google\'s speech servers.');
+      }
+    };
+    recognition.onend = () => setIsFocusRecording(false);
+    focusSpeechRef.current = recognition;
+    recognition.start();
+    setIsFocusRecording(true);
+  }, [isFocusRecording, showError]);
 
   // Load subjects on mount
   useEffect(() => {
@@ -529,23 +580,42 @@ export default function QuickGenerateScreen() {
       {/* ── Focus On (context input) ─────────────────────────────────── */}
       <GlassCard style={styles.section}>
         <Text style={[styles.sectionTitle, { color: colors.text }]}>Focus On</Text>
-        <TextInput
-          style={[
-            styles.contextInput,
-            {
-              backgroundColor: isDark ? 'rgba(255,255,255,0.08)' : 'rgba(0,0,0,0.04)',
-              color: colors.text,
-              borderColor: colors.border,
-            },
-          ]}
-          placeholder="e.g., Chapter 5: Binary Trees and Tree Traversal"
-          placeholderTextColor={colors.textTertiary}
-          value={context}
-          onChangeText={setContext}
-          multiline
-          numberOfLines={3}
-          editable={!isGenerating}
-        />
+        <View style={styles.focusRow}>
+          <TextInput
+            style={[
+              styles.contextInput,
+              { flex: 1,
+                backgroundColor: isDark ? 'rgba(255,255,255,0.08)' : 'rgba(0,0,0,0.04)',
+                color: colors.text,
+                borderColor: isFocusRecording ? colors.error : colors.border,
+              },
+            ]}
+            placeholder={isFocusRecording ? 'Listening...' : 'e.g., Chapter 5: Binary Trees and Tree Traversal'}
+            placeholderTextColor={isFocusRecording ? colors.error : colors.textTertiary}
+            value={context}
+            onChangeText={setContext}
+            multiline
+            numberOfLines={3}
+            editable={!isGenerating}
+          />
+          {Platform.OS === 'web' && webSpeechAvailable && (
+            <TouchableOpacity
+              style={[
+                styles.focusMicButton,
+                { backgroundColor: isFocusRecording ? colors.error : colors.primary },
+              ]}
+              onPress={toggleFocusSpeech}
+              disabled={isGenerating}
+              activeOpacity={0.8}
+            >
+              {isFocusRecording ? (
+                <ActivityIndicator size="small" color="#fff" />
+              ) : (
+                <IconSymbol name="mic.fill" size={18} color="#fff" />
+              )}
+            </TouchableOpacity>
+          )}
+        </View>
       </GlassCard>
 
       {/* ── Options ─────────────────────────────────────────────────── */}
@@ -924,6 +994,8 @@ const styles = StyleSheet.create({
 
   // Context input
   contextInput: { borderWidth: 1, borderRadius: BorderRadius.md, padding: Spacing.md, fontSize: FontSizes.md, minHeight: 100, textAlignVertical: 'top' },
+  focusRow: { flexDirection: 'row', alignItems: 'flex-start', gap: Spacing.xs },
+  focusMicButton: { width: 40, height: 40, borderRadius: 20, alignItems: 'center', justifyContent: 'center', marginTop: 2, flexShrink: 0 },
   helperText: { fontSize: FontSizes.xs, marginTop: Spacing.sm },
 
   // Options

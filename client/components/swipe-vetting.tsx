@@ -126,6 +126,57 @@ export function SwipeVetting({
   const [selectedReasons, setSelectedReasons] = useState<string[]>([]);
   const [rejectNotes, setRejectNotes] = useState('');
 
+  // Web Speech API voice input (web platform only, free via browser)
+  const [isWebRecording, setIsWebRecording] = useState(false);
+  const [webSpeechAvailable, setWebSpeechAvailable] = useState(false);
+  const webSpeechRef = useRef<any>(null);
+
+  useEffect(() => {
+    if (Platform.OS === 'web') {
+      const SpeechRecognition = (window as any).SpeechRecognition || (window as any).webkitSpeechRecognition;
+      const isSecure = window.location.protocol === 'https:' ||
+        window.location.hostname === 'localhost' ||
+        window.location.hostname === '127.0.0.1';
+      setWebSpeechAvailable(!!SpeechRecognition && isSecure);
+    }
+  }, []);
+
+  const toggleWebSpeech = useCallback(() => {
+    if (isWebRecording) {
+      webSpeechRef.current?.stop();
+      setIsWebRecording(false);
+      return;
+    }
+    const SpeechRecognition = (window as any).SpeechRecognition || (window as any).webkitSpeechRecognition;
+    if (!SpeechRecognition) return;
+    const recognition = new SpeechRecognition();
+    recognition.lang = 'en-US';
+    recognition.interimResults = false;
+    recognition.maxAlternatives = 1;
+    recognition.continuous = true;
+    recognition.onresult = (event: any) => {
+      // In continuous mode, new results are appended; grab only the latest final result
+      for (let i = event.resultIndex; i < event.results.length; i++) {
+        if (event.results[i].isFinal) {
+          const transcript = event.results[i][0].transcript.trim();
+          if (transcript) setRejectNotes((prev) => (prev ? `${prev} ${transcript}` : transcript));
+        }
+      }
+    };
+    recognition.onerror = (event: any) => {
+      setIsWebRecording(false);
+      if (event.error === 'not-allowed' || event.error === 'permission-denied') {
+        showError('Microphone access denied. Please allow it in your browser settings.');
+      } else if (event.error === 'network') {
+        showError('Speech recognition unavailable. Your browser may be blocking access to Google\'s speech servers.');
+      }
+    };
+    recognition.onend = () => setIsWebRecording(false);
+    webSpeechRef.current = recognition;
+    recognition.start();
+    setIsWebRecording(true);
+  }, [isWebRecording, showError]);
+
   // Source references modal
   const [showSourcesModal, setShowSourcesModal] = useState(false);
 
@@ -923,17 +974,35 @@ export function SwipeVetting({
                     })}
                   </View>
 
-                  <TextInput
-                    style={[
-                      styles.notesInput,
-                      { color: colors.text, borderColor: colors.border, backgroundColor: colors.background },
-                    ]}
-                    value={rejectNotes}
-                    onChangeText={setRejectNotes}
-                    placeholder="Additional notes (optional)"
-                    placeholderTextColor={colors.textTertiary}
-                    multiline
-                  />
+                  <View style={styles.notesRow}>
+                    <TextInput
+                      style={[
+                        styles.notesInput,
+                        { flex: 1, color: colors.text, borderColor: isWebRecording ? colors.error : colors.border, backgroundColor: colors.background },
+                      ]}
+                      value={rejectNotes}
+                      onChangeText={setRejectNotes}
+                      placeholder={isWebRecording ? 'Listening...' : 'Additional notes (optional)'}
+                      placeholderTextColor={isWebRecording ? colors.error : colors.textTertiary}
+                      multiline
+                    />
+                    {Platform.OS === 'web' && webSpeechAvailable && (
+                      <TouchableOpacity
+                        style={[
+                          styles.webMicButton,
+                          { backgroundColor: isWebRecording ? colors.error : colors.primary },
+                        ]}
+                        onPress={toggleWebSpeech}
+                        activeOpacity={0.8}
+                      >
+                        {isWebRecording ? (
+                          <ActivityIndicator size="small" color="#fff" />
+                        ) : (
+                          <IconSymbol name="mic.fill" size={18} color="#fff" />
+                        )}
+                      </TouchableOpacity>
+                    )}
+                  </View>
 
                   <View style={styles.panelButtons}>
                     <TouchableOpacity
@@ -1780,6 +1849,21 @@ const styles = StyleSheet.create({
     fontSize: FontSizes.sm,
     textAlignVertical: 'top',
     marginBottom: Spacing.sm,
+  },
+  notesRow: {
+    flexDirection: 'row',
+    alignItems: 'flex-start',
+    gap: Spacing.xs,
+    marginBottom: Spacing.sm,
+  },
+  webMicButton: {
+    width: 40,
+    height: 40,
+    borderRadius: 20,
+    alignItems: 'center',
+    justifyContent: 'center',
+    marginTop: 2,
+    flexShrink: 0,
   },
   panelButtons: {
     flexDirection: 'row',

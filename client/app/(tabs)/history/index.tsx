@@ -463,11 +463,11 @@ export default function HistoryScreen() {
                                     <IconSymbol name="square.and.arrow.up" size={22} color={colors.primary} />
                                 </TouchableOpacity>
                             )}
-                            {/* {selectedSession && (
+                            {selectedSession && (
                                 <TouchableOpacity onPress={() => handleDeleteSession(selectedSession)}>
                                     <IconSymbol name="trash.fill" size={20} color="#FF3B30" />
                                 </TouchableOpacity>
-                            )} */}
+                            )}
                         </View>
                         {selectedSession && (
                             <View style={styles.modalMeta}>
