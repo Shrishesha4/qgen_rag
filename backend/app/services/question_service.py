@@ -2530,7 +2530,12 @@ Output valid JSON only."""
             logger.info(f"quick_generate_from_subject: type distribution={type_distribution}")
 
             for q_type, type_count in type_distribution.items():
-                for i in range(type_count):
+                type_generated = 0
+                type_attempts = 0
+                max_attempts = type_count * 4  # allow up to 4x retries per slot
+                while type_generated < type_count and type_attempts < max_attempts:
+                    type_attempts += 1
+                    i = type_generated  # keep query variety index consistent
                     try:
                         varied_query = query_aspects[total_question_index % len(query_aspects)]
                         context_embedding = await self.embedding_service.get_embedding(varied_query)
@@ -2601,6 +2606,7 @@ Output valid JSON only."""
                                 topic_id=topic_id,
                             )
                             questions_generated += 1
+                            type_generated += 1
                             generated_embeddings.append(question.question_embedding)
 
                             progress_val = 15 + int(((questions_generated + questions_failed) / count) * 80)
