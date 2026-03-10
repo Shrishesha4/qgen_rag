@@ -269,7 +269,7 @@ export default function VetterDashboard() {
                 onPress={() => router.push({ pathname: '/(vetter)/questions' as any, params: { status: 'pending' } })}
               >
                 <LinearGradient
-                  colors={[A.skyBlue, A.aquaBlue, A.deepBlue]}
+                  colors={[A.gelOrange, A.gelOrange, A.gelOrangeLight]}
                   start={{ x: 0, y: 0 }}
                   end={{ x: 0, y: 1 }}
                   style={styles.aquaBtn}

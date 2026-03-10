@@ -28,6 +28,7 @@ import {
   vetterService,
   QuestionForVetting,
   SubjectSummary,
+  TeacherSummary,
   QuestionVersionEntry,
   VersionHistoryResponse,
 } from '@/services/vetter.service';
@@ -75,6 +76,7 @@ export default function QuestionsForVetting() {
 
   const [questions, setQuestions] = useState<QuestionForVetting[]>([]);
   const [subjects, setSubjects] = useState<SubjectSummary[]>([]);
+  const [teachers, setTeachers] = useState<TeacherSummary[]>([]);
   const [isLoading, setIsLoading] = useState(true);
   const [isRefreshing, setIsRefreshing] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -100,9 +102,16 @@ export default function QuestionsForVetting() {
   // Selected for bulk action
   const [selectedIds, setSelectedIds] = useState<Set<string>>(new Set());
 
+  // Question text search
+  const [questionSearch, setQuestionSearch] = useState('');
+
   // Subject search dropdown
   const [showSubjectPicker, setShowSubjectPicker] = useState(false);
   const [subjectSearch, setSubjectSearch] = useState('');
+
+  // Teacher picker
+  const [showTeacherPicker, setShowTeacherPicker] = useState(false);
+  const [teacherSearch, setTeacherSearch] = useState('');
 
   // Swipe vetting mode
   const [showSwipeVetting, setShowSwipeVetting] = useState(false);
@@ -141,6 +150,38 @@ const [editCoMapping, setEditCoMapping] = useState<Record<string, number>>({});
     const subject = subjects.find((s) => s.id === subjectFilter);
     return subject ? `${subject.code} - ${subject.name}` : 'All Subjects';
   }, [subjectFilter, subjects]);
+
+  // Fuzzy search filter for teachers
+  const filteredTeachers = useMemo(() => {
+    if (!teacherSearch.trim()) return teachers;
+    const searchLower = teacherSearch.toLowerCase();
+    return teachers.filter(
+      (t) =>
+        (t.full_name ?? '').toLowerCase().includes(searchLower) ||
+        t.username.toLowerCase().includes(searchLower) ||
+        t.email.toLowerCase().includes(searchLower)
+    );
+  }, [teachers, teacherSearch]);
+
+  // Get selected teacher name for display
+  const selectedTeacherName = useMemo(() => {
+    if (!teacherFilter) return 'All Teachers';
+    const teacher = teachers.find((t) => t.id === teacherFilter);
+    return teacher ? (teacher.full_name || teacher.username) : 'All Teachers';
+  }, [teacherFilter, teachers]);
+
+  // Client-side fuzzy filter on loaded questions
+  const filteredQuestions = useMemo(() => {
+    if (!questionSearch.trim()) return questions;
+    const searchLower = questionSearch.toLowerCase();
+    return questions.filter(
+      (q) =>
+        q.question_text.toLowerCase().includes(searchLower) ||
+        (q.topic_name ?? '').toLowerCase().includes(searchLower) ||
+        (q.subject_name ?? '').toLowerCase().includes(searchLower) ||
+        (q.teacher_name ?? '').toLowerCase().includes(searchLower)
+    );
+  }, [questions, questionSearch]);
 
   // Initialise editable fields whenever the selected question changes
   useEffect(() => {
@@ -209,9 +250,24 @@ const [editCoMapping, setEditCoMapping] = useState<Record<string, number>>({});
     }
   }, [teacherFilter]);
 
+  const fetchTeachers = useCallback(async () => {
+    try {
+      const data = await vetterService.getTeachers();
+      setTeachers(data);
+    } catch (err) {
+      console.error('Failed to load teachers', err);
+    }
+  }, []);
+
+  useEffect(() => {
+    fetchTeachers();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+
   useEffect(() => {
     setPage(1);
     setSelectedIds(new Set());
+    setQuestionSearch('');
     fetchQuestions(1);
     fetchSubjects();
     // eslint-disable-next-line react-hooks/exhaustive-deps
@@ -474,6 +530,13 @@ const [editCoMapping, setEditCoMapping] = useState<Record<string, number>>({});
     setSubjectSearch('');
   }, []);
 
+  const handleSelectTeacher = useCallback((teacherId: string | undefined) => {
+    setTeacherFilter(teacherId);
+    setSubjectFilter(undefined); // reset subject when teacher changes
+    setShowTeacherPicker(false);
+    setTeacherSearch('');
+  }, []);
+
   // Robust MCQ correct-answer matching (mirrors teacher vetting screen)
   const optionMatchesCorrect = (option: string, correct: string | null | undefined, index: number): boolean => {
     if (!correct) return false;
@@ -685,21 +748,66 @@ const [editCoMapping, setEditCoMapping] = useState<Record<string, number>>({});
       <View style={styles.header}>
         <Text style={[styles.title, { color: colors.text }]}>Questions</Text>
         <Text style={[styles.subtitle, { color: colors.textSecondary }]}>
-          {total} questions found
+          {questionSearch.trim() ? `${filteredQuestions.length} of ${total}` : `${total} questions found`}
         </Text>
       </View>
 
-      {/* Subject Dropdown */}
-      <TouchableOpacity
-        style={[styles.subjectDropdown, { backgroundColor: colors.card, borderColor: colors.border }]}
-        onPress={() => setShowSubjectPicker(true)}
-      >
-        <IconSymbol name="book.fill" size={16} color={colors.primary} />
-        <Text style={[styles.subjectDropdownText, { color: colors.text }]} numberOfLines={1}>
-          {selectedSubjectName}
-        </Text>
-        <IconSymbol name="chevron.down" size={14} color={colors.textSecondary} />
-      </TouchableOpacity>
+      {/* Question search bar */}
+      <View style={[styles.searchContainer, { backgroundColor: colors.card, borderColor: colors.border, marginHorizontal: Spacing.md, marginBottom: Spacing.sm }]}>
+        <IconSymbol name="magnifyingglass" size={18} color={colors.textSecondary} />
+        <TextInput
+          style={[styles.searchInput, { color: colors.text }]}
+          placeholder="Search questions..."
+          placeholderTextColor={colors.textTertiary}
+          value={questionSearch}
+          onChangeText={setQuestionSearch}
+          autoCapitalize="none"
+          autoCorrect={false}
+          returnKeyType="search"
+        />
+        {questionSearch.length > 0 && (
+          <TouchableOpacity onPress={() => setQuestionSearch('')}>
+            <IconSymbol name="xmark.circle.fill" size={18} color={colors.textSecondary} />
+          </TouchableOpacity>
+        )}
+      </View>
+
+      {/* Teacher + Subject pickers row */}
+      <View style={styles.pickerRow}>
+        <TouchableOpacity
+          style={[styles.pickerDropdown, { backgroundColor: colors.card, borderColor: teacherFilter ? colors.primary : colors.border }]}
+          onPress={() => setShowTeacherPicker(true)}
+        >
+          <IconSymbol name="person.fill" size={14} color={teacherFilter ? colors.primary : colors.textSecondary} />
+          <Text style={[styles.pickerDropdownText, { color: teacherFilter ? colors.primary : colors.text }]} numberOfLines={1}>
+            {selectedTeacherName}
+          </Text>
+          {teacherFilter ? (
+            <TouchableOpacity onPress={() => handleSelectTeacher(undefined)} hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}>
+              <IconSymbol name="xmark.circle.fill" size={14} color={colors.primary} />
+            </TouchableOpacity>
+          ) : (
+            <IconSymbol name="chevron.down" size={12} color={colors.textSecondary} />
+          )}
+        </TouchableOpacity>
+
+        <TouchableOpacity
+          style={[styles.pickerDropdown, { backgroundColor: colors.card, borderColor: subjectFilter ? colors.primary : colors.border }]}
+          onPress={() => setShowSubjectPicker(true)}
+        >
+          <IconSymbol name="book.fill" size={14} color={subjectFilter ? colors.primary : colors.textSecondary} />
+          <Text style={[styles.pickerDropdownText, { color: subjectFilter ? colors.primary : colors.text }]} numberOfLines={1}>
+            {selectedSubjectName}
+          </Text>
+          {subjectFilter ? (
+            <TouchableOpacity onPress={() => handleSelectSubject(undefined)} hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}>
+              <IconSymbol name="xmark.circle.fill" size={14} color={colors.primary} />
+            </TouchableOpacity>
+          ) : (
+            <IconSymbol name="chevron.down" size={12} color={colors.textSecondary} />
+          )}
+        </TouchableOpacity>
+      </View>
 
       <FilterBar />
 
@@ -733,7 +841,7 @@ const [editCoMapping, setEditCoMapping] = useState<Record<string, number>>({});
       )}
 
       <FlatList
-        data={questions}
+        data={filteredQuestions}
         keyExtractor={(item) => String(item.id)}
         renderItem={({ item }) => <QuestionCard question={item} />}
         contentContainerStyle={styles.listContent}
@@ -1230,6 +1338,107 @@ const [editCoMapping, setEditCoMapping] = useState<Record<string, number>>({});
         </SafeAreaView>
       </Modal>
 
+      {/* Teacher Picker Modal */}
+      <Modal
+        visible={showTeacherPicker}
+        animationType="slide"
+        presentationStyle="pageSheet"
+        onRequestClose={() => {
+          setShowTeacherPicker(false);
+          setTeacherSearch('');
+        }}
+      >
+        <SafeAreaView style={[styles.modalContainer, { backgroundColor: colors.background }]}>
+          <View style={styles.modalHeader}>
+            <Text style={[styles.modalTitle, { color: colors.text }]}>Select Teacher</Text>
+            <TouchableOpacity onPress={() => { setShowTeacherPicker(false); setTeacherSearch(''); }}>
+              <Text style={[styles.closeButton, { color: colors.primary }]}>Close</Text>
+            </TouchableOpacity>
+          </View>
+
+          <View style={[styles.searchContainer, { backgroundColor: colors.card, borderColor: colors.border }]}>
+            <IconSymbol name="magnifyingglass" size={18} color={colors.textSecondary} />
+            <TextInput
+              style={[styles.searchInput, { color: colors.text }]}
+              placeholder="Search teachers..."
+              placeholderTextColor={colors.textTertiary}
+              value={teacherSearch}
+              onChangeText={setTeacherSearch}
+              autoCapitalize="none"
+              autoCorrect={false}
+            />
+            {teacherSearch.length > 0 && (
+              <TouchableOpacity onPress={() => setTeacherSearch('')}>
+                <IconSymbol name="xmark.circle.fill" size={18} color={colors.textSecondary} />
+              </TouchableOpacity>
+            )}
+          </View>
+
+          <ScrollView style={styles.modalContent}>
+            <TouchableOpacity
+              style={[
+                styles.subjectItem,
+                { borderColor: colors.border },
+                !teacherFilter && { backgroundColor: colors.primary + '15' },
+              ]}
+              onPress={() => handleSelectTeacher(undefined)}
+            >
+              <View style={styles.subjectItemContent}>
+                <Text style={[styles.subjectItemName, { color: colors.text }]}>All Teachers</Text>
+                <Text style={[styles.subjectItemMeta, { color: colors.textSecondary }]}>
+                  Show questions from all teachers
+                </Text>
+              </View>
+              {!teacherFilter && (
+                <IconSymbol name="checkmark.circle.fill" size={22} color={colors.primary} />
+              )}
+            </TouchableOpacity>
+
+            {filteredTeachers.map((teacher) => (
+              <TouchableOpacity
+                key={teacher.id}
+                style={[
+                  styles.subjectItem,
+                  { borderColor: colors.border },
+                  teacherFilter === teacher.id && { backgroundColor: colors.primary + '15' },
+                ]}
+                onPress={() => handleSelectTeacher(teacher.id)}
+              >
+                <View style={styles.subjectItemContent}>
+                  <Text style={[styles.subjectItemName, { color: colors.text }]}>
+                    {teacher.full_name || teacher.username}
+                  </Text>
+                  <Text style={[styles.subjectItemMeta, { color: colors.textSecondary }]}>
+                    {teacher.email} • {teacher.pending_count} pending
+                  </Text>
+                  {teacher.subjects.length > 0 && (
+                    <Text style={[styles.subjectItemMeta, { color: colors.textTertiary, marginTop: 2 }]} numberOfLines={1}>
+                      {teacher.subjects.slice(0, 3).join(' · ')}{teacher.subjects.length > 3 ? ` +${teacher.subjects.length - 3}` : ''}
+                    </Text>
+                  )}
+                </View>
+                {teacher.pending_count > 0 && (
+                  <View style={[styles.pendingBadge, { backgroundColor: colors.warning }]}>
+                    <Text style={styles.pendingBadgeText}>{teacher.pending_count}</Text>
+                  </View>
+                )}
+                {teacherFilter === teacher.id && (
+                  <IconSymbol name="checkmark.circle.fill" size={22} color={colors.primary} />
+                )}
+              </TouchableOpacity>
+            ))}
+
+            {filteredTeachers.length === 0 && teacherSearch && (
+              <View style={styles.emptyContainer}>
+                <Text style={[styles.emptyText, { color: colors.textSecondary }]}>
+                  No teachers match "{teacherSearch}"
+                </Text>
+              </View>
+            )}
+          </ScrollView>
+        </SafeAreaView>
+      </Modal>
+
       {/* Subject Picker Modal */}
       <Modal
         visible={showSubjectPicker}
@@ -1600,7 +1809,29 @@ const styles = StyleSheet.create({
     textAlignVertical: 'top',
     marginTop: Spacing.sm,
   },
-  // Subject Dropdown styles
+  // Picker row (teacher + subject side by side)
+  pickerRow: {
+    flexDirection: 'row',
+    marginHorizontal: Spacing.md,
+    marginBottom: Spacing.sm,
+    gap: Spacing.sm,
+  },
+  pickerDropdown: {
+    flex: 1,
+    flexDirection: 'row',
+    alignItems: 'center',
+    paddingHorizontal: Spacing.sm,
+    paddingVertical: Spacing.sm,
+    borderRadius: BorderRadius.md,
+    borderWidth: 1,
+    gap: Spacing.xs,
+  },
+  pickerDropdownText: {
+    flex: 1,
+    fontSize: FontSizes.xs,
+    fontWeight: '500',
+  },
+  // Subject Dropdown styles (kept for backward compat)
   subjectDropdown: {
     flexDirection: 'row',
     alignItems: 'center',
