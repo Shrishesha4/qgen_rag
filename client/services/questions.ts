@@ -91,6 +91,7 @@ export interface QuickGenerateProgress {
   question: Question | null;
   message: string | null;
   document_id: string | null;
+  questions_failed?: number;
 }
 
 export interface QuickGenerateRequest {

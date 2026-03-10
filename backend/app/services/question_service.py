@@ -2330,6 +2330,7 @@ Output valid JSON only."""
                 total_questions=count,
                 message=f"Successfully generated {questions_generated} questions",
                 document_id=document_id,
+                questions_failed=questions_failed,
             )
 
         except Exception as e:
@@ -2689,6 +2690,7 @@ Output valid JSON only."""
                 current_question=questions_generated,
                 total_questions=count,
                 message=f"Successfully generated {questions_generated} questions",
+                questions_failed=questions_failed,
             )
 
         except Exception as e:

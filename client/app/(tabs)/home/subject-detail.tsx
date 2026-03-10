@@ -77,6 +77,8 @@ export default function SubjectDetailScreen() {
   const [genQuestions, setGenQuestions] = useState<Array<{ id: string; question_text: string; question_type: string; marks: number; learning_outcome_id?: string | null; course_outcome_mapping?: Record<string, number> | null }>>([]);
   const cancelGenRef = useRef<(() => void) | null>(null);
   const genProgressAnim = useRef(new Animated.Value(0)).current;
+  const [genFailedCount, setGenFailedCount] = useState(0);
+  const [genLastRubricId, setGenLastRubricId] = useState<string | null>(null);
   // Quick generate form
   const [qgMcqCount, setQgMcqCount] = useState('0');
   const [qgShortCount, setQgShortCount] = useState('0');
@@ -219,6 +221,8 @@ export default function SubjectDetailScreen() {
     setGenProgress(null);
     setGenQuestions([]);
     setIsGenerating(false);
+    setGenFailedCount(0);
+    setGenLastRubricId(null);
     setQgMcqCount('10');
     setQgShortCount('0');
     setQgLongCount('0');
@@ -258,11 +262,13 @@ export default function SubjectDetailScreen() {
     loadData(); // refresh data only after modal is closed
   };
 
-  const runGeneration = (rubricId: string, isTempRubric: boolean) => {
+  const runGeneration = (rubricId: string, isTempRubric: boolean, countOverride?: number) => {
     try {
       setIsGenerating(true);
       setGenQuestions([]);
       setGenProgress(null);
+      setGenFailedCount(0);
+      setGenLastRubricId(rubricId);
       genProgressAnim.setValue(0);
 
       const cancel = rubricsService.generateFromRubric(
@@ -270,6 +276,9 @@ export default function SubjectDetailScreen() {
         (progress) => {
           try {
             setGenProgress(progress);
+            if (progress.questions_failed !== undefined) {
+              setGenFailedCount(progress.questions_failed);
+            }
             if (progress.progress) {
               Animated.timing(genProgressAnim, {
                 toValue: progress.progress,
@@ -306,6 +315,7 @@ export default function SubjectDetailScreen() {
           }
         },
         generateTopic?.id,
+        countOverride,
       );
       cancelGenRef.current = cancel;
     } catch (error) {
@@ -332,6 +342,8 @@ export default function SubjectDetailScreen() {
       setIsGenerating(true);
       setGenQuestions([]);
       setGenProgress(null);
+      setGenFailedCount(0);
+      setGenLastRubricId(null);
       genProgressAnim.setValue(0);
 
       const dist: Record<string, { count: number; marks_each: number }> = {};
@@ -346,6 +358,9 @@ export default function SubjectDetailScreen() {
         (progress) => {
           try {
             setGenProgress(progress);
+            if (progress.questions_failed !== undefined) {
+              setGenFailedCount(progress.questions_failed);
+            }
             if (progress.progress) {
               Animated.timing(genProgressAnim, {
                 toValue: progress.progress,
@@ -389,6 +404,51 @@ export default function SubjectDetailScreen() {
 
   const handleUseExistingRubric = (rubric: Rubric) => {
     runGeneration(rubric.id, false);
+  };
+
+  const handleRetryFailed = () => {
+    if (genFailedCount <= 0 || isGenerating || !generateTopic) return;
+    const retryCount = genFailedCount;
+    if (genLastRubricId) {
+      // Existing rubric path — retry with count override
+      runGeneration(genLastRubricId, false, retryCount);
+    } else {
+      // Quick generate path — rebuild dist from form state and retry
+      const mcq = parseInt(qgMcqCount) || 0;
+      const short = parseInt(qgShortCount) || 0;
+      const long = parseInt(qgLongCount) || 0;
+      if (mcq + short + long === 0) return;
+      setIsGenerating(true);
+      setGenFailedCount(0);
+      genProgressAnim.setValue(0);
+      const dist: Record<string, { count: number; marks_each: number }> = {};
+      if (mcq > 0) dist.mcq = { count: mcq, marks_each: parseInt(qgMcqMarks) || 1 };
+      if (short > 0) dist.short_notes = { count: short, marks_each: parseInt(qgShortMarks) || 3 };
+      if (long > 0) dist.essay = { count: long, marks_each: parseInt(qgLongMarks) || 10 };
+      const cancel = rubricsService.generateChapter(
+        generateTopic.id,
+        dist,
+        (progress) => {
+          setGenProgress(progress);
+          if (progress.questions_failed !== undefined) setGenFailedCount(progress.questions_failed);
+          if (progress.progress) {
+            Animated.timing(genProgressAnim, { toValue: progress.progress, duration: 300, useNativeDriver: false }).start();
+          }
+          if (progress.question) setGenQuestions(prev => [...prev, progress.question!]);
+          if (progress.status === 'error') {
+            showError(new Error(progress.message || 'Generation failed'), 'Retry Failed');
+            setIsGenerating(false);
+          }
+        },
+        () => { /* stay on completion UI */ },
+        (error) => { showError(error, 'Retry Failed'); setIsGenerating(false); },
+        qgDifficulty,
+        qgLoFilter.length > 0 ? qgLoFilter : undefined,
+        Object.keys(qgLoDistribution).length > 0 ? qgLoDistribution : undefined,
+        retryCount,
+      );
+      cancelGenRef.current = cancel;
+    }
   };
 
   const handleUploadSyllabus = async () => {
@@ -1355,6 +1415,15 @@ export default function SubjectDetailScreen() {
                       <Text style={{ fontSize: FontSizes.sm, color: '#2E7D32' }}>
                         {genQuestions.length} questions generated and ready for vetting.
                       </Text>
+                      {genFailedCount > 0 && (
+                        <TouchableOpacity
+                          style={[styles.genDoneButton, { backgroundColor: '#FF9500', flexDirection: 'row', alignItems: 'center', gap: 6 }]}
+                          onPress={handleRetryFailed}
+                        >
+                          <IconSymbol name="arrow.clockwise.circle.fill" size={16} color="#FFF" />
+                          <Text style={{ color: '#FFF', fontWeight: '700', fontSize: FontSizes.sm }}>Generate {genFailedCount} More</Text>
+                        </TouchableOpacity>
+                      )}
                       <TouchableOpacity
                         style={[styles.genDoneButton, { backgroundColor: '#34C759' }]}
                         onPress={() => {

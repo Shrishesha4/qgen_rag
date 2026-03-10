@@ -69,6 +69,7 @@ export default function QuickGenerateScreen() {
   const [isGenerating, setIsGenerating] = useState(false);
   const [progress, setProgress] = useState<QuickGenerateProgress | null>(null);
   const [generatedQuestions, setGeneratedQuestions] = useState<Question[]>([]);
+  const [failedCount, setFailedCount] = useState(0);
   const cancelRef = useRef<(() => void) | null>(null);
   const progressAnim = useRef(new Animated.Value(0)).current;
 
@@ -185,6 +186,7 @@ export default function QuickGenerateScreen() {
       setIsGenerating(true);
       setGeneratedQuestions([]);
       setProgress(null);
+      setFailedCount(0);
       progressAnim.setValue(0);
 
       const marks_by_type = {
@@ -196,6 +198,9 @@ export default function QuickGenerateScreen() {
       const onProgress = (progressUpdate: QuickGenerateProgress) => {
         try {
           setProgress(progressUpdate);
+          if (progressUpdate.questions_failed !== undefined) {
+            setFailedCount(progressUpdate.questions_failed);
+          }
           Animated.timing(progressAnim, {
             toValue: progressUpdate.progress / 100,
             duration: 300,
@@ -268,6 +273,69 @@ export default function QuickGenerateScreen() {
   const handleCancel = () => {
     cancelRef.current?.();
     setIsGenerating(false);
+  };
+
+  const handleRetryFailed = () => {
+    if (failedCount <= 0 || isGenerating) return;
+    mediumImpact();
+
+    const marks_by_type = {
+      marks_mcq: selectedTypes.includes('mcq') ? marksMcq : undefined,
+      marks_short: selectedTypes.includes('short_answer') ? marksShort : undefined,
+      marks_long: selectedTypes.includes('long_answer') ? marksLong : undefined,
+    };
+
+    setIsGenerating(true);
+    setFailedCount(0);
+    progressAnim.setValue(0);
+
+    const onProgress = (progressUpdate: QuickGenerateProgress) => {
+      try {
+        setProgress(progressUpdate);
+        if (progressUpdate.questions_failed !== undefined) {
+          setFailedCount(progressUpdate.questions_failed);
+        }
+        Animated.timing(progressAnim, {
+          toValue: progressUpdate.progress / 100,
+          duration: 300,
+          useNativeDriver: false,
+        }).start();
+        if (progressUpdate.question) {
+          setGeneratedQuestions(prev => [...prev, progressUpdate.question!]);
+        }
+      } catch (e) { /* ignore */ }
+    };
+    const onComplete = (_documentId: string | null) => setIsGenerating(false);
+    const onError = (error: Error) => { setIsGenerating(false); showError(error, 'Retry Failed'); };
+
+    if (inputMode === 'pdf') {
+      cancelRef.current = questionsService.quickGenerate(
+        {
+          file: selectedFile!,
+          context: context.trim(),
+          count: failedCount,
+          types: selectedTypes,
+          difficulty,
+          ...marks_by_type,
+          subject_id: selectedSubjectId || undefined,
+          topic_id: selectedTopicId || undefined,
+        },
+        onProgress, onComplete, onError,
+      );
+    } else {
+      cancelRef.current = questionsService.quickGenerateFromSubject(
+        {
+          subject_id: selectedSubjectId!,
+          topic_id: selectedTopicId || undefined,
+          context: context.trim(),
+          count: failedCount,
+          types: selectedTypes,
+          difficulty,
+          ...marks_by_type,
+        },
+        onProgress, onComplete, onError,
+      );
+    }
   };
 
   const toggleType = (type: QuestionType) => {
@@ -708,12 +776,6 @@ export default function QuickGenerateScreen() {
                   })}
                 </View>
               )}
-              {q.correct_answer && (
-                <View style={[styles.answerContainer, { backgroundColor: colors.success + '10', borderColor: colors.success + '30' }]}>
-                  <Text style={[styles.answerLabel, { color: colors.success }]}>{q.question_type === 'mcq' ? 'Correct Answer:' : 'Expected Answer:'}</Text>
-                  <Text style={[styles.answerText, { color: colors.text }]}>{q.correct_answer}</Text>
-                </View>
-              )}
               {q.explanation && (
                 <View style={[styles.explanationContainer, { backgroundColor: colors.primary + '10', borderColor: colors.primary + '30' }]}>
                   <Text style={[styles.answerLabel, { color: colors.primary }]}>Explanation:</Text>
@@ -724,11 +786,17 @@ export default function QuickGenerateScreen() {
           ))}
           {progress?.status === 'complete' && (
             <View style={styles.actionButtons}>
+              {failedCount > 0 && (
+                <TouchableOpacity style={[styles.actionButton, { backgroundColor: '#FF9500' }]} onPress={handleRetryFailed}>
+                  <IconSymbol name="arrow.clockwise.circle.fill" size={20} color="#FFFFFF" />
+                  <Text style={styles.actionButtonText}>Generate {failedCount} More</Text>
+                </TouchableOpacity>
+              )}
               <TouchableOpacity style={[styles.actionButton, { backgroundColor: colors.primary }]} onPress={() => router.push('/(tabs)/home/vetting')}>
                 <IconSymbol name="checkmark.shield.fill" size={20} color="#FFFFFF" />
                 <Text style={styles.actionButtonText}>Review & Validate</Text>
               </TouchableOpacity>
-              <TouchableOpacity style={[styles.actionButton, { backgroundColor: colors.success }]} onPress={() => { setGeneratedQuestions([]); setProgress(null); setSelectedFile(null); setContext(''); }}>
+              <TouchableOpacity style={[styles.actionButton, { backgroundColor: colors.success }]} onPress={() => { setGeneratedQuestions([]); setProgress(null); setSelectedFile(null); setContext(''); setFailedCount(0); }}>
                 <IconSymbol name="plus.circle.fill" size={20} color="#FFFFFF" />
                 <Text style={styles.actionButtonText}>Generate More</Text>
               </TouchableOpacity>

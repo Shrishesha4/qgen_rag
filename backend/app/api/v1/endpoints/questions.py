@@ -2789,6 +2789,7 @@ class RubricGenerationRequest(BaseModel):
     """Schema for generating questions from a rubric."""
     rubric_id: uuid.UUID
     topic_id: Optional[uuid.UUID] = None  # If set, restrict generation to this chapter only
+    count_override: Optional[int] = None  # If set, stop after this many questions (for retry-failed)
 
 
 @router.post("/generate-from-rubric")
@@ -3092,9 +3093,14 @@ async def generate_from_rubric(
             # Count how many questions have been assigned to each topic (for LO-aware balancing)
             topic_question_counts: dict[str, int] = {tid: 0 for tid in topic_ids_ordered}
 
+            # If count_override is set (retry-failed), cap total generation
+            effective_total = request.count_override if request.count_override else total_questions
+
             # Generate questions for each type
             for q_type, config in question_distribution.items():
                 if cancelled:
+                    break
+                if request.count_override and questions_generated >= request.count_override:
                     break
                 count = config.get("count", 0)
                 marks = config.get("marks_each", 2)
@@ -3106,6 +3112,8 @@ async def generate_from_rubric(
                 logger.info(f"[{request_id}] Generating {count} {mapped_type} questions")
                 
                 for i in range(count):
+                    if request.count_override and questions_generated >= request.count_override:
+                        break
                     if await raw_request.is_disconnected():
                         logger.info(f"[{request_id}] Client disconnected, cancelling generation")
                         cancelled = True
@@ -3333,9 +3341,9 @@ Output valid JSON only."""
                         questions_generated += 1
 
                         # Calculate progress
-                        progress = 10 + int((questions_generated / max(total_questions, 1)) * 85)
+                        progress = 10 + int((questions_generated / max(effective_total, 1)) * 85)
 
-                        yield f"data: {json.dumps({'status': 'generating', 'progress': min(progress, 95), 'current_question': questions_generated, 'total_questions': total_questions, 'message': f'Generated {questions_generated}/{total_questions} questions', 'question': {'id': str(question.id), 'question_text': question.question_text[:100] + '...' if len(question.question_text) > 100 else question.question_text, 'question_type': question.question_type, 'marks': question.marks, 'learning_outcome_id': question.learning_outcome_id, 'course_outcome_mapping': question.course_outcome_mapping}})}\n\n"
+                        yield f"data: {json.dumps({'status': 'generating', 'progress': min(progress, 95), 'current_question': questions_generated, 'total_questions': effective_total, 'message': f'Generated {questions_generated}/{effective_total} questions', 'question': {'id': str(question.id), 'question_text': question.question_text[:100] + '...' if len(question.question_text) > 100 else question.question_text, 'question_type': question.question_type, 'marks': question.marks, 'learning_outcome_id': question.learning_outcome_id, 'course_outcome_mapping': question.course_outcome_mapping}})}\n\n"
                     except Exception as e:
                         logger.error(f"[{request_id}] Error generating question: {e}")
                         questions_failed += 1
@@ -3363,7 +3371,7 @@ Output valid JSON only."""
             except Exception as e:
                 logger.error(f"[{request_id}] Error updating subject stats: {e}")
             
-            yield f"data: {json.dumps({'status': 'complete', 'progress': 100, 'current_question': questions_generated, 'total_questions': total_questions, 'message': f'Generated {questions_generated} questions' + (f' ({questions_failed} failed)' if questions_failed > 0 else '')})}\n\n"
+            yield f"data: {json.dumps({'status': 'complete', 'progress': 100, 'current_question': questions_generated, 'total_questions': total_questions, 'questions_failed': questions_failed, 'message': f'Generated {questions_generated} questions' + (f' ({questions_failed} failed)' if questions_failed > 0 else '')})}\n\n"
             
             logger.info(f"[{request_id}] Rubric generation complete: {questions_generated} generated, {questions_failed} failed")
             
@@ -3404,6 +3412,7 @@ class ChapterGenerationRequest(BaseModel):
     difficulty: Optional[str] = "medium"  # easy | medium | hard
     lo_filter: Optional[List[str]] = None  # restrict to these LO ids, e.g. ["LO1", "LO2"]
     lo_distribution: Optional[dict] = None  # {"LO1": 25, "LO2": 25, ...} percentage weights
+    count_override: Optional[int] = None  # If set, stop after this many questions (for retry-failed)
 
 
 @router.post("/generate-chapter")
@@ -3685,9 +3694,13 @@ async def generate_chapter(
                     co_context_ch = f"\nAvailable Course Outcomes (pick 1–2 most relevant): {', '.join(sorted(all_cos_ch))}"
 
             cancelled = False
+            # If count_override is set (retry-failed), cap total generation
+            effective_total_ch = request.count_override if request.count_override else total_questions
 
             for plan in generation_plan:
                 if cancelled:
+                    break
+                if request.count_override and questions_generated >= request.count_override:
                     break
                 q_type = plan["type"]
                 count = plan["count"]
@@ -3695,6 +3708,8 @@ async def generate_chapter(
                 chunk_idx = 0
 
                 for i in range(count):
+                    if request.count_override and questions_generated >= request.count_override:
+                        break
                     # Check if client has disconnected (cancelled)
                     if await raw_request.is_disconnected():
                         logger.info(f"[{request_id}] Client disconnected, cancelling chapter generation")
@@ -3894,8 +3909,8 @@ Output valid JSON only."""
                             generated_embeddings.append(candidate_emb)
                             questions_generated += 1
 
-                            progress = 10 + int((questions_generated / max(total_questions, 1)) * 85)
-                            yield f"data: {json.dumps({'status': 'generating', 'progress': min(progress, 95), 'current_question': questions_generated, 'total_questions': total_questions, 'message': f'Generated {questions_generated}/{total_questions} questions', 'question': {'id': str(question.id), 'question_text': question.question_text[:100] + ('...' if len(question.question_text) > 100 else ''), 'question_type': question.question_type, 'marks': question.marks, 'learning_outcome_id': question.learning_outcome_id, 'course_outcome_mapping': question.course_outcome_mapping}})}\n\n"
+                            progress = 10 + int((questions_generated / max(effective_total_ch, 1)) * 85)
+                            yield f"data: {json.dumps({'status': 'generating', 'progress': min(progress, 95), 'current_question': questions_generated, 'total_questions': effective_total_ch, 'message': f'Generated {questions_generated}/{effective_total_ch} questions', 'question': {'id': str(question.id), 'question_text': question.question_text[:100] + ('...' if len(question.question_text) > 100 else ''), 'question_type': question.question_type, 'marks': question.marks, 'learning_outcome_id': question.learning_outcome_id, 'course_outcome_mapping': question.course_outcome_mapping}})}\n\n"
                             break
 
                         if not accepted:
@@ -3926,7 +3941,7 @@ Output valid JSON only."""
             except Exception as e:
                 logger.error(f"[{request_id}] Error updating subject stats: {e}")
 
-            yield f"data: {json.dumps({'status': 'complete', 'progress': 100, 'current_question': questions_generated, 'total_questions': total_questions, 'message': f'Generated {questions_generated} questions' + (f' ({questions_failed} failed)' if questions_failed > 0 else '')})}\n\n"
+            yield f"data: {json.dumps({'status': 'complete', 'progress': 100, 'current_question': questions_generated, 'total_questions': total_questions, 'questions_failed': questions_failed, 'message': f'Generated {questions_generated} questions' + (f' ({questions_failed} failed)' if questions_failed > 0 else '')})}\n\n"
             logger.info(f"[{request_id}] Chapter gen complete: {questions_generated} generated, {questions_failed} failed")
 
         except Exception as e:

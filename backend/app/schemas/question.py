@@ -214,6 +214,7 @@ class GenerationProgress(BaseModel):
     total_questions: Optional[int] = None
     question: Optional[QuestionResponse] = None
     message: Optional[str] = None
+    questions_failed: Optional[int] = None
 
 
 class GenerationSessionResponse(BaseModel):
@@ -302,3 +303,4 @@ class QuickGenerateProgress(BaseModel):
     question: Optional[QuestionResponse] = None
     message: Optional[str] = None
     document_id: Optional[uuid.UUID] = None
+    questions_failed: Optional[int] = None

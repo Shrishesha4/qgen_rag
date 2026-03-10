@@ -64,6 +64,7 @@ export default function GenerateScreen() {
   const [isGenerating, setIsGenerating] = useState(false);
   const [generationProgress, setGenerationProgress] = useState<GenerationProgress | null>(null);
   const [generatedQuestions, setGeneratedQuestions] = useState<Array<{id: string; question_text: string; question_type: string; marks: number; subject_id?: string | null; topic_id?: string | null; learning_outcome_id?: string | null; course_outcome_mapping?: Record<string, number> | null;}>>([]);
+  const [failedCount, setFailedCount] = useState(0);
   const cancelGenerationRef = useRef<(() => void) | null>(null);
   const progressAnim = useRef(new Animated.Value(0)).current;
   
@@ -241,6 +242,7 @@ export default function GenerateScreen() {
     setSelectedRubric(rubric);
     setGeneratedQuestions([]);
     setGenerationProgress(null);
+    setFailedCount(0);
     setShowGenerateModal(true);
   };
 
@@ -255,6 +257,7 @@ export default function GenerateScreen() {
       console.log('[Generate] Starting generation...');
       setIsGenerating(true);
       setGeneratedQuestions([]);
+      setFailedCount(0);
       progressAnim.setValue(0);
       
       console.log('[Generate] Calling rubricsService.generateFromRubric with rubricId:', selectedRubric.id);
@@ -264,6 +267,9 @@ export default function GenerateScreen() {
           try {
             console.log('[Generate] Progress received:', progress.status, progress.message);
             setGenerationProgress(progress);
+            if (progress.questions_failed !== undefined) {
+              setFailedCount(progress.questions_failed);
+            }
             
             if (progress.progress) {
               Animated.timing(progressAnim, {
@@ -309,6 +315,34 @@ export default function GenerateScreen() {
       setIsGenerating(false);
       showError(error, 'Generation Failed');
     }
+  };
+
+  const handleRetryFailed = () => {
+    if (!selectedRubric || failedCount <= 0 || isGenerating) return;
+    const retryCount = failedCount;
+    setIsGenerating(true);
+    setFailedCount(0);
+    progressAnim.setValue(0);
+    const cancel = rubricsService.generateFromRubric(
+      selectedRubric.id,
+      (progress) => {
+        setGenerationProgress(progress);
+        if (progress.questions_failed !== undefined) setFailedCount(progress.questions_failed);
+        if (progress.progress) {
+          Animated.timing(progressAnim, { toValue: progress.progress, duration: 300, useNativeDriver: false }).start();
+        }
+        if (progress.question) setGeneratedQuestions(prev => [...prev, progress.question!]);
+        if (progress.status === 'error') {
+          showError(new Error(progress.message || 'Failed'), 'Retry Failed');
+          setIsGenerating(false);
+        }
+      },
+      () => { setIsGenerating(false); loadData(); },
+      (error) => { showError(error, 'Retry Failed'); setIsGenerating(false); },
+      undefined,
+      retryCount,
+    );
+    cancelGenerationRef.current = cancel;
   };
 
   const handleCancelGeneration = () => {
@@ -894,6 +928,15 @@ export default function GenerateScreen() {
                 <Text style={styles.completionSubtitle}>
                   {generatedQuestions.length} questions are now ready for vetting.
                 </Text>
+                {failedCount > 0 && (
+                  <TouchableOpacity
+                    style={[styles.viewQuestionsButton, { backgroundColor: '#FF9500' }]}
+                    onPress={handleRetryFailed}
+                  >
+                    <IconSymbol name="arrow.clockwise.circle.fill" size={18} color="#FFFFFF" style={{ marginRight: 6 }} />
+                    <Text style={styles.viewQuestionsButtonText}>Generate {failedCount} More</Text>
+                  </TouchableOpacity>
+                )}
                 <TouchableOpacity
                   style={[styles.viewQuestionsButton, { backgroundColor: colors.primary }]}
                   onPress={() => {

@@ -100,6 +100,7 @@ export const rubricsService = {
     onComplete: () => void,
     onError: (error: Error) => void,
     topicId?: string,
+    countOverride?: number,
   ): () => void {
     let cancelled = false;
     let cancelFn = () => { cancelled = true; };
@@ -108,8 +109,9 @@ export const rubricsService = {
 
     (async () => {
       try {
-        const body: Record<string, string> = { rubric_id: rubricId };
+        const body: Record<string, any> = { rubric_id: rubricId };
         if (topicId) body.topic_id = topicId;
+        if (countOverride) body.count_override = countOverride;
 
         const { tokenStorage } = await import('./api');
         const token = await tokenStorage.getAccessToken();
@@ -199,6 +201,7 @@ export const rubricsService = {
     difficulty: string = 'medium',
     loFilter?: string[],
     loDistribution?: Record<string, number>,
+    countOverride?: number,
   ): () => void {
     let cancelled = false;
     let cancelFn = () => { cancelled = true; };
@@ -271,6 +274,7 @@ export const rubricsService = {
           difficulty,
           lo_filter: loFilter && loFilter.length > 0 ? loFilter : undefined,
           lo_distribution: loDistribution && Object.keys(loDistribution).length > 0 ? loDistribution : undefined,
+          count_override: countOverride || undefined,
         }));
       } catch (error) {
         if (!cancelled) onError(error as Error);
@@ -287,6 +291,7 @@ export interface GenerationProgress {
   current_question?: number;
   total_questions?: number;
   message?: string;
+  questions_failed?: number;
   // Question payload may include assigned LO/CO and topic/subject ids
   question?: {
     id: string;
