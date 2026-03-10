@@ -292,7 +292,7 @@ async def generate_questions(
 async def quick_generate_questions(
     file: UploadFile = File(..., description="PDF file to generate questions from"),
     context: str = Form(..., min_length=3, max_length=500, description="Context or title (e.g., 'Chapter 5: Data Structures')"),
-    count: int = Form(default=5, ge=1, le=20, description="Number of questions to generate"),
+    count: int = Form(default=5, ge=1, le=200, description="Number of questions to generate"),
     types: Optional[str] = Form(default="mcq,short_answer", description="Comma-separated question types: mcq, short_answer, long_answer"),
     difficulty: str = Form(default="medium", description="Difficulty level: easy, medium, hard"),
     bloom_levels: Optional[str] = Form(default=None, description="Comma-separated Bloom levels: remember, understand, apply, analyze, evaluate, create"),
@@ -507,7 +507,7 @@ async def _enhance_focus_prompt(context: str, llm_service) -> str:
 async def quick_generate_from_subject(
     subject_id: str = Form(..., description="Subject ID to generate questions from"),
     context: str = Form(..., min_length=3, max_length=500, description="Focus topic or description"),
-    count: int = Form(default=5, ge=1, le=20, description="Number of questions to generate"),
+    count: int = Form(default=5, ge=1, le=200, description="Number of questions to generate"),
     types: Optional[str] = Form(default="mcq,short_answer", description="Comma-separated question types"),
     difficulty: str = Form(default="medium", description="Difficulty level: easy, medium, hard"),
     marks_mcq: Optional[int] = Form(default=1, ge=1, le=100),

@@ -11,7 +11,7 @@ import uuid
 class QuestionGenerationRequest(BaseModel):
     """Schema for question generation request."""
     document_id: uuid.UUID
-    count: int = Field(..., ge=1, le=50, description="Number of questions to generate")
+    count: int = Field(..., ge=1, le=200, description="Number of questions to generate")
     types: Optional[List[Literal["mcq", "short_answer", "long_answer"]]] = Field(
         default=["mcq", "short_answer"],
         description="Types of questions to generate"
@@ -23,7 +23,7 @@ class QuestionGenerationRequest(BaseModel):
     marks: Optional[int] = Field(
         default=None,
         ge=1,
-        le=20,
+        le=200,
         description="Marks per question"
     )
     focus_topics: Optional[List[str]] = Field(
@@ -275,7 +275,7 @@ class QuickGenerateRequest(BaseModel):
     count: int = Field(
         default=5,
         ge=1,
-        le=20,
+        le=200,
         description="Number of questions to generate"
     )
     types: Optional[List[Literal["mcq", "short_answer", "long_answer"]]] = Field(
