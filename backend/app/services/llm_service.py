@@ -525,6 +525,15 @@ class OllamaLLMService:
         text = re.sub(r',\s*}', '}', text)
         text = re.sub(r',\s*]', ']', text)
         
+        # Fix missing commas between adjacent JSON properties.
+        # LLMs occasionally omit the separating comma, causing parse errors like
+        # "Expecting ',' delimiter". Detect: value-end char(s) + newline + next key.
+        text = re.sub(
+            r'(["\]\}]|true|false|null|\d)\n(\s*"[^"\\\n]{0,100}"\s*:)',
+            r'\1,\n\2',
+            text,
+        )
+        
         # Fix unquoted keys (common LLM error)
         text = re.sub(r'(\{|,)\s*([a-zA-Z_][a-zA-Z0-9_]*)\s*:', r'\1"\2":', text)
         

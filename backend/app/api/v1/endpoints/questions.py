@@ -131,7 +131,16 @@ def _sanitize_question_fields(kwargs: dict) -> dict:
             clean_map = dict(sorted(clean_map.items(), key=lambda x: x[1], reverse=True)[:2])
         kwargs["course_outcome_mapping"] = clean_map
 
-    # Truncate other VARCHAR fields to their column limits
+    # Normalize numeric bloom taxonomy levels to named levels
+    # LLMs sometimes return the Bloom number (1/2/3) used in CO mapping instead of the word
+    _bloom_num_map = {"1": "remember", "2": "apply", "3": "evaluate"}
+    bloom_val = kwargs.get("bloom_taxonomy_level")
+    if bloom_val is not None:
+        bloom_key = str(bloom_val).strip()
+        if bloom_key in _bloom_num_map:
+            kwargs["bloom_taxonomy_level"] = _bloom_num_map[bloom_key]
+
+    # Truncate/coerce other VARCHAR fields to their column limits
     _limits = {
         "question_type": 50,
         "difficulty_level": 20,
@@ -143,8 +152,12 @@ def _sanitize_question_fields(kwargs: dict) -> dict:
     }
     for field, limit in _limits.items():
         val = kwargs.get(field)
-        if val and isinstance(val, str) and len(val) > limit:
-            kwargs[field] = val[:limit]
+        if val is not None:
+            if not isinstance(val, str):
+                val = str(val)
+                kwargs[field] = val
+            if len(val) > limit:
+                kwargs[field] = val[:limit]
 
     return kwargs
 
@@ -3217,9 +3230,12 @@ Output valid JSON only."""
                                 ),
                             },
                         )
-                        db.add(question)
-                        await db.commit()
-                        await db.refresh(question)
+                        # Use an isolated session per question so a DB error on one
+                        # question does not corrupt the main session's transaction state.
+                        async with AsyncSessionLocal() as q_session:
+                            q_session.add(question)
+                            await q_session.commit()
+                            await q_session.refresh(question)
 
                         # Track for duplicate detection
                         generated_questions.append(question_text)
@@ -3233,7 +3249,6 @@ Output valid JSON only."""
                     except Exception as e:
                         logger.error(f"[{request_id}] Error generating question: {e}")
                         questions_failed += 1
-                        await db.rollback()
                         continue
             
             # Finalize rubric session
@@ -3782,9 +3797,12 @@ Output valid JSON only."""
                                     "source_info": source_info_dict,
                                 },
                             )
-                            db.add(question)
-                            await db.commit()
-                            await db.refresh(question)
+                            # Use an isolated session per question so a DB error on one
+                            # question does not corrupt the main session's transaction state.
+                            async with AsyncSessionLocal() as q_session:
+                                q_session.add(question)
+                                await q_session.commit()
+                                await q_session.refresh(question)
 
                             generated_texts.append(candidate_text)
                             generated_embeddings.append(candidate_emb)
@@ -3799,7 +3817,6 @@ Output valid JSON only."""
                     except Exception as e:
                         logger.error(f"[{request_id}] Error generating question: {e}")
                         questions_failed += 1
-                        await db.rollback()
                         continue
 
             # Finalize chapter session
