@@ -2201,7 +2201,7 @@ Output valid JSON only."""
                                     is_latest=True,
                                     generation_metadata={
                                         "source": "quick_from_subject",
-                                        "regenerated_by_vetter": True,
+                                        "regenerated_by_vetter": False,
                                         "regenerated_from": str(question_id),
                                         "source_info": _build_rubric_source_info(
                                             ref_chunks_a2,
