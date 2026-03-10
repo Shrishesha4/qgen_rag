@@ -864,7 +864,7 @@ export default function QuickGenerateScreen() {
         >
           {isGenerating ? (
             <>
-              <ActivityIndicator color="#FFFFFF" style={{ marginRight: Spacing.sm, marginBottom: 20}} />
+              <ActivityIndicator color="#FFFFFF" style={{ marginRight: Spacing.sm }} />
               <Text style={styles.generateButtonText}>Cancel</Text>
             </>
           ) : (

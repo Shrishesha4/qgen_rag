@@ -77,13 +77,13 @@ export function GlassCard({
   // Fallback for non-iOS or unsupported iOS versions
   return (
     <View 
-      pointerEvents={pointerEvents}
       style={[
         styles.fallbackCard,
         { 
           borderRadius,
           backgroundColor: isDark ? colors.card : 'rgba(255, 255, 255, 0.95)',
           borderColor: isDark ? colors.border : 'rgba(0, 0, 0, 0.06)',
+          pointerEvents,
         },
         style,
       ]}
