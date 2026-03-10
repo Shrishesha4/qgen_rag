@@ -40,7 +40,7 @@ class RerankerService:
             return
         
         from app.core.logging import logger
-        logger.info(f"⏳ Loading reranker model (first use): {settings.RERANKER_MODEL}...")
+        logger.info(f"⏳ Loading reranker model: {settings.RERANKER_MODEL}...")
         device = "cuda" if torch.cuda.is_available() else "cpu"
         self._model = CrossEncoder(
             settings.RERANKER_MODEL,
