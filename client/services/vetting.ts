@@ -21,14 +21,10 @@ export type RejectionCategory = 'modify' | 'new';
 // Predefined rejection reasons with regeneration categories
 export const REJECTION_REASONS = [
   { id: 'duplicate', label: 'Duplicate Question', description: 'Similar to an existing question', category: 'new' as RejectionCategory },
-  { id: 'too_easy', label: 'Too Easy', description: 'Question lacks sufficient challenge', category: 'modify' as RejectionCategory },
-  { id: 'too_hard', label: 'Too Difficult', description: 'Question is overly complex', category: 'modify' as RejectionCategory },
   { id: 'unclear', label: 'Unclear Wording', description: 'Question is ambiguous or confusing', category: 'modify' as RejectionCategory },
   { id: 'off_topic', label: 'Off Topic', description: 'Not relevant to the subject matter', category: 'new' as RejectionCategory },
   { id: 'incorrect_answer', label: 'Wrong Answer', description: 'The correct answer is inaccurate', category: 'modify' as RejectionCategory },
   { id: 'poor_options', label: 'Poor MCQ Options', description: 'Options are too obvious or confusing', category: 'modify' as RejectionCategory },
-  { id: 'too_long', label: 'Too Long', description: 'Question is unnecessarily verbose', category: 'modify' as RejectionCategory },
-  { id: 'too_short', label: 'Too Short', description: 'Question lacks sufficient context', category: 'modify' as RejectionCategory },
   { id: 'needs_improvement', label: 'Needs Improvement', description: 'Use voice/text to explain what to fix', category: 'modify' as RejectionCategory },
   { id: 'completely_new', label: 'Generate New', description: 'Replace with entirely different question', category: 'new' as RejectionCategory },
 ] as const;

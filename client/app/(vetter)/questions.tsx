@@ -38,8 +38,6 @@ type StatusFilter = 'pending' | 'approved' | 'rejected' | 'all';
 const REJECTION_REASONS = [
   { id: 'duplicate', label: 'Duplicate question' },
   { id: 'off_topic', label: 'Off topic' },
-  { id: 'too_easy', label: 'Too easy' },
-  { id: 'too_hard', label: 'Too hard' },
   { id: 'unclear', label: 'Unclear wording' },
   { id: 'incorrect_answer', label: 'Incorrect answer' },
   { id: 'poor_options', label: 'Poor MCQ options' },
@@ -1248,20 +1246,6 @@ const [editCoMapping, setEditCoMapping] = useState<Record<string, number>>({});
                       </View>
                     ))}
                   </View>
-                </GlassCard>
-
-                {/* ── Notes ── */}
-                <GlassCard style={styles.notesCard}>
-                  <Text style={[styles.detailLabel, { color: colors.text }]}>Notes (optional):</Text>
-                  <TextInput
-                    style={[styles.notesInput, { backgroundColor: colors.card, color: colors.text, borderColor: colors.border }]}
-                    placeholder="Add notes for the teacher..."
-                    placeholderTextColor={colors.textTertiary}
-                    value={vetNotes}
-                    onChangeText={setVetNotes}
-                    multiline
-                    numberOfLines={3}
-                  />
                 </GlassCard>
 
                 {/* ── Rejection reasons — expanded when Reject tapped ── */}

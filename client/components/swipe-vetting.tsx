@@ -70,8 +70,6 @@ const optionMatchesCorrect = (option: string, correct: string | null | undefined
 const REJECTION_REASONS = [
   { id: 'duplicate', label: 'Duplicate', desc: 'Already exists' },
   { id: 'off_topic', label: 'Off topic', desc: 'Not relevant' },
-  { id: 'too_easy', label: 'Too easy', desc: 'Below level' },
-  { id: 'too_hard', label: 'Too hard', desc: 'Above level' },
   { id: 'unclear', label: 'Unclear', desc: 'Confusing' },
   { id: 'incorrect_answer', label: 'Wrong answer', desc: 'Key is wrong' },
   { id: 'poor_options', label: 'Bad options', desc: 'MCQ issues' },
