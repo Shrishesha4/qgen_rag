@@ -881,11 +881,11 @@ export default function QuickGenerateScreen() {
 const styles = StyleSheet.create({
   container: { flex: 1, position: 'relative' },
   scrollContent: { flex: 1, },
-  contentContainer: { paddingBottom: Spacing.xxl },
+  contentContainer: { paddingTop: Spacing.xxxl + 15, paddingBottom: Spacing.xxl },
 
   // Header
-  headerBlur: { overflow: 'hidden', borderRadius: BorderRadius.xxl, marginTop: Spacing.lg, marginBottom: Spacing.lg, marginHorizontal: Spacing.md, ...Shadows.medium },
-  header: { paddingTop: 20, paddingBottom: Spacing.xxxl, paddingHorizontal: Spacing.lg, alignItems: 'center' },
+  headerBlur: { overflow: 'hidden', borderRadius: BorderRadius.xxl, marginTop: Spacing.sm, marginBottom: Spacing.lg, marginHorizontal: Spacing.md, ...Shadows.medium },
+  header: { paddingTop: Spacing.lg, paddingBottom: Spacing.xxxl, paddingHorizontal: Spacing.lg, alignItems: 'center' },
   headerTitle: { fontSize: FontSizes.xxxl, fontWeight: '700', color: '#FFFFFF', marginTop: Spacing.md },
   headerSubtitle: { fontSize: FontSizes.md, color: 'rgba(255,255,255,0.85)', marginTop: Spacing.xs, textAlign: 'center' },
 
