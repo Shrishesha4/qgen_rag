@@ -781,36 +781,66 @@ async def reject_and_regenerate_question(
             "regenerated": False,
         }
 
-    # 6. Generate a replacement question
-    try:
-        gen_service = QuestionGenerationService(db)
-        selected_chunks = random.sample(chunks, min(3, len(chunks)))
+    # 6. Preload existing embeddings for subject-level dedupe
+    existing_embeddings = []
+    if question.subject_id:
+        try:
+            emb_res = await db.execute(
+                select(Question.question_embedding).where(
+                    Question.subject_id == question.subject_id,
+                    Question.is_archived == False,
+                    Question.question_embedding.isnot(None),
+                ).limit(2000)
+            )
+            existing_embeddings = [r[0] for r in emb_res.all()]
+            logger.info(f"reject_and_regenerate: Preloaded {len(existing_embeddings)} existing embeddings for dedupe")
+        except Exception as e:
+            logger.warning(f"reject_and_regenerate: Could not preload existing embeddings: {e}")
 
-        question_data = await gen_service._generate_single_question(
-            chunks=selected_chunks,
-            question_type=question.question_type,
-            difficulty=question.difficulty_level or "medium",
-            marks=question.marks,
-            bloom_levels=[question.bloom_taxonomy_level] if question.bloom_taxonomy_level else None,
-        )
-    except Exception as e:
-        logger.error(f"reject_and_regenerate: generation failed: {e}")
-        question.is_latest = True
-        question.vetting_status = "rejected"
-        await db.commit()
-        return {
-            "message": "Question rejected (regeneration failed)",
-            "question_id": str(question_id),
-            "status": "rejected",
-            "regenerated": False,
-        }
+    # 7. Generate a replacement question (with dedupe retry loop)
+    import numpy as np
+    gen_service = QuestionGenerationService(db)
+    embedding_service = EmbeddingService()
+    question_data = None
+    selected_chunks = chunks[:3]  # fallback; overwritten on each attempt
+    REGEN_MAX_ATTEMPTS = 3
+    for attempt in range(REGEN_MAX_ATTEMPTS):
+        try:
+            selected_chunks = random.sample(chunks, min(3, len(chunks)))
+            candidate_data = await gen_service._generate_single_question(
+                chunks=selected_chunks,
+                question_type=question.question_type,
+                difficulty=question.difficulty_level or "medium",
+                marks=question.marks,
+                bloom_levels=[question.bloom_taxonomy_level] if question.bloom_taxonomy_level else None,
+            )
+            if not candidate_data:
+                continue
+
+            # Embedding-based dedupe check
+            if existing_embeddings:
+                candidate_emb = await embedding_service.get_embedding(candidate_data["question_text"])
+                q_vec = np.array(candidate_emb)
+                matrix = np.array(existing_embeddings)
+                q_norm = q_vec / (np.linalg.norm(q_vec) or 1.0)
+                norms = np.linalg.norm(matrix, axis=1, keepdims=True)
+                norms[norms == 0] = 1.0
+                max_sim = float(np.max(np.dot(matrix / norms, q_norm)))
+                if max_sim > 0.85:
+                    logger.warning(f"reject_and_regenerate: attempt {attempt + 1} rejected as duplicate (sim={max_sim:.4f})")
+                    continue
+
+            question_data = candidate_data
+            break
+        except Exception as e:
+            logger.error(f"reject_and_regenerate: generation attempt {attempt + 1} failed: {e}")
 
     if not question_data:
         question.is_latest = True
         question.vetting_status = "rejected"
         await db.commit()
         return {
-            "message": "Question rejected (could not generate replacement)",
+            "message": "Question rejected (could not generate non-duplicate replacement)",
             "question_id": str(question_id),
             "status": "rejected",
             "regenerated": False,
