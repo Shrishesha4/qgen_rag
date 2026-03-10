@@ -181,16 +181,20 @@ export const subjectsService = {
     topicId: string,
     uri: string,
     filename: string,
-    mimeType: string
+    mimeType: string,
+    webFile?: File
   ): Promise<Topic> {
     const formData = new FormData();
-    
-    // For React Native, we need to create a proper file object
-    formData.append('file', {
-      uri,
-      name: filename,
-      type: mimeType,
-    } as unknown as Blob);
+
+    if (typeof File !== 'undefined' && webFile instanceof File) {
+      formData.append('file', webFile);
+    } else {
+      formData.append('file', {
+        uri,
+        name: filename,
+        type: mimeType,
+      } as unknown as Blob);
+    }
 
     const response = await apiClient.post<Topic>(
       `/subjects/${subjectId}/topics/${topicId}/upload-syllabus`,

@@ -99,6 +99,7 @@ export interface QuickGenerateRequest {
     uri: string;
     name: string;
     type: string;
+    webFile?: File;
   };
   context: string;
   count?: number;
@@ -409,16 +410,20 @@ export const questionsService = {
    * Import questions from Excel/CSV file
    */
   async importQuestions(
-    file: { uri: string; name: string; type: string },
+    file: { uri: string; name: string; type: string; webFile?: File },
     subjectId: string,
     topicId?: string,
   ): Promise<{ message: string; imported: number; skipped: number; session_id: string }> {
     const formData = new FormData();
-    formData.append('file', {
-      uri: file.uri,
-      name: file.name,
-      type: file.type,
-    } as unknown as Blob);
+    if (typeof File !== 'undefined' && file.webFile instanceof File) {
+      formData.append('file', file.webFile);
+    } else {
+      formData.append('file', {
+        uri: file.uri,
+        name: file.name,
+        type: file.type,
+      } as unknown as Blob);
+    }
     formData.append('subject_id', subjectId);
     if (topicId) formData.append('topic_id', topicId);
 
@@ -486,11 +491,15 @@ export const questionsService = {
         });
 
         const formData = new FormData();
-        formData.append('file', {
-          uri: request.file.uri,
-          name: request.file.name,
-          type: request.file.type,
-        } as any);
+        if (typeof File !== 'undefined' && request.file.webFile instanceof File) {
+          formData.append('file', request.file.webFile);
+        } else {
+          formData.append('file', {
+            uri: request.file.uri,
+            name: request.file.name,
+            type: request.file.type,
+          } as any);
+        }
         formData.append('context', request.context);
         if (request.count) formData.append('count', request.count.toString());
         if (request.types) formData.append('types', request.types.join(','));

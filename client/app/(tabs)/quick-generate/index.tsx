@@ -43,7 +43,7 @@ export default function QuickGenerateScreen() {
   const [inputMode, setInputMode] = useState<InputMode>('pdf');
 
   // Form state
-  const [selectedFile, setSelectedFile] = useState<{ uri: string; name: string; type: string } | null>(null);
+  const [selectedFile, setSelectedFile] = useState<{ uri: string; name: string; type: string; webFile?: File } | null>(null);
   const [context, setContext] = useState('');
   const [count, setCount] = useState(10);
   const [customCount, setCustomCount] = useState('');
@@ -146,6 +146,9 @@ export default function QuickGenerateScreen() {
           uri: result.assets[0].uri,
           name: result.assets[0].name,
           type: result.assets[0].mimeType || 'application/pdf',
+          webFile: typeof File !== 'undefined' && (result.assets[0] as any).file instanceof File
+            ? (result.assets[0] as any).file
+            : undefined,
         });
       }
     } catch (error) {

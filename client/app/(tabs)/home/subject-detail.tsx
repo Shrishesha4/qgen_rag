@@ -493,7 +493,8 @@ export default function SubjectDetailScreen() {
         selectedTopic.id,
         file.uri,
         file.name,
-        file.mimeType || 'application/pdf'
+        file.mimeType || 'application/pdf',
+        typeof File !== 'undefined' && (file as any).file instanceof File ? (file as any).file : undefined
       );
 
       setUploadStatus('Complete!');
@@ -636,7 +637,7 @@ export default function SubjectDetailScreen() {
       const file = result.assets[0];
 
       const response = await questionsService.importQuestions(
-        { uri: file.uri, name: file.name, type: file.mimeType || 'application/octet-stream' },
+        { uri: file.uri, name: file.name, type: file.mimeType || 'application/octet-stream', webFile: typeof File !== 'undefined' && (file as any).file instanceof File ? (file as any).file : undefined },
         id,
         topicId,
       );
