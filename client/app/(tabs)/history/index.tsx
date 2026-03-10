@@ -364,14 +364,14 @@ export default function HistoryScreen() {
                                             {/* Row 4: Focus topics / source file */}
                                             {session.focus_topics && session.focus_topics.length > 0 && (
                                                 <View style={styles.focusRow}>
-                                                    <Text style={{ fontSize: 10, color: colors.textTertiary }}>Focus: </Text>
-                                                    {session.focus_topics.slice(0, 3).map((t, i) => (
-                                                        <View key={i} style={[styles.focusChip, { backgroundColor: colors.card }]}>
-                                                            <Text style={{ fontSize: 10, color: colors.textSecondary }}>{t}</Text>
+                                                    <Text style={{ fontSize: 10, color: colors.textTertiary, flexShrink: 0 }}>Focus: </Text>
+                                                    {session.focus_topics.slice(0, 2).map((t, i) => (
+                                                        <View key={i} style={[styles.focusChip, { backgroundColor: colors.card, maxWidth: 180 }]}>
+                                                            <Text style={{ fontSize: 10, color: colors.textSecondary }} numberOfLines={1}>{t}</Text>
                                                         </View>
                                                     ))}
-                                                    {session.focus_topics.length > 3 && (
-                                                        <Text style={{ fontSize: 10, color: colors.textTertiary }}>+{session.focus_topics.length - 3}</Text>
+                                                    {session.focus_topics.length > 2 && (
+                                                        <Text style={{ fontSize: 10, color: colors.textTertiary, flexShrink: 0 }}>+{session.focus_topics.length - 2}</Text>
                                                     )}
                                                 </View>
                                             )}
@@ -898,8 +898,8 @@ const styles = StyleSheet.create({
     subjectRow: { marginBottom: 6, gap: 3 },
     subjectChip: { flexDirection: 'row', alignItems: 'center', gap: 5 },
     subjectText: { fontSize: FontSizes.sm, fontWeight: '600', flex: 1 },
-    topicChip: { flexDirection: 'row', alignItems: 'center', gap: 4, marginLeft: 17 },
-    topicText: { fontSize: 12 },
+    topicChip: { flexDirection: 'row', alignItems: 'center', gap: 4, marginLeft: 17, flex: 1 },
+    topicText: { fontSize: 12, flex: 1 },
 
     statsRow: { flexDirection: 'row', alignItems: 'center', gap: Spacing.md },
     stat: { alignItems: 'center' },

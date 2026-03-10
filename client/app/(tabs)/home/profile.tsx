@@ -12,6 +12,7 @@ import {
   StatusBar,
   ActivityIndicator,
   Image,
+  Alert,
 } from 'react-native';
 import { useNavigation } from '@react-navigation/native';
 import * as ImagePicker from 'expo-image-picker';
@@ -102,11 +103,11 @@ export default function ProfileScreen() {
       setApprovedQuestions(vettingStats.total_approved);
       setTotalSubjects(subjects.length);
 
-      console.log('[Profile] Statistics loaded:', {
-        totalQuestions: vettingStats.total_generated,
-        approvedQuestions: vettingStats.total_approved,
-        totalSubjects: subjects.length,
-      });
+      // console.log('[Profile] Statistics loaded:', {
+      //   totalQuestions: vettingStats.total_generated,
+      //   approvedQuestions: vettingStats.total_approved,
+      //   totalSubjects: subjects.length,
+      // });
     } catch (error) {
       console.error('[Profile] Failed to load statistics:', error);
       // Set default values on error

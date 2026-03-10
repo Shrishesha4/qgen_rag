@@ -2,10 +2,26 @@
  * Export Service - Handles exporting questions in various formats
  */
 
+import { Platform } from 'react-native';
 import { Paths, File } from 'expo-file-system';
 import * as Sharing from 'expo-sharing';
 import * as XLSX from 'xlsx';
 import { Question } from './questions';
+
+/** Trigger a download in the browser via a temporary anchor element. */
+const webDownload = (data: Uint8Array | string, filename: string, mimeType: string) => {
+  const blob = typeof data === 'string'
+    ? new Blob([data], { type: mimeType })
+    : new Blob([data], { type: mimeType });
+  const url = URL.createObjectURL(blob);
+  const a = document.createElement('a');
+  a.href = url;
+  a.download = filename;
+  document.body.appendChild(a);
+  a.click();
+  document.body.removeChild(a);
+  URL.revokeObjectURL(url);
+};
 
 export type ExportFormat = 'xlsx' | 'csv' | 'docx';
 
@@ -243,19 +259,48 @@ export const exportQuestions = async (
     let fileExtension: string;
     let mimeType: string;
 
+    if (Platform.OS === 'web') {
+      // ── Web: use Blob + anchor download (expo-file-system doesn't work on web) ──
+      switch (options.format) {
+        case 'xlsx': {
+          const workbook = generateExcelWorkbook(filteredQuestions, options);
+          const wbout = XLSX.write(workbook, { type: 'array', bookType: 'xlsx' });
+          webDownload(
+            new Uint8Array(wbout),
+            `${filename}.xlsx`,
+            'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
+          );
+          return { success: true };
+        }
+        case 'csv': {
+          webDownload(generateCSV(filteredQuestions), `${filename}.csv`, 'text/csv');
+          return { success: true };
+        }
+        case 'docx': {
+          webDownload(
+            generateDocContent(filteredQuestions, options, filename),
+            `${filename}.html`,
+            'text/html',
+          );
+          return { success: true };
+        }
+        default:
+          return { success: false, error: 'Unsupported format' };
+      }
+    }
+
+    // ── Native (iOS / Android): use expo-file-system + Sharing ──
     switch (options.format) {
       case 'xlsx': {
         const workbook = generateExcelWorkbook(filteredQuestions, options);
         const wbout = XLSX.write(workbook, { type: 'base64', bookType: 'xlsx' });
         const file = new File(Paths.cache, `${filename}.xlsx`);
-        // Write base64 content as binary
         const binaryString = atob(wbout);
         const bytes = new Uint8Array(binaryString.length);
         for (let i = 0; i < binaryString.length; i++) {
           bytes[i] = binaryString.charCodeAt(i);
         }
         await file.write(bytes);
-        
         if (await Sharing.isAvailableAsync()) {
           await Sharing.shareAsync(file.uri, {
             mimeType: 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
@@ -265,35 +310,27 @@ export const exportQuestions = async (
         }
         return { success: true, filePath: file.uri };
       }
-      
       case 'csv': {
         fileContent = generateCSV(filteredQuestions);
         fileExtension = 'csv';
         mimeType = 'text/csv';
         break;
       }
-      
       case 'docx': {
         fileContent = generateDocContent(filteredQuestions, options, filename);
-        fileExtension = 'html'; // Using HTML that Word can open
+        fileExtension = 'html';
         mimeType = 'text/html';
         break;
       }
-      
       default:
         return { success: false, error: 'Unsupported format' };
     }
 
     const file = new File(Paths.cache, `${filename}.${fileExtension}`);
     await file.write(fileContent);
-
     if (await Sharing.isAvailableAsync()) {
-      await Sharing.shareAsync(file.uri, {
-        mimeType,
-        dialogTitle: 'Export Questions',
-      });
+      await Sharing.shareAsync(file.uri, { mimeType, dialogTitle: 'Export Questions' });
     }
-
     return { success: true, filePath: file.uri };
   } catch (error) {
     console.error('[Export] Error:', error);
@@ -329,102 +366,89 @@ export const exportReport = async (
   filename: string = 'report'
 ): Promise<ExportResult> => {
   try {
+    if (Platform.OS === 'web') {
+      if (format === 'xlsx') {
+        const workbook = XLSX.utils.book_new();
+        const summaryData = [
+          ['Report Title', reportData.title],
+          ['Generated At', reportData.generatedAt],
+          [''], ['Summary'],
+          ['Total Questions', reportData.summary.totalQuestions],
+          ['Approved', reportData.summary.approvedQuestions],
+          ['Pending', reportData.summary.pendingQuestions],
+          ['Rejected', reportData.summary.rejectedQuestions],
+        ];
+        XLSX.utils.book_append_sheet(workbook, XLSX.utils.aoa_to_sheet(summaryData), 'Summary');
+        XLSX.utils.book_append_sheet(workbook, XLSX.utils.aoa_to_sheet([['Question Type', 'Count'], ...Object.entries(reportData.byType)]), 'By Type');
+        XLSX.utils.book_append_sheet(workbook, XLSX.utils.aoa_to_sheet([['Difficulty', 'Count'], ...Object.entries(reportData.byDifficulty)]), 'By Difficulty');
+        XLSX.utils.book_append_sheet(workbook, XLSX.utils.aoa_to_sheet([['Bloom Level', 'Count'], ...Object.entries(reportData.byBloomLevel)]), 'By Bloom Level');
+        if (reportData.byChapter && Object.keys(reportData.byChapter).length > 0)
+          XLSX.utils.book_append_sheet(workbook, XLSX.utils.aoa_to_sheet([['Chapter', 'Count'], ...Object.entries(reportData.byChapter)]), 'By Chapter');
+        if (reportData.bySubject && Object.keys(reportData.bySubject).length > 0)
+          XLSX.utils.book_append_sheet(workbook, XLSX.utils.aoa_to_sheet([['Subject', 'Count'], ...Object.entries(reportData.bySubject)]), 'By Subject');
+        const wbout = XLSX.write(workbook, { type: 'array', bookType: 'xlsx' });
+        webDownload(new Uint8Array(wbout), `${filename}.xlsx`, 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet');
+        return { success: true };
+      }
+      if (format === 'csv') {
+        const lines = [
+          `Report: ${reportData.title}`, `Generated: ${reportData.generatedAt}`, '',
+          'Summary',
+          `Total Questions,${reportData.summary.totalQuestions}`,
+          `Approved,${reportData.summary.approvedQuestions}`,
+          `Pending,${reportData.summary.pendingQuestions}`,
+          `Rejected,${reportData.summary.rejectedQuestions}`,
+          '', 'By Type', ...Object.entries(reportData.byType).map(([k, v]) => `${k},${v}`),
+          '', 'By Difficulty', ...Object.entries(reportData.byDifficulty).map(([k, v]) => `${k},${v}`),
+          '', 'By Bloom Level', ...Object.entries(reportData.byBloomLevel).map(([k, v]) => `${k},${v}`),
+        ];
+        webDownload(lines.join('\n'), `${filename}.csv`, 'text/csv');
+        return { success: true };
+      }
+      return { success: false, error: 'Unsupported format for reports' };
+    }
+
+    // ── Native ──
     if (format === 'xlsx') {
       const workbook = XLSX.utils.book_new();
-
-      // Summary sheet
       const summaryData = [
-        ['Report Title', reportData.title],
-        ['Generated At', reportData.generatedAt],
-        [''],
-        ['Summary'],
+        ['Report Title', reportData.title], ['Generated At', reportData.generatedAt],
+        [''], ['Summary'],
         ['Total Questions', reportData.summary.totalQuestions],
         ['Approved', reportData.summary.approvedQuestions],
         ['Pending', reportData.summary.pendingQuestions],
         ['Rejected', reportData.summary.rejectedQuestions],
       ];
-      const summarySheet = XLSX.utils.aoa_to_sheet(summaryData);
-      XLSX.utils.book_append_sheet(workbook, summarySheet, 'Summary');
-
-      // By Type sheet
-      const typeData = [['Question Type', 'Count'], ...Object.entries(reportData.byType)];
-      const typeSheet = XLSX.utils.aoa_to_sheet(typeData);
-      XLSX.utils.book_append_sheet(workbook, typeSheet, 'By Type');
-
-      // By Difficulty sheet  
-      const diffData = [['Difficulty', 'Count'], ...Object.entries(reportData.byDifficulty)];
-      const diffSheet = XLSX.utils.aoa_to_sheet(diffData);
-      XLSX.utils.book_append_sheet(workbook, diffSheet, 'By Difficulty');
-
-      // By Bloom Level sheet
-      const bloomData = [['Bloom Level', 'Count'], ...Object.entries(reportData.byBloomLevel)];
-      const bloomSheet = XLSX.utils.aoa_to_sheet(bloomData);
-      XLSX.utils.book_append_sheet(workbook, bloomSheet, 'By Bloom Level');
-
-      // By Chapter sheet (if available)
-      if (reportData.byChapter && Object.keys(reportData.byChapter).length > 0) {
-        const chapterData = [['Chapter', 'Count'], ...Object.entries(reportData.byChapter)];
-        const chapterSheet = XLSX.utils.aoa_to_sheet(chapterData);
-        XLSX.utils.book_append_sheet(workbook, chapterSheet, 'By Chapter');
-      }
-
-      // By Subject sheet (if available)
-      if (reportData.bySubject && Object.keys(reportData.bySubject).length > 0) {
-        const subjectData = [['Subject', 'Count'], ...Object.entries(reportData.bySubject)];
-        const subjectSheet = XLSX.utils.aoa_to_sheet(subjectData);
-        XLSX.utils.book_append_sheet(workbook, subjectSheet, 'By Subject');
-      }
-
+      XLSX.utils.book_append_sheet(workbook, XLSX.utils.aoa_to_sheet(summaryData), 'Summary');
+      XLSX.utils.book_append_sheet(workbook, XLSX.utils.aoa_to_sheet([['Question Type', 'Count'], ...Object.entries(reportData.byType)]), 'By Type');
+      XLSX.utils.book_append_sheet(workbook, XLSX.utils.aoa_to_sheet([['Difficulty', 'Count'], ...Object.entries(reportData.byDifficulty)]), 'By Difficulty');
+      XLSX.utils.book_append_sheet(workbook, XLSX.utils.aoa_to_sheet([['Bloom Level', 'Count'], ...Object.entries(reportData.byBloomLevel)]), 'By Bloom Level');
       const wbout = XLSX.write(workbook, { type: 'base64', bookType: 'xlsx' });
       const file = new File(Paths.cache, `${filename}.xlsx`);
-      // Write base64 content as binary
       const binaryString = atob(wbout);
       const bytes = new Uint8Array(binaryString.length);
-      for (let i = 0; i < binaryString.length; i++) {
-        bytes[i] = binaryString.charCodeAt(i);
-      }
+      for (let i = 0; i < binaryString.length; i++) bytes[i] = binaryString.charCodeAt(i);
       await file.write(bytes);
-
       if (await Sharing.isAvailableAsync()) {
-        await Sharing.shareAsync(file.uri, {
-          mimeType: 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
-          dialogTitle: 'Export Report',
-        });
+        await Sharing.shareAsync(file.uri, { mimeType: 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet', dialogTitle: 'Export Report' });
       }
       return { success: true, filePath: file.uri };
     }
-
     if (format === 'csv') {
       const lines = [
-        `Report: ${reportData.title}`,
-        `Generated: ${reportData.generatedAt}`,
-        '',
+        `Report: ${reportData.title}`, `Generated: ${reportData.generatedAt}`, '',
         'Summary',
         `Total Questions,${reportData.summary.totalQuestions}`,
         `Approved,${reportData.summary.approvedQuestions}`,
         `Pending,${reportData.summary.pendingQuestions}`,
         `Rejected,${reportData.summary.rejectedQuestions}`,
-        '',
-        'By Type',
-        ...Object.entries(reportData.byType).map(([k, v]) => `${k},${v}`),
-        '',
-        'By Difficulty',
-        ...Object.entries(reportData.byDifficulty).map(([k, v]) => `${k},${v}`),
-        '',
-        'By Bloom Level',
-        ...Object.entries(reportData.byBloomLevel).map(([k, v]) => `${k},${v}`),
+        '', 'By Type', ...Object.entries(reportData.byType).map(([k, v]) => `${k},${v}`),
       ];
-
-      const content = lines.join('\n');
       const file = new File(Paths.cache, `${filename}.csv`);
-      await file.write(content);
-
-      if (await Sharing.isAvailableAsync()) {
-        await Sharing.shareAsync(file.uri, { mimeType: 'text/csv' });
-      }
+      await file.write(lines.join('\n'));
+      if (await Sharing.isAvailableAsync()) await Sharing.shareAsync(file.uri, { mimeType: 'text/csv' });
       return { success: true, filePath: file.uri };
     }
-
     return { success: false, error: 'Unsupported format for reports' };
   } catch (error) {
     console.error('[ExportReport] Error:', error);
