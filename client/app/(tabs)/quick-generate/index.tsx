@@ -983,7 +983,7 @@ const styles = StyleSheet.create({
   generateButtonText: { color: '#FFFFFF', fontSize: FontSizes.lg, fontWeight: '600', paddingBottom: 40 },
 
   // Floating generate button
-  floatingGenerateButton: { position: 'absolute', bottom: Spacing.lg, left: Spacing.lg, right: Spacing.lg, marginBottom: 80, borderRadius: BorderRadius.xxl, overflow: 'hidden', zIndex: 100, ...Shadows.large, maxWidth: 300, alignSelf: 'center', marginLeft: 100, maxHeight: 50 },
+  floatingGenerateButton: { position: 'absolute', bottom: Spacing.lg, left: Spacing.lg, right: Spacing.lg, marginBottom: 80, borderRadius: BorderRadius.xxl, overflow: 'hidden', zIndex: 100, ...Shadows.large  , alignSelf: 'center', maxHeight: 50 },
   floatingGenerateButtonDisabled: {},
 
   // Custom count modal
