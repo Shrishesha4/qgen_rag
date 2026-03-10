@@ -193,8 +193,11 @@ export function SwipeVetting({
 
   const panResponder = useRef(
     PanResponder.create({
-      onStartShouldSetPanResponder: () => viewModeRef.current === 'question',
-      onMoveShouldSetPanResponder: () => viewModeRef.current === 'question',
+      onStartShouldSetPanResponder: () => false,
+      onMoveShouldSetPanResponder: (_, { dx, dy }) => {
+        // Only claim gesture when horizontal OR strongly non-vertical — let ScrollView handle pure vertical scrolls
+        return viewModeRef.current === 'question' && Math.abs(dx) > Math.abs(dy) && Math.abs(dx) > 8;
+      },
       onPanResponderGrant: () => {
         swipeHapticFiredRef.current = { left: false, right: false, up: false, down: false };
         lightImpact();
@@ -592,6 +595,7 @@ export function SwipeVetting({
                 contentContainerStyle={styles.questionScrollContent}
                 showsVerticalScrollIndicator={false}
                 scrollEnabled={true}
+                nestedScrollEnabled={true}
               >
                 <GlassCard style={[styles.questionCard, { backgroundColor: colors.card }]}>
                   {/* Question Header */}
@@ -1091,9 +1095,9 @@ export function SwipeVetting({
           </ScrollView>
           )}
 
-          {/* Quick Action Buttons */}
+          {/* Quick Action Buttons - in normal flow below the card */}
           {viewMode === 'question' && (
-            <View style={[styles.actionButtonsRow, { bottom: Math.max(insets.bottom + 10, 24) }]}>
+            <View style={[styles.actionButtonsRow, { paddingBottom: Math.max(insets.bottom, 12) }]}>
               <TouchableOpacity
                 style={[styles.actionButton, { backgroundColor: colors.error + '20' }]}
                 onPress={() => setViewMode('reject')}
@@ -1222,13 +1226,14 @@ const styles = StyleSheet.create({
   questionCardContainer: {
     flex: 1,
     marginHorizontal: Spacing.md,
-    marginBottom: Spacing.md,
+    marginBottom: 0,
   },
   questionScrollView: {
     flex: 1,
   },
   questionScrollContent: {
     flexGrow: 1,
+    paddingBottom: Spacing.md,
   },
   panelScrollView: {
     flex: 1,
@@ -1715,14 +1720,12 @@ const styles = StyleSheet.create({
   },
   // Action Buttons
   actionButtonsRow: {
-    position: 'absolute',
-    bottom: 30,
-    left: 0,
-    right: 0,
     flexDirection: 'row',
     justifyContent: 'center',
     gap: Spacing.lg,
     paddingHorizontal: Spacing.lg,
+    paddingTop: Spacing.md,
+    paddingBottom: Spacing.md,
   },
   actionButton: {
     width: 52,
