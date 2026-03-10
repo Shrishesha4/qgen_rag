@@ -591,8 +591,30 @@ export const questionsService = {
           };
 
           xhr.onerror = () => {
-            console.error('[QuickGenerate] Network error');
-            reject(new Error('Network error'));
+            // ERR_INCOMPLETE_CHUNKED_ENCODING / ERR_QUIC_PROTOCOL_ERROR can fire onerror
+            // even when the server returned 200. Scan responseText before failing.
+            console.warn('[QuickGenerate] Network error (may be QUIC/chunked encoding issue after 200)');
+            try {
+              const fullText = (xhr?.responseText || '');
+              if (fullText && lastDocumentId === null) {
+                const allEvents = fullText.split('\n\n');
+                for (const event of allEvents) {
+                  const dataLine = event.split('\n').find(l => l.startsWith('data: '));
+                  if (dataLine) {
+                    try {
+                      const progress = JSON.parse(dataLine.slice(6).trim()) as QuickGenerateProgress;
+                      if (progress.document_id) lastDocumentId = progress.document_id;
+                    } catch { /* ignore */ }
+                  }
+                }
+              }
+            } catch { /* ignore */ }
+            if (lastDocumentId !== null) {
+              onComplete(lastDocumentId);
+              resolve();
+            } else {
+              reject(new Error('Network error'));
+            }
           };
 
           xhr.ontimeout = () => {
@@ -720,8 +742,33 @@ export const questionsService = {
           };
 
           xhr.onerror = () => {
-            console.error('[QuickGenerateFromSubject] Network error');
-            reject(new Error('Network error'));
+            // ERR_INCOMPLETE_CHUNKED_ENCODING / ERR_QUIC_PROTOCOL_ERROR can fire onerror
+            // even when the server returned 200 and streamed all events. With QUIC the
+            // response body may not have been delivered to onprogress at all, so also
+            // scan whatever responseText is available before deciding on failure.
+            console.warn('[QuickGenerateFromSubject] Network error (may be QUIC/chunked encoding issue after 200)');
+            try {
+              const fullText = (xhr?.responseText || '');
+              if (fullText && lastDocumentId === null) {
+                const allEvents = fullText.split('\n\n');
+                for (const event of allEvents) {
+                  const dataLine = event.split('\n').find(l => l.startsWith('data: '));
+                  if (dataLine) {
+                    try {
+                      const progress = JSON.parse(dataLine.slice(6).trim()) as QuickGenerateProgress;
+                      if (progress.document_id) lastDocumentId = progress.document_id;
+                    } catch { /* ignore parse errors */ }
+                  }
+                }
+              }
+            } catch { /* ignore responseText access errors */ }
+            if (lastDocumentId !== null) {
+              // We received a document_id so generation completed — treat as success
+              onComplete(lastDocumentId);
+              resolve();
+            } else {
+              reject(new Error('Network error'));
+            }
           };
 
           xhr.ontimeout = () => {

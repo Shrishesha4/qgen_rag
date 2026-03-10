@@ -4,7 +4,8 @@ Question generation API endpoints.
 
 import json
 import os
-from typing import Optional, List
+import asyncio
+from typing import Optional, List, AsyncGenerator
 import uuid
 from datetime import datetime, timezone
 import re
@@ -43,6 +44,34 @@ MIME_TYPE_MAPPING = {
 
 
 router = APIRouter()
+
+
+async def sse_with_heartbeat(
+    generator: AsyncGenerator[str, None],
+    interval: float = 15.0,
+) -> AsyncGenerator[str, None]:
+    """
+    Wraps an SSE generator and injects an SSE comment (': heartbeat\\n\\n') every
+    `interval` seconds while waiting for the next real event.
+
+    This keeps the TCP connection alive through Cloudflare Tunnels (and other
+    proxies) that would otherwise buffer or drop the stream due to inactivity.
+    SSE comments are ignored by EventSource clients but flush Cloudflare's buffer.
+    """
+    gen = generator.__aiter__()
+    next_item: asyncio.Future = asyncio.ensure_future(gen.__anext__())
+
+    while True:
+        done, _ = await asyncio.wait({next_item}, timeout=interval)
+        if next_item in done:
+            try:
+                yield next_item.result()
+                next_item = asyncio.ensure_future(gen.__anext__())
+            except StopAsyncIteration:
+                break
+        else:
+            # Timeout — send a keepalive comment to flush Cloudflare's buffer
+            yield ": heartbeat\n\n"
 
 
 # ── Question Starter Diversity Pool ──────────────────────────────────────────
@@ -278,7 +307,7 @@ async def generate_questions(
             yield f"data: {progress.model_dump_json()}\n\n"
     
     return StreamingResponse(
-        event_generator(),
+        sse_with_heartbeat(event_generator()),
         media_type="text/event-stream",
         headers={
             "Cache-Control": "no-cache",
@@ -488,7 +517,7 @@ async def quick_generate_questions(
             yield f"data: {QuickGenerateProgress(status='error', progress=0, message=f'An error occurred: {str(e)}').model_dump_json()}\n\n"
     
     return StreamingResponse(
-        event_generator(),
+        sse_with_heartbeat(event_generator()),
         media_type="text/event-stream",
         headers={
             "Cache-Control": "no-cache",
@@ -617,7 +646,7 @@ async def quick_generate_from_subject(
             yield f"data: {QuickGenerateProgress(status='error', progress=0, message=f'An error occurred: {str(e)}').model_dump_json()}\n\n"
 
     return StreamingResponse(
-        event_generator(),
+        sse_with_heartbeat(event_generator()),
         media_type="text/event-stream",
         headers={
             "Cache-Control": "no-cache",
@@ -3604,7 +3633,7 @@ Output valid JSON only."""
             except Exception:
                 pass
     return StreamingResponse(
-        event_generator(),
+        sse_with_heartbeat(event_generator()),
         media_type="text/event-stream",
         headers={
             "Cache-Control": "no-cache",
@@ -4216,7 +4245,7 @@ Output valid JSON only."""
             except Exception:
                 pass
     return StreamingResponse(
-        event_generator(),
+        sse_with_heartbeat(event_generator()),
         media_type="text/event-stream",
         headers={
             "Cache-Control": "no-cache",

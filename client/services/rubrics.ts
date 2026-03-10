@@ -133,7 +133,7 @@ export const rubricsService = {
           if (cancelled) return;
           const text = xhr.responseText.substring(lastIndex);
           lastIndex = xhr.responseText.length;
-          console.log('[RubricsService] XHR onprogress, new text length:', text.length);
+          // console.log('[RubricsService] XHR onprogress, new text length:', text.length);
 
           const parts = text.split('\n\n');
           for (const part of parts) {
@@ -141,7 +141,7 @@ export const rubricsService = {
             if (trimmed.startsWith('data: ')) {
               try {
                 const parsed = JSON.parse(trimmed.slice(6)) as GenerationProgress;
-                console.log('[RubricsService] Parsed SSE event:', parsed.status);
+                // console.log('[RubricsService] Parsed SSE event:', parsed.status);
                 onProgress(parsed);
               } catch (e) {
                 console.warn('[RubricsService] Failed to parse SSE:', e);
@@ -151,7 +151,7 @@ export const rubricsService = {
         };
 
         xhr.onload = () => {
-          console.log('[RubricsService] XHR onload, status:', xhr.status);
+          // console.log('[RubricsService] XHR onload, status:', xhr.status);
           if (cancelled) return;
           const text = xhr.responseText.substring(lastIndex);
           if (text) {
@@ -165,7 +165,7 @@ export const rubricsService = {
               }
             }
           }
-          console.log('[RubricsService] Generation complete');
+          // console.log('[RubricsService] Generation complete');
           onComplete();
         };
 
@@ -179,7 +179,7 @@ export const rubricsService = {
           xhr.abort();
         };
 
-        console.log('[RubricsService] Sending XHR request...');
+        // console.log('[RubricsService] Sending XHR request...');
         xhr.send(JSON.stringify(body));
       } catch (error) {
         if (!cancelled) onError(error as Error);
@@ -206,8 +206,8 @@ export const rubricsService = {
     let cancelled = false;
     let cancelFn = () => { cancelled = true; };
 
-    console.log('[RubricsService] generateChapter called, topicId:', topicId);
-    console.log('[RubricsService] questionTypes:', JSON.stringify(questionTypes));
+    // console.log('[RubricsService] generateChapter called, topicId:', topicId);
+    // console.log('[RubricsService] questionTypes:', JSON.stringify(questionTypes));
 
     (async () => {
       try {
@@ -215,8 +215,8 @@ export const rubricsService = {
         const token = await tokenStorage.getAccessToken();
         const baseURL = apiClient.defaults.baseURL || '';
 
-        console.log('[RubricsService] Making chapter SSE request to:', `${baseURL}/questions/generate-chapter`);
-        console.log('[RubricsService] Has token:', !!token);
+        // console.log('[RubricsService] Making chapter SSE request to:', `${baseURL}/questions/generate-chapter`);
+        // console.log('[RubricsService] Has token:', !!token);
 
         const xhr = new XMLHttpRequest();
         xhr.open('POST', `${baseURL}/questions/generate-chapter`);

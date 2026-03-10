@@ -265,7 +265,7 @@ export default function GenerateScreen() {
         selectedRubric.id,
         (progress) => {
           try {
-            console.log('[Generate] Progress received:', progress.status, progress.message);
+            // console.log('[Generate] Progress received:', progress.status, progress.message);
             setGenerationProgress(progress);
             if (progress.questions_failed !== undefined) {
               setFailedCount(progress.questions_failed);
