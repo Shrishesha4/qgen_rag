@@ -243,44 +243,57 @@ async def get_teachers_with_questions(
 ):
     """
     Get list of teachers who have generated questions, with stats.
+    Users live in SQLite; questions/subjects live in PostgreSQL — joined in Python.
     """
-    # Get distinct teachers who have subjects with questions
-    query = """
-        SELECT 
-            u.id,
-            u.username,
-            u.full_name,
-            u.email,
-            COUNT(CASE WHEN q.vetting_status = 'pending' AND q.is_latest = true AND q.is_archived = false THEN 1 END) as pending_count,
+    # 1. Aggregate per-user stats purely from PostgreSQL (no users table)
+    from sqlalchemy import text, case as sa_case
+    stats_query = text("""
+        SELECT
+            s.user_id,
+            array_agg(DISTINCT s.name) FILTER (WHERE s.name IS NOT NULL) as subject_names,
+            COUNT(CASE WHEN q.vetting_status = 'pending'  AND q.is_latest = true AND q.is_archived = false THEN 1 END) as pending_count,
             COUNT(CASE WHEN q.vetting_status = 'approved' AND q.is_latest = true AND q.is_archived = false THEN 1 END) as approved_count,
             COUNT(CASE WHEN q.vetting_status = 'rejected' AND q.is_latest = true AND q.is_archived = false THEN 1 END) as rejected_count,
-            array_agg(DISTINCT s.name) FILTER (WHERE s.name IS NOT NULL) as subjects
-        FROM users u
-        JOIN subjects s ON s.user_id = u.id
+            COUNT(q.id) as total_questions
+        FROM subjects s
         LEFT JOIN questions q ON q.subject_id = s.id
-        WHERE u.role = 'teacher'
-        GROUP BY u.id, u.username, u.full_name, u.email
+        GROUP BY s.user_id
         HAVING COUNT(q.id) > 0
         ORDER BY COUNT(CASE WHEN q.vetting_status = 'pending' AND q.is_latest = true THEN 1 END) DESC
-    """
-    
-    from sqlalchemy import text
-    result = await db.execute(text(query))
-    rows = result.fetchall()
-    
+    """)
+    pg_result = await db.execute(stats_query)
+    pg_rows = pg_result.fetchall()
+
+    if not pg_rows:
+        return []
+
+    user_ids = [row[0] for row in pg_rows]
+
+    # 2. Fetch matching users from SQLite auth DB
+    async with AuthSessionLocal() as auth_session:
+        users_result = await auth_session.execute(
+            select(User).where(User.id.in_(user_ids), User.role == "teacher")
+        )
+        users_map = {u.id: u for u in users_result.scalars().all()}
+
+    # 3. Join in Python
     teachers = []
-    for row in rows:
+    for row in pg_rows:
+        user_id, subject_names, pending, approved, rejected, _ = row
+        user = users_map.get(user_id)
+        if not user:
+            continue
         teachers.append(TeacherSummary(
-            id=row[0],
-            username=row[1],
-            full_name=row[2],
-            email=row[3],
-            pending_count=row[4] or 0,
-            approved_count=row[5] or 0,
-            rejected_count=row[6] or 0,
-            subjects=row[7] or [],
+            id=user.id,
+            username=user.username,
+            full_name=user.full_name,
+            email=user.email,
+            pending_count=pending or 0,
+            approved_count=approved or 0,
+            rejected_count=rejected or 0,
+            subjects=subject_names or [],
         ))
-    
+
     return teachers
 
 
@@ -295,47 +308,69 @@ async def get_subjects_with_questions(
 ):
     """
     Get list of subjects with question stats, optionally filtered by teacher.
+    Users live in SQLite; subjects/questions live in PostgreSQL — joined in Python.
     """
     from sqlalchemy import text
-    
-    base_query = """
-        SELECT 
-            s.id,
-            s.name,
-            s.code,
-            s.user_id as teacher_id,
-            u.full_name as teacher_name,
-            COUNT(CASE WHEN q.vetting_status = 'pending' AND q.is_latest = true AND q.is_archived = false THEN 1 END) as pending_count,
-            COUNT(CASE WHEN q.vetting_status = 'approved' AND q.is_latest = true AND q.is_archived = false THEN 1 END) as approved_count,
-            COUNT(CASE WHEN q.vetting_status = 'rejected' AND q.is_latest = true AND q.is_archived = false THEN 1 END) as rejected_count
-        FROM subjects s
-        JOIN users u ON u.id = s.user_id
-        LEFT JOIN questions q ON q.subject_id = s.id
-    """
-    
+
+    # 1. Aggregate subject stats from PostgreSQL only
     if teacher_id:
-        base_query += f" WHERE s.user_id = '{teacher_id}'"
-    
-    base_query += """
-        GROUP BY s.id, s.name, s.code, s.user_id, u.full_name
-        HAVING COUNT(q.id) > 0
-        ORDER BY COUNT(CASE WHEN q.vetting_status = 'pending' AND q.is_latest = true THEN 1 END) DESC
-    """
-    
-    result = await db.execute(text(base_query))
-    rows = result.fetchall()
-    
+        stats_query = text("""
+            SELECT
+                s.id, s.name, s.code, s.user_id,
+                COUNT(CASE WHEN q.vetting_status = 'pending'  AND q.is_latest = true AND q.is_archived = false THEN 1 END) as pending_count,
+                COUNT(CASE WHEN q.vetting_status = 'approved' AND q.is_latest = true AND q.is_archived = false THEN 1 END) as approved_count,
+                COUNT(CASE WHEN q.vetting_status = 'rejected' AND q.is_latest = true AND q.is_archived = false THEN 1 END) as rejected_count,
+                COUNT(q.id) as total_questions
+            FROM subjects s
+            LEFT JOIN questions q ON q.subject_id = s.id
+            WHERE s.user_id = :teacher_id
+            GROUP BY s.id, s.name, s.code, s.user_id
+            HAVING COUNT(q.id) > 0
+            ORDER BY COUNT(CASE WHEN q.vetting_status = 'pending' AND q.is_latest = true THEN 1 END) DESC
+        """)
+        pg_result = await db.execute(stats_query, {"teacher_id": str(teacher_id)})
+    else:
+        stats_query = text("""
+            SELECT
+                s.id, s.name, s.code, s.user_id,
+                COUNT(CASE WHEN q.vetting_status = 'pending'  AND q.is_latest = true AND q.is_archived = false THEN 1 END) as pending_count,
+                COUNT(CASE WHEN q.vetting_status = 'approved' AND q.is_latest = true AND q.is_archived = false THEN 1 END) as approved_count,
+                COUNT(CASE WHEN q.vetting_status = 'rejected' AND q.is_latest = true AND q.is_archived = false THEN 1 END) as rejected_count,
+                COUNT(q.id) as total_questions
+            FROM subjects s
+            LEFT JOIN questions q ON q.subject_id = s.id
+            GROUP BY s.id, s.name, s.code, s.user_id
+            HAVING COUNT(q.id) > 0
+            ORDER BY COUNT(CASE WHEN q.vetting_status = 'pending' AND q.is_latest = true THEN 1 END) DESC
+        """)
+        pg_result = await db.execute(stats_query)
+
+    pg_rows = pg_result.fetchall()
+
+    if not pg_rows:
+        return []
+
+    # 2. Fetch teacher names from SQLite for the distinct user_ids
+    user_ids = list({row[3] for row in pg_rows})
+    async with AuthSessionLocal() as auth_session:
+        users_result = await auth_session.execute(
+            select(User).where(User.id.in_(user_ids))
+        )
+        users_map = {u.id: u for u in users_result.scalars().all()}
+
+    # 3. Build response, fetching topic stats per subject
     subjects = []
-    for row in rows:
-        subject_id = row[0]
-        
+    for row in pg_rows:
+        subject_id, name, code, user_id, pending_count, approved_count, rejected_count, _ = row
+        teacher = users_map.get(user_id)
+        teacher_name = (teacher.full_name or teacher.username) if teacher else "Unknown"
+
         # Get topics for this subject
         topics_result = await db.execute(
             select(Topic).where(Topic.subject_id == subject_id).order_by(Topic.order_index)
         )
         topics = topics_result.scalars().all()
-        
-        # Get topic stats
+
         topic_stats = []
         for topic in topics:
             topic_pending = await db.execute(
@@ -351,23 +386,23 @@ async def get_subjects_with_questions(
                 "name": topic.name,
                 "pending_count": topic_pending.scalar() or 0,
             })
-        
+
         subjects.append(SubjectSummary(
-            id=row[0],
-            name=row[1],
-            code=row[2],
-            teacher_id=row[3],
-            teacher_name=row[4] or "Unknown",
-            pending_count=row[5] or 0,
-            approved_count=row[6] or 0,
-            rejected_count=row[7] or 0,
+            id=subject_id,
+            name=name,
+            code=code,
+            teacher_id=user_id,
+            teacher_name=teacher_name,
+            pending_count=pending_count or 0,
+            approved_count=approved_count or 0,
+            rejected_count=rejected_count or 0,
             topics=topic_stats,
         ))
-    
+
     return subjects
 
 
-# ============== Questions List ==============
+
 
 
 @router.get("/questions", response_model=dict)

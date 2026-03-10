@@ -82,7 +82,7 @@ export default function VetterDashboard() {
         style={styles.gelCard}
       >
         {/* Gloss shine overlay (top half) */}
-        <View style={styles.gelShine} pointerEvents="none">
+        <View style={[styles.gelShine, { pointerEvents: 'none' }]}>
           <LinearGradient
             colors={[A.shine, 'rgba(255,255,255,0)']}
             start={{ x: 0, y: 0 }}
@@ -145,16 +145,17 @@ export default function VetterDashboard() {
         showsVerticalScrollIndicator={false}
       >
         {/* ── Aqua Header ───────────────────────────────────────────────── */}
-        <LinearGradient
-          colors={isDark
-            ? [A.deepBlue, A.aquaBlue, '#0097C7']
-            : ['#1E73BE', A.aquaBlue, '#29B6F6']}
-          start={{ x: 0, y: 0 }}
-          end={{ x: 1, y: 1 }}
-          style={styles.aquaHeader}
-        >
+        <View style={styles.aquaHeader}>
+          <LinearGradient
+            colors={isDark
+              ? [A.deepBlue, A.aquaBlue, '#0097C7']
+              : ['#1E73BE', A.aquaBlue, '#29B6F6']}
+            start={{ x: 0, y: 0 }}
+            end={{ x: 1, y: 1 }}
+            style={StyleSheet.absoluteFillObject}
+          />
           {/* Top-half gloss */}
-          <View style={styles.headerGloss} pointerEvents="none">
+          <View style={[styles.headerGloss, { pointerEvents: 'none' }]}>
             <LinearGradient
               colors={['rgba(255,255,255,0.38)', 'rgba(255,255,255,0)']}
               start={{ x: 0, y: 0 }}
@@ -185,7 +186,7 @@ export default function VetterDashboard() {
               </LinearGradient>
             </TouchableOpacity>
           </View>
-        </LinearGradient>
+        </View>
 
         {/* ── Error Banner ──────────────────────────────────────────────── */}
         {error && (
@@ -276,7 +277,7 @@ export default function VetterDashboard() {
                   end={{ x: 0, y: 1 }}
                   style={styles.aquaBtn}
                 >
-                  <View style={styles.aquaBtnShine} pointerEvents="none">
+                  <View style={[styles.aquaBtnShine, { pointerEvents: 'none' }]}>
                     <LinearGradient
                       colors={['rgba(255,255,255,0.45)', 'rgba(255,255,255,0)']}
                       start={{ x: 0, y: 0 }}
@@ -303,7 +304,7 @@ export default function VetterDashboard() {
                     borderColor: isDark ? A.metalBorderDark : A.metalBorderLight,
                   }]}
                 >
-                  <View style={styles.aquaBtnShine} pointerEvents="none">
+                  <View style={[styles.aquaBtnShine, { pointerEvents: 'none' }]}>
                     <LinearGradient
                       colors={['rgba(255,255,255,0.35)', 'rgba(255,255,255,0)']}
                       start={{ x: 0, y: 0 }}
@@ -353,10 +354,7 @@ const styles = StyleSheet.create({
     marginBottom: 20,
     borderRadius: 20,
     overflow: 'hidden',
-    shadowColor: '#0288D1',
-    shadowOffset: { width: 0, height: 6 },
-    shadowOpacity: 0.4,
-    shadowRadius: 12,
+    boxShadow: '0px 6px 12px rgba(2,136,209,0.4)',
     elevation: 10,
   },
   headerGloss: {
@@ -365,8 +363,6 @@ const styles = StyleSheet.create({
     left: 0,
     right: 0,
     height: '50%',
-    borderTopLeftRadius: 20,
-    borderTopRightRadius: 20,
     overflow: 'hidden',
   },
   headerContent: {
@@ -391,10 +387,8 @@ const styles = StyleSheet.create({
     fontWeight: '800',
     marginTop: 2,
     letterSpacing: -0.5,
-    textShadowColor: 'rgba(0,0,0,0.3)',
-    textShadowOffset: { width: 0, height: 1 },
-    textShadowRadius: 4,
-  },
+    textShadow: '0px 1px 4px rgba(0,0,0,0.3)',
+  } as any,
   rolePill: {
     marginTop: 8,
     alignSelf: 'flex-start',
@@ -415,10 +409,7 @@ const styles = StyleSheet.create({
     marginLeft: 16,
     borderRadius: 22,
     overflow: 'hidden',
-    shadowColor: '#000',
-    shadowOffset: { width: 0, height: 2 },
-    shadowOpacity: 0.25,
-    shadowRadius: 4,
+    boxShadow: '0px 2px 4px rgba(0,0,0,0.25)',
   },
   profileBtnGradient: {
     width: 44,
@@ -488,10 +479,7 @@ const styles = StyleSheet.create({
     flex: 1,
     borderRadius: 16,
     overflow: 'hidden',
-    shadowColor: '#000',
-    shadowOffset: { width: 0, height: 4 },
-    shadowOpacity: 0.22,
-    shadowRadius: 8,
+    boxShadow: '0px 4px 8px rgba(0,0,0,0.22)',
     elevation: 6,
   },
   gelCard: {
@@ -516,10 +504,8 @@ const styles = StyleSheet.create({
     fontSize: 34,
     fontWeight: '800',
     color: '#FFFFFF',
-    textShadowColor: 'rgba(0,0,0,0.3)',
-    textShadowOffset: { width: 0, height: 1 },
-    textShadowRadius: 3,
-  },
+    textShadow: '0px 1px 3px rgba(0,0,0,0.3)',
+  } as any,
   gelTitle: {
     fontSize: 11,
     fontWeight: '600',
@@ -536,10 +522,7 @@ const styles = StyleSheet.create({
     borderRadius: 16,
     borderWidth: 1,
     overflow: 'hidden',
-    shadowColor: '#0288D1',
-    shadowOffset: { width: 0, height: 2 },
-    shadowOpacity: 0.12,
-    shadowRadius: 8,
+    boxShadow: '0px 2px 8px rgba(2,136,209,0.12)',
     elevation: 3,
   },
   chromeTitleBar: {
@@ -595,10 +578,7 @@ const styles = StyleSheet.create({
     flex: 1,
     borderRadius: 14,
     overflow: 'hidden',
-    shadowColor: A.aquaBlue,
-    shadowOffset: { width: 0, height: 4 },
-    shadowOpacity: 0.45,
-    shadowRadius: 10,
+    boxShadow: '0px 4px 10px rgba(2,136,209,0.45)',
     elevation: 7,
   },
   aquaBtn: {
@@ -627,18 +607,13 @@ const styles = StyleSheet.create({
     fontSize: 14,
     fontWeight: '700',
     letterSpacing: -0.1,
-    textShadowColor: 'rgba(0,0,0,0.25)',
-    textShadowOffset: { width: 0, height: 1 },
-    textShadowRadius: 2,
-  },
+    textShadow: '0px 1px 2px rgba(0,0,0,0.25)',
+  } as any,
   chromeBtnWrapper: {
     flex: 1,
     borderRadius: 14,
     overflow: 'hidden',
-    shadowColor: '#000',
-    shadowOffset: { width: 0, height: 2 },
-    shadowOpacity: 0.1,
-    shadowRadius: 6,
+    boxShadow: '0px 2px 6px rgba(0,0,0,0.1)',
     elevation: 3,
   },
   chromeBtn: {

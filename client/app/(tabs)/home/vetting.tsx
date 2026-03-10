@@ -530,10 +530,7 @@ export default function VettingScreen() {
           replacedQuestionId === question.id && {
             borderWidth: 2,
             borderColor: colors.primary,
-            shadowColor: colors.primary,
-            shadowOpacity: 0.3,
-            shadowRadius: 8,
-            shadowOffset: { width: 0, height: 2 },
+            boxShadow: `0px 2px 8px ${colors.primary}4D`,
           },
         ]}
       >

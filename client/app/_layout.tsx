@@ -1,15 +1,36 @@
 import { DarkTheme, DefaultTheme, ThemeProvider } from '@react-navigation/native';
-import { Stack, useRouter, useSegments } from 'expo-router';
+import { Stack, useRouter, useSegments, usePathname } from 'expo-router';
 import { StatusBar } from 'expo-status-bar';
 import { useEffect } from 'react';
 import 'react-native-reanimated';
 import { SafeAreaProvider } from 'react-native-safe-area-context';
+import { Platform } from 'react-native';
 
 import { useColorScheme } from '@/hooks/use-color-scheme';
 import { useAuthStore } from '@/stores/authStore';
 import { View, ActivityIndicator } from 'react-native';
 import { ToastProvider } from '@/components/toast';
 import { ErrorBoundary } from '@/components/error-boundary';
+
+/**
+ * Blurs the focused DOM element whenever the route changes on web.
+ *
+ * React Navigation marks inactive Stack screens with aria-hidden="true" to hide
+ * them from screen readers. If a button on the departing screen retains browser
+ * focus at that moment, Chrome fires:
+ *   "Blocked aria-hidden on an element because its descendant retained focus."
+ * Pre-emptively blurring the active element before the new screen renders
+ * prevents the conflict entirely.
+ */
+function BlurOnNavigate() {
+  const pathname = usePathname();
+  useEffect(() => {
+    if (Platform.OS === 'web' && typeof document !== 'undefined') {
+      (document.activeElement as HTMLElement | null)?.blur?.();
+    }
+  }, [pathname]);
+  return null;
+}
 
 export const unstable_settings = {
   initialRouteName: '(tabs)',
@@ -74,6 +95,7 @@ export default function RootLayout() {
         <ThemeProvider value={colorScheme === 'dark' ? DarkTheme : DefaultTheme}>
           <ToastProvider>
             <AuthGuard>
+              <BlurOnNavigate />
               <Stack
                 screenOptions={{
                   headerTransparent: true,

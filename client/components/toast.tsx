@@ -143,7 +143,6 @@ function ToastItem({
           borderLeftColor: config.backgroundColor,
           transform: [{ translateY }],
           opacity,
-          shadowColor: colorScheme === 'dark' ? '#000' : '#000',
         },
       ]}
     >
@@ -247,7 +246,7 @@ export function ToastProvider({ children }: { children: React.ReactNode }) {
       value={{ showToast, showError, showSuccess, showWarning, showInfo, hideToast, hideAll }}
     >
       {children}
-      <View style={[styles.toastsWrapper, { top: insets.top + 10 }]} pointerEvents="box-none">
+      <View style={[styles.toastsWrapper, { top: insets.top + 10, pointerEvents: 'box-none' }]}>
         {toasts.map((toast) => (
           <ToastItem key={toast.id} toast={toast} onHide={() => hideToast(toast.id)} />
         ))}
@@ -284,9 +283,7 @@ const styles = StyleSheet.create({
     borderRadius: BorderRadius.md,
     borderLeftWidth: 4,
     padding: Spacing.md,
-    shadowOffset: { width: 0, height: 4 },
-    shadowOpacity: 0.15,
-    shadowRadius: 12,
+    boxShadow: '0px 4px 12px rgba(0,0,0,0.15)',
     elevation: 8,
   },
   iconContainer: {

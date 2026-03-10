@@ -489,10 +489,7 @@ const styles = StyleSheet.create({
     gap: Spacing.sm,
     zIndex: 3,
     elevation: 3, // Android
-    shadowColor: '#000',
-    shadowOpacity: 0.06,
-    shadowRadius: 8,
-    shadowOffset: { width: 0, height: 3 },
+    boxShadow: '0px 3px 8px rgba(0,0,0,0.06)',
   },
   sectionTitle: {
     flex: 1,

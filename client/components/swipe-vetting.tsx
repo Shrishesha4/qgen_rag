@@ -1422,10 +1422,7 @@ const styles = StyleSheet.create({
     width: '100%',
     borderRadius: BorderRadius.lg,
     overflow: 'hidden',
-    shadowColor: '#000',
-    shadowOffset: { width: 0, height: 8 },
-    shadowOpacity: 0.25,
-    shadowRadius: 16,
+    boxShadow: '0px 8px 16px rgba(0,0,0,0.25)',
     elevation: 20,
   },
   sourcesModalHeader: {

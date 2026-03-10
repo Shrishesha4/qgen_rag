@@ -86,7 +86,7 @@ export default function HomeScreen() {
         end={{ x: 0, y: 1 }}
         style={styles.gelCard}
       >
-        <View style={styles.gelShine} pointerEvents="none">
+        <View style={[styles.gelShine, { pointerEvents: 'none' }]}>
           <LinearGradient
             colors={[A.shine, 'rgba(255,255,255,0)'] as [string, string]}
             start={{ x: 0, y: 0 }}
@@ -159,7 +159,7 @@ export default function HomeScreen() {
           end={{ x: 0, y: 1 }}
           style={styles.menuIconGel}
         >
-          <View style={styles.menuIconGelShine} pointerEvents="none">
+          <View style={[styles.menuIconGelShine, { pointerEvents: 'none' }]}>
             <LinearGradient
               colors={[A.shine, 'rgba(255,255,255,0)'] as [string, string]}
               start={{ x: 0, y: 0 }}
@@ -240,16 +240,17 @@ export default function HomeScreen() {
         showsVerticalScrollIndicator={false}
       >
         {/* ── Aqua Header ─────────────────────────────────────────────── */}
-        <LinearGradient
-          colors={isDark
-            ? [A.deepBlue, A.aquaBlue, '#0097C7'] as [string, string, string]
-            : ['#1E73BE', A.aquaBlue, '#29B6F6'] as [string, string, string]}
-          start={{ x: 0, y: 0 }}
-          end={{ x: 1, y: 1 }}
-          style={styles.aquaHeader}
-        >
+        <View style={styles.aquaHeader}>
+          <LinearGradient
+            colors={isDark
+              ? [A.deepBlue, A.aquaBlue, '#0097C7'] as [string, string, string]
+              : ['#1E73BE', A.aquaBlue, '#29B6F6'] as [string, string, string]}
+            start={{ x: 0, y: 0 }}
+            end={{ x: 1, y: 1 }}
+            style={StyleSheet.absoluteFillObject}
+          />
           {/* Top-half gloss */}
-          <View style={styles.headerGloss} pointerEvents="none">
+          <View style={[styles.headerGloss, { pointerEvents: 'none' }]}>
             <LinearGradient
               colors={['rgba(255,255,255,0.38)', 'rgba(255,255,255,0)'] as [string, string]}
               start={{ x: 0, y: 0 }}
@@ -286,7 +287,7 @@ export default function HomeScreen() {
               </LinearGradient>
             </TouchableOpacity>
           </View>
-        </LinearGradient>
+        </View>
 
         {/* ── Error Banner ─────────────────────────────────────────────── */}
         {error && (
@@ -469,10 +470,7 @@ const styles = StyleSheet.create({
     marginBottom: 20,
     borderRadius: 20,
     overflow: 'hidden',
-    shadowColor: '#0288D1',
-    shadowOffset: { width: 0, height: 6 },
-    shadowOpacity: 0.4,
-    shadowRadius: 12,
+    boxShadow: '0px 6px 12px rgba(2,136,209,0.4)',
     elevation: 10,
   },
   headerGloss: {
@@ -481,8 +479,6 @@ const styles = StyleSheet.create({
     left: 0,
     right: 0,
     height: '50%',
-    borderTopLeftRadius: 20,
-    borderTopRightRadius: 20,
     overflow: 'hidden',
   },
   headerContent: {
@@ -505,10 +501,8 @@ const styles = StyleSheet.create({
     fontWeight: '800',
     marginTop: 2,
     letterSpacing: -0.5,
-    textShadowColor: 'rgba(0,0,0,0.3)',
-    textShadowOffset: { width: 0, height: 1 },
-    textShadowRadius: 4,
-  },
+    textShadow: '0px 1px 4px rgba(0,0,0,0.3)',
+  } as any,
   rolePill: {
     marginTop: 8,
     alignSelf: 'flex-start',
@@ -529,10 +523,7 @@ const styles = StyleSheet.create({
     marginLeft: 16,
     borderRadius: 22,
     overflow: 'hidden',
-    shadowColor: '#000',
-    shadowOffset: { width: 0, height: 2 },
-    shadowOpacity: 0.25,
-    shadowRadius: 4,
+    boxShadow: '0px 2px 4px rgba(0,0,0,0.25)',
   },
   profileBtnGradient: {
     width: 44,
@@ -592,10 +583,7 @@ const styles = StyleSheet.create({
     flex: 1,
     borderRadius: 16,
     overflow: 'hidden',
-    shadowColor: '#000',
-    shadowOffset: { width: 0, height: 4 },
-    shadowOpacity: 0.22,
-    shadowRadius: 8,
+    boxShadow: '0px 4px 8px rgba(0,0,0,0.22)',
     elevation: 6,
   },
   gelCard: {
@@ -620,10 +608,8 @@ const styles = StyleSheet.create({
     fontSize: 28,
     fontWeight: '800',
     color: '#FFFFFF',
-    textShadowColor: 'rgba(0,0,0,0.3)',
-    textShadowOffset: { width: 0, height: 1 },
-    textShadowRadius: 3,
-  },
+    textShadow: '0px 1px 3px rgba(0,0,0,0.3)',
+  } as any,
   gelTitle: {
     fontSize: 9,
     fontWeight: '700',
@@ -640,10 +626,7 @@ const styles = StyleSheet.create({
     borderRadius: 16,
     borderWidth: 1,
     overflow: 'hidden',
-    shadowColor: '#0288D1',
-    shadowOffset: { width: 0, height: 2 },
-    shadowOpacity: 0.12,
-    shadowRadius: 8,
+    boxShadow: '0px 2px 8px rgba(2,136,209,0.12)',
     elevation: 3,
   },
   chromeTitleBar: {
@@ -685,10 +668,7 @@ const styles = StyleSheet.create({
     width: '47.5%',
     borderRadius: 16,
     overflow: 'hidden',
-    shadowColor: '#0288D1',
-    shadowOffset: { width: 0, height: 4 },
-    shadowOpacity: 0.15,
-    shadowRadius: 8,
+    boxShadow: '0px 4px 8px rgba(2,136,209,0.15)',
     elevation: 4,
   },
   menuCard: {

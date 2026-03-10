@@ -155,6 +155,7 @@ export function ReferenceMaterials({
 
       setUploadProgress(`Uploading ${file.name} (${fileSizeMB}MB)...`);
 
+      const webFile = typeof File !== 'undefined' ? (file as any).file : undefined;
       const response = await referencesService.uploadReferenceBook(
         subjectId,
         file.uri,
@@ -163,7 +164,8 @@ export function ReferenceMaterials({
         (pct) => {
           setUploadPercent(pct);
           setUploadProgress(`Uploading ${file.name} — ${pct}%`);
-        }
+        },
+        webFile
       );
 
       // Upload done, now poll for processing status
@@ -237,6 +239,7 @@ export function ReferenceMaterials({
 
       setUploadProgress(`Uploading ${file.name} (${fileSizeMB}MB)...`);
 
+      const webFile = typeof File !== 'undefined' ? (file as any).file : undefined;
       const response = await referencesService.uploadTemplatePaper(
         subjectId,
         file.uri,
@@ -245,7 +248,8 @@ export function ReferenceMaterials({
         (pct) => {
           setUploadPercent(pct);
           setUploadProgress(`Uploading ${file.name} — ${pct}%`);
-        }
+        },
+        webFile
       );
 
       setUploadProgress('Processing document...');
@@ -347,6 +351,7 @@ export function ReferenceMaterials({
 
       setUploadProgress(`Uploading ${file.name} (${fileSizeMB}MB)...`);
 
+      const webFile = typeof File !== 'undefined' ? (file as any).file : undefined;
       const response = await referencesService.uploadReferenceQuestions(
         subjectId,
         file.uri,
@@ -355,7 +360,8 @@ export function ReferenceMaterials({
         (pct) => {
           setUploadPercent(pct);
           setUploadProgress(`Uploading ${file.name} — ${pct}%`);
-        }
+        },
+        webFile
       );
 
       if (response.status === 'completed') {

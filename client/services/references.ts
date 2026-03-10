@@ -73,15 +73,19 @@ export const referencesService = {
     uri: string,
     filename: string,
     mimeType: string,
-    onUploadProgress?: ProgressCallback
+    onUploadProgress?: ProgressCallback,
+    webFile?: File
   ): Promise<{ document_id: string; status: string }> {
     const formData = new FormData();
 
-    formData.append('file', {
-      uri,
-      name: filename,
-      type: mimeType,
-    } as unknown as Blob);
+    // On web, expo-document-picker provides a native browser File object.
+    // Using the { uri, name, type } RN pattern on web sends a plain object (stringified),
+    // which FastAPI rejects with "Expected UploadFile, received: <class 'str'>".
+    if (typeof File !== 'undefined' && webFile instanceof File) {
+      formData.append('file', webFile);
+    } else {
+      formData.append('file', { uri, name: filename, type: mimeType } as unknown as Blob);
+    }
     formData.append('index_type', 'reference_book');
     formData.append('subject_id', subjectId);
 
@@ -111,15 +115,16 @@ export const referencesService = {
     uri: string,
     filename: string,
     mimeType: string,
-    onUploadProgress?: ProgressCallback
+    onUploadProgress?: ProgressCallback,
+    webFile?: File
   ): Promise<{ document_id: string; status: string }> {
     const formData = new FormData();
 
-    formData.append('file', {
-      uri,
-      name: filename,
-      type: mimeType,
-    } as unknown as Blob);
+    if (typeof File !== 'undefined' && webFile instanceof File) {
+      formData.append('file', webFile);
+    } else {
+      formData.append('file', { uri, name: filename, type: mimeType } as unknown as Blob);
+    }
     formData.append('index_type', 'template_paper');
     formData.append('subject_id', subjectId);
 
@@ -149,15 +154,16 @@ export const referencesService = {
     uri: string,
     filename: string,
     mimeType: string,
-    onUploadProgress?: ProgressCallback
+    onUploadProgress?: ProgressCallback,
+    webFile?: File
   ): Promise<{ document_id: string; status: string; message: string }> {
     const formData = new FormData();
 
-    formData.append('file', {
-      uri,
-      name: filename,
-      type: mimeType,
-    } as unknown as Blob);
+    if (typeof File !== 'undefined' && webFile instanceof File) {
+      formData.append('file', webFile);
+    } else {
+      formData.append('file', { uri, name: filename, type: mimeType } as unknown as Blob);
+    }
     formData.append('index_type', 'reference_questions');
     formData.append('subject_id', subjectId);
 

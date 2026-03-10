@@ -120,34 +120,22 @@ export const FontSizes = {
   largeTitle: 40,
 };
 
-// iOS 26 shadow styles
+// Shadow styles (cross-platform: boxShadow for iOS/web on RN 0.76+, elevation for Android)
 export const Shadows = {
   small: {
-    shadowColor: '#000',
-    shadowOffset: { width: 0, height: 2 },
-    shadowOpacity: 0.08,
-    shadowRadius: 8,
+    boxShadow: '0px 2px 8px rgba(0,0,0,0.08)',
     elevation: 2,
   },
   medium: {
-    shadowColor: '#000',
-    shadowOffset: { width: 0, height: 4 },
-    shadowOpacity: 0.12,
-    shadowRadius: 16,
+    boxShadow: '0px 4px 16px rgba(0,0,0,0.12)',
     elevation: 4,
   },
   large: {
-    shadowColor: '#000',
-    shadowOffset: { width: 0, height: 8 },
-    shadowOpacity: 0.16,
-    shadowRadius: 24,
+    boxShadow: '0px 8px 24px rgba(0,0,0,0.16)',
     elevation: 8,
   },
   glow: (color: string) => ({
-    shadowColor: color,
-    shadowOffset: { width: 0, height: 4 },
-    shadowOpacity: 0.4,
-    shadowRadius: 12,
+    boxShadow: `0px 4px 12px ${color}66`,
     elevation: 6,
   }),
 };

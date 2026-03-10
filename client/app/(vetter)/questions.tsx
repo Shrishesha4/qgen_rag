@@ -1903,10 +1903,7 @@ const styles = StyleSheet.create({
     right: Spacing.lg,
     borderRadius: BorderRadius.lg,
     overflow: 'hidden',
-    shadowColor: '#5856D6',
-    shadowOffset: { width: 0, height: 4 },
-    shadowOpacity: 0.3,
-    shadowRadius: 8,
+    boxShadow: '0px 4px 8px rgba(88,86,214,0.3)',
     elevation: 8,
   },
   floatingButtonGradient: {
