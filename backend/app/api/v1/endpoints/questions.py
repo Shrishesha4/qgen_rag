@@ -2033,6 +2033,206 @@ Output valid JSON only."""
             if replacement:
                 return QR.from_orm_with_sources(replacement)
 
+        # ═══════════════════════════════════════════════════════════
+        # PATH A2: Quick-from-subject (RAG across subject reference docs)
+        # ═══════════════════════════════════════════════════════════════
+        elif gen_method == "quick_from_subject" and question_snapshot["subject_id"]:
+            logger.info(f"Regenerating via quick_from_subject for subject_id={question_snapshot['subject_id']}")
+
+            llm_service = LLMService()
+            embedding_service = EmbeddingService()
+            doc_service = DocumentService(db, embedding_service)
+
+            # Fetch reference document chunks for this subject (primary + reference books)
+            content_context = ""
+            ref_chunks_a2: list = []
+            try:
+                rag_query = question_snapshot["question_text"][:300]
+                query_emb = await embedding_service.get_query_embedding(rag_query)
+
+                ref_doc_ids = await doc_service.get_reference_document_ids(
+                    user_id=current_user.id,
+                    subject_id=question_snapshot["subject_id"],
+                    index_type="reference_book",
+                )
+                if ref_doc_ids:
+                    ref_chunks_a2 = await doc_service.hybrid_search_multi_document(
+                        document_ids=ref_doc_ids,
+                        query=rag_query,
+                        query_embedding=query_emb,
+                        top_k=8,
+                        alpha=0.6,
+                    )
+                if not ref_chunks_a2:
+                    # Fallback: any uploaded documents for the subject
+                    from app.models.document import Document as DocModel
+                    any_docs_res = await db.execute(
+                        select(DocModel.id).where(
+                            DocModel.user_id == current_user.id,
+                            DocModel.processing_status == "completed",
+                        ).limit(5)
+                    )
+                    any_doc_ids = [row[0] for row in any_docs_res.all()]
+                    if any_doc_ids:
+                        ref_chunks_a2 = await doc_service.hybrid_search_multi_document(
+                            document_ids=any_doc_ids,
+                            query=rag_query,
+                            query_embedding=query_emb,
+                            top_k=5,
+                            alpha=0.6,
+                        )
+                if ref_chunks_a2:
+                    content_context = "\n\n".join(c.chunk_text for c in ref_chunks_a2 if c.chunk_text)[:4000]
+            except Exception as e:
+                logger.warning(f"RAG lookup for quick_from_subject regen failed: {e}")
+
+            # Fallback: use topic syllabus content if no reference docs found
+            if not content_context and question_snapshot["topic_id"]:
+                try:
+                    tres = await db.execute(select(Topic).where(Topic.id == question_snapshot["topic_id"]))
+                    t_obj = tres.scalar_one_or_none()
+                    if t_obj and t_obj.syllabus_content:
+                        content_context = t_obj.syllabus_content[:4000]
+                except Exception:
+                    pass
+
+            if content_context:
+                system_prompt = _get_rubric_system_prompt(q_type)
+                _vetter_existing_embs_a2 = await _preload_subject_embeddings(db, question_snapshot["subject_id"])
+
+                max_retries = 3
+                for attempt in range(max_retries):
+                    try:
+                        import random as _r
+                        regen_starter = _r.choice(_QUESTION_STARTERS.get(q_type, _QUESTION_STARTERS["default"]))
+
+                        if regeneration_mode == "modify":
+                            prompt = f"""Content:\n{content_context}\n
+
+TASK: Improve the following question based on user feedback.
+
+ORIGINAL QUESTION:
+"{question_snapshot["question_text"]}"
+
+ORIGINAL ANSWER: {question_snapshot["correct_answer"] or "Not specified"}
+
+IMPROVEMENT INSTRUCTIONS:
+{rejection_guidance_str if rejection_guidance_str else "- Improve clarity and quality while keeping the same concept"}
+
+REQUIREMENTS:
+- Generate a {q_type.replace('_', ' ')} question
+- Marks: {marks}
+- Difficulty: {question_snapshot["difficulty_level"] or "medium"}
+- KEEP the same core concept/topic as the original question
+- APPLY the improvement feedback above
+- Your question MUST start with "{regen_starter}" or a similar interrogative
+- FORBIDDEN: Do NOT start with scenario setups like "A clinician", "A patient", etc.
+- CRITICAL: The question must be FULLY SELF-CONTAINED without referencing source material.
+
+Output valid JSON only."""
+                        else:
+                            feedback_block = (
+                                f"\nFEEDBACK TO ADDRESS:\n{rejection_guidance_str}\n"
+                                if rejection_guidance_str else ""
+                            )
+                            prompt = (
+                                f"Content:\n{content_context}\n\n"
+                                f"Generate a COMPLETELY NEW {q_type.replace('_', ' ')} question based on this content.\n\n"
+                                f"PREVIOUSLY REJECTED QUESTION (DO NOT regenerate similar):\n"
+                                f'"{question_snapshot["question_text"][:200]}..."\n\n'
+                                f"REQUIREMENTS:\n"
+                                f"- Marks: {marks}\n"
+                                f"- Difficulty: {question_snapshot['difficulty_level'] or 'medium'}\n"
+                                f'- Your question MUST start with "{regen_starter}"\n'
+                                f"- Generate a question about a DIFFERENT TOPIC or ASPECT than the rejected question\n"
+                                f"- FORBIDDEN: Do NOT start with \"A clinician\", \"A patient\", \"A doctor\", etc.\n"
+                                f"- CRITICAL: The question must be FULLY SELF-CONTAINED.\n"
+                                f"{feedback_block}"
+                                f"Output valid JSON only."
+                            )
+
+                        logger.info(f"quick_from_subject regen attempt {attempt + 1}/{max_retries}, mode={regeneration_mode}")
+                        response = await llm_service.generate_json(
+                            prompt=prompt, system_prompt=system_prompt, temperature=0.7 + (attempt * 0.1),
+                        )
+                        response = _normalize_llm_response(response)
+
+                        if response and "question_text" in response:
+                            question_text = response["question_text"]
+                            if len(question_text) >= 15 and question_text.strip() != (question_snapshot["question_text"] or "").strip():
+                                if q_type == "mcq":
+                                    norm_opts = _normalize_mcq_options(response.get("options"), "mcq")
+                                    if not norm_opts or len(norm_opts) < 4:
+                                        logger.warning(f"quick_from_subject regen attempt {attempt + 1}: MCQ has only {len(norm_opts) if norm_opts else 0} options, retrying")
+                                        continue
+
+                                question_embedding = await embedding_service.get_embedding(question_text)
+                                if _is_duplicate_embedding(question_embedding, _vetter_existing_embs_a2, []):
+                                    logger.warning(f"quick_from_subject regen attempt {attempt + 1}: duplicate, retrying")
+                                    continue
+
+                                _s = _sanitize_question_fields({
+                                    "learning_outcome_id": question_snapshot["learning_outcome_id"],
+                                    "course_outcome_mapping": question_snapshot["course_outcome_mapping"],
+                                    "bloom_taxonomy_level": response.get("bloom_level", question_snapshot["bloom_taxonomy_level"] or "understand"),
+                                    "difficulty_level": question_snapshot["difficulty_level"] or "medium",
+                                })
+
+                                new_question = QuestionModel(
+                                    subject_id=question_snapshot["subject_id"],
+                                    topic_id=question_snapshot["topic_id"],
+                                    session_id=session_id,
+                                    question_text=question_text,
+                                    question_embedding=question_embedding,
+                                    question_type=q_type,
+                                    marks=marks,
+                                    difficulty_level=_s["difficulty_level"],
+                                    bloom_taxonomy_level=_s["bloom_taxonomy_level"],
+                                    correct_answer=response.get("correct_answer") or response.get("expected_answer"),
+                                    options=_normalize_mcq_options(response.get("options"), q_type),
+                                    explanation=response.get("explanation"),
+                                    topic_tags=response.get("topic_tags", question_snapshot["topic_tags"]),
+                                    learning_outcome_id=_s["learning_outcome_id"],
+                                    course_outcome_mapping=_s["course_outcome_mapping"],
+                                    generation_confidence=0.75,
+                                    vetting_status="pending",
+                                    replaces_id=question_id,
+                                    version_number=(question.version_number or 1) + 1,
+                                    is_latest=True,
+                                    generation_metadata={
+                                        "source": "quick_from_subject",
+                                        "regenerated_by_vetter": True,
+                                        "regenerated_from": str(question_id),
+                                        "source_info": _build_rubric_source_info(
+                                            ref_chunks_a2,
+                                            question_snapshot.get("topic_tags", ["Subject"])[0] if question_snapshot.get("topic_tags") else "Subject",
+                                        ),
+                                    },
+                                )
+                                db.add(new_question)
+                                await db.commit()
+                                await db.refresh(new_question)
+
+                                question.replaced_by_id = new_question.id
+                                question.is_latest = False
+                                await db.commit()
+
+                                replacement = new_question
+                                logger.info(f"quick_from_subject regen: replacement={replacement.id}")
+                                break
+                            else:
+                                logger.warning(f"quick_from_subject regen attempt {attempt + 1}: question too short or duplicate")
+                        else:
+                            logger.warning(f"quick_from_subject regen attempt {attempt + 1}: response missing question_text")
+                    except Exception as e:
+                        logger.error(f"quick_from_subject regen attempt {attempt + 1} error: {e}")
+                        await db.rollback()
+                        if attempt == max_retries - 1:
+                            logger.error(f"quick_from_subject regen failed after {max_retries} attempts")
+
+            if replacement:
+                return QR.from_orm_with_sources(replacement)
+
         # ═══════════════════════════════════════════════
         # PATH B: Chapter Generate (syllabus content + RAG)
         # ═══════════════════════════════════════════════
