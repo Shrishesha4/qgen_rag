@@ -94,8 +94,9 @@ export default function TabLayout() {
         tabBarStyle: {
           backgroundColor: colors.card,
           borderTopColor: colors.border,
-          height: 66,
-          paddingBottom: 12,
+          borderTopWidth: StyleSheet.hairlineWidth,
+          height: 80,
+          paddingBottom: 16,
           paddingTop: 8,
         },
         tabBarBackground: TabBarBackground,
