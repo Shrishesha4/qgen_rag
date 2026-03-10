@@ -880,7 +880,7 @@ export default function QuickGenerateScreen() {
 
 const styles = StyleSheet.create({
   container: { flex: 1, position: 'relative' },
-  scrollContent: { flex: 1 },
+  scrollContent: { flex: 1, },
   contentContainer: { paddingBottom: Spacing.xxl },
 
   // Header
