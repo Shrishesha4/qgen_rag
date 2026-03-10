@@ -661,6 +661,7 @@ export const questionsService = {
     let xhr: XMLHttpRequest | null = null;
     let isCancelled = false;
     let lastDocumentId: string | null = null;
+    let lastSessionId: string | null = null;
 
     (async () => {
       try {
@@ -711,6 +712,7 @@ export const questionsService = {
                     const progress = JSON.parse(json) as QuickGenerateProgress;
                     console.log('[QuickGenerateFromSubject] SSE Event:', progress.status, progress.message);
                     if (progress.document_id) lastDocumentId = progress.document_id;
+                    if (progress.session_id) lastSessionId = progress.session_id;
                     onProgress(progress);
                   }
                 } catch (parseError) {
@@ -730,6 +732,7 @@ export const questionsService = {
                   if (json) {
                     const progress = JSON.parse(json) as QuickGenerateProgress;
                     if (progress.document_id) lastDocumentId = progress.document_id;
+                    if (progress.session_id) lastSessionId = progress.session_id;
                     onProgress(progress);
                   }
                 } catch (e) { /* ignore incomplete final event */ }
@@ -743,13 +746,12 @@ export const questionsService = {
 
           xhr.onerror = () => {
             // ERR_INCOMPLETE_CHUNKED_ENCODING / ERR_QUIC_PROTOCOL_ERROR can fire onerror
-            // even when the server returned 200 and streamed all events. With QUIC the
-            // response body may not have been delivered to onprogress at all, so also
-            // scan whatever responseText is available before deciding on failure.
+            // even when the server returned 200 and is still generating. Scan responseText
+            // first, then fall back to polling the session API if we have a session_id.
             console.warn('[QuickGenerateFromSubject] Network error (may be QUIC/chunked encoding issue after 200)');
             try {
               const fullText = (xhr?.responseText || '');
-              if (fullText && lastDocumentId === null) {
+              if (fullText) {
                 const allEvents = fullText.split('\n\n');
                 for (const event of allEvents) {
                   const dataLine = event.split('\n').find(l => l.startsWith('data: '));
@@ -757,18 +759,70 @@ export const questionsService = {
                     try {
                       const progress = JSON.parse(dataLine.slice(6).trim()) as QuickGenerateProgress;
                       if (progress.document_id) lastDocumentId = progress.document_id;
-                    } catch { /* ignore parse errors */ }
+                      if (progress.session_id) lastSessionId = progress.session_id;
+                    } catch { /* ignore */ }
                   }
                 }
               }
             } catch { /* ignore responseText access errors */ }
+
             if (lastDocumentId !== null) {
-              // We received a document_id so generation completed — treat as success
               onComplete(lastDocumentId);
               resolve();
-            } else {
-              reject(new Error('Network error'));
+              return;
             }
+
+            if (lastSessionId !== null) {
+              // Generation is likely still in progress on the server.
+              // Poll the session endpoint until completion (up to 10 min).
+              const sessionId = lastSessionId;
+              console.log('[QuickGenerateFromSubject] Polling session for completion:', sessionId);
+              onProgress({
+                status: 'processing',
+                progress: 50,
+                current_question: null,
+                total_questions: null,
+                question: null,
+                message: 'Connection interrupted — checking generation status...',
+                document_id: null,
+              });
+              (async () => {
+                const maxAttempts = 120; // 10 min at 5s intervals
+                for (let i = 0; i < maxAttempts; i++) {
+                  if (isCancelled) { resolve(); return; }
+                  await new Promise(r => setTimeout(r, 5000));
+                  if (isCancelled) { resolve(); return; }
+                  try {
+                    const session = await apiClient.get<GenerationSession>(`/questions/sessions/${sessionId}`);
+                    const s = session.data;
+                    if (s.status === 'completed') {
+                      console.log('[QuickGenerateFromSubject] Poll: session completed');
+                      onComplete(s.document_id || null);
+                      resolve();
+                      return;
+                    }
+                    if (s.status === 'failed' || s.status === 'error') {
+                      reject(new Error(s.error_message || 'Generation failed on server'));
+                      return;
+                    }
+                    // Still in_progress — emit a progress heartbeat
+                    onProgress({
+                      status: 'generating',
+                      progress: Math.min(50 + Math.round((i / maxAttempts) * 45), 94),
+                      current_question: s.questions_generated ?? null,
+                      total_questions: s.requested_count ?? null,
+                      question: null,
+                      message: `Generating... ${s.questions_generated ?? '?'} of ${s.requested_count ?? '?'} done`,
+                      document_id: null,
+                    });
+                  } catch { /* ignore transient poll errors */ }
+                }
+                reject(new Error('Generation timed out'));
+              })();
+              return;
+            }
+
+            reject(new Error('Network error'));
           };
 
           xhr.ontimeout = () => {

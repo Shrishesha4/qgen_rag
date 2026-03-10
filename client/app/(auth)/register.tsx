@@ -15,6 +15,7 @@ import { NativeButton } from '@/components/ui/native-button';
 import { useAuthStore } from '@/stores/authStore';
 import { Colors, Spacing, BorderRadius, FontSizes } from '@/constants/theme';
 import { useColorScheme } from '@/hooks/use-color-scheme';
+import { useResponsive } from '@/hooks/use-responsive';
 import { UserRole } from '@/services/auth';
 
 const ROLES: { value: UserRole; label: string; description: string }[] = [
@@ -34,6 +35,7 @@ export default function RegisterScreen() {
   const { register, isLoading, error, clearError } = useAuthStore();
   const colorScheme = useColorScheme();
   const colors = Colors[colorScheme ?? 'light'];
+  const { isDesktop } = useResponsive();
 
   const handleRegister = async () => {
     setLocalError(null);
@@ -65,9 +67,10 @@ export default function RegisterScreen() {
       style={[styles.container, { backgroundColor: colors.background }]}
     >
       <ScrollView
-        contentContainerStyle={styles.scrollContent}
+        contentContainerStyle={[styles.scrollContent, isDesktop && styles.scrollContentDesktop]}
         keyboardShouldPersistTaps="handled"
       >
+        <View style={[styles.formWrapper, isDesktop && styles.formWrapperDesktop]}>
         <View style={styles.header}>
           <Text style={[styles.title, { color: colors.primary }]}>QuestionGen AI</Text>
           <Text style={[styles.subtitle, { color: colors.textSecondary }]}>Create Your Account</Text>
@@ -205,6 +208,7 @@ export default function RegisterScreen() {
             </Link>
           </View>
         </GlassCard>
+        </View>
       </ScrollView>
     </KeyboardAvoidingView>
   );
@@ -218,6 +222,17 @@ const styles = StyleSheet.create({
     flexGrow: 1,
     justifyContent: 'center',
     padding: Spacing.lg,
+  },
+  scrollContentDesktop: {
+    alignItems: 'center',
+    paddingHorizontal: Spacing.xl,
+  },
+  formWrapper: {
+    width: '100%',
+  },
+  formWrapperDesktop: {
+    maxWidth: 520,
+    width: '100%',
   },
   header: {
     alignItems: 'center',
