@@ -2067,7 +2067,7 @@ Output valid JSON only."""
             
             # Query variations for chunk selection diversity
             query_aspects = [
-                context,  # Original query
+                context,
                 f"{context} definition and concepts",
                 f"{context} operations and methods",
                 f"{context} advantages disadvantages",
@@ -2076,7 +2076,61 @@ Output valid JSON only."""
                 f"{context} comparison differences",
                 f"{context} performance complexity",
             ]
-            
+
+            # ── Pre-fetch chunk pool (once, before the loop) ──────────────
+            # Embed all query variants in parallel, then search in parallel,
+            # deduplicate, and rerank once.
+            pool_query_count = min(4, len(query_aspects))
+            pool_variants = query_aspects[:pool_query_count]
+
+            async def _embed_and_search(q_variant: str):
+                try:
+                    q_emb = await self.embedding_service.get_embedding(q_variant)
+                    return await self.document_service.hybrid_search_multi_document(
+                        document_ids=all_search_doc_ids,
+                        query=q_variant,
+                        query_embedding=q_emb,
+                        top_k=8,
+                        alpha=0.6,
+                    )
+                except Exception as pool_err:
+                    logger.warning(f"quick_generate: pool search failed for '{q_variant[:40]}': {pool_err}")
+                    return []
+
+            import asyncio
+            all_candidate_lists = await asyncio.gather(*[_embed_and_search(v) for v in pool_variants])
+
+            chunk_pool = []
+            seen_chunk_ids: set = set()
+            for candidates in all_candidate_lists:
+                for c in candidates:
+                    if c.id not in seen_chunk_ids:
+                        seen_chunk_ids.add(c.id)
+                        chunk_pool.append(c)
+
+            # Rerank the whole pool once with the main query
+            if self.reranker_service and len(chunk_pool) > 5:
+                chunk_pool = self.reranker_service.rerank(
+                    query=context,
+                    chunks=chunk_pool,
+                    top_k=min(20, len(chunk_pool)),
+                )
+
+            if not chunk_pool:
+                logger.warning("quick_generate: chunk pool empty, falling back to raw doc chunks")
+                chunk_pool = list(chunks[:15])
+
+            logger.info(f"quick_generate: Pre-fetched chunk pool of {len(chunk_pool)} chunks ({pool_query_count} parallel queries, deduped+reranked)")
+
+            yield QuickGenerateProgress(
+                status="generating",
+                progress=22,
+                message=f"Content ready — generating {count} questions...",
+                total_questions=count,
+                document_id=document_id,
+            )
+            # ─────────────────────────────────────────────────────────────
+
             # Distribute question types
             type_distribution = self._distribute_types(count, types)
             logger.info(f"Type distribution: {type_distribution}")
@@ -2086,38 +2140,20 @@ Output valid JSON only."""
                 for i in range(type_count):
                     try:
                         logger.info(f"Starting generation {i+1}/{type_count} for {q_type}")
-                        
-                        # Use varied query for diversity in chunk selection
-                        varied_query = query_aspects[total_question_index % len(query_aspects)]
-                        
-                        # Select relevant chunks using hybrid search (semantic + BM25)
-                        context_embedding = await self.embedding_service.get_embedding(varied_query)
-                        
-                        # Use multi-document hybrid search to include reference books
-                        candidates = await self.document_service.hybrid_search_multi_document(
-                            document_ids=all_search_doc_ids,
-                            query=varied_query,
-                            query_embedding=context_embedding,
-                            top_k=8,  # Get more candidates for variety
-                            alpha=0.6,  # Slightly favor semantic search
-                        )
-                        
-                        # Rerank using cross-encoder if available
-                        if self.reranker_service and len(candidates) > 3:
-                            selected_chunks = self.reranker_service.rerank(
-                                query=varied_query,
-                                chunks=candidates,
-                                top_k=3,
-                            )
-                        else:
-                            # Offset selection for variety
-                            offset = (total_question_index % 2) * 2
-                            selected_chunks = candidates[offset:offset+3] if len(candidates) > offset + 2 else candidates[:3]
-                        
-                        logger.info(f"Hybrid search returned {len(selected_chunks)} chunks (query: {varied_query[:50]}...)")
-                        
+
+                        # Rotate through chunk pool for source variety
+                        pool_size = len(chunk_pool)
+                        pool_offset = (total_question_index * 3) % max(1, pool_size - 2)
+                        selected_chunks = chunk_pool[pool_offset:pool_offset + 3]
+                        if len(selected_chunks) < 3 and pool_size >= 3:
+                            selected_chunks = chunk_pool[:3]
                         if not selected_chunks:
-                            logger.warning("No chunks from hybrid search, falling back to random selection")
+                            selected_chunks = chunk_pool
+
+                        logger.info(f"Selected {len(selected_chunks)} chunks from pool (offset {pool_offset})")
+
+                        if not selected_chunks:
+                            logger.warning("No chunks available, falling back to random selection")
                             import random
                             selected_chunks = random.sample(chunks, min(3, len(chunks)))
 
@@ -2227,23 +2263,11 @@ Output valid JSON only."""
                 q_type = random.choice(types)
                 
                 try:
-                    # Use hybrid search with modified context for variety
-                    modified_context = f"{context} variation {backfill_attempts}"
-                    context_embedding = await self.embedding_service.get_embedding(modified_context)
-                    
-                    # Get more chunks across primary + reference books
-                    all_chunks = await self.document_service.hybrid_search_multi_document(
-                        document_ids=all_search_doc_ids,
-                        query=modified_context,
-                        query_embedding=context_embedding,
-                        top_k=6,
-                        alpha=0.5,  # Balance semantic and keyword search
-                    )
-                    
-                    # Use different chunks for variety by offsetting
-                    offset = backfill_attempts * 2
-                    selected_chunks = all_chunks[offset:offset+3] if len(all_chunks) > offset else all_chunks[:3]
-                    
+                    # Use a different slice of the pre-fetched pool for variety
+                    offset = (backfill_attempts * 4) % max(1, len(chunk_pool) - 2)
+                    selected_chunks = chunk_pool[offset:offset + 3]
+                    if len(selected_chunks) < 3 and len(chunk_pool) >= 3:
+                        selected_chunks = chunk_pool[:3]
                     if not selected_chunks:
                         selected_chunks = random.sample(chunks, min(3, len(chunks)))
                     
@@ -2564,6 +2588,55 @@ Output valid JSON only."""
                 f"{context} performance complexity",
             ]
 
+            # ── Pre-fetch chunk pool (once, before the loop) ──────────────
+            # All embed + search tasks run in parallel via asyncio.gather.
+            subj_pool_variants = query_aspects[:min(4, len(query_aspects))]
+
+            async def _subj_embed_and_search(q_variant: str):
+                try:
+                    q_emb = await self.embedding_service.get_embedding(q_variant)
+                    return await self.document_service.hybrid_search_multi_document(
+                        document_ids=all_search_doc_ids,
+                        query=q_variant,
+                        query_embedding=q_emb,
+                        top_k=8,
+                        alpha=0.6,
+                    )
+                except Exception as pool_err:
+                    logger.warning(f"quick_generate_from_subject: pool search failed for '{q_variant[:40]}': {pool_err}")
+                    return []
+
+            import asyncio
+            subj_all_candidate_lists = await asyncio.gather(*[_subj_embed_and_search(v) for v in subj_pool_variants])
+
+            subj_chunk_pool = []
+            subj_seen_ids: set = set()
+            for candidates in subj_all_candidate_lists:
+                for c in candidates:
+                    if c.id not in subj_seen_ids:
+                        subj_seen_ids.add(c.id)
+                        subj_chunk_pool.append(c)
+
+            if self.reranker_service and len(subj_chunk_pool) > 5:
+                subj_chunk_pool = self.reranker_service.rerank(
+                    query=context,
+                    chunks=subj_chunk_pool,
+                    top_k=min(20, len(subj_chunk_pool)),
+                )
+            if not subj_chunk_pool:
+                import random
+                subj_chunk_pool = random.sample(all_chunks, min(15, len(all_chunks)))
+
+            logger.info(f"quick_generate_from_subject: pre-fetched chunk pool of {len(subj_chunk_pool)} chunks ({len(subj_pool_variants)} parallel queries, deduped+reranked)")
+
+            yield QuickGenerateProgress(
+                status="generating",
+                progress=22,
+                message=f"Content ready — generating {count} questions...",
+                total_questions=count,
+            )
+            # ─────────────────────────────────────────────────────────────
+
             type_distribution = self._distribute_types(count, types)
             logger.info(f"quick_generate_from_subject: type distribution={type_distribution}")
 
@@ -2573,29 +2646,13 @@ Output valid JSON only."""
                 max_attempts = type_count * 4  # allow up to 4x retries per slot
                 while type_generated < type_count and type_attempts < max_attempts:
                     type_attempts += 1
-                    i = type_generated  # keep query variety index consistent
                     try:
-                        varied_query = query_aspects[total_question_index % len(query_aspects)]
-                        context_embedding = await self.embedding_service.get_embedding(varied_query)
-
-                        candidates = await self.document_service.hybrid_search_multi_document(
-                            document_ids=all_search_doc_ids,
-                            query=varied_query,
-                            query_embedding=context_embedding,
-                            top_k=8,
-                            alpha=0.6,
-                        )
-
-                        if self.reranker_service and len(candidates) > 3:
-                            selected_chunks = self.reranker_service.rerank(
-                                query=varied_query,
-                                chunks=candidates,
-                                top_k=3,
-                            )
-                        else:
-                            offset = (total_question_index % 2) * 2
-                            selected_chunks = candidates[offset:offset + 3] if len(candidates) > offset + 2 else candidates[:3]
-
+                        # Rotate through pre-fetched chunk pool for variety
+                        pool_size = len(subj_chunk_pool)
+                        pool_offset = (total_question_index * 3) % max(1, pool_size - 2)
+                        selected_chunks = subj_chunk_pool[pool_offset:pool_offset + 3]
+                        if len(selected_chunks) < 3 and pool_size >= 3:
+                            selected_chunks = subj_chunk_pool[:3]
                         if not selected_chunks:
                             import random
                             selected_chunks = random.sample(all_chunks, min(3, len(all_chunks)))

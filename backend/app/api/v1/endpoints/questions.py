@@ -380,19 +380,20 @@ async def quick_generate_questions(
         document_service = DocumentService(db)
         question_service = QuestionGenerationService(db)
         
-        # Step 1: Upload and process document
+        # Step 1: Upload and process document (run enhance in parallel)
         logger.info(f"Quick generate: Starting for user {current_user.id}, context: {context}")
         yield f"data: {QuickGenerateProgress(status='uploading', progress=5, message='Uploading document...').model_dump_json()}\n\n"
         
         try:
-            # Enhance focus prompt with LLM
+            import asyncio
             from app.services.llm_service import LLMService
             llm = LLMService()
-            enhanced_context = await _enhance_focus_prompt(context, llm)
-            logger.info(f"Quick generate: original context='{context}' enhanced='{enhanced_context}'")
 
-            yield f"data: {QuickGenerateProgress(status='processing', progress=10, message='Processing document content...').model_dump_json()}\n\n"
-            
+            # Run context enhancement and document upload concurrently
+            enhanced_context_task = asyncio.create_task(_enhance_focus_prompt(context, llm))
+
+            yield f"data: {QuickGenerateProgress(status='processing', progress=8, message='Processing document content...').model_dump_json()}\n\n"
+
             # Upload and process synchronously
             logger.info(f"Quick generate: Processing document {filename}")
             document = await document_service.upload_and_process_document(
@@ -400,10 +401,14 @@ async def quick_generate_questions(
                 filename=filename,
                 file_content=content,
                 mime_type=mime_type,
-                context=enhanced_context,
+                context=context,
                 subject_id=parsed_subject_id,
             )
-            
+
+            # By now enhance should be done (upload takes much longer)
+            enhanced_context = await enhanced_context_task
+            logger.info(f"Quick generate: original context='{context}' enhanced='{enhanced_context}'")
+
             # Extract document_id immediately to avoid session issues
             doc_id = document.id
             doc_chunks = document.total_chunks
@@ -559,22 +564,14 @@ async def quick_generate_from_subject(
     async def event_generator():
         question_service = QuestionGenerationService(db)
 
-        yield f"data: {QuickGenerateProgress(status='processing', progress=5, message='Enhancing focus prompt with AI...').model_dump_json()}\n\n"
-
-        # Enhance focus prompt
-        from app.services.llm_service import LLMService
-        llm = LLMService()
-        enhanced_context = await _enhance_focus_prompt(context, llm)
-        logger.info(f"Quick generate from subject: original='{context}' enhanced='{enhanced_context}'")
-
-        yield f"data: {QuickGenerateProgress(status='processing', progress=10, message='Searching subject content...').model_dump_json()}\n\n"
+        yield f"data: {QuickGenerateProgress(status='processing', progress=5, message='Searching subject content...').model_dump_json()}\n\n"
 
         try:
             generation_started = False
             generator = question_service.quick_generate_from_subject(
                 user_id=current_user.id,
                 subject_id=parsed_subject_id,
-                context=enhanced_context,
+                context=context,
                 count=count,
                 types=type_list,
                 difficulty=difficulty,
