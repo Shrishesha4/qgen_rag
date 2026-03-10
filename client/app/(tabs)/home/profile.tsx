@@ -839,6 +839,7 @@ const styles = StyleSheet.create({
     marginHorizontal: Spacing.lg,
     alignItems: 'center',
     paddingVertical: Spacing.xl,
+    marginTop: 40,
   },
   avatarContainer: {
     width: 88,
