@@ -1,5 +1,5 @@
 import React from 'react';
-import { Platform, StyleSheet, View } from 'react-native';
+import { Platform, StyleSheet, View, useWindowDimensions } from 'react-native';
 import { Tabs } from 'expo-router';
 import { BlurView } from 'expo-blur';
 
@@ -15,13 +15,17 @@ const TEACHER_TABS = [
   { name: 'history', href: '/(tabs)/history', title: 'History', icon: 'clock.arrow.circlepath' },
 ];
 
+const DESKTOP_BREAKPOINT = 768;
+
 export default function TabLayout() {
   const colorScheme = useColorScheme();
   const colors = Colors[colorScheme ?? 'light'];
   const isDark = colorScheme === 'dark';
+  const { width } = useWindowDimensions();
+  const isDesktopWeb = Platform.OS === 'web' && width >= DESKTOP_BREAKPOINT;
 
-  // Web: sidebar + hidden tab bar
-  if (Platform.OS === 'web') {
+  // Desktop web: sidebar + hidden tab bar
+  if (isDesktopWeb) {
     return (
       <View style={{ flex: 1, flexDirection: 'row', backgroundColor: colors.background }}>
         <WebSidebar items={TEACHER_TABS} appTitle="QGen" appSubtitle="Teacher Portal" />

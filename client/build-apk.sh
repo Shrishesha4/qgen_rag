@@ -24,7 +24,10 @@ command -v node >/dev/null 2>&1  || { red "Error: node not found."; exit 1; }
 command -v npx >/dev/null 2>&1   || { red "Error: npx not found."; exit 1; }
 command -v java >/dev/null 2>&1  || { red "Error: java not found."; exit 1; }
 [[ -d "$ANDROID_HOME" ]] || { red "Error: Android SDK not found at $ANDROID_HOME"; exit 1; }
-command -v "$ANDROID_HOME/tools/bin/sdkmanager" >/dev/null 2>&1 || { red "Error: Android SDK tools not properly installed."; exit 1; }
+# sdkmanager lives in cmdline-tools/latest/bin (new layout) or tools/bin (old layout)
+SDKMANAGER="$ANDROID_HOME/cmdline-tools/latest/bin/sdkmanager"
+[[ -x "$SDKMANAGER" ]] || SDKMANAGER="$ANDROID_HOME/tools/bin/sdkmanager"
+[[ -x "$SDKMANAGER" ]] || { red "Error: Android SDK tools not properly installed."; exit 1; }
 
 # ─── Step 1: Install JS dependencies & generate native dirs ────
 step 1 "Preparing build environment..."
@@ -52,6 +55,8 @@ fi
 # ─── Step 2: Clean old build ────────────────────────────────────
 step 2 "Cleaning previous build..."
 cd "$ANDROID_DIR"
+# Remove stale CMake cache - causes codegen directory errors after npm install
+rm -rf app/.cxx
 ./gradlew clean -q
 
 # ─── Step 3: Build release APK ──────────────────────────────────
