@@ -31,22 +31,26 @@ function AuthGuard({ children }: { children: React.ReactNode }) {
     const inVetterGroup = segments[0] === '(vetter)';
     const inTabsGroup = segments[0] === '(tabs)';
     
-    if (!isAuthenticated && !inAuthGroup) {
-      // Redirect to login
-      router.replace('/(auth)/login');
-    } else if (isAuthenticated && inAuthGroup) {
-      // Redirect based on role
-      if (user?.role === 'vetter') {
+    try {
+      if (!isAuthenticated && !inAuthGroup) {
+        // Redirect to login
+        router.replace('/(auth)/login');
+      } else if (isAuthenticated && inAuthGroup) {
+        // Redirect based on role
+        if (user?.role === 'vetter') {
+          router.replace('/(vetter)/dashboard');
+        } else {
+          router.replace('/(tabs)/home');
+        }
+      } else if (isAuthenticated && user?.role === 'vetter' && inTabsGroup) {
+        // Vetter trying to access teacher tabs, redirect to vetter portal
         router.replace('/(vetter)/dashboard');
-      } else {
+      } else if (isAuthenticated && user?.role !== 'vetter' && inVetterGroup) {
+        // Non-vetter trying to access vetter portal, redirect to tabs
         router.replace('/(tabs)/home');
       }
-    } else if (isAuthenticated && user?.role === 'vetter' && inTabsGroup) {
-      // Vetter trying to access teacher tabs, redirect to vetter portal
-      router.replace('/(vetter)/dashboard');
-    } else if (isAuthenticated && user?.role !== 'vetter' && inVetterGroup) {
-      // Non-vetter trying to access vetter portal, redirect to tabs
-      router.replace('/(tabs)/home');
+    } catch (error) {
+      console.error('[AuthGuard] Navigation error:', error);
     }
   }, [isAuthenticated, isLoading, segments, user?.role]);
 

@@ -5,7 +5,6 @@ import {
   StyleSheet,
   ScrollView,
   TouchableOpacity,
-  Alert,
   Modal,
   TextInput,
   Switch,
@@ -23,6 +22,7 @@ import { useColorScheme } from '@/hooks/use-color-scheme';
 import { useToast } from '@/components/toast';
 import { useAuthStore } from '@/stores/authStore';
 import { selectionImpact } from '@/utils/haptics';
+import { showConfirmDialog } from '@/utils/alert';
 
 type ModalType = 'editProfile' | 'changePassword' | 'notifications' | 'help' | 'reportIssue' | null;
 
@@ -53,15 +53,20 @@ export default function VetterSettings() {
   const [isSubmitting, setIsSubmitting] = useState(false);
 
   const handleLogout = () => {
-    Alert.alert('Logout', 'Are you sure you want to logout?', [
+    showConfirmDialog('Logout', 'Are you sure you want to logout?', [
       { text: 'Cancel', style: 'cancel' },
       {
         text: 'Logout',
         style: 'destructive',
         onPress: async () => {
-          await logout();
-          showSuccess('Logged out');
-          router.replace('/(auth)/login');
+          try {
+            await logout();
+            showSuccess('Logged out');
+            router.replace('/(auth)/login');
+          } catch (error) {
+            const message = error instanceof Error ? error.message : 'Failed to logout';
+            showError(message);
+          }
         },
       },
     ]);

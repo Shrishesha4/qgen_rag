@@ -1,15 +1,21 @@
-import React from 'react';
-import { Platform, StyleSheet } from 'react-native';
+import React, { useEffect } from 'react';
+import { Platform, StyleSheet, View } from 'react-native';
 import { Tabs, useRouter } from 'expo-router';
-import { NativeTabs, Icon, Label } from 'expo-router/unstable-native-tabs';
 import { BlurView } from 'expo-blur';
 
 import { HapticTab } from '@/components/haptic-tab';
 import { IconSymbol } from '@/components/ui/icon-symbol';
+import { WebSidebar } from '@/components/ui/web-sidebar';
 import { Colors } from '@/constants/theme';
 import { useColorScheme } from '@/hooks/use-color-scheme';
 import { useAuthStore } from '@/stores/authStore';
-import { useEffect } from 'react';
+
+const VETTER_TABS = [
+  { name: 'dashboard', href: '/(vetter)/dashboard', title: 'Dashboard', icon: 'chart.bar.fill' },
+  { name: 'teachers', href: '/(vetter)/teachers', title: 'Teachers', icon: 'person.2.fill' },
+  { name: 'questions', href: '/(vetter)/questions', title: 'Questions', icon: 'list.bullet.clipboard.fill' },
+  { name: 'settings', href: '/(vetter)/settings', title: 'Settings', icon: 'gearshape.fill' },
+];
 
 export default function VetterTabLayout() {
   const colorScheme = useColorScheme();
@@ -25,8 +31,32 @@ export default function VetterTabLayout() {
     }
   }, [user]);
 
+  // Web: sidebar + hidden tab bar
+  if (Platform.OS === 'web') {
+    return (
+      <View style={{ flex: 1, flexDirection: 'row', backgroundColor: colors.background }}>
+        <WebSidebar items={VETTER_TABS} appTitle="QGen" appSubtitle="Vetter Portal" />
+        <View style={{ flex: 1 }}>
+          <Tabs
+            screenOptions={{
+              headerShown: false,
+              tabBarStyle: { display: 'none' },
+            }}
+          >
+            <Tabs.Screen name="dashboard" options={{ title: 'Dashboard' }} />
+            <Tabs.Screen name="teachers" options={{ title: 'Teachers' }} />
+            <Tabs.Screen name="questions" options={{ title: 'Questions' }} />
+            <Tabs.Screen name="settings" options={{ title: 'Settings' }} />
+          </Tabs>
+        </View>
+      </View>
+    );
+  }
+
   // Use native iOS tabs on iOS
   if (Platform.OS === 'ios') {
+    // Lazy require to avoid bundling iOS-only module on web
+    const { NativeTabs, Icon, Label } = require('expo-router/unstable-native-tabs');
     return (
       <NativeTabs
         disableTransparentOnScrollEdge={false}

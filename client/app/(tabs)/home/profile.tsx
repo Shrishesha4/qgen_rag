@@ -5,7 +5,6 @@ import {
   StyleSheet,
   ScrollView,
   TouchableOpacity,
-  Alert,
   Modal,
   TextInput,
   Switch,
@@ -26,6 +25,8 @@ import { subjectsService } from '@/services/subjects';
 import { vettingService } from '@/services/vetting';
 import { API_BASE_URL } from '@/services/api';
 import { selectionImpact, mediumImpact, heavyImpact } from '@/utils/haptics';
+import { showConfirmDialog } from '@/utils/alert';
+import { useRouter } from 'expo-router';
 
 type ModalType = 'editProfile' | 'changePassword' | 'notifications' | 'appearance' | 'help' | 'about' | null;
 
@@ -34,6 +35,7 @@ export default function ProfileScreen() {
   const colors = Colors[colorScheme ?? 'light'];
   const { user, logout, updateProfile, changePassword, uploadAvatar, deleteAvatar, isLoading: authLoading } = useAuthStore();
   const navigation = useNavigation();
+  const router = useRouter();
   const { showError, showSuccess, showWarning } = useToast();
 
   const [activeModal, setActiveModal] = useState<ModalType>(null);
@@ -117,7 +119,7 @@ export default function ProfileScreen() {
   };
 
   const handleLogout = () => {
-    Alert.alert(
+    showConfirmDialog(
       'Logout',
       'Are you sure you want to logout?',
       [
@@ -125,7 +127,16 @@ export default function ProfileScreen() {
         {
           text: 'Logout',
           style: 'destructive',
-          onPress: logout,
+          onPress: async () => {
+            try {
+              await logout();
+              showSuccess('Logged out');
+              router.replace('/(auth)/login');
+            } catch (error) {
+              const message = error instanceof Error ? error.message : 'Failed to logout';
+              showError(message);
+            }
+          },
         },
       ]
     );

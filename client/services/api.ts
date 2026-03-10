@@ -3,11 +3,63 @@
  */
 
 import axios, { AxiosError, InternalAxiosRequestConfig } from 'axios';
-import * as SecureStore from 'expo-secure-store';
 import { Platform } from 'react-native';
 import { ENV_CONFIG, isSimulator } from '../config/env';
 
-// Determine API base URL based on environment and platform
+// Platform-aware token storage: SecureStore on native, localStorage on web
+const ACCESS_TOKEN_KEY = 'qgen_access_token';
+const REFRESH_TOKEN_KEY = 'qgen_refresh_token';
+
+interface TokenStorage {
+  getAccessToken(): Promise<string | null>;
+  getRefreshToken(): Promise<string | null>;
+  setTokens(accessToken: string, refreshToken: string): Promise<void>;
+  clearTokens(): Promise<void>;
+}
+
+const createTokenStorage = (): TokenStorage => {
+  if (Platform.OS === 'web') {
+    return {
+      async getAccessToken(): Promise<string | null> {
+        try { return localStorage.getItem(ACCESS_TOKEN_KEY); } catch { return null; }
+      },
+      async getRefreshToken(): Promise<string | null> {
+        try { return localStorage.getItem(REFRESH_TOKEN_KEY); } catch { return null; }
+      },
+      async setTokens(accessToken: string, refreshToken: string): Promise<void> {
+        localStorage.setItem(ACCESS_TOKEN_KEY, accessToken);
+        localStorage.setItem(REFRESH_TOKEN_KEY, refreshToken);
+      },
+      async clearTokens(): Promise<void> {
+        localStorage.removeItem(ACCESS_TOKEN_KEY);
+        localStorage.removeItem(REFRESH_TOKEN_KEY);
+      },
+    };
+  }
+
+  // Native: use SecureStore
+  // Lazy require to avoid crashing on web during module evaluation
+  const SecureStore = require('expo-secure-store') as typeof import('expo-secure-store');
+  return {
+    async getAccessToken(): Promise<string | null> {
+      try { return await SecureStore.getItemAsync(ACCESS_TOKEN_KEY); } catch { return null; }
+    },
+    async getRefreshToken(): Promise<string | null> {
+      try { return await SecureStore.getItemAsync(REFRESH_TOKEN_KEY); } catch { return null; }
+    },
+    async setTokens(accessToken: string, refreshToken: string): Promise<void> {
+      await SecureStore.setItemAsync(ACCESS_TOKEN_KEY, accessToken);
+      await SecureStore.setItemAsync(REFRESH_TOKEN_KEY, refreshToken);
+    },
+    async clearTokens(): Promise<void> {
+      await SecureStore.deleteItemAsync(ACCESS_TOKEN_KEY);
+      await SecureStore.deleteItemAsync(REFRESH_TOKEN_KEY);
+    },
+  };
+};
+
+export const tokenStorage = createTokenStorage();
+
 const getApiBaseUrl = (): string => {
   // Always use production URL for release builds
   if (!__DEV__) {
@@ -32,19 +84,15 @@ const getApiBaseUrl = (): string => {
     return `http://${ENV_CONFIG.DEV_MACHINE_IP}:8000/api/v1`;
   }
 
-  // Fallback for web/other platforms
+  // Fallback for web/other platforms — use localhost in dev
+  if (Platform.OS === 'web') {
+    return 'http://localhost:8000/api/v1';
+  }
+
   return `http://${ENV_CONFIG.DEV_MACHINE_IP}:8000/api/v1`;
 };
 
 export const API_BASE_URL = getApiBaseUrl();
-
-console.log('[API] Base URL:', API_BASE_URL);
-console.log('[API] Platform:', Platform.OS);
-console.log('[API] USE_SIMULATOR flag:', isSimulator());
-
-// Token storage keys
-const ACCESS_TOKEN_KEY = 'qgen_access_token';
-const REFRESH_TOKEN_KEY = 'qgen_refresh_token';
 
 // Create axios instance
 export const apiClient = axios.create({
@@ -54,35 +102,6 @@ export const apiClient = axios.create({
     'Content-Type': 'application/json',
   },
 });
-
-// Token management functions
-export const tokenStorage = {
-  async getAccessToken(): Promise<string | null> {
-    try {
-      return await SecureStore.getItemAsync(ACCESS_TOKEN_KEY);
-    } catch {
-      return null;
-    }
-  },
-
-  async getRefreshToken(): Promise<string | null> {
-    try {
-      return await SecureStore.getItemAsync(REFRESH_TOKEN_KEY);
-    } catch {
-      return null;
-    }
-  },
-
-  async setTokens(accessToken: string, refreshToken: string): Promise<void> {
-    await SecureStore.setItemAsync(ACCESS_TOKEN_KEY, accessToken);
-    await SecureStore.setItemAsync(REFRESH_TOKEN_KEY, refreshToken);
-  },
-
-  async clearTokens(): Promise<void> {
-    await SecureStore.deleteItemAsync(ACCESS_TOKEN_KEY);
-    await SecureStore.deleteItemAsync(REFRESH_TOKEN_KEY);
-  },
-};
 
 // Request interceptor - add auth token
 apiClient.interceptors.request.use(
@@ -167,8 +186,12 @@ apiClient.interceptors.response.use(
 
           // Clear any stored tokens and redirect to the login screen immediately
           await tokenStorage.clearTokens();
-          const { router } = await import('expo-router');
-          router.replace('/(auth)/login');
+          try {
+            const { router } = await import('expo-router');
+            router.replace('/(auth)/login');
+          } catch (routerError) {
+            console.error('[API] Failed to redirect to login:', routerError);
+          }
 
           // Build a normalized AxiosError with 401 response so UI helpers treat this as an auth error
           const authResponse = {
@@ -206,8 +229,12 @@ apiClient.interceptors.response.use(
         await tokenStorage.clearTokens();
 
         // Import router dynamically to avoid circular dependency
-        const { router } = await import('expo-router');
-        router.replace('/(auth)/login');
+        try {
+          const { router } = await import('expo-router');
+          router.replace('/(auth)/login');
+        } catch (routerError) {
+          console.error('[API] Failed to redirect to login:', routerError);
+        }
 
         return Promise.reject(refreshError);
       } finally {
