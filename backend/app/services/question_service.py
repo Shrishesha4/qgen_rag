@@ -1921,6 +1921,7 @@ Output valid JSON only."""
         marks_by_type: Optional[dict] = None,
         subject_id: Optional[uuid.UUID] = None,
         topic_id: Optional[uuid.UUID] = None,
+        existing_session_id: Optional[uuid.UUID] = None,
     ) -> AsyncGenerator[QuickGenerateProgress, None]:
         """
         Generate questions from an already-processed document with minimal configuration.
@@ -2003,28 +2004,49 @@ Output valid JSON only."""
             # Build list of all document IDs to search across
             all_search_doc_ids = [document_id] + reference_doc_ids
 
-            # 3. Create a simple session for tracking
-            session = GenerationSession(
-                document_id=document_id,
-                user_id=user_id,
-                subject_id=subject_id,
-                topic_id=topic_id,
-                generation_method="quick",
-                requested_count=count,
-                requested_types=types,
-                requested_difficulty=difficulty,
-                focus_topics=[context],  # Use context as focus topic
-                status="in_progress",
-                generation_config={
-                    "mode": "quick_generate",
-                    "context": context,
-                    "bloom_levels": bloom_levels,
-                },
-            )
-            self.db.add(session)
-            await self.db.commit()
-            await self.db.refresh(session)
-            
+            # 3. Create a new session or reuse an existing one (for retry)
+            prior_generated = 0
+            prior_failed = 0
+            if existing_session_id:
+                existing_res = await self.db.execute(
+                    select(GenerationSession).where(
+                        GenerationSession.id == existing_session_id,
+                        GenerationSession.user_id == user_id,
+                    )
+                )
+                session = existing_res.scalar_one_or_none()
+                if session:
+                    prior_generated = session.questions_generated or 0
+                    prior_failed = session.questions_failed or 0
+                    session.status = "in_progress"
+                    session.requested_count = (session.requested_count or 0) + count
+                    await self.db.commit()
+                    await self.db.refresh(session)
+                else:
+                    existing_session_id = None
+
+            if not existing_session_id:
+                session = GenerationSession(
+                    document_id=document_id,
+                    user_id=user_id,
+                    subject_id=subject_id,
+                    topic_id=topic_id,
+                    generation_method="quick",
+                    requested_count=count,
+                    requested_types=types,
+                    requested_difficulty=difficulty,
+                    focus_topics=[context],
+                    status="in_progress",
+                    generation_config={
+                        "mode": "quick_generate",
+                        "context": context,
+                        "bloom_levels": bloom_levels,
+                    },
+                )
+                self.db.add(session)
+                await self.db.commit()
+                await self.db.refresh(session)
+
             # Extract session_id immediately to avoid SQLAlchemy lazy-loading issues after rollback
             session_id = session.id
 
@@ -2128,6 +2150,7 @@ Output valid JSON only."""
                 message=f"Content ready — generating {count} questions...",
                 total_questions=count,
                 document_id=document_id,
+                session_id=session_id,
             )
             # ─────────────────────────────────────────────────────────────
 
@@ -2336,8 +2359,8 @@ Output valid JSON only."""
             session = session_result.scalar_one_or_none()
             
             if session:
-                session.questions_generated = questions_generated
-                session.questions_failed = questions_failed
+                session.questions_generated = prior_generated + questions_generated
+                session.questions_failed = prior_failed + questions_failed
                 session.questions_duplicate = 0
                 session.status = "completed"
                 session.completed_at = datetime.now(timezone.utc)
@@ -2345,7 +2368,7 @@ Output valid JSON only."""
                     session.total_duration_seconds = (
                         session.completed_at - session.started_at
                     ).total_seconds()
-                
+
                 await self.db.commit()
 
             yield QuickGenerateProgress(
@@ -2356,6 +2379,7 @@ Output valid JSON only."""
                 message=f"Successfully generated {questions_generated} questions",
                 document_id=document_id,
                 questions_failed=questions_failed,
+                session_id=session_id,
             )
 
         except Exception as e:
@@ -2386,6 +2410,7 @@ Output valid JSON only."""
         difficulty: str = "medium",
         marks_by_type: Optional[dict] = None,
         topic_id: Optional[uuid.UUID] = None,
+        existing_session_id: Optional[uuid.UUID] = None,
     ) -> AsyncGenerator[QuickGenerateProgress, None]:
         """
         Generate questions from all primary documents in a subject (no file upload needed).
@@ -2533,26 +2558,49 @@ Output valid JSON only."""
                 except Exception as e:
                     logger.warning(f"Failed to load reference questions: {e}")
 
-            session = GenerationSession(
-                document_id=None,
-                user_id=user_id,
-                subject_id=subject_id,
-                topic_id=topic_id,
-                generation_method="quick_from_subject",
-                requested_count=count,
-                requested_types=types,
-                requested_difficulty=difficulty,
-                focus_topics=[context],
-                status="in_progress",
-                generation_config={
-                    "mode": "quick_generate_from_subject",
-                    "context": context,
-                    "primary_document_ids": [str(d) for d in primary_doc_ids],
-                },
-            )
-            self.db.add(session)
-            await self.db.commit()
-            await self.db.refresh(session)
+            # 4. Create generation session or reuse existing one (for retry)
+            prior_generated = 0
+            prior_failed = 0
+            if existing_session_id:
+                existing_res = await self.db.execute(
+                    select(GenerationSession).where(
+                        GenerationSession.id == existing_session_id,
+                        GenerationSession.user_id == user_id,
+                    )
+                )
+                session = existing_res.scalar_one_or_none()
+                if session:
+                    prior_generated = session.questions_generated or 0
+                    prior_failed = session.questions_failed or 0
+                    session.status = "in_progress"
+                    session.requested_count = (session.requested_count or 0) + count
+                    await self.db.commit()
+                    await self.db.refresh(session)
+                else:
+                    existing_session_id = None
+
+            if not existing_session_id:
+                session = GenerationSession(
+                    document_id=None,
+                    user_id=user_id,
+                    subject_id=subject_id,
+                    topic_id=topic_id,
+                    generation_method="quick_from_subject",
+                    requested_count=count,
+                    requested_types=types,
+                    requested_difficulty=difficulty,
+                    focus_topics=[context],
+                    status="in_progress",
+                    generation_config={
+                        "mode": "quick_generate_from_subject",
+                        "context": context,
+                        "primary_document_ids": [str(d) for d in primary_doc_ids],
+                    },
+                )
+                self.db.add(session)
+                await self.db.commit()
+                await self.db.refresh(session)
+
             session_id = session.id
 
             # 5. Generation loop (mirrors quick_generate)
@@ -2634,6 +2682,7 @@ Output valid JSON only."""
                 progress=22,
                 message=f"Content ready — generating {count} questions...",
                 total_questions=count,
+                session_id=session_id,
             )
             # ─────────────────────────────────────────────────────────────
 
@@ -2732,8 +2781,8 @@ Output valid JSON only."""
             )
             session = session_result.scalar_one_or_none()
             if session:
-                session.questions_generated = questions_generated
-                session.questions_failed = max(0, count - questions_generated)
+                session.questions_generated = prior_generated + questions_generated
+                session.questions_failed = prior_failed + max(0, count - questions_generated)
                 session.status = "completed"
                 session.completed_at = datetime.now(timezone.utc)
                 if session.started_at:
@@ -2749,6 +2798,7 @@ Output valid JSON only."""
                 total_questions=count,
                 message=f"Successfully generated {questions_generated} questions",
                 questions_failed=max(0, count - questions_generated),
+                session_id=session_id,
             )
 
         except Exception as e:

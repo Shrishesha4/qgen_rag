@@ -72,6 +72,7 @@ export default function QuickGenerateScreen() {
   const [progress, setProgress] = useState<QuickGenerateProgress | null>(null);
   const [generatedQuestions, setGeneratedQuestions] = useState<Question[]>([]);
   const [failedCount, setFailedCount] = useState(0);
+  const [currentSessionId, setCurrentSessionId] = useState<string | null>(null);
   const cancelRef = useRef<(() => void) | null>(null);
   const progressAnim = useRef(new Animated.Value(0)).current;
 
@@ -192,6 +193,7 @@ export default function QuickGenerateScreen() {
       setGeneratedQuestions([]);
       setProgress(null);
       setFailedCount(0);
+      setCurrentSessionId(null);
       progressAnim.setValue(0);
 
       const marks_by_type = {
@@ -203,6 +205,9 @@ export default function QuickGenerateScreen() {
       const onProgress = (progressUpdate: QuickGenerateProgress) => {
         try {
           setProgress(progressUpdate);
+          if (progressUpdate.session_id) {
+            setCurrentSessionId(progressUpdate.session_id);
+          }
           if (progressUpdate.questions_failed !== undefined) {
             setFailedCount(progressUpdate.questions_failed);
           }
@@ -297,6 +302,9 @@ export default function QuickGenerateScreen() {
     const onProgress = (progressUpdate: QuickGenerateProgress) => {
       try {
         setProgress(progressUpdate);
+        if (progressUpdate.session_id) {
+          setCurrentSessionId(progressUpdate.session_id);
+        }
         if (progressUpdate.questions_failed !== undefined) {
           setFailedCount(progressUpdate.questions_failed);
         }
@@ -324,6 +332,7 @@ export default function QuickGenerateScreen() {
           ...marks_by_type,
           subject_id: selectedSubjectId || undefined,
           topic_id: selectedTopicId || undefined,
+          existing_session_id: currentSessionId || undefined,
         },
         onProgress, onComplete, onError,
       );
@@ -337,6 +346,7 @@ export default function QuickGenerateScreen() {
           types: selectedTypes,
           difficulty,
           ...marks_by_type,
+          existing_session_id: currentSessionId || undefined,
         },
         onProgress, onComplete, onError,
       );

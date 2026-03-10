@@ -304,3 +304,4 @@ class QuickGenerateProgress(BaseModel):
     message: Optional[str] = None
     document_id: Optional[uuid.UUID] = None
     questions_failed: Optional[int] = None
+    session_id: Optional[uuid.UUID] = None

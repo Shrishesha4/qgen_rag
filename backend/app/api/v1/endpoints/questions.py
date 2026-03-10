@@ -301,6 +301,7 @@ async def quick_generate_questions(
     marks_long: Optional[int] = Form(default=5, ge=1, le=100, description="Marks for long answer/essay questions"),
     subject_id: Optional[str] = Form(default=None, description="Subject ID to link questions to"),
     topic_id: Optional[str] = Form(default=None, description="Topic/Chapter ID to link questions to"),
+    existing_session_id: Optional[str] = Form(default=None, description="Existing session ID to attach retry questions to"),
     current_user: User = Depends(rate_limit(requests=50, window_seconds=86400)),  # 50/day for quick generate
     db: AsyncSession = Depends(get_db),
 ):
@@ -371,7 +372,14 @@ async def quick_generate_questions(
                 )
     
     mime_type = MIME_TYPE_MAPPING.get(ext, "application/octet-stream")
-    
+
+    parsed_existing_session_id: Optional[uuid.UUID] = None
+    if existing_session_id:
+        try:
+            parsed_existing_session_id = uuid.UUID(existing_session_id)
+        except ValueError:
+            pass
+
     async def event_generator():
         """Generate SSE events for quick generation."""
         import logging
@@ -443,6 +451,7 @@ async def quick_generate_questions(
                     marks_by_type=marks_by_type,
                     subject_id=parsed_subject_id,
                     topic_id=parsed_topic_id,
+                    existing_session_id=parsed_existing_session_id,
                 )
                 
                 async for progress in generator:
@@ -519,6 +528,7 @@ async def quick_generate_from_subject(
     marks_short: Optional[int] = Form(default=2, ge=1, le=100),
     marks_long: Optional[int] = Form(default=5, ge=1, le=100),
     topic_id: Optional[str] = Form(default=None, description="Topic/Chapter ID (optional)"),
+    existing_session_id: Optional[str] = Form(default=None, description="Existing session ID to attach retry questions to"),
     current_user: User = Depends(rate_limit(requests=50, window_seconds=86400)),
     db: AsyncSession = Depends(get_db),
 ):
@@ -559,6 +569,13 @@ async def quick_generate_from_subject(
         except ValueError:
             raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Invalid topic_id format")
 
+    parsed_existing_session_id_subj: Optional[uuid.UUID] = None
+    if existing_session_id:
+        try:
+            parsed_existing_session_id_subj = uuid.UUID(existing_session_id)
+        except ValueError:
+            pass
+
     marks_by_type = {"mcq": marks_mcq, "short_answer": marks_short, "long_answer": marks_long}
 
     async def event_generator():
@@ -577,6 +594,7 @@ async def quick_generate_from_subject(
                 difficulty=difficulty,
                 marks_by_type=marks_by_type,
                 topic_id=parsed_topic_id,
+                existing_session_id=parsed_existing_session_id_subj,
             )
 
             async for progress in generator:

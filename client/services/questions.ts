@@ -92,6 +92,7 @@ export interface QuickGenerateProgress {
   message: string | null;
   document_id: string | null;
   questions_failed?: number;
+  session_id?: string | null;
 }
 
 export interface QuickGenerateRequest {
@@ -111,6 +112,7 @@ export interface QuickGenerateRequest {
   marks_long?: number;
   subject_id?: string;
   topic_id?: string;
+  existing_session_id?: string;
 }
 
 export interface QuickGenerateFromSubjectRequest {
@@ -123,6 +125,7 @@ export interface QuickGenerateFromSubjectRequest {
   marks_mcq?: number;
   marks_short?: number;
   marks_long?: number;
+  existing_session_id?: string;
 }
 
 export interface QuestionUpdateRequest {
@@ -510,6 +513,7 @@ export const questionsService = {
         if (request.marks_long) formData.append('marks_long', request.marks_long.toString());
         if (request.subject_id) formData.append('subject_id', request.subject_id);
         if (request.topic_id) formData.append('topic_id', request.topic_id);
+        if (request.existing_session_id) formData.append('existing_session_id', request.existing_session_id);
 
         const accessToken = await tokenStorage.getAccessToken();
         const baseUrl = apiClient.defaults.baseURL || '';
@@ -658,6 +662,7 @@ export const questionsService = {
         if (request.marks_mcq) formData.append('marks_mcq', request.marks_mcq.toString());
         if (request.marks_short) formData.append('marks_short', request.marks_short.toString());
         if (request.marks_long) formData.append('marks_long', request.marks_long.toString());
+        if (request.existing_session_id) formData.append('existing_session_id', request.existing_session_id);
 
         const accessToken = await tokenStorage.getAccessToken();
         const baseUrl = apiClient.defaults.baseURL || '';
