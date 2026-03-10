@@ -2043,6 +2043,22 @@ Output valid JSON only."""
             generated_embeddings = []  # Track embeddings for deduplication within session
             generated_questions_text = []  # Track question text for diversity hints
             total_question_index = 0  # Global index for diversity hints
+
+            # Preload existing question embeddings for subject-level dedupe
+            existing_embeddings = []
+            if subject_id:
+                try:
+                    emb_res = await self.db.execute(
+                        select(Question.question_embedding).where(
+                            Question.subject_id == subject_id,
+                            Question.is_archived == False,
+                            Question.question_embedding.isnot(None),
+                        ).limit(2000)
+                    )
+                    existing_embeddings = [r[0] for r in emb_res.all()]
+                    logger.info(f"quick_generate: Preloaded {len(existing_embeddings)} existing embeddings for dedupe")
+                except Exception as e:
+                    logger.warning(f"quick_generate: Could not preload existing embeddings: {e}")
             
             # Query variations for chunk selection diversity
             query_aspects = [
@@ -2124,13 +2140,14 @@ Output valid JSON only."""
                         q_text = question_data.get('question_text', '')
                         logger.info(f"Question generated: {q_text[:100] if q_text else 'empty'}")
 
-                        # Check for duplicates within this session
-                        if generated_embeddings:
+                        # Check for duplicates against existing DB + session-generated questions
+                        if generated_embeddings or existing_embeddings:
                             new_embedding = await self.embedding_service.get_embedding(
                                 question_data["question_text"]
                             )
+                            all_embeddings = existing_embeddings + generated_embeddings
                             similarities = self.embedding_service.compute_similarity_batch(
-                                new_embedding, generated_embeddings
+                                new_embedding, all_embeddings
                             )
                             if any(s > 0.85 for s in similarities):
                                 logger.warning("Question rejected as duplicate")
@@ -2515,6 +2532,21 @@ Output valid JSON only."""
             generated_questions_text = []
             total_question_index = 0
 
+            # Preload existing question embeddings for subject-level dedupe
+            existing_embeddings = []
+            try:
+                emb_res = await self.db.execute(
+                    select(Question.question_embedding).where(
+                        Question.subject_id == subject_id,
+                        Question.is_archived == False,
+                        Question.question_embedding.isnot(None),
+                    ).limit(2000)
+                )
+                existing_embeddings = [r[0] for r in emb_res.all()]
+                logger.info(f"quick_generate_from_subject: Preloaded {len(existing_embeddings)} existing embeddings for dedupe")
+            except Exception as e:
+                logger.warning(f"quick_generate_from_subject: Could not preload existing embeddings: {e}")
+
             query_aspects = [
                 context,
                 f"{context} definition and concepts",
@@ -2580,10 +2612,11 @@ Output valid JSON only."""
 
                         q_text = question_data.get("question_text", "")
 
-                        if generated_embeddings:
+                        if generated_embeddings or existing_embeddings:
                             new_embedding = await self.embedding_service.get_embedding(q_text)
+                            all_embs = existing_embeddings + generated_embeddings
                             similarities = self.embedding_service.compute_similarity_batch(
-                                new_embedding, generated_embeddings
+                                new_embedding, all_embs
                             )
                             if any(s > 0.85 for s in similarities):
                                 questions_failed += 1

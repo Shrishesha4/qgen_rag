@@ -101,6 +101,75 @@ def _pick_starter(q_type: str, used_starters: list[str]) -> str:
 
 # ─────────────────────────────────────────────────────────────────────────────
 
+import logging as _logging
+
+_dedupe_logger = _logging.getLogger(__name__)
+
+DEDUPE_SIMILARITY_THRESHOLD = 0.85
+
+
+async def _preload_subject_embeddings(
+    db: AsyncSession,
+    subject_id: uuid.UUID,
+    limit: int = 2000,
+) -> list:
+    """
+    Preload existing question embeddings for a subject from the DB.
+    Used to detect duplicates against the full question bank, not just the
+    current generation session.
+    """
+    try:
+        emb_res = await db.execute(
+            select(Question.question_embedding).where(
+                Question.subject_id == subject_id,
+                Question.is_archived == False,
+                Question.question_embedding.isnot(None),
+            ).limit(limit)
+        )
+        embeddings = [r[0] for r in emb_res.all()]
+        _dedupe_logger.info(f"Preloaded {len(embeddings)} existing embeddings for subject {subject_id}")
+        return embeddings
+    except Exception as e:
+        _dedupe_logger.warning(f"Could not preload existing embeddings for subject {subject_id}: {e}")
+        return []
+
+
+def _is_duplicate_embedding(
+    candidate_embedding: list,
+    existing_embeddings: list,
+    generated_embeddings: list,
+    threshold: float = DEDUPE_SIMILARITY_THRESHOLD,
+) -> bool:
+    """
+    Check whether a candidate embedding is too similar to any existing question
+    (from the DB) or any question generated in this session.
+
+    Returns True if the candidate should be rejected as a duplicate.
+    """
+    import numpy as np
+
+    all_embeddings = existing_embeddings + generated_embeddings
+    if not all_embeddings:
+        return False
+
+    query = np.array(candidate_embedding)
+    matrix = np.array(all_embeddings)
+
+    query_norm = query / (np.linalg.norm(query) or 1.0)
+    norms = np.linalg.norm(matrix, axis=1, keepdims=True)
+    norms[norms == 0] = 1.0
+    matrix_norms = matrix / norms
+
+    similarities = np.dot(matrix_norms, query_norm)
+    max_sim = float(np.max(similarities))
+    if max_sim > threshold:
+        _dedupe_logger.debug(f"Duplicate detected: max_similarity={max_sim:.4f} > {threshold}")
+        return True
+    return False
+
+
+# ─────────────────────────────────────────────────────────────────────────────
+
 def _sanitize_question_fields(kwargs: dict) -> dict:
     """
     Sanitize Question field values to fit within DB column limits.
@@ -1816,6 +1885,11 @@ async def vet_question(
             if content_context:
                 system_prompt = _get_rubric_system_prompt(q_type)
                 
+                # Preload existing embeddings for subject-level dedupe
+                _vetter_existing_embs = []
+                if question_snapshot["subject_id"]:
+                    _vetter_existing_embs = await _preload_subject_embeddings(db, question_snapshot["subject_id"])
+
                 # Retry loop for robustness
                 max_retries = 3
                 for attempt in range(max_retries):
@@ -1889,6 +1963,11 @@ Output valid JSON only."""
                                         continue
 
                                 question_embedding = await embedding_service.get_embedding(question_text)
+
+                                # Dedupe: reject if too similar to existing questions
+                                if _is_duplicate_embedding(question_embedding, _vetter_existing_embs, []):
+                                    logger.warning(f"Quick regen attempt {attempt + 1}: duplicate of existing question, retrying")
+                                    continue
 
                                 _s = _sanitize_question_fields({
                                     "learning_outcome_id": question_snapshot["learning_outcome_id"],
@@ -2016,6 +2095,9 @@ Output valid JSON only."""
 
                 system_prompt = _get_rubric_system_prompt(q_type)
                 
+                # Preload existing embeddings for subject-level dedupe
+                _vetter_existing_embs_ch = await _preload_subject_embeddings(db, question_snapshot["subject_id"])
+
                 # Retry loop for robustness
                 max_retries = 3
                 for attempt in range(max_retries):
@@ -2050,6 +2132,11 @@ Output valid JSON only."""
                             question_text = response["question_text"]
                             if len(question_text) >= 15 and question_text.strip() != (question_snapshot["question_text"] or "").strip():
                                 question_embedding = await embedding_service.get_embedding(question_text)
+
+                                # Dedupe: reject if too similar to existing questions
+                                if _is_duplicate_embedding(question_embedding, _vetter_existing_embs_ch, []):
+                                    logger.warning(f"Chapter regen attempt {attempt + 1}: duplicate of existing question, retrying")
+                                    continue
 
                                 assigned_lo = response.get("learning_outcome_id") or response.get("learning_outcome")
                                 if not assigned_lo and topic_lo_mappings:
@@ -2176,6 +2263,9 @@ Output valid JSON only."""
                     embedding_service = EmbeddingService()
                     system_prompt = _get_rubric_system_prompt(q_type)
                     
+                    # Preload existing embeddings for subject-level dedupe
+                    _vetter_existing_embs_rb = await _preload_subject_embeddings(db, question_snapshot["subject_id"])
+
                     # Retry loop for robustness
                     max_retries = 3
                     for attempt in range(max_retries):
@@ -2216,6 +2306,11 @@ Output valid JSON only."""
                                             continue
 
                                     question_embedding = await embedding_service.get_embedding(question_text)
+
+                                    # Dedupe: reject if too similar to existing questions
+                                    if _is_duplicate_embedding(question_embedding, _vetter_existing_embs_rb, []):
+                                        logger.warning(f"Rubric regen attempt {attempt + 1}: duplicate of existing question, retrying")
+                                        continue
 
                                     assigned_lo = response.get("learning_outcome_id") or response.get("learning_outcome")
                                     topic_obj = None
@@ -2968,22 +3063,10 @@ async def generate_from_rubric(
             questions_failed = 0
             generated_questions = []  # Track for duplicate detection
             generated_embeddings = []  # Track embeddings for semantic dedupe within this session
-            existing_question_embeddings = []  # Preloaded DB embeddings for subject-level dedupe
             used_starters_rubric: list[str] = []  # Track starters for variety
 
-            # Preload existing question embeddings for this subject to reduce false positives
-            try:
-                emb_res = await db.execute(
-                    select(Question.question_embedding).where(
-                        Question.subject_id == uuid.UUID(subject_id_str),
-                        Question.is_archived == False,
-                        Question.question_embedding.isnot(None),
-                    ).limit(2000)
-                )
-                existing_question_embeddings = [r[0] for r in emb_res.all()]
-                logger.info(f"[{request_id}] Preloaded {len(existing_question_embeddings)} existing embeddings for dedupe")
-            except Exception as e:
-                logger.warning(f"[{request_id}] Could not preload existing embeddings ({e}); continuing without DB dedupe")
+            # Preload existing question embeddings for subject-level dedupe
+            existing_question_embeddings = await _preload_subject_embeddings(db, uuid.UUID(subject_id_str))
 
             # Type mapping
             type_mapping = {
@@ -3136,6 +3219,13 @@ Output valid JSON only."""
                                     if attempt == RETRY_LIMIT - 1:
                                         questions_failed += 1
                                     continue
+
+                            # Dedupe: reject if too similar to existing or session-generated questions
+                            if _is_duplicate_embedding(candidate_emb, existing_question_embeddings, generated_embeddings):
+                                logger.debug(f"[{request_id}] Rubric candidate rejected as duplicate (attempt {attempt+1})")
+                                if attempt == RETRY_LIMIT - 1:
+                                    questions_failed += 1
+                                continue
 
                             # Accepted candidate
                             question_text = candidate_text
@@ -3570,18 +3660,7 @@ async def generate_chapter(
             await db.refresh(chapter_gen_session)
 
             # ── Preload existing embeddings ──
-            existing_embeddings = []
-            try:
-                emb_res = await db.execute(
-                    select(Question.question_embedding).where(
-                        Question.subject_id == uuid.UUID(subject_id_str),
-                        Question.is_archived == False,
-                        Question.question_embedding.isnot(None),
-                    ).limit(2000)
-                )
-                existing_embeddings = [r[0] for r in emb_res.all()]
-            except Exception as e:
-                logger.warning(f"[{request_id}] Embedding preload failed ({e})")
+            existing_embeddings = await _preload_subject_embeddings(db, uuid.UUID(subject_id_str))
 
             questions_generated = 0
             questions_failed = 0
@@ -3724,6 +3803,13 @@ Output valid JSON only."""
                                     if attempt == RETRY_LIMIT - 1:
                                         questions_failed += 1
                                     continue
+
+                            # Dedupe: reject if too similar to existing or session-generated questions
+                            if _is_duplicate_embedding(candidate_emb, existing_embeddings, generated_embeddings):
+                                logger.debug(f"[{request_id}] Chapter candidate rejected as duplicate (attempt {attempt+1})")
+                                if attempt == RETRY_LIMIT - 1:
+                                    questions_failed += 1
+                                continue
 
                             accepted = True
 
