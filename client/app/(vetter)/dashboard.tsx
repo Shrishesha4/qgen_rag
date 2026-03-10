@@ -17,12 +17,14 @@ import { useColorScheme } from '@/hooks/use-color-scheme';
 import { useAuthStore } from '@/stores/authStore';
 import { vetterService, VetterDashboard as Dashboard } from '@/services/vetter.service';
 import { AquaTokens as A } from '@/constants/theme';
+import { useResponsive } from '@/hooks/use-responsive';
 
 export default function VetterDashboard() {
   const colorScheme = useColorScheme();
   const isDark = colorScheme === 'dark';
   const router = useRouter();
   const { user } = useAuthStore();
+  const { desktopContentStyle } = useResponsive();
 
   const [dashboard, setDashboard] = useState<Dashboard | null>(null);
   const [isLoading, setIsLoading] = useState(true);
@@ -131,7 +133,7 @@ export default function VetterDashboard() {
   return (
     <SafeAreaView style={[styles.container, { backgroundColor: isDark ? A.bgDark : A.bgLight }]}>
       <ScrollView
-        contentContainerStyle={styles.scrollContent}
+        contentContainerStyle={[styles.scrollContent, desktopContentStyle]}
         refreshControl={
           <RefreshControl
             refreshing={isRefreshing}

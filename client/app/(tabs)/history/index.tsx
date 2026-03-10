@@ -21,6 +21,7 @@ import { ExportModal } from '@/components/export-modal';
 import { useToast } from '@/components/toast';
 import { mediumImpact, heavyImpact, selectionImpact } from '@/utils/haptics';
 import { QuestionSources } from '@/components/question-sources';
+import { useResponsive } from '@/hooks/use-responsive';
 
 // Type for version chain groups
 interface VersionChain {
@@ -74,6 +75,7 @@ export default function HistoryScreen() {
     const colorScheme = useColorScheme();
     const colors = Colors[colorScheme ?? 'light'];
     const { showError, showSuccess } = useToast();
+    const { wideContentStyle } = useResponsive();
 
     const [sessions, setSessions] = useState<GenerationSession[]>([]);
     const [isLoading, setIsLoading] = useState(true);
@@ -264,7 +266,7 @@ export default function HistoryScreen() {
     return (
         <View style={[styles.container, { backgroundColor: colors.background }]}>
             <ScrollView
-                contentContainerStyle={styles.scrollContent}
+                contentContainerStyle={[styles.scrollContent, wideContentStyle]}
                 showsVerticalScrollIndicator={false}
                 refreshControl={
                     <RefreshControl refreshing={isRefreshing} onRefresh={() => loadSessions(1, true)} />

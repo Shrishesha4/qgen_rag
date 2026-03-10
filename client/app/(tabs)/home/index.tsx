@@ -19,11 +19,13 @@ import { useAuthStore } from '@/stores/authStore';
 import { questionsService, TeacherDashboard } from '@/services/questions';
 import { API_BASE_URL } from '@/services/api';
 import { AquaTokens as A } from '@/constants/theme';
+import { useResponsive } from '@/hooks/use-responsive';
 
 export default function HomeScreen() {
   const colorScheme = useColorScheme();
   const isDark = colorScheme === 'dark';
   const { user } = useAuthStore();
+  const { isDesktop, desktopContentStyle } = useResponsive();
 
   const getAvatarUrl = () => {
     if (!user?.avatar_url) return null;
@@ -141,7 +143,7 @@ export default function HomeScreen() {
     gradientBottom: string;
     onPress: () => void;
   }) => (
-    <TouchableOpacity style={styles.menuCardWrapper} onPress={onPress} activeOpacity={0.8}>
+    <TouchableOpacity style={[styles.menuCardWrapper, isDesktop && { width: '23%' }]} onPress={onPress} activeOpacity={0.8}>
       <LinearGradient
         colors={[isDark ? A.cardDark : A.cardLight, isDark ? '#0A2240' : '#F0F8FF'] as [string, string]}
         start={{ x: 0, y: 0 }}
@@ -226,7 +228,7 @@ export default function HomeScreen() {
   return (
     <View style={[styles.container, { backgroundColor: isDark ? A.bgDark : A.bgLight }]}>
       <ScrollView
-        contentContainerStyle={styles.scrollContent}
+        contentContainerStyle={[styles.scrollContent, desktopContentStyle]}
         refreshControl={
           <RefreshControl
             refreshing={isRefreshing}

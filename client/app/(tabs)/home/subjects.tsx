@@ -6,7 +6,6 @@ import {
   FlatList,
   TouchableOpacity,
   RefreshControl,
-  Alert,
   ActivityIndicator,
   TextInput,
   Modal,
@@ -18,11 +17,14 @@ import { useColorScheme } from '@/hooks/use-color-scheme';
 import { subjectsService, Subject, SubjectCreateData } from '@/services/subjects';
 import { useToast } from '@/components/toast';
 import { mediumImpact, heavyImpact } from '@/utils/haptics';
+import { showConfirmDialog } from '@/utils/alert';
+import { useResponsive } from '@/hooks/use-responsive';
 
 export default function SubjectsScreen() {
   const colorScheme = useColorScheme();
   const colors = Colors[colorScheme ?? 'light'];
   const { showError, showSuccess, showWarning } = useToast();
+  const { isDesktop, desktopContentStyle } = useResponsive();
 
   const [subjects, setSubjects] = useState<Subject[]>([]);
   const [isLoading, setIsLoading] = useState(true);
@@ -79,7 +81,7 @@ export default function SubjectsScreen() {
 
   const handleDeleteSubject = async (subject: Subject) => {
     mediumImpact();
-    Alert.alert(
+    showConfirmDialog(
       'Delete Subject',
       `Are you sure you want to delete "${subject.name}"? This will also delete all topics and questions.`,
       [
@@ -152,7 +154,9 @@ export default function SubjectsScreen() {
 
   return (
     <View style={[styles.container, { backgroundColor: colors.background }]}>
-      {/* Search Bar */}
+      {/* Responsive inner container */}
+      <View style={[{ flex: 1 }, desktopContentStyle]}>
+      {/* Search Bar */}}
       <View style={[styles.searchContainer, { backgroundColor: colors.card }]}>
         <IconSymbol name="magnifyingglass" size={18} color={colors.textSecondary} />
         <TextInput
@@ -194,6 +198,7 @@ export default function SubjectsScreen() {
       >
         <IconSymbol name="plus" size={24} color="#FFFFFF" />
       </TouchableOpacity>
+      </View>
 
       {/* Add Subject Modal */}
       <Modal

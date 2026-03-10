@@ -26,6 +26,7 @@ import { useToast } from '@/components/toast';
 import { extractErrorDetails } from '@/utils/errors';
 import { selectionImpact, mediumImpact, lightImpact } from '@/utils/haptics';
 import { QuestionSources } from '@/components/question-sources';
+import { useResponsive } from '@/hooks/use-responsive';
 
 type QuestionType = 'mcq' | 'short_answer' | 'long_answer';
 type Difficulty = 'easy' | 'medium' | 'hard';
@@ -36,6 +37,7 @@ export default function QuickGenerateScreen() {
   const colors = Colors[colorScheme ?? 'light'];
   const isDark = colorScheme === 'dark';
   const { showError, showSuccess, showWarning } = useToast();
+  const { desktopContentStyle } = useResponsive();
 
   // Input mode (PDF tab vs Subject tab)
   const [inputMode, setInputMode] = useState<InputMode>('pdf');
@@ -354,7 +356,7 @@ export default function QuickGenerateScreen() {
     <View style={[styles.container, { backgroundColor: colors.background }]}>
       <ScrollView
         style={styles.scrollContent}
-        contentContainerStyle={styles.contentContainer}
+        contentContainerStyle={[styles.contentContainer, desktopContentStyle]}
         showsVerticalScrollIndicator={false}
         refreshControl={
           <RefreshControl
