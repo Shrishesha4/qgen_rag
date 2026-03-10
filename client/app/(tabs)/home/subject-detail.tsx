@@ -52,6 +52,7 @@ export default function SubjectDetailScreen() {
   const [isUploadingDoc, setIsUploadingDoc] = useState(false);
   const [uploadStatus, setUploadStatus] = useState('');
   const [syllabusContent, setSyllabusContent] = useState('');
+  const [editTopicName, setEditTopicName] = useState('');
 
   // New state for syllabus chapter extraction
   const [isExtractingChapters, setIsExtractingChapters] = useState(false);
@@ -210,6 +211,7 @@ export default function SubjectDetailScreen() {
     mediumImpact();
     setSelectedTopic(topic);
     setSyllabusContent(topic.syllabus_content || '');
+    setEditTopicName(topic.name);
     setShowTopicDetailModal(true);
   };
 
@@ -522,10 +524,11 @@ export default function SubjectDetailScreen() {
     mediumImpact();
     try {
       await subjectsService.updateTopic(id, selectedTopic.id, {
+        name: editTopicName.trim() || selectedTopic.name,
         syllabus_content: syllabusContent,
         has_syllabus: syllabusContent.trim().length > 0,
       });
-      showSuccess('Syllabus content saved');
+      showSuccess('Chapter saved');
       setShowTopicDetailModal(false);
       loadData();
     } catch (error) {
@@ -1228,12 +1231,27 @@ export default function SubjectDetailScreen() {
               }}>
                 <Text style={[styles.modalCancel, { color: colors.primary }]}>Close</Text>
               </TouchableOpacity>
-              <Text style={[styles.modalTitle, { color: colors.text }]} numberOfLines={1}>
-                {selectedTopic?.name}
-              </Text>
-              <TouchableOpacity onPress={handleSaveSyllabus}>
-                <Text style={[styles.modalDone, { color: colors.primary }]}>Save</Text>
-              </TouchableOpacity>
+              <TextInput
+                style={[styles.modalTitle, { color: colors.text, textAlign: 'center' }]}
+                value={editTopicName}
+                onChangeText={setEditTopicName}
+                placeholder="Chapter name"
+                placeholderTextColor={colors.textTertiary}
+                numberOfLines={1}
+              />
+              <View style={{ flexDirection: 'row', alignItems: 'center', gap: Spacing.sm }}>
+                <TouchableOpacity onPress={() => {
+                  if (selectedTopic) {
+                    setShowTopicDetailModal(false);
+                    handleDeleteTopic(selectedTopic);
+                  }
+                }}>
+                  <IconSymbol name="trash" size={18} color={colors.error} />
+                </TouchableOpacity>
+                <TouchableOpacity onPress={handleSaveSyllabus}>
+                  <Text style={[styles.modalDone, { color: colors.primary }]}>Save</Text>
+                </TouchableOpacity>
+              </View>
             </View>
             <ScrollView style={styles.modalContent}>
               {/* Upload Document */}
