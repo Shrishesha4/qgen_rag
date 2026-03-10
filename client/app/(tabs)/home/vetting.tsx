@@ -584,6 +584,14 @@ export default function VettingScreen() {
           </View>
         ) : null}
 
+        {/* Explanation (always visible in card) */}
+        {question.explanation ? (
+          <View style={[styles.answerPreview, { backgroundColor: colors.primary + '10', marginTop: 6 }]}>
+            <Text style={[styles.answerPreviewLabel, { color: colors.primary }]}>Explanation</Text>
+            <Text style={[styles.answerPreviewText, { color: colors.text }]}>{question.explanation}</Text>
+          </View>
+        ) : null}
+
         {/* MCQ Options */}
         {question.question_type === 'mcq' && question.options && (
           <View style={styles.optionsContainer}>
@@ -859,6 +867,22 @@ export default function VettingScreen() {
                 </>
               )}
             </View>
+
+            {/* Explanation (read-only in expanded view) */}
+            {question.explanation && (
+              <>
+                <LinearGradient
+                  colors={['#4A90D9', '#357ABD'] as const}
+                  style={[styles.coHeader, { marginTop: Spacing.lg }]}
+                >
+                  <IconSymbol name="text.bubble.fill" size={16} color="#FFFFFF" />
+                  <Text style={styles.coHeaderText}>Explanation</Text>
+                </LinearGradient>
+                <View style={[styles.answerContainer, { backgroundColor: isDark ? 'rgba(74,144,217,0.08)' : 'rgba(74,144,217,0.06)', borderColor: colors.primary + '30', marginBottom: Spacing.md }]}>
+                  <Text style={[styles.answerText, { color: colors.text }]}>{question.explanation}</Text>
+                </View>
+              </>
+            )}
 
             <TouchableOpacity
               style={[styles.saveAllButton, { backgroundColor: colors.primary }]}

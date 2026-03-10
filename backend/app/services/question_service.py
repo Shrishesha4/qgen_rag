@@ -110,6 +110,7 @@ Output ONLY valid JSON with this exact format:
 {
     "question_text": "Clear question requiring a short written response",
     "expected_answer": "Complete model answer in 2-4 sentences based on the content",
+    "explanation": "Brief explanation of why this answer is correct and what concept it tests",
     "key_points": ["key point 1", "key point 2", "key point 3"],
     "topic_tags": ["relevant", "topics"]
 }"""
@@ -144,6 +145,7 @@ Output ONLY valid JSON with this exact format:
 {
     "question_text": "Comprehensive question requiring detailed analysis",
     "expected_answer": "Detailed model answer outline covering main points",
+    "explanation": "Brief explanation of the key concept being tested and why the model answer is correct",
     "key_points": ["main concept 1", "main concept 2", "main concept 3"],
     "rubric": {
         "Understanding": "Demonstrates clear understanding of concepts",
@@ -1013,6 +1015,7 @@ Output valid JSON only."""
             difficulty_level=(difficulty or "medium")[:20],
             bloom_taxonomy_level=(question_data.get("bloom_taxonomy_level") or "understand")[:30],
             correct_answer=str(correct_answer) if correct_answer else None,
+            explanation=question_data.get("explanation"),
             options=normalized_options,
             topic_tags=question_data.get("topic_tags"),
             source_chunk_ids=chunk_ids,
@@ -1054,6 +1057,7 @@ Output valid JSON only."""
             bloom_taxonomy_level=question.bloom_taxonomy_level,
             options=question.options,
             correct_answer=question.correct_answer,
+            explanation=question.explanation,
             topic_tags=question.topic_tags,
             source_chunk_ids=question.source_chunk_ids,
             source_info=source_info_response,

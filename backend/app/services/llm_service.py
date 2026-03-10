@@ -279,7 +279,8 @@ class OllamaLLMService:
         """Generate a JSON response from the LLM with retry logic."""
         json_system = (system_prompt or "") + (
             "\n\nIMPORTANT: You must respond with ONLY a valid JSON object. "
-            "Do NOT include any text, explanation, or markdown formatting before or after the JSON. "
+            "Do NOT include any prose, commentary, or markdown code fences (```json) before or after the JSON. "
+            "Output ALL fields specified in the format above, including the 'explanation' field. "
             "Start your response with { and end with }."
         )
         

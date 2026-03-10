@@ -331,7 +331,6 @@ export function SwipeVetting({
           question_type: result.new_question.question_type,
           options: result.new_question.options,
           correct_answer: result.new_question.correct_answer,
-          explanation: null,
           marks: result.new_question.marks,
           difficulty_level: result.new_question.difficulty_level,
           bloom_taxonomy_level: result.new_question.bloom_taxonomy_level,

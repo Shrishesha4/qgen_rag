@@ -217,6 +217,11 @@ export function ExportModal({
                           Answer: {q.correct_answer}
                         </Text>
                       )}
+                      {q.explanation && (
+                        <Text style={[styles.previewDocxAnswer, { color: colors.textSecondary }]} numberOfLines={2}>
+                          Explanation: {q.explanation}
+                        </Text>
+                      )}
                     </View>
                   ))}
                 </View>

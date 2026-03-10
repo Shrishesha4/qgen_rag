@@ -708,10 +708,16 @@ export default function QuickGenerateScreen() {
                   })}
                 </View>
               )}
-              {q.correct_answer && q.question_type !== 'mcq' && (
+              {q.correct_answer && (
                 <View style={[styles.answerContainer, { backgroundColor: colors.success + '10', borderColor: colors.success + '30' }]}>
-                  <Text style={[styles.answerLabel, { color: colors.success }]}>Expected Answer:</Text>
+                  <Text style={[styles.answerLabel, { color: colors.success }]}>{q.question_type === 'mcq' ? 'Correct Answer:' : 'Expected Answer:'}</Text>
                   <Text style={[styles.answerText, { color: colors.text }]}>{q.correct_answer}</Text>
+                </View>
+              )}
+              {q.explanation && (
+                <View style={[styles.explanationContainer, { backgroundColor: colors.primary + '10', borderColor: colors.primary + '30' }]}>
+                  <Text style={[styles.answerLabel, { color: colors.primary }]}>Explanation:</Text>
+                  <Text style={[styles.answerText, { color: colors.text }]}>{q.explanation}</Text>
                 </View>
               )}
             </View>
@@ -895,6 +901,7 @@ const styles = StyleSheet.create({
   answerContainer: { marginTop: Spacing.md, padding: Spacing.sm, borderRadius: BorderRadius.sm, borderWidth: 1 },
   answerLabel: { fontSize: FontSizes.xs, fontWeight: '600', marginBottom: 4 },
   answerText: { fontSize: FontSizes.sm, lineHeight: 18 },
+  explanationContainer: { marginTop: Spacing.sm, padding: Spacing.sm, borderRadius: BorderRadius.sm, borderWidth: 1 },
   actionButtons: { flexDirection: 'row', gap: Spacing.md, marginTop: Spacing.lg },
   actionButton: { flex: 1, flexDirection: 'row', alignItems: 'center', justifyContent: 'center', paddingVertical: Spacing.md, borderRadius: BorderRadius.md, gap: Spacing.xs },
   actionButtonText: { color: '#FFFFFF', fontSize: FontSizes.sm, fontWeight: '600' },
