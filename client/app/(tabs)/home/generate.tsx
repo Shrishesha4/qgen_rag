@@ -991,6 +991,8 @@ const styles = StyleSheet.create({
     paddingTop: Spacing.headerInset,
     paddingHorizontal: Spacing.lg,
     paddingBottom: 100,
+    marginTop: 10,
+
   },
   infoCard: {
     flexDirection: 'row',

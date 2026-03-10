@@ -3759,59 +3759,106 @@ async def generate_chapter(
         try:
             yield f"data: {json.dumps({'status': 'processing', 'progress': 5, 'message': 'Analyzing chapter content...'})}\n\n"
 
-            # ── RAG: fetch reference-book chunks using hybrid search ──
-            reference_context = ""
-            ref_count = 0
-            ref_chunks = []
+            # ── RAG: build a varied reference chunk pool in parallel ──────
+            # Build multiple query variants covering different angles of the
+            # topic, run all hybrid searches concurrently, deduplicate, then
+            # rerank once.  Per-question we slice a different window of the
+            # pool so each question gets contextually distinct reference text.
+            ref_chunk_pool: list = []
+            ref_doc_ids: list = []
             try:
+                import asyncio as _asyncio
                 doc_service = DocumentService(db, embedding_service)
-                rag_query = f"{topic_name}: {topic_content[:500]}"
-                query_emb = await embedding_service.get_query_embedding(rag_query)
-                
-                # Get reference book IDs for hybrid search
                 ref_doc_ids = await doc_service.get_reference_document_ids(
                     user_id=user_id,
                     subject_id=uuid.UUID(subject_id_str),
                     index_type="reference_book",
                 )
-                
+
                 if ref_doc_ids:
-                    ref_chunks = await doc_service.hybrid_search_multi_document(
-                        document_ids=ref_doc_ids,
-                        query=rag_query,
-                        query_embedding=query_emb,
-                        top_k=8,
-                        alpha=0.6,
+                    # Extract section headings from syllabus for richer queries
+                    heading_lines = [
+                        ln.strip() for ln in topic_content.splitlines()
+                        if ln.strip() and (ln.strip().isupper() or re.match(r'^(\d+[\.\)]|#+)\s', ln.strip()))
+                    ][:3]
+
+                    rag_query_variants = [
+                        f"{topic_name}: {topic_content[:400]}",
+                        topic_name,
+                        f"examples of {topic_name}",
+                        f"compare and contrast {topic_name}",
+                        f"applications of {topic_name}",
+                    ]
+                    for h in heading_lines:
+                        rag_query_variants.append(f"{topic_name} {h}")
+
+                    async def _rag_search(q_variant: str):
+                        try:
+                            q_emb = await embedding_service.get_query_embedding(q_variant)
+                            return await doc_service.hybrid_search_multi_document(
+                                document_ids=ref_doc_ids,
+                                query=q_variant,
+                                query_embedding=q_emb,
+                                top_k=6,
+                                alpha=0.6,
+                            )
+                        except Exception as _re:
+                            logger.warning(f"[{request_id}] RAG variant search failed: {_re}")
+                            return []
+
+                    all_ref_results = await _asyncio.gather(
+                        *[_rag_search(v) for v in rag_query_variants[:6]]
                     )
-                
-                if not ref_chunks:
-                    # Fallback to vector-only search
-                    ref_chunks = await doc_service.get_reference_chunks(
+
+                    seen_ref_ids: set = set()
+                    for result_list in all_ref_results:
+                        for c in result_list:
+                            if c.id not in seen_ref_ids:
+                                seen_ref_ids.add(c.id)
+                                ref_chunk_pool.append(c)
+
+                if not ref_chunk_pool and ref_doc_ids:
+                    # Fallback: vector-only with generic topic query
+                    fallback_emb = await embedding_service.get_query_embedding(topic_name)
+                    ref_chunk_pool = await doc_service.get_reference_chunks(
                         user_id=user_id,
                         subject_id=uuid.UUID(subject_id_str),
                         index_type="reference_book",
-                        query_embedding=query_emb,
-                        top_k=5,
+                        query_embedding=fallback_emb,
+                        top_k=10,
                     )
-                
-                if ref_chunks:
-                    reference_context = "\n\n".join(
-                        f"[Reference {i+1}]: {c.chunk_text}" for i, c in enumerate(ref_chunks)
-                    )
-                    ref_count = len(ref_chunks)
-                    logger.info(f"[{request_id}] RAG found {ref_count} reference chunks")
+
+                logger.info(f"[{request_id}] RAG pool: {len(ref_chunk_pool)} unique chunks from {len(ref_doc_ids)} reference doc(s)")
             except Exception as e:
-                logger.warning(f"[{request_id}] RAG lookup failed ({e}); continuing without reference context")
-            
-            # ── Build source_info from RAG chunks ──
-            def build_source_info_from_chunks(chunks):
-                """Build source information for tracking RAG attribution."""
-                if not chunks:
+                logger.warning(f"[{request_id}] RAG pool build failed ({e}); continuing without reference context")
+
+            ref_count = len(ref_chunk_pool)
+
+            # Helper: build reference_context string for a specific pool slice
+            def _ref_context_for_index(q_index: int, window: int = 4) -> str:
+                if not ref_chunk_pool:
+                    return ""
+                pool_size = len(ref_chunk_pool)
+                offset = (q_index * window) % max(1, pool_size - window + 1)
+                sliced = ref_chunk_pool[offset:offset + window]
+                if not sliced:
+                    sliced = ref_chunk_pool[:window]
+                return "\n\n".join(
+                    f"[Reference {i+1}]: {c.chunk_text}" for i, c in enumerate(sliced)
+                )
+
+            # Helper: build source_info for a specific pool slice
+            def build_source_info_for_index(q_index: int, window: int = 4) -> dict:
+                if not ref_chunk_pool:
                     return {"sources": [], "generation_reasoning": None, "content_coverage": None}
-                
+                pool_size = len(ref_chunk_pool)
+                offset = (q_index * window) % max(1, pool_size - window + 1)
+                sliced = ref_chunk_pool[offset:offset + window]
+                if not sliced:
+                    sliced = ref_chunk_pool[:window]
+
                 sources = []
-                for chunk in chunks:
-                    # Get document name
+                for chunk in sliced:
                     chunk_meta = chunk.chunk_metadata or {}
                     source_meta = chunk_meta.get("source_info", {})
                     document_name = source_meta.get("document_name")
@@ -3819,11 +3866,8 @@ async def generate_chapter(
                         document_name = chunk.document.filename
                     if not document_name:
                         document_name = "Unknown Document"
-                    
-                    # Store full content snippet (frontend will handle truncation)
                     content_snippet = chunk.chunk_text
-                    
-                    source = {
+                    sources.append({
                         "document_name": document_name,
                         "page_number": chunk.page_number or source_meta.get("page_number"),
                         "page_range": source_meta.get("page_range"),
@@ -3833,16 +3877,13 @@ async def generate_chapter(
                         "content_snippet": content_snippet,
                         "highlighted_phrase": _extract_highlighted_phrase(content_snippet, topic_name),
                         "relevance_reason": f"Retrieved as reference material for {topic_name}",
-                    }
-                    sources.append(source)
-                
+                    })
                 return {
                     "sources": sources,
                     "generation_reasoning": f"Question generated from chapter '{topic_name}' syllabus content with reference material support",
                     "content_coverage": f"Chapter-based question covering {topic_name} concepts",
                 }
-            
-            source_info_dict = build_source_info_from_chunks(ref_chunks)
+
 
             yield f"data: {json.dumps({'status': 'processing', 'progress': 10, 'message': f'Prepared {len(syllabus_chunks)} content sections + {ref_count} reference excerpts'})}\n\n"
 
@@ -3930,10 +3971,11 @@ async def generate_chapter(
 Syllabus content:
 {selected_content}
 """
-                        if reference_context:
+                        q_ref_context = _ref_context_for_index(questions_generated)
+                        if q_ref_context:
                             prompt += f"""
 Background knowledge (use to inform the question, do NOT cite or reference it):
-{reference_context}
+{q_ref_context}
 """
                         # LO requirement — either mandated by distribution or restricted by lo_filter
                         lo_requirement_ch = ""
@@ -4091,9 +4133,9 @@ Output valid JSON only."""
                                 generation_metadata={
                                     "source": "chapter_generation",
                                     "topic_name": topic_name,
-                                    "has_reference_context": bool(reference_context),
+                                    "has_reference_context": bool(ref_chunk_pool),
                                     "raw_response": resp,
-                                    "source_info": source_info_dict,
+                                    "source_info": build_source_info_for_index(questions_generated),
                                 },
                             )
                             # Use an isolated session per question so a DB error on one

@@ -439,6 +439,8 @@ const styles = StyleSheet.create({
     paddingTop: Spacing.headerInset,
     paddingHorizontal: Spacing.lg,
     paddingBottom: 100,
+    marginTop: 20,
+
   },
   headerCard: {
     flexDirection: 'row',
