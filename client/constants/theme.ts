@@ -180,7 +180,7 @@ export const AquaTokens = {
   gelPurpleLight: '#7B1FA2',
   // Surfaces
   bgLight: '#EBF4FD',
-  bgDark: '#0D1B2A',
+  bgDark: '#02070d',
   cardLight: '#FFFFFF',
   cardDark: '#132F4C',
   // Gloss / chrome

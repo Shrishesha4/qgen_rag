@@ -346,12 +346,6 @@ export default function HomeScreen() {
                 onPress={() => router.push('/(tabs)/home/subjects')}
               />
               <GelStatCard
-                title="DOCUMENTS"
-                value={dashboard.documents_count}
-                gradientTop={A.gelPurple}
-                gradientBottom={A.gelPurpleLight}
-              />
-              <GelStatCard
                 title="GENERATED"
                 value={dashboard.total_questions}
                 gradientTop={A.gelGreen}
@@ -368,12 +362,6 @@ export default function HomeScreen() {
                 gradientTop={A.gelOrange}
                 gradientBottom={A.gelOrangeLight}
                 onPress={() => router.push('/(tabs)/home/vetting')}
-              />
-              <GelStatCard
-                title="APPROVED"
-                value={dashboard.approved_questions}
-                gradientTop={A.gelGreen}
-                gradientBottom={A.gelGreenLight}
               />
               <GelStatCard
                 title="APPROVAL %"
