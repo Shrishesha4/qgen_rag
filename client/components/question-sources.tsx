@@ -39,14 +39,14 @@ export function QuestionSources({ sourceInfo, compact = false, defaultExpanded =
   const [expandedSnippets, setExpandedSnippets] = useState<Record<number, boolean>>({});
 
   // Debug logging
-  console.log('QuestionSources - sourceInfo:', sourceInfo);
+  // console.log('QuestionSources - sourceInfo:', sourceInfo);
 
   if (!sourceInfo || !sourceInfo.sources || sourceInfo.sources.length === 0) {
     console.log('QuestionSources - No sources to display');
     return null;
   }
 
-  console.log('QuestionSources - Displaying', sourceInfo.sources.length, 'sources');
+  // console.log('QuestionSources - Displaying', sourceInfo.sources.length, 'sources');
 
   const toggleExpand = () => {
     LayoutAnimation.configureNext(LayoutAnimation.Presets.easeInEaseOut);

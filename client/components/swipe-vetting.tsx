@@ -42,6 +42,7 @@ import {
 
 const { width: SCREEN_WIDTH, height: SCREEN_HEIGHT } = Dimensions.get('window');
 const SWIPE_THRESHOLD = 120;
+const VERTICAL_SWIPE_THRESHOLD = 60;
 const SWIPE_OUT_DURATION = 250;
 
 // Course Outcome levels
@@ -132,7 +133,17 @@ export function SwipeVetting({
 
   // Swipe animation
   const position = useRef(new Animated.ValueXY()).current;
+  // Jean button press animation (0 = idle, 1 = fully pressed)
+  const buttonPressAnim = useRef(new Animated.Value(0)).current;
+  // Tracks the inner dot offset so it follows the user's finger direction
+  const handleDragPosition = useRef(new Animated.ValueXY()).current;
   const scrollViewRef = useRef<ScrollView>(null);
+  const questionScrollRef = useRef<ScrollView>(null);
+
+  // Track scroll position so we know when the card is at its top/bottom bounds
+  const scrollOffsetRef = useRef(0);
+  const scrollContentHeightRef = useRef(0);
+  const scrollContainerHeightRef = useRef(0);
 
   // Refs for gesture callbacks — always points to latest functions (fixes stale closures in panResponder)
   const viewModeRef = useRef<ViewMode>('question');
@@ -181,12 +192,92 @@ export function SwipeVetting({
         setMcqOptions([]);
       }
     }
-    scrollViewRef.current?.scrollTo({ y: 0, animated: false });
+    scrollOffsetRef.current = 0;
+    scrollContentHeightRef.current = 0;
+    scrollContainerHeightRef.current = 0;
+    questionScrollRef.current?.scrollTo({ y: 0, animated: false });
   }, [currentQuestion]);
 
   useEffect(() => {
     resetState();
   }, [currentIndex, resetState]);
+
+  // Dedicated drag handle PanResponder — lives outside the ScrollView so it always wins.
+  // Supports all 4 directions: left/right = reject/approve, up = edit, down = skip.
+  const dragHandlePanResponder = useRef(
+    PanResponder.create({
+      onStartShouldSetPanResponder: () => true,
+      onStartShouldSetPanResponderCapture: () => true,
+      onPanResponderGrant: () => {
+        swipeHapticFiredRef.current = { left: false, right: false, up: false, down: false };
+        // Animate jean button to pressed state
+        Animated.spring(buttonPressAnim, {
+          toValue: 1,
+          useNativeDriver: false,
+          speed: 40,
+          bounciness: 8,
+        }).start();
+        lightImpact();
+      },
+      onPanResponderMove: (_, gesture) => {
+        position.setValue({ x: gesture.dx, y: 0 });
+        if (gesture.dx > SWIPE_THRESHOLD && !swipeHapticFiredRef.current.right) {
+          swipeHapticFiredRef.current.right = true;
+          mediumImpact();
+        } else if (gesture.dx < -SWIPE_THRESHOLD && !swipeHapticFiredRef.current.left) {
+          swipeHapticFiredRef.current.left = true;
+          mediumImpact();
+        } else if (gesture.dy < -VERTICAL_SWIPE_THRESHOLD && !swipeHapticFiredRef.current.up) {
+          swipeHapticFiredRef.current.up = true;
+          lightImpact();
+        } else if (gesture.dy > VERTICAL_SWIPE_THRESHOLD && !swipeHapticFiredRef.current.down) {
+          swipeHapticFiredRef.current.down = true;
+          lightImpact();
+        }
+      },
+      onPanResponderRelease: (_, { dx, dy, vx, vy }) => {
+        // Spring inner dot back to centre
+        Animated.spring(handleDragPosition, {
+          toValue: { x: 0, y: 0 },
+          useNativeDriver: false,
+          speed: 30,
+          bounciness: 8,
+        }).start();
+        // Release jean button animation
+        Animated.spring(buttonPressAnim, {
+          toValue: 0,
+          useNativeDriver: false,
+          speed: 30,
+          bounciness: 4,
+        }).start();
+        if (dx > SWIPE_THRESHOLD || vx > 0.8) {
+          gestureCallbacksRef.current.swipeOut('right');
+        } else if (dx < -SWIPE_THRESHOLD || vx < -0.8) {
+          gestureCallbacksRef.current.swipeOut('left');
+        } else if (dy < -VERTICAL_SWIPE_THRESHOLD || vy < -0.4) {
+          gestureCallbacksRef.current.handleUpSwipe();
+        } else if (dy > VERTICAL_SWIPE_THRESHOLD || vy > 0.4) {
+          gestureCallbacksRef.current.handleDownSwipe();
+        } else {
+          gestureCallbacksRef.current.resetPosition();
+        }
+      },
+      onPanResponderTerminate: () => {
+        Animated.spring(handleDragPosition, {
+          toValue: { x: 0, y: 0 },
+          useNativeDriver: false,
+          speed: 30,
+          bounciness: 8,
+        }).start();
+        Animated.spring(buttonPressAnim, {
+          toValue: 0,
+          useNativeDriver: false,
+          speed: 30,
+          bounciness: 4,
+        }).start();
+      },
+    })
+  ).current;
 
   // Tracks which swipe directions have already fired a threshold haptic this gesture
   const swipeHapticFiredRef = useRef({ left: false, right: false, up: false, down: false });
@@ -194,29 +285,42 @@ export function SwipeVetting({
   const panResponder = useRef(
     PanResponder.create({
       onStartShouldSetPanResponder: () => false,
-      onMoveShouldSetPanResponder: (_, { dx, dy }) => {
-        // Only claim gesture when horizontal OR strongly non-vertical — let ScrollView handle pure vertical scrolls
-        return viewModeRef.current === 'question' && Math.abs(dx) > Math.abs(dy) && Math.abs(dx) > 8;
+      onStartShouldSetPanResponderCapture: () => false,
+      // Capture phase: parent wins over ScrollView for clearly horizontal moves
+      onMoveShouldSetPanResponderCapture: (_, { dx, dy, vx, vy }) => {
+        if (viewModeRef.current !== 'question') return false;
+        const absDx = Math.abs(dx);
+        const absDy = Math.abs(dy);
+        const absVx = Math.abs(vx);
+        const absVy = Math.abs(vy);
+        // Claim when decisively horizontal so ScrollView never steals it
+        if (absDx > absDy * 2 && absDx > 6) return true;
+        if (absVx > 0.4 && absVx > absVy * 2.5) return true;
+        return false;
+      },
+      // Bubble phase fallback (in case capture didn't fire)
+      onMoveShouldSetPanResponder: (_, { dx, dy, vx, vy }) => {
+        if (viewModeRef.current !== 'question') return false;
+        const absDx = Math.abs(dx);
+        const absDy = Math.abs(dy);
+        const absVx = Math.abs(vx);
+        const absVy = Math.abs(vy);
+        if (absDx > absDy * 2 && absDx > 6) return true;
+        if (absVx > 0.4 && absVx > absVy * 2.5) return true;
+        return false;
       },
       onPanResponderGrant: () => {
         swipeHapticFiredRef.current = { left: false, right: false, up: false, down: false };
         lightImpact();
       },
       onPanResponderMove: (_, gesture) => {
-        position.setValue({ x: gesture.dx, y: gesture.dy });
-        // Fire a medium haptic once each time a threshold is crossed
+        position.setValue({ x: gesture.dx, y: 0 });
         if (gesture.dx > SWIPE_THRESHOLD && !swipeHapticFiredRef.current.right) {
           swipeHapticFiredRef.current.right = true;
           mediumImpact();
         } else if (gesture.dx < -SWIPE_THRESHOLD && !swipeHapticFiredRef.current.left) {
           swipeHapticFiredRef.current.left = true;
           mediumImpact();
-        } else if (gesture.dy < -SWIPE_THRESHOLD && !swipeHapticFiredRef.current.up) {
-          swipeHapticFiredRef.current.up = true;
-          lightImpact();
-        } else if (gesture.dy > SWIPE_THRESHOLD && !swipeHapticFiredRef.current.down) {
-          swipeHapticFiredRef.current.down = true;
-          lightImpact();
         }
       },
       onPanResponderRelease: (_, gesture) => {
@@ -224,14 +328,11 @@ export function SwipeVetting({
           gestureCallbacksRef.current.resetPosition();
           return;
         }
-        if (gesture.dx > SWIPE_THRESHOLD) {
+        const { dx, vx } = gesture;
+        if (dx > SWIPE_THRESHOLD || vx > 0.8) {
           gestureCallbacksRef.current.swipeOut('right');
-        } else if (gesture.dx < -SWIPE_THRESHOLD) {
+        } else if (dx < -SWIPE_THRESHOLD || vx < -0.8) {
           gestureCallbacksRef.current.swipeOut('left');
-        } else if (gesture.dy < -SWIPE_THRESHOLD) {
-          gestureCallbacksRef.current.handleUpSwipe();
-        } else if (gesture.dy > SWIPE_THRESHOLD) {
-          gestureCallbacksRef.current.handleDownSwipe();
         } else {
           gestureCallbacksRef.current.resetPosition();
         }
@@ -477,7 +578,7 @@ export function SwipeVetting({
   viewModeRef.current = viewMode;
   gestureCallbacksRef.current = { handleUpSwipe, handleDownSwipe, swipeOut, resetPosition };
 
-  // Card animation
+  // Card animation — horizontal only (no vertical swipe gestures)
   const rotate = position.x.interpolate({
     inputRange: [-SCREEN_WIDTH / 2, 0, SCREEN_WIDTH / 2],
     outputRange: ['-8deg', '0deg', '8deg'],
@@ -487,7 +588,6 @@ export function SwipeVetting({
   const cardStyle = {
     transform: [
       { translateX: position.x },
-      { translateY: position.y },
       { rotate },
     ],
   };
@@ -558,13 +658,13 @@ export function SwipeVetting({
                   <View style={[styles.instructionIcon, { backgroundColor: colors.primary + '20' }]}>
                     <IconSymbol name="arrow.up" size={16} color={colors.primary} />
                   </View>
-                  <Text style={[styles.instructionText, { color: colors.text }]}>Edit</Text>
+                  <Text style={[styles.instructionText, { color: colors.text }]}>Edit¹</Text>
                 </View>
                 <View style={styles.instructionItem}>
                   <View style={[styles.instructionIcon, { backgroundColor: colors.warning + '20' }]}>
                     <IconSymbol name="arrow.down" size={16} color={colors.warning} />
                   </View>
-                  <Text style={[styles.instructionText, { color: colors.text }]}>Skip</Text>
+                  <Text style={[styles.instructionText, { color: colors.text }]}>Skip¹</Text>
                 </View>
                 <View style={styles.instructionItem}>
                   <View style={[styles.instructionIcon, { backgroundColor: colors.success + '20' }]}>
@@ -573,6 +673,9 @@ export function SwipeVetting({
                   <Text style={[styles.instructionText, { color: colors.text }]}>Approve</Text>
                 </View>
               </View>
+              <Text style={[styles.instructionsHint, { color: colors.textTertiary }]}>
+                ¹ Hold the ● button below to drag in any direction
+              </Text>
             </View>
           )}
 
@@ -590,12 +693,22 @@ export function SwipeVetting({
                 <Text style={styles.swipeLabelText}>REJECT</Text>
               </Animated.View>
 
-              <ScrollView 
+              <ScrollView
+                ref={questionScrollRef}
                 style={styles.questionScrollView}
                 contentContainerStyle={styles.questionScrollContent}
                 showsVerticalScrollIndicator={false}
-                scrollEnabled={true}
                 nestedScrollEnabled={true}
+                scrollEventThrottle={16}
+                onScroll={(e) => {
+                  scrollOffsetRef.current = e.nativeEvent.contentOffset.y;
+                }}
+                onContentSizeChange={(_, h) => {
+                  scrollContentHeightRef.current = h;
+                }}
+                onLayout={(e) => {
+                  scrollContainerHeightRef.current = e.nativeEvent.layout.height;
+                }}
               >
                 <GlassCard style={[styles.questionCard, { backgroundColor: colors.card }]}>
                   {/* Question Header */}
@@ -724,7 +837,7 @@ export function SwipeVetting({
                     </TouchableOpacity>
                   )}
 
-                  {/* Teacher info */}
+                  {/* Teacher info + drag handle */}
                   {currentQuestion.teacher_name && (
                     <View style={[styles.teacherRow, { borderTopColor: colors.border }]}>
                       <IconSymbol name="person.fill" size={12} color={colors.textSecondary} />
@@ -735,6 +848,8 @@ export function SwipeVetting({
                   )}
                 </GlassCard>
               </ScrollView>
+
+              {/* Jean button drag handle — rendered inside absolute bar below */}
             </Animated.View>
           )}
 
@@ -1095,39 +1210,104 @@ export function SwipeVetting({
           </ScrollView>
           )}
 
-          {/* Quick Action Buttons - in normal flow below the card */}
-          {viewMode === 'question' && (
-            <View style={[styles.actionButtonsRow, { paddingBottom: Math.max(insets.bottom, 12) }]}>
-              <TouchableOpacity
-                style={[styles.actionButton, { backgroundColor: colors.error + '20' }]}
-                onPress={() => setViewMode('reject')}
-                disabled={isProcessing}
-              >
-                <IconSymbol name="xmark" size={24} color={colors.error} />
-              </TouchableOpacity>
-              <TouchableOpacity
-                style={[styles.actionButton, { backgroundColor: colors.warning + '20' }]}
-                onPress={handleSkip}
-                disabled={isProcessing}
-              >
-                <IconSymbol name="arrow.uturn.right" size={24} color={colors.warning} />
-              </TouchableOpacity>
-              <TouchableOpacity
-                style={[styles.actionButton, { backgroundColor: colors.primary + '20' }]}
-                onPress={() => setViewMode('edit')}
-                disabled={isProcessing}
-              >
-                <IconSymbol name="pencil" size={24} color={colors.primary} />
-              </TouchableOpacity>
-              <TouchableOpacity
-                style={[styles.actionButton, { backgroundColor: colors.success + '20' }]}
-                onPress={handleApprove}
-                disabled={isProcessing}
-              >
-                <IconSymbol name="checkmark" size={24} color={colors.success} />
-              </TouchableOpacity>
-            </View>
-          )}
+          {/* Floating action bar — BlurView backdrop so card shows through */}
+          {viewMode === 'question' && (() => {
+            const btnScale = buttonPressAnim.interpolate({
+              inputRange: [0, 2],
+              outputRange: [2, 2.22],
+            });
+            const ringOpacity = buttonPressAnim.interpolate({
+              inputRange: [0, 0.4, 1],
+              outputRange: [0, 0.6, 1],
+            });
+            const ringScale = buttonPressAnim.interpolate({
+              inputRange: [0, 1],
+              outputRange: [1, 1.55],
+            });
+            const innerBg = buttonPressAnim.interpolate({
+              inputRange: [0, 1],
+              outputRange: [
+                'transparent',
+                isDark ? 'rgba(10,132,255,0.85)' : 'rgba(0,122,255,0.85)',
+              ],
+            });
+            return (
+              <View style={[styles.floatingActionBar, { paddingBottom: Math.max(insets.bottom, 12) }]}>
+                <BlurView
+                  intensity={isDark ? 0 : 0}
+                  tint={isDark ? 'dark' : 'light'}
+                  style={StyleSheet.absoluteFillObject}
+                />
+
+                {/* Jean button row */}
+                <View
+                  {...dragHandlePanResponder.panHandlers}
+                  style={styles.jeanButtonWrapper}
+                >
+                  {/* Outer ripple ring */}
+                  <Animated.View
+                    style={[
+                      styles.jeanButtonRing,
+                      {
+                        opacity: ringOpacity,
+                        transform: [{ scale: ringScale }],
+                        borderColor: isDark ? 'rgba(10,132,255,0.7)' : 'rgba(0,122,255,0.6)',
+                      },
+                    ]}
+                  />
+                  {/* Inner rivet circle — translates to follow the finger */}
+                  <Animated.View
+                    style={[
+                      styles.jeanButton,
+                      {
+                        backgroundColor: innerBg,
+                        borderColor: isDark ? 'rgba(255,255,255,0.4)' : 'rgba(80,80,100,0.45)',
+                        transform: [
+                          { scale: btnScale },
+                          { translateX: handleDragPosition.x },
+                          { translateY: handleDragPosition.y },
+                        ],
+                      },
+                    ]}
+                  >
+                    <View style={styles.jeanButtonHighlight} />
+                  </Animated.View>
+                </View>
+
+                {/* Action buttons */}
+                <View style={styles.actionButtonsRow}>
+                  <TouchableOpacity
+                    style={[styles.actionButton, { backgroundColor: colors.error + '20' }]}
+                    onPress={() => setViewMode('reject')}
+                    disabled={isProcessing}
+                  >
+                    <IconSymbol name="xmark" size={24} color={colors.error} />
+                  </TouchableOpacity>
+                  <TouchableOpacity
+                    style={[styles.actionButton, { backgroundColor: colors.warning + '20' }]}
+                    onPress={handleSkip}
+                    disabled={isProcessing}
+                  >
+                    <IconSymbol name="arrow.uturn.right" size={24} color={colors.warning} />
+                  </TouchableOpacity>
+                  <TouchableOpacity
+                    style={[styles.actionButton, { backgroundColor: colors.primary + '20' }]}
+                    onPress={() => setViewMode('edit')}
+                    disabled={isProcessing}
+                  >
+                    <IconSymbol name="pencil" size={24} color={colors.primary} />
+                  </TouchableOpacity>
+                  <TouchableOpacity
+                    style={[styles.actionButton, { backgroundColor: colors.success + '20' }]}
+                    onPress={handleApprove}
+                    disabled={isProcessing}
+                  >
+                    <IconSymbol name="checkmark" size={24} color={colors.success} />
+                  </TouchableOpacity>
+                </View>
+              </View>
+            );
+          })()}
 
           {/* Processing Overlay */}
           {isProcessing && (
@@ -1233,7 +1413,7 @@ const styles = StyleSheet.create({
   },
   questionScrollContent: {
     flexGrow: 1,
-    paddingBottom: Spacing.md,
+    paddingBottom: 140,
   },
   panelScrollView: {
     flex: 1,
@@ -1460,6 +1640,12 @@ const styles = StyleSheet.create({
   sourcesModalScrollContent: {
     padding: Spacing.md,
   },
+  instructionsHint: {
+    fontSize: 10,
+    marginTop: 4,
+    textAlign: 'center',
+    opacity: 0.7,
+  },
   teacherRow: {
     flexDirection: 'row',
     alignItems: 'center',
@@ -1470,6 +1656,52 @@ const styles = StyleSheet.create({
   },
   teacherText: {
     fontSize: FontSizes.xs,
+  },
+  dragHandle: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'center',
+    gap: 5,
+    paddingVertical: 10,
+    paddingHorizontal: 20,
+    alignSelf: 'center',
+  },
+  dragHandleDot: {
+    width: 6,
+    height: 6,
+    borderRadius: 3,
+  },
+  jeanButtonWrapper: {
+    alignSelf: 'center',
+    alignItems: 'center',
+    justifyContent: 'center',
+    width: 56,
+    height: 56,
+    borderRadius: 28,
+    marginVertical: 4,
+  },
+  jeanButtonRing: {
+    position: 'absolute',
+    width: 40,
+    height: 40,
+    borderRadius: 20,
+    borderWidth: 2,
+  },
+  jeanButton: {
+    width: 28,
+    height: 28,
+    borderRadius: 14,
+    borderWidth: 1.5,
+    alignItems: 'center',
+    justifyContent: 'flex-start',
+    overflow: 'hidden',
+  },
+  jeanButtonHighlight: {
+    width: '70%',
+    height: '38%',
+    borderRadius: 4,
+    backgroundColor: 'rgba(255,255,255,0.45)',
+    marginTop: 3,
   },
   swipeLabel: {
     position: 'absolute',
@@ -1721,8 +1953,21 @@ const styles = StyleSheet.create({
     justifyContent: 'center',
     gap: Spacing.lg,
     paddingHorizontal: Spacing.lg,
-    paddingTop: Spacing.md,
-    paddingBottom: Spacing.md,
+    paddingBottom: Spacing.sm,
+    marginTop: Spacing.lg,
+  },
+  floatingActionBar: {
+    position: 'absolute',
+    bottom: 0,
+    left: 0,
+    right: 0,
+    alignItems: 'center',
+    overflow: 'hidden',
+  },
+  floatingBarBorder: {
+    height: StyleSheet.hairlineWidth,
+    alignSelf: 'stretch',
+    marginBottom: Spacing.sm,
   },
   actionButton: {
     width: 52,
