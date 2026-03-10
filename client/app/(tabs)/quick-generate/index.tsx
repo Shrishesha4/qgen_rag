@@ -12,6 +12,7 @@ import {
   RefreshControl,
   Platform,
 } from 'react-native';
+import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { LinearGradient } from 'expo-linear-gradient';
 import { BlurView } from 'expo-blur';
 import * as DocumentPicker from 'expo-document-picker';
@@ -39,6 +40,7 @@ export default function QuickGenerateScreen() {
   const isDark = colorScheme === 'dark';
   const { showError, showSuccess, showWarning } = useToast();
   const { desktopContentStyle } = useResponsive();
+  const insets = useSafeAreaInsets();
 
   // Input mode (PDF tab vs Subject tab)
   const [inputMode, setInputMode] = useState<InputMode>('pdf');
@@ -932,7 +934,7 @@ export default function QuickGenerateScreen() {
 
       {/* ── Floating Generate Button ──────────────────────────────── */}
       <TouchableOpacity
-        style={[styles.floatingGenerateButton, isGenerating && styles.floatingGenerateButtonDisabled]}
+        style={[styles.floatingGenerateButton, isGenerating && styles.floatingGenerateButtonDisabled, Platform.OS === 'ios' && { bottom: Spacing.lg + insets.bottom + 30}]}
         onPress={isGenerating ? handleCancel : handleGenerate}
         activeOpacity={0.8}
       >
