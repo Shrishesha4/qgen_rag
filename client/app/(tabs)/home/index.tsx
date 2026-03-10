@@ -408,12 +408,12 @@ export default function HomeScreen() {
               <View style={styles.chromeBody}>
                 <AquaRow label="Multiple choice (MCQ)" value={dashboard.questions_by_type['mcq'] ?? 0} />
                 <AquaRow label="Short answer" value={dashboard.questions_by_type['short_answer'] ?? 0} />
-                <AquaRow label="Long answer / Essay" value={dashboard.questions_by_type['long_answer'] ?? 0} isLast />
+                <AquaRow label="Long answer" value={dashboard.questions_by_type['long_answer'] ?? 0} isLast />
               </View>
             </View>
 
             {/* ── Sessions chrome card ──────────────────────────────────── */}
-            <View style={[styles.chromeCard, {
+            {/* <View style={[styles.chromeCard, {
               backgroundColor: isDark ? A.cardDark : A.cardLight,
               borderColor: isDark ? A.metalBorderDark : A.metalBorderLight,
               marginTop: 12,
@@ -435,7 +435,7 @@ export default function HomeScreen() {
                 <AquaRow label="Generation sessions" value={dashboard.sessions_count} />
                 <AquaRow label="Rejected questions" value={dashboard.rejected_questions} isLast />
               </View>
-            </View>
+            </View> */}
           </>
         )}
 

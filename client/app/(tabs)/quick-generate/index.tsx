@@ -462,9 +462,6 @@ export default function QuickGenerateScreen() {
           numberOfLines={3}
           editable={!isGenerating}
         />
-        <Text style={[styles.helperText, { color: colors.textTertiary }]}>
-          The AI will enhance your focus description before generating questions
-        </Text>
       </GlassCard>
 
       {/* ── Options ─────────────────────────────────────────────────── */}
