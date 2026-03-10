@@ -20,6 +20,7 @@ import { questionsService, GenerationSession, SessionQuestion, Question } from '
 import { ExportModal } from '@/components/export-modal';
 import { useToast } from '@/components/toast';
 import { mediumImpact, heavyImpact, selectionImpact } from '@/utils/haptics';
+import { showConfirmDialog } from '@/utils/alert';
 import { QuestionSources } from '@/components/question-sources';
 import { useResponsive } from '@/hooks/use-responsive';
 
@@ -144,7 +145,7 @@ export default function HistoryScreen() {
     const handleDeleteSession = (session: GenerationSession) => {
         mediumImpact();
         const count = session.questions_generated || 0;
-        Alert.alert(
+        showConfirmDialog(
             'Delete Session',
             `This will permanently delete this session and ${count} associated question${count !== 1 ? 's' : ''}. This action cannot be undone.`,
             [
@@ -162,7 +163,7 @@ export default function HistoryScreen() {
                             }
                         } catch (error) {
                             console.error('[History] Failed to delete:', error);
-                            Alert.alert('Error', 'Failed to delete session.');
+                            showConfirmDialog('Error', 'Failed to delete session.', [{ text: 'OK' }]);
                         }
                     },
                 },
