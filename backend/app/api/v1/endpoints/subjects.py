@@ -723,6 +723,24 @@ Extract all chapters with their names, descriptions, and content. Return as a JS
                     'description': str(chapter.get('description', ''))[:1000] if chapter.get('description') else None,
                     'syllabus_content': str(chapter.get('syllabus_content', '')) if chapter.get('syllabus_content') else None,
                 })
+            elif isinstance(chapter, list) and len(chapter) >= 1:
+                # LLM returned positional strings instead of a keyed object.
+                # Positions: 0 = name, 1 = description, 2 = syllabus_content
+                name_val = str(chapter[0]).strip() if chapter[0] else 'Untitled Chapter'
+                if not name_val:
+                    continue
+                validated_chapters.append({
+                    'name': name_val[:255],
+                    'description': str(chapter[1])[:1000] if len(chapter) > 1 and chapter[1] else None,
+                    'syllabus_content': str(chapter[2]) if len(chapter) > 2 and chapter[2] else None,
+                })
+            elif isinstance(chapter, str) and chapter.strip():
+                # Bare string — use as name only
+                validated_chapters.append({
+                    'name': chapter.strip()[:255],
+                    'description': None,
+                    'syllabus_content': None,
+                })
         
         return validated_chapters
         

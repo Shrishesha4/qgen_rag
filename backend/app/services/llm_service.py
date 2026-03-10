@@ -364,7 +364,7 @@ class OllamaLLMService:
         return re.sub(json_string_pattern, escape_control_chars_in_strings, text)
 
     def _extract_json_object(self, text: str) -> Dict[str, Any]:
-        """Extract the first valid JSON object from text."""
+        """Extract the first valid JSON object or array from text."""
         import re
         
         # First, sanitize control characters
@@ -383,12 +383,20 @@ class OllamaLLMService:
         except json.JSONDecodeError:
             pass
         
-        # Find the first { and try to find matching }
-        start = text.find('{')
-        if start == -1:
-            raise json.JSONDecodeError("No JSON object found", text, 0)
+        # Find whichever JSON root token ({  or [) comes first
+        first_obj = text.find('{')
+        first_arr = text.find('[')
+        if first_obj == -1 and first_arr == -1:
+            raise json.JSONDecodeError("No JSON structure found", text, 0)
         
-        # Track brace depth to find the end of the first JSON object
+        if first_arr != -1 and (first_obj == -1 or first_arr < first_obj):
+            start = first_arr
+            open_char, close_char = '[', ']'
+        else:
+            start = first_obj
+            open_char, close_char = '{', '}'
+        
+        # Track depth to find the matching closing token
         depth = 0
         in_string = False
         escape_next = False
@@ -405,12 +413,12 @@ class OllamaLLMService:
                 continue
             if in_string:
                 continue
-            if char == '{':
+            if char == open_char:
                 depth += 1
-            elif char == '}':
+            elif char == close_char:
                 depth -= 1
                 if depth == 0:
-                    # Found complete JSON object
+                    # Found complete JSON structure
                     json_str = text[start:i+1]
                     try:
                         return json.loads(json_str)
@@ -428,7 +436,7 @@ class OllamaLLMService:
                 pass
         
         # If we get here, try parsing from start to end of text
-        raise json.JSONDecodeError("No valid JSON object found", text, 0)
+        raise json.JSONDecodeError("No valid JSON structure found", text, 0)
     
     def _repair_truncated_json(self, text: str, depth: int, in_string: bool) -> Optional[str]:
         """Attempt to repair truncated JSON by closing incomplete structures.
@@ -531,6 +539,16 @@ class OllamaLLMService:
         text = re.sub(
             r'(["\]\}]|true|false|null|\d)\n(\s*"[^"\\\n]{0,100}"\s*:)',
             r'\1,\n\2',
+            text,
+        )
+        
+        # Fix keyless string values inside objects.
+        # LLMs sometimes emit {"v1", "v2", "v3"} (no keys) instead of a proper object.
+        # Convert these to JSON arrays ["v1", "v2", "v3"] so the parser doesn't choke.
+        # The regex only matches objects whose body is exclusively quoted string literals.
+        text = re.sub(
+            r'\{(\s*"(?:[^"\\]|\\.)*"\s*(?:,\s*"(?:[^"\\]|\\.)*"\s*)*)\}',
+            lambda m: '[' + m.group(1) + ']',
             text,
         )
         

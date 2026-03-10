@@ -349,7 +349,7 @@ class GeminiService:
         raise last_error or GeminiResponseError("JSON generation failed after retries")
     
     def _extract_json_object(self, text: str) -> Dict[str, Any]:
-        """Extract the first valid JSON object from text."""
+        """Extract the first valid JSON object or array from text."""
         # First, sanitize control characters
         text = self._sanitize_control_chars(text)
         
@@ -366,12 +366,20 @@ class GeminiService:
         except json.JSONDecodeError:
             pass
         
-        # Find the first { and try to find matching }
-        start = text.find('{')
-        if start == -1:
-            raise json.JSONDecodeError("No JSON object found", text, 0)
+        # Find whichever JSON root token ({ or [) comes first
+        first_obj = text.find('{')
+        first_arr = text.find('[')
+        if first_obj == -1 and first_arr == -1:
+            raise json.JSONDecodeError("No JSON structure found", text, 0)
         
-        # Track brace depth to find the end of the first JSON object
+        if first_arr != -1 and (first_obj == -1 or first_arr < first_obj):
+            start = first_arr
+            open_char, close_char = '[', ']'
+        else:
+            start = first_obj
+            open_char, close_char = '{', '}'
+        
+        # Track depth to find the matching closing token
         depth = 0
         in_string = False
         escape_next = False
@@ -388,9 +396,9 @@ class GeminiService:
                 continue
             if in_string:
                 continue
-            if char == '{':
+            if char == open_char:
                 depth += 1
-            elif char == '}':
+            elif char == close_char:
                 depth -= 1
                 if depth == 0:
                     json_str = text[start:i+1]
@@ -408,7 +416,7 @@ class GeminiService:
             except json.JSONDecodeError:
                 pass
         
-        raise json.JSONDecodeError("No valid JSON object found", text, 0)
+        raise json.JSONDecodeError("No valid JSON structure found", text, 0)
     
     def _repair_truncated_json(self, text: str) -> Optional[str]:
         """Attempt to repair truncated JSON by closing incomplete structures."""
@@ -535,6 +543,16 @@ class GeminiService:
         # Remove trailing commas
         text = re.sub(r',\s*}', '}', text)
         text = re.sub(r',\s*]', ']', text)
+        
+        # Fix keyless string values inside objects.
+        # LLMs sometimes emit {"v1", "v2", "v3"} (no keys) instead of a proper object.
+        # Convert these to JSON arrays ["v1", "v2", "v3"] so the parser doesn't choke.
+        # The regex only matches objects whose body is exclusively quoted string literals.
+        text = re.sub(
+            r'\{(\s*"(?:[^"\\]|\\.)*"\s*(?:,\s*"(?:[^"\\]|\\.)*"\s*)*)\}',
+            lambda m: '[' + m.group(1) + ']',
+            text,
+        )
         
         # Fix unquoted keys
         text = re.sub(r'(\{|,)\s*([a-zA-Z_][a-zA-Z0-9_]*)\s*:', r'\1"\2":', text)
