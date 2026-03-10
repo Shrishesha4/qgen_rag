@@ -943,10 +943,10 @@ export default function QuickGenerateScreen() {
           style={styles.generateButtonGradient}
         >
           {isGenerating ? (
-            <>
-              <ActivityIndicator color="#FFFFFF" style={{ marginRight: Spacing.sm }} />
+            <View style={{ flexDirection: 'row', alignItems: 'center', justifyContent: 'center', gap: Spacing.sm }}>
+              <ActivityIndicator color="#FFFFFF" />
               <Text style={styles.generateButtonText}>Cancel</Text>
-            </>
+            </View>
           ) : (
             <>
               <Text style={styles.generateButtonText}>Generate Questions</Text>
@@ -1065,10 +1065,10 @@ const styles = StyleSheet.create({
   generateButton: { marginHorizontal: Spacing.xxxl + 60, marginTop: Spacing.xl, borderRadius: BorderRadius.lg, overflow: 'hidden', ...Shadows.large },
   generateButtonDisabled: {},
   generateButtonGradient: { flexDirection: 'row', alignItems: 'center', justifyContent: 'center', paddingVertical: Spacing.lg, gap: Spacing.sm },
-  generateButtonText: { color: '#FFFFFF', fontSize: FontSizes.lg, fontWeight: '600', paddingBottom: 40 },
+  generateButtonText: { color: '#FFFFFF', fontSize: FontSizes.lg, fontWeight: '600' },
 
   // Floating generate button
-  floatingGenerateButton: { position: 'absolute', bottom: Spacing.lg, left: Spacing.lg, right: Spacing.lg, marginBottom: 80, borderRadius: BorderRadius.xxl, overflow: 'hidden', zIndex: 100, ...Shadows.large  , alignSelf: 'center', maxHeight: 50 },
+  floatingGenerateButton: { position: 'absolute', bottom: Spacing.lg, left: Spacing.lg, right: Spacing.lg, marginBottom: 10, borderRadius: BorderRadius.xxl, overflow: 'hidden', zIndex: 100, ...Shadows.large, alignSelf: 'center', maxHeight: 50 },
   floatingGenerateButtonDisabled: {},
 
   // Custom count modal
