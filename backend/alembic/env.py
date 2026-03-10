@@ -27,8 +27,7 @@ from app.core.config import settings
 from app.core.database import Base
 
 # Import all models so they're registered with Base.metadata
-from app.models.user import User
-from app.models.auth import RefreshToken
+# Note: User, RefreshToken, AuditLog are in SQLite (AuthBase), not Alembic-managed
 from app.models.subject import Subject
 from app.models.document import Document, DocumentChunk
 from app.models.question import Question, GenerationSession

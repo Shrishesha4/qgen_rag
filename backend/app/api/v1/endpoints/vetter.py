@@ -17,6 +17,7 @@ from sqlalchemy.orm import selectinload, joinedload
 from pydantic import BaseModel, Field
 
 from app.core.database import get_db
+from app.core.auth_database import AuthSessionLocal
 from app.api.v1.deps import get_current_vetter
 from app.models.user import User
 from app.models.question import Question
@@ -437,11 +438,12 @@ async def get_questions_for_vetting(
         teacher_name = None
         teacher_id_val = None
         if q.subject:
-            # Fetch teacher
-            teacher_result = await db.execute(
-                select(User).where(User.id == q.subject.user_id)
-            )
-            teacher = teacher_result.scalar_one_or_none()
+            # Fetch teacher from auth DB (cross-database lookup)
+            async with AuthSessionLocal() as auth_session:
+                teacher_result = await auth_session.execute(
+                    select(User).where(User.id == q.subject.user_id)
+                )
+                teacher = teacher_result.scalar_one_or_none()
             if teacher:
                 teacher_name = teacher.full_name or teacher.username
                 teacher_id_val = teacher.id

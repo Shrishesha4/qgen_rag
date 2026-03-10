@@ -1,11 +1,11 @@
 """
 Reranker service for improving retrieval quality using cross-encoder models.
 
-Cross-encoders are more accurate than bi-encoders for ranking because they
-jointly process the query and document together, allowing for more nuanced
-similarity assessment.
+Uses mixedbread-ai/mxbai-rerank-large-v1 for high-quality reranking,
+pinned to GPU for fast inference on NVIDIA A10G.
 """
 
+import torch
 from typing import List, Optional, Tuple
 from sentence_transformers import CrossEncoder
 
@@ -17,13 +17,13 @@ class RerankerService:
     """
     Service for reranking retrieved chunks using cross-encoder models.
     
-    Cross-encoders provide more accurate relevance scores than embedding
-    similarity but are slower, so they're best used as a second stage
-    after initial retrieval.
+    Uses mxbai-rerank-large-v1 on GPU for accurate relevance scoring.
+    Lazy-loads on first use to avoid startup delays.
     """
 
     _instance: Optional["RerankerService"] = None
     _model: Optional[CrossEncoder] = None
+    _model_loaded: bool = False
 
     def __new__(cls):
         """Singleton pattern for model reuse."""
@@ -32,14 +32,23 @@ class RerankerService:
         return cls._instance
 
     def __init__(self):
-        if self._model is None:
-            # ms-marco-MiniLM-L-6-v2 is a fast, effective model for reranking
-            # It was trained on MS MARCO passage ranking dataset
-            self._model = CrossEncoder(
-                settings.RERANKER_MODEL if hasattr(settings, 'RERANKER_MODEL') 
-                else 'cross-encoder/ms-marco-MiniLM-L-6-v2',
-                max_length=512
-            )
+        pass  # Lazy load deferred to first use
+
+    def _ensure_model_loaded(self):
+        """Lazy load model on first use."""
+        if self._model_loaded:
+            return
+        
+        from app.core.logging import logger
+        logger.info(f"⏳ Loading reranker model (first use): {settings.RERANKER_MODEL}...")
+        device = "cuda" if torch.cuda.is_available() else "cpu"
+        self._model = CrossEncoder(
+            settings.RERANKER_MODEL,
+            max_length=512,
+            device=device,
+        )
+        self._model_loaded = True
+        logger.info(f"✅ Reranker model loaded: {settings.RERANKER_MODEL}")
 
     def rerank(
         self,
@@ -58,6 +67,8 @@ class RerankerService:
         Returns:
             List of chunks sorted by relevance (highest first)
         """
+        self._ensure_model_loaded()
+        
         if not chunks:
             return []
         
@@ -101,6 +112,8 @@ class RerankerService:
         Returns:
             List of (chunk, score) tuples sorted by relevance
         """
+        self._ensure_model_loaded()
+        
         if not chunks:
             return []
         
@@ -147,6 +160,8 @@ class RerankerService:
         Returns:
             List of (text, score, original_index) tuples sorted by relevance
         """
+        self._ensure_model_loaded()
+        
         if not texts:
             return []
         
@@ -200,11 +215,7 @@ class RerankerService:
         This ensures the model is fully loaded and ready before the first
         real request, avoiding cold start latency for users.
         """
-        dummy_query = "What is the main topic?"
-        dummy_text = "This is a warmup text for model initialization."
-        _ = self._model.predict([(dummy_query, dummy_text)])
-        from app.core.logging import logger
-        logger.info(f"✅ Reranker model warmed up: {settings.RERANKER_MODEL}")
+        self._ensure_model_loaded()
 
 
 # Module-level function for easy import

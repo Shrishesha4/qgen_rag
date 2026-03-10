@@ -10,9 +10,14 @@ from pydantic import Field
 class Settings(BaseSettings):
     """Application settings loaded from environment variables."""
 
-    # Database
+    # Database (PostgreSQL + pgvector for vector data)
     DATABASE_URL: str = Field(
         default="postgresql+asyncpg://qgen_user:qgen_password@localhost:5432/qgen_db"
+    )
+    
+    # Auth Database (SQLite for user/auth data, decoupled from pgvector)
+    AUTH_DATABASE_URL: str = Field(
+        default="sqlite+aiosqlite:///./auth.db"
     )
 
     # Redis
@@ -30,7 +35,7 @@ class Settings(BaseSettings):
     
     # Ollama LLM (local)
     OLLAMA_BASE_URL: str = Field(default="http://localhost:11434")
-    OLLAMA_MODEL: str = Field(default="llama3")
+    OLLAMA_MODEL: str = Field(default="llama3.1:8b")
     
     # Google Gemini API (cloud)
     GEMINI_API_KEY: str = Field(default="")  # Get from aistudio.google.com/apikey
@@ -59,13 +64,10 @@ class Settings(BaseSettings):
             return ["*"]
         return [origin.strip() for origin in self.CORS_ORIGINS.split(",") if origin.strip()]
 
-    # Embedding Model
-    # Options: 
-    #   - "all-MiniLM-L6-v2" (384 dims, fast, good quality) - DEFAULT
-    #   - "all-mpnet-base-v2" (768 dims, better quality, slower)
-    #   - "BAAI/bge-base-en-v1.5" (768 dims, best for Q&A tasks)
-    EMBEDDING_MODEL: str = Field(default="all-MiniLM-L6-v2")
-    EMBEDDING_DIMENSION: int = Field(default=384)
+    # Embedding Model (via Ollama API)
+    # nomic-embed-text: 768 dims, 8192 context window, excellent quality
+    EMBEDDING_MODEL: str = Field(default="nomic-embed-text")
+    EMBEDDING_DIMENSION: int = Field(default=768)
     
     # Set to True to use instruction-based embedding (recommended for bge models)
     EMBEDDING_USE_INSTRUCTION: bool = Field(default=False)
@@ -79,7 +81,8 @@ class Settings(BaseSettings):
     EMBEDDING_CACHE_TTL: int = Field(default=604800)    # 7 days in seconds
 
     # Reranker Model (Cross-encoder for retrieval refinement)
-    RERANKER_MODEL: str = Field(default="cross-encoder/ms-marco-MiniLM-L-6-v2")
+    # v1 = BERT-based, loads in seconds. v2 = Qwen2 LLM, very slow to load.
+    RERANKER_MODEL: str = Field(default="mixedbread-ai/mxbai-rerank-large-v1")
     RERANKER_ENABLED: bool = Field(default=True)
 
     # Question Generation

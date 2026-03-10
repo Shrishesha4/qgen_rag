@@ -11,6 +11,7 @@ from fastapi.security import HTTPBearer, HTTPAuthorizationCredentials
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.database import get_db
+from app.core.auth_database import get_auth_db
 from app.core.security import decode_token
 from app.models.user import User
 from app.services.user_service import UserService
@@ -23,7 +24,7 @@ security = HTTPBearer()
 async def get_current_user(
     request: Request,
     credentials: HTTPAuthorizationCredentials = Depends(security),
-    db: AsyncSession = Depends(get_db),
+    auth_db: AsyncSession = Depends(get_auth_db),
 ) -> User:
     """
     Dependency to get current authenticated user from JWT token.
@@ -66,8 +67,8 @@ async def get_current_user(
             headers={"WWW-Authenticate": "Bearer"},
         )
     
-    user_service = UserService(db)
-    user = await user_service.get_user_by_id(uuid.UUID(user_id))
+    user_service = UserService(auth_db)
+    user = await user_service.get_user_by_id(user_id)
     
     if not user:
         raise HTTPException(

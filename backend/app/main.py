@@ -8,6 +8,7 @@ from contextlib import asynccontextmanager
 from fastapi import FastAPI, Request
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
+from pydantic import ValidationError
 from starlette.datastructures import MutableHeaders
 from starlette.types import ASGIApp, Scope, Receive, Send
 
@@ -36,14 +37,16 @@ async def lifespan(app: FastAPI):
     await init_db()
     logger.info("✅ Database initialized")
     
-    # Warmup ML models to avoid cold start latency
+    # Warmup ML models to avoid cold start latency on first request
     try:
         await warmup_embedding_service()
     except Exception as e:
         logger.warning(f"⚠️ Embedding model warmup failed: {e}")
     
+    # Load reranker at startup (synchronous, run in thread to not block event loop)
     try:
-        warmup_reranker_service()
+        import asyncio
+        await asyncio.get_event_loop().run_in_executor(None, warmup_reranker_service)
     except Exception as e:
         logger.warning(f"⚠️ Reranker model warmup failed: {e}")
     
@@ -94,6 +97,25 @@ app.add_middleware(
     allow_methods=["*"],
     allow_headers=["*"],
 )
+
+
+# Custom exception handler for validation errors - format them clearly
+@app.exception_handler(ValidationError)
+async def validation_exception_handler(request: Request, exc: ValidationError):
+    """Format validation errors in a readable way."""
+    errors = []
+    for error in exc.errors():
+        field = ".".join(str(x) for x in error["loc"][1:])
+        errors.append({
+            "field": field or error["loc"][0],
+            "message": error["msg"],
+            "type": error["type"],
+        })
+    logger.warning(f"⚠️ Validation error on {request.method} {request.url.path}: {errors}")
+    return JSONResponse(
+        status_code=422,
+        content={"detail": errors},
+    )
 
 
 # Request ID middleware for tracing — implemented as a pure ASGI middleware to

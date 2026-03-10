@@ -8,7 +8,7 @@ from fastapi import APIRouter, Depends, HTTPException, status, Request, UploadFi
 from fastapi.responses import FileResponse
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.core.database import get_db
+from app.core.auth_database import get_auth_db
 from app.core.config import settings
 from app.schemas.user import UserCreate, UserLogin, UserUpdate, UserResponse
 from app.schemas.auth import (
@@ -33,7 +33,7 @@ router = APIRouter()
 async def register(
     request: Request,
     user_data: UserCreate,
-    db: AsyncSession = Depends(get_db),
+    db: AsyncSession = Depends(get_auth_db),
 ):
     """
     Register a new user account.
@@ -70,7 +70,7 @@ async def register(
 async def login(
     request: Request,
     credentials: UserLogin,
-    db: AsyncSession = Depends(get_db),
+    db: AsyncSession = Depends(get_auth_db),
 ):
     """
     Authenticate user and return tokens.
@@ -116,7 +116,7 @@ async def login(
 @router.post("/refresh", response_model=Token)
 async def refresh_token(
     token_data: TokenRefresh,
-    db: AsyncSession = Depends(get_db),
+    db: AsyncSession = Depends(get_auth_db),
 ):
     """
     Refresh access token using refresh token.
@@ -145,7 +145,7 @@ async def refresh_token(
 async def logout(
     logout_data: LogoutRequest,
     current_user: User = Depends(get_current_user),
-    db: AsyncSession = Depends(get_db),
+    db: AsyncSession = Depends(get_auth_db),
 ):
     """
     Logout from current session.
@@ -160,7 +160,7 @@ async def logout(
 @router.post("/logout-all", response_model=LogoutAllResponse)
 async def logout_all(
     current_user: User = Depends(get_current_user),
-    db: AsyncSession = Depends(get_db),
+    db: AsyncSession = Depends(get_auth_db),
 ):
     """
     Logout from all devices.
@@ -189,7 +189,7 @@ async def get_current_user_info(
 async def update_profile(
     update_data: UserUpdate,
     current_user: User = Depends(get_current_user),
-    db: AsyncSession = Depends(get_db),
+    db: AsyncSession = Depends(get_auth_db),
 ):
     """
     Update current user profile.
@@ -205,7 +205,7 @@ async def update_profile(
 async def upload_avatar(
     file: UploadFile = File(..., description="Profile image (JPEG, PNG, or WebP)"),
     current_user: User = Depends(get_current_user),
-    db: AsyncSession = Depends(get_db),
+    db: AsyncSession = Depends(get_auth_db),
 ):
     """
     Upload a profile avatar image.
@@ -276,7 +276,7 @@ async def get_avatar(filename: str):
 @router.delete("/avatar", response_model=UserResponse)
 async def delete_avatar(
     current_user: User = Depends(get_current_user),
-    db: AsyncSession = Depends(get_db),
+    db: AsyncSession = Depends(get_auth_db),
 ):
     """
     Delete current user's avatar.
@@ -301,7 +301,7 @@ async def delete_avatar(
 async def change_password(
     password_data: PasswordChange,
     current_user: User = Depends(get_current_user),
-    db: AsyncSession = Depends(get_db),
+    db: AsyncSession = Depends(get_auth_db),
 ):
     """
     Change current user's password.
@@ -327,7 +327,7 @@ async def change_password(
 async def get_sessions(
     request: Request,
     current_user: User = Depends(get_current_user),
-    db: AsyncSession = Depends(get_db),
+    db: AsyncSession = Depends(get_auth_db),
 ):
     """
     Get all active sessions for current user.
@@ -349,7 +349,7 @@ async def get_sessions(
 async def revoke_session(
     session_id: str,
     current_user: User = Depends(get_current_user),
-    db: AsyncSession = Depends(get_db),
+    db: AsyncSession = Depends(get_auth_db),
 ):
     """
     Revoke a specific session.

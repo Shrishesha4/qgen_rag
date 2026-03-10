@@ -1,15 +1,16 @@
 """
 User database model.
+
+Stored in SQLite (auth.db), decoupled from PostgreSQL/pgvector.
 """
 
 from datetime import datetime
 from typing import Optional
-from sqlalchemy import String, Boolean, Integer, DateTime, Text, Float, func
+from sqlalchemy import String, Boolean, Integer, DateTime, Text, JSON, func
 from sqlalchemy.orm import Mapped, mapped_column, relationship
-from sqlalchemy.dialects.postgresql import UUID, JSONB
 import uuid
 
-from app.core.database import Base
+from app.core.auth_database import AuthBase
 
 
 # User roles
@@ -19,13 +20,13 @@ ROLE_ADMIN = "admin"
 VALID_ROLES = {ROLE_TEACHER, ROLE_VETTER, ROLE_ADMIN}
 
 
-class User(Base):
-    """User model for authentication and authorization."""
+class User(AuthBase):
+    """User model for authentication and authorization (SQLite)."""
     
     __tablename__ = "users"
 
-    id: Mapped[uuid.UUID] = mapped_column(
-        UUID(as_uuid=True), primary_key=True, default=uuid.uuid4
+    id: Mapped[str] = mapped_column(
+        String(36), primary_key=True, default=lambda: str(uuid.uuid4())
     )
     email: Mapped[str] = mapped_column(String(255), unique=True, nullable=False, index=True)
     username: Mapped[str] = mapped_column(String(50), unique=True, nullable=False, index=True)
@@ -46,35 +47,23 @@ class User(Base):
     
     # Security
     failed_login_attempts: Mapped[int] = mapped_column(Integer, default=0)
-    locked_until: Mapped[Optional[datetime]] = mapped_column(DateTime(timezone=True))
-    password_changed_at: Mapped[datetime] = mapped_column(
-        DateTime(timezone=True), server_default=func.now()
-    )
+    locked_until: Mapped[Optional[datetime]] = mapped_column(DateTime)
+    password_changed_at: Mapped[Optional[datetime]] = mapped_column(DateTime)
     
     # Timestamps
-    created_at: Mapped[datetime] = mapped_column(
-        DateTime(timezone=True), server_default=func.now()
-    )
-    updated_at: Mapped[datetime] = mapped_column(
-        DateTime(timezone=True), server_default=func.now(), onupdate=func.now()
-    )
-    last_login_at: Mapped[Optional[datetime]] = mapped_column(DateTime(timezone=True))
+    created_at: Mapped[Optional[datetime]] = mapped_column(DateTime, default=datetime.utcnow)
+    updated_at: Mapped[Optional[datetime]] = mapped_column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
+    last_login_at: Mapped[Optional[datetime]] = mapped_column(DateTime)
     
-    # Preferences
-    preferences: Mapped[Optional[dict]] = mapped_column(JSONB, default={})
-    
-
+    # Preferences (JSON instead of JSONB for SQLite)
+    preferences: Mapped[Optional[dict]] = mapped_column(JSON, default={})
     
     # Subject-level Reference Materials (stored per subject)
     # Format: {"subject_id": {"reference_books": [...], "template_papers": [...]}}
-    subject_reference_materials: Mapped[Optional[dict]] = mapped_column(JSONB, default={})
+    subject_reference_materials: Mapped[Optional[dict]] = mapped_column(JSON, default={})
     
-    # Relationships
-    documents = relationship("Document", back_populates="user", cascade="all, delete-orphan")
+    # Relationships (within auth DB only)
     refresh_tokens = relationship("RefreshToken", back_populates="user", cascade="all, delete-orphan")
-    generation_sessions = relationship("GenerationSession", back_populates="user", cascade="all, delete-orphan")
-    subjects = relationship("Subject", back_populates="user", cascade="all, delete-orphan")
-    rubrics = relationship("Rubric", back_populates="user", cascade="all, delete-orphan")
     
     def __repr__(self) -> str:
         return f"<User {self.username}>"

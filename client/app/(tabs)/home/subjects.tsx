@@ -156,8 +156,8 @@ export default function SubjectsScreen() {
     <View style={[styles.container, { backgroundColor: colors.background }]}>
       {/* Responsive inner container */}
       <View style={[{ flex: 1 }, desktopContentStyle]}>
-      {/* Search Bar */}}
-      <View style={[styles.searchContainer, { backgroundColor: colors.card }]}>
+        {/* Search Bar */}
+        <View style={[styles.searchContainer, { backgroundColor: colors.card }]}>
         <IconSymbol name="magnifyingglass" size={18} color={colors.textSecondary} />
         <TextInput
           style={[styles.searchInput, { color: colors.text }]}

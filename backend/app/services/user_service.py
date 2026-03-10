@@ -143,7 +143,7 @@ class UserService:
 
         return user
 
-    async def get_user_by_id(self, user_id: uuid.UUID) -> Optional[User]:
+    async def get_user_by_id(self, user_id: str) -> Optional[User]:
         """Get user by ID."""
         result = await self.db.execute(select(User).where(User.id == user_id))
         return result.scalar_one_or_none()
@@ -153,7 +153,7 @@ class UserService:
         result = await self.db.execute(select(User).where(User.email == email))
         return result.scalar_one_or_none()
 
-    async def update_user(self, user_id: uuid.UUID, update_data: UserUpdate) -> User:
+    async def update_user(self, user_id: str, update_data: UserUpdate) -> User:
         """Update user profile."""
         user = await self.get_user_by_id(user_id)
         if not user:
@@ -170,7 +170,7 @@ class UserService:
 
     async def change_password(
         self,
-        user_id: uuid.UUID,
+        user_id: str,
         current_password: str,
         new_password: str,
     ) -> bool:
@@ -189,7 +189,7 @@ class UserService:
 
     async def create_refresh_token(
         self,
-        user_id: uuid.UUID,
+        user_id: str,
         device_id: Optional[str] = None,
         device_name: Optional[str] = None,
         device_type: Optional[str] = None,
@@ -249,7 +249,7 @@ class UserService:
             return None
 
         # Get user
-        user_id = uuid.UUID(payload["sub"])
+        user_id = payload["sub"]
         user = await self.get_user_by_id(user_id)
         if not user or not user.is_active:
             return None
@@ -304,7 +304,7 @@ class UserService:
             return True
         return False
 
-    async def revoke_all_user_tokens(self, user_id: uuid.UUID) -> int:
+    async def revoke_all_user_tokens(self, user_id: str) -> int:
         """Revoke all refresh tokens for a user."""
         result = await self.db.execute(
             update(RefreshToken)
@@ -314,7 +314,7 @@ class UserService:
         await self.db.commit()
         return result.rowcount
 
-    async def get_user_sessions(self, user_id: uuid.UUID, current_token: str) -> List[Dict[str, Any]]:
+    async def get_user_sessions(self, user_id: str, current_token: str) -> List[Dict[str, Any]]:
         """Get all active sessions for a user."""
         current_token_hash = hashlib.sha256(current_token.encode()).hexdigest()
         
@@ -342,7 +342,7 @@ class UserService:
 
     async def _log_auth_event(
         self,
-        user_id: Optional[uuid.UUID],
+        user_id: Optional[str],
         event_type: str,
         ip_address: Optional[str] = None,
         user_agent: Optional[str] = None,

@@ -58,7 +58,7 @@ class Question(Base):
     
     # Vetting/Review status
     vetting_status: Mapped[str] = mapped_column(String(20), default="pending")  # pending, approved, rejected
-    vetted_by: Mapped[Optional[uuid.UUID]] = mapped_column(UUID(as_uuid=True))
+    vetted_by: Mapped[Optional[str]] = mapped_column(String(36))
     vetted_at: Mapped[Optional[datetime]] = mapped_column(DateTime(timezone=True))
     vetting_notes: Mapped[Optional[str]] = mapped_column(Text)
     
@@ -140,8 +140,8 @@ class GenerationSession(Base):
     document_id: Mapped[Optional[uuid.UUID]] = mapped_column(
         UUID(as_uuid=True), ForeignKey("documents.id", ondelete="SET NULL"), nullable=True
     )
-    user_id: Mapped[uuid.UUID] = mapped_column(
-        UUID(as_uuid=True), ForeignKey("users.id", ondelete="CASCADE"), nullable=False
+    user_id: Mapped[str] = mapped_column(
+        String(36), nullable=False, index=True
     )
     subject_id: Mapped[Optional[uuid.UUID]] = mapped_column(
         UUID(as_uuid=True), ForeignKey("subjects.id", ondelete="SET NULL"), nullable=True
@@ -185,8 +185,7 @@ class GenerationSession(Base):
     error_message: Mapped[Optional[str]] = mapped_column(Text)
     generation_config: Mapped[Optional[dict]] = mapped_column(JSONB)
     
-    # Relationships
-    user = relationship("User", back_populates="generation_sessions")
+    # Relationships (user is cross-database, no ORM relationship)
     document = relationship("Document", back_populates="generation_sessions")
     
     def __repr__(self) -> str:

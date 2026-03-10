@@ -67,9 +67,11 @@ class NoveltyService:
         self,
         db: AsyncSession,
         embedding_service: Optional[EmbeddingService] = None,
+        auth_db: Optional[AsyncSession] = None,
     ):
         self.db = db
         self.embedding_service = embedding_service or EmbeddingService()
+        self._auth_db = auth_db
 
     async def compute_novelty(
         self,
@@ -242,16 +244,24 @@ class NoveltyService:
         
         return max(similarities) if similarities else 0.0
 
-    async def _get_user(self, user_id: uuid.UUID) -> Optional[User]:
-        """Get user by ID."""
-        result = await self.db.execute(
-            select(User).where(User.id == user_id)
-        )
-        return result.scalar_one_or_none()
+    async def _get_user(self, user_id) -> Optional[User]:
+        """Get user by ID from auth database."""
+        if self._auth_db:
+            result = await self._auth_db.execute(
+                select(User).where(User.id == str(user_id))
+            )
+            return result.scalar_one_or_none()
+        # Fallback: create a new auth session
+        from app.core.auth_database import AuthSessionLocal
+        async with AuthSessionLocal() as session:
+            result = await session.execute(
+                select(User).where(User.id == str(user_id))
+            )
+            return result.scalar_one_or_none()
 
     async def get_user_novelty_settings(
         self,
-        user_id: uuid.UUID,
+        user_id,
     ) -> Dict[str, Any]:
         """Get user's novelty settings."""
         user = await self._get_user(user_id)

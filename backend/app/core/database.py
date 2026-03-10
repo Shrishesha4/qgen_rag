@@ -44,11 +44,16 @@ Base = declarative_base()
 
 async def init_db():
     """Initialize database and create tables."""
+    # Initialize PostgreSQL (pgvector) database
     async with engine.begin() as conn:
         # Enable pgvector extension
         await conn.execute(text("CREATE EXTENSION IF NOT EXISTS vector"))
-        # Create all tables
+        # Create all pgvector tables
         await conn.run_sync(Base.metadata.create_all)
+    
+    # Initialize SQLite auth database
+    from app.core.auth_database import init_auth_db
+    await init_auth_db()
     
     # Create indexes after tables exist
     await create_indexes()

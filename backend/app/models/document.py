@@ -13,6 +13,9 @@ import uuid
 from app.core.database import Base
 from app.core.config import settings
 
+# Note: user_id is a cross-database reference (user lives in SQLite auth.db).
+# No FK constraint — integrity is enforced at the application layer.
+
 
 class Document(Base):
     """Document model for uploaded files."""
@@ -22,8 +25,8 @@ class Document(Base):
     id: Mapped[uuid.UUID] = mapped_column(
         UUID(as_uuid=True), primary_key=True, default=uuid.uuid4
     )
-    user_id: Mapped[uuid.UUID] = mapped_column(
-        UUID(as_uuid=True), ForeignKey("users.id", ondelete="CASCADE"), nullable=False
+    user_id: Mapped[str] = mapped_column(
+        String(36), nullable=False, index=True
     )
     subject_id: Mapped[Optional[uuid.UUID]] = mapped_column(
         UUID(as_uuid=True), ForeignKey("subjects.id", ondelete="SET NULL"), nullable=True
@@ -60,8 +63,7 @@ class Document(Base):
     is_public: Mapped[bool] = mapped_column(default=False)
     share_token: Mapped[Optional[str]] = mapped_column(String(100), unique=True)
     
-    # Relationships
-    user = relationship("User", back_populates="documents")
+    # Relationships (user is cross-database, no ORM relationship)
     chunks = relationship("DocumentChunk", back_populates="document", cascade="all, delete-orphan")
     questions = relationship("Question", back_populates="document", cascade="all, delete-orphan")
     generation_sessions = relationship("GenerationSession", back_populates="document", cascade="all, delete-orphan")

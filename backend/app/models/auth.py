@@ -1,27 +1,28 @@
 """
 Authentication-related database models.
+
+Stored in SQLite (auth.db), decoupled from PostgreSQL/pgvector.
 """
 
 from datetime import datetime
 from typing import Optional
-from sqlalchemy import String, Boolean, DateTime, Text, ForeignKey, func
+from sqlalchemy import String, Boolean, DateTime, Text, ForeignKey, JSON, Integer
 from sqlalchemy.orm import Mapped, mapped_column, relationship
-from sqlalchemy.dialects.postgresql import UUID, JSONB, INET
 import uuid
 
-from app.core.database import Base
+from app.core.auth_database import AuthBase
 
 
-class RefreshToken(Base):
-    """Refresh token model for session management."""
+class RefreshToken(AuthBase):
+    """Refresh token model for session management (SQLite)."""
     
     __tablename__ = "refresh_tokens"
 
-    id: Mapped[uuid.UUID] = mapped_column(
-        UUID(as_uuid=True), primary_key=True, default=uuid.uuid4
+    id: Mapped[str] = mapped_column(
+        String(36), primary_key=True, default=lambda: str(uuid.uuid4())
     )
-    user_id: Mapped[uuid.UUID] = mapped_column(
-        UUID(as_uuid=True), ForeignKey("users.id", ondelete="CASCADE"), nullable=False
+    user_id: Mapped[str] = mapped_column(
+        String(36), ForeignKey("users.id", ondelete="CASCADE"), nullable=False
     )
     token_hash: Mapped[str] = mapped_column(String(255), unique=True, nullable=False)
     
@@ -35,14 +36,10 @@ class RefreshToken(Base):
     user_agent: Mapped[Optional[str]] = mapped_column(Text)
     
     # Token lifecycle
-    issued_at: Mapped[datetime] = mapped_column(
-        DateTime(timezone=True), server_default=func.now()
-    )
-    expires_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
-    last_used_at: Mapped[datetime] = mapped_column(
-        DateTime(timezone=True), server_default=func.now()
-    )
-    revoked_at: Mapped[Optional[datetime]] = mapped_column(DateTime(timezone=True))
+    issued_at: Mapped[Optional[datetime]] = mapped_column(DateTime, default=datetime.utcnow)
+    expires_at: Mapped[datetime] = mapped_column(DateTime, nullable=False)
+    last_used_at: Mapped[Optional[datetime]] = mapped_column(DateTime, default=datetime.utcnow)
+    revoked_at: Mapped[Optional[datetime]] = mapped_column(DateTime)
     is_revoked: Mapped[bool] = mapped_column(Boolean, default=False)
     
     # Relationships
@@ -52,15 +49,13 @@ class RefreshToken(Base):
         return f"<RefreshToken {self.id}>"
 
 
-class AuditLog(Base):
-    """Audit log model for security events."""
+class AuditLog(AuthBase):
+    """Audit log model for security events (SQLite)."""
     
     __tablename__ = "audit_log"
 
-    id: Mapped[int] = mapped_column(primary_key=True, autoincrement=True)
-    user_id: Mapped[Optional[uuid.UUID]] = mapped_column(
-        UUID(as_uuid=True), ForeignKey("users.id", ondelete="SET NULL")
-    )
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
+    user_id: Mapped[Optional[str]] = mapped_column(String(36))
     
     # Event details
     event_type: Mapped[str] = mapped_column(String(50), nullable=False)
@@ -74,15 +69,13 @@ class AuditLog(Base):
     endpoint: Mapped[Optional[str]] = mapped_column(String(255))
     http_method: Mapped[Optional[str]] = mapped_column(String(10))
     
-    # Details
-    event_data: Mapped[Optional[dict]] = mapped_column(JSONB)
+    # Details (JSON instead of JSONB for SQLite)
+    event_data: Mapped[Optional[dict]] = mapped_column(JSON)
     success: Mapped[bool] = mapped_column(Boolean, default=True)
     error_message: Mapped[Optional[str]] = mapped_column(Text)
     
     # Timestamp
-    timestamp: Mapped[datetime] = mapped_column(
-        DateTime(timezone=True), server_default=func.now()
-    )
+    timestamp: Mapped[Optional[datetime]] = mapped_column(DateTime, default=datetime.utcnow)
     
     def __repr__(self) -> str:
         return f"<AuditLog {self.event_type} at {self.timestamp}>"

@@ -1,21 +1,20 @@
 """
-Embedding service for generating text embeddings.
+Embedding service for generating text embeddings via Ollama API.
 
-Supports multiple embedding models including:
-- all-MiniLM-L6-v2 (fast, good quality)
-- all-mpnet-base-v2 (better quality)
-- BAAI/bge-base-en-v1.5 (best for Q&A, requires instruction prefix)
+Uses nomic-embed-text model via Ollama for high-quality embeddings with
+8192 token context window, eliminating the 512-token truncation of
+local SentenceTransformer models.
 
 Features:
 - Two-tier caching: In-memory LRU cache + optional Redis persistence
-- Instruction-based embedding support for BGE models
-- Batch embedding with parallel processing
+- Batch embedding with concurrent Ollama API calls
+- 768-dimensional embeddings via nomic-embed-text
 """
 
 import hashlib
 from typing import List, Optional, Dict
 from collections import OrderedDict
-from sentence_transformers import SentenceTransformer
+import httpx
 import numpy as np
 
 import logging
@@ -69,15 +68,16 @@ class LRUCache:
 
 class EmbeddingService:
     """
-    Service for generating text embeddings using sentence-transformers.
+    Service for generating text embeddings via Ollama API.
     
+    Uses nomic-embed-text for 768-dim embeddings with 8192 context window.
     Supports two-tier caching:
     1. In-memory LRU cache for fast access to hot embeddings
     2. Optional Redis cache for persistence across restarts
     """
 
     _instance: Optional["EmbeddingService"] = None
-    _model: Optional[SentenceTransformer] = None
+    _client: Optional[httpx.AsyncClient] = None
     _cache: Optional[LRUCache] = None
     _redis_service = None
 
@@ -88,11 +88,10 @@ class EmbeddingService:
         return cls._instance
 
     def __init__(self):
-        if self._model is None:
-            self._model = SentenceTransformer(settings.EMBEDDING_MODEL)
-            self._use_instruction = settings.EMBEDDING_USE_INSTRUCTION
-            self._query_instruction = settings.EMBEDDING_QUERY_INSTRUCTION
-            self._doc_instruction = settings.EMBEDDING_DOCUMENT_INSTRUCTION
+        if self._client is None:
+            self._ollama_url = f"{settings.OLLAMA_BASE_URL}/api/embed"
+            self._model = settings.EMBEDDING_MODEL
+            self._client = httpx.AsyncClient(timeout=60.0)
             self._cache = LRUCache(max_size=10000)
             self._cache_enabled = True
             self._redis_cache_enabled = getattr(settings, 'EMBEDDING_REDIS_CACHE', False)
@@ -105,21 +104,30 @@ class EmbeddingService:
             self._redis_service = RedisService()
         return self._redis_service
 
-    def _prepare_text(self, text: str, is_query: bool = True) -> str:
-        """Prepare text with instruction prefix if enabled."""
-        if not self._use_instruction:
-            return text
-        
-        instruction = self._query_instruction if is_query else self._doc_instruction
-        if instruction:
-            return f"{instruction} {text}"
-        return text
-
     def _get_cache_key(self, text: str, is_query: bool) -> str:
         """Generate a cache key for the text."""
-        # Include model name and query flag in key to avoid collisions
-        key_str = f"{settings.EMBEDDING_MODEL}:{is_query}:{text}"
+        key_str = f"{self._model}:{is_query}:{text}"
         return hashlib.md5(key_str.encode()).hexdigest()
+
+    async def _call_ollama(self, text: str) -> List[float]:
+        """Call Ollama embedding API for a single text."""
+        response = await self._client.post(
+            self._ollama_url,
+            json={"model": self._model, "input": text},
+        )
+        response.raise_for_status()
+        data = response.json()
+        return data["embeddings"][0]
+
+    async def _call_ollama_batch(self, texts: List[str]) -> List[List[float]]:
+        """Call Ollama embedding API for a batch of texts."""
+        response = await self._client.post(
+            self._ollama_url,
+            json={"model": self._model, "input": texts},
+        )
+        response.raise_for_status()
+        data = response.json()
+        return data["embeddings"]
 
     async def get_embedding(self, text: str, is_query: bool = True) -> List[float]:
         """
@@ -128,12 +136,11 @@ class EmbeddingService:
         Cache lookup order:
         1. In-memory LRU cache (fastest)
         2. Redis cache (if enabled)
-        3. Generate new embedding
+        3. Generate new embedding via Ollama API
         
         Args:
             text: Text to embed
-            is_query: If True, use query instruction (for search queries).
-                     If False, use document instruction (for documents/chunks).
+            is_query: If True, marks as query (for cache key differentiation).
         """
         cache_key = self._get_cache_key(text, is_query)
         
@@ -154,12 +161,10 @@ class EmbeddingService:
                         self._cache.put(cache_key, cached)
                     return cached
             except Exception:
-                # Redis errors shouldn't break embedding generation
                 pass
         
-        # Generate embedding
-        prepared_text = self._prepare_text(text, is_query)
-        embedding = self._model.encode(prepared_text, convert_to_numpy=True).tolist()
+        # Generate embedding via Ollama
+        embedding = await self._call_ollama(text)
         
         # Cache the result in L1
         if self._cache_enabled:
@@ -175,7 +180,7 @@ class EmbeddingService:
                     ttl=self._redis_cache_ttl
                 )
             except Exception:
-                pass  # Non-critical, continue
+                pass
         
         return embedding
 
@@ -189,14 +194,13 @@ class EmbeddingService:
         
         Args:
             texts: List of texts to embed
-            is_query: If True, use query instruction. Usually False for batch
-                     document embeddings.
+            is_query: If True, marks as query for cache key differentiation.
         """
         if not texts:
             return []
         
         results: List[Optional[List[float]]] = [None] * len(texts)
-        texts_to_encode: List[tuple[int, str]] = []  # (original_index, prepared_text)
+        texts_to_encode: List[tuple[int, str]] = []  # (original_index, text)
         cache_keys: List[str] = []
         
         # Check L1 cache for each text
@@ -224,7 +228,6 @@ class EmbeddingService:
                     cached = redis_results.get(cache_key)
                     if cached is not None:
                         results[orig_idx] = cached
-                        # Populate L1 from L2
                         if self._cache_enabled:
                             self._cache.put(cache_key, cached)
                     else:
@@ -232,16 +235,13 @@ class EmbeddingService:
                 
                 texts_to_encode = new_texts_to_encode
             except Exception:
-                pass  # Continue with current texts_to_encode
+                pass
         
-        # Encode remaining uncached texts in batch
+        # Encode remaining uncached texts via Ollama batch API
         if texts_to_encode:
             indices = [i for i, _ in texts_to_encode]
-            prepared_texts = [self._prepare_text(text, is_query) for _, text in texts_to_encode]
-            new_embeddings = self._model.encode(
-                prepared_texts, 
-                convert_to_numpy=True
-            ).tolist()
+            raw_texts = [text for _, text in texts_to_encode]
+            new_embeddings = await self._call_ollama_batch(raw_texts)
             
             # Fill in results and update caches
             redis_to_cache = {}
@@ -270,11 +270,11 @@ class EmbeddingService:
         return results
 
     async def get_document_embedding(self, text: str) -> List[float]:
-        """Generate embedding for a document chunk (uses document instruction)."""
+        """Generate embedding for a document chunk."""
         return await self.get_embedding(text, is_query=False)
 
     async def get_query_embedding(self, text: str) -> List[float]:
-        """Generate embedding for a search query (uses query instruction)."""
+        """Generate embedding for a search query."""
         return await self.get_embedding(text, is_query=True)
 
     def compute_similarity(
@@ -368,12 +368,12 @@ class EmbeddingService:
         """
         Warmup the model by running a dummy inference.
         
-        This ensures the model is fully loaded and ready before the first
+        This ensures the Ollama model is loaded into GPU memory before the first
         real request, avoiding cold start latency for users.
         """
         dummy_text = "This is a warmup text for model initialization."
         _ = await self.get_embedding(dummy_text)
-        logger.info(f"✅ Embedding model warmed up: {settings.EMBEDDING_MODEL}")
+        logger.info(f"Embedding model warmed up: {self._model} via Ollama")
 
 
 # Module-level function for easy import
