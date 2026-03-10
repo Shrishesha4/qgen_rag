@@ -574,12 +574,16 @@ export default function SubjectDetailScreen() {
 
       setExtractionStatus('Extracting chapters...');
 
+      // On web, expo-document-picker exposes the native browser File on the asset
+      const webFile = typeof File !== 'undefined' ? (file as any).file : undefined;
+
       // Call the API to extract chapters
       const response = await subjectsService.extractChaptersFromSyllabus(
         id,
         file.uri,
         file.name,
-        file.mimeType || 'application/pdf'
+        file.mimeType || 'application/pdf',
+        webFile
       );
 
       setExtractionStatus('Complete!');

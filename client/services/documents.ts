@@ -84,8 +84,20 @@ export const documentsService = {
       return null;
     }
 
-    const file = result.assets[0];
-    return this.uploadDocument(file.uri, file.name, file.mimeType || 'application/pdf');
+    const asset = result.assets[0];
+
+    // On web, expo-document-picker provides the native browser File object directly.
+    // Using the { uri, name, type } RN pattern on web sends a plain object (stringified),
+    // which FastAPI rejects with "Expected UploadFile, received: <class 'str'>".
+    const webFile = (asset as any).file;
+    if (typeof File !== 'undefined' && webFile instanceof File) {
+      const formData = new FormData();
+      formData.append('file', webFile);
+      const response = await apiClient.post('/documents/upload', formData);
+      return response.data;
+    }
+
+    return this.uploadDocument(asset.uri, asset.name, asset.mimeType || 'application/pdf');
   },
 
   /**

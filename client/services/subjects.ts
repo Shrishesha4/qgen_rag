@@ -214,19 +214,27 @@ export const subjectsService = {
     subjectId: string,
     uri: string,
     filename: string,
-    mimeType: string
+    mimeType: string,
+    webFile?: File
   ): Promise<{
     message: string;
     chapters_created: number;
     topics: Topic[];
   }> {
     const formData = new FormData();
-    
-    formData.append('file', {
-      uri,
-      name: filename,
-      type: mimeType,
-    } as unknown as Blob);
+
+    // On web, expo-document-picker provides a native browser File object.
+    // Using the { uri, name, type } RN pattern on web sends a plain object (stringified),
+    // which FastAPI rejects with "Expected UploadFile, received: <class 'str'>".
+    if (typeof File !== 'undefined' && webFile instanceof File) {
+      formData.append('file', webFile);
+    } else {
+      formData.append('file', {
+        uri,
+        name: filename,
+        type: mimeType,
+      } as unknown as Blob);
+    }
 
     const response = await apiClient.post<{
       message: string;

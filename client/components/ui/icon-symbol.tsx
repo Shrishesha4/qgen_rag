@@ -129,6 +129,7 @@ const MAPPING: IconMapping = {
   'text.quote': 'format-quote',
 
   // clipboard / lists
+  'list.bullet.clipboard': 'assignment',
   'list.bullet.clipboard.fill': 'assignment',
 
   // settings
