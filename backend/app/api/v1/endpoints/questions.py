@@ -3352,7 +3352,7 @@ Output valid JSON only."""
             # Finalize rubric session
             try:
                 rubric_gen_session.questions_generated = questions_generated
-                rubric_gen_session.questions_failed = questions_failed
+                rubric_gen_session.questions_failed = max(0, total_questions - questions_generated)
                 rubric_gen_session.status = "completed"
                 rubric_gen_session.completed_at = datetime.now(timezone.utc)
                 await db.commit()
@@ -3371,9 +3371,10 @@ Output valid JSON only."""
             except Exception as e:
                 logger.error(f"[{request_id}] Error updating subject stats: {e}")
             
-            yield f"data: {json.dumps({'status': 'complete', 'progress': 100, 'current_question': questions_generated, 'total_questions': total_questions, 'questions_failed': questions_failed, 'message': f'Generated {questions_generated} questions' + (f' ({questions_failed} failed)' if questions_failed > 0 else '')})}\n\n"
+            questions_failed_count = max(0, total_questions - questions_generated)
+            yield f"data: {json.dumps({'status': 'complete', 'progress': 100, 'current_question': questions_generated, 'total_questions': total_questions, 'questions_failed': questions_failed_count, 'message': f'Generated {questions_generated} questions' + (f' ({questions_failed_count} shortfall)' if questions_failed_count > 0 else '')})}\n\n"
             
-            logger.info(f"[{request_id}] Rubric generation complete: {questions_generated} generated, {questions_failed} failed")
+            logger.info(f"[{request_id}] Rubric generation complete: {questions_generated} generated, {questions_failed_count} shortfall")
             
         except Exception as e:
             logger.error(f"[{request_id}] Rubric generation failed: {e}")
@@ -3923,7 +3924,7 @@ Output valid JSON only."""
             # Finalize chapter session
             try:
                 chapter_gen_session.questions_generated = questions_generated
-                chapter_gen_session.questions_failed = questions_failed
+                chapter_gen_session.questions_failed = max(0, total_questions - questions_generated)
                 chapter_gen_session.status = "completed"
                 chapter_gen_session.completed_at = datetime.now(timezone.utc)
                 await db.commit()
@@ -3941,8 +3942,9 @@ Output valid JSON only."""
             except Exception as e:
                 logger.error(f"[{request_id}] Error updating subject stats: {e}")
 
-            yield f"data: {json.dumps({'status': 'complete', 'progress': 100, 'current_question': questions_generated, 'total_questions': total_questions, 'questions_failed': questions_failed, 'message': f'Generated {questions_generated} questions' + (f' ({questions_failed} failed)' if questions_failed > 0 else '')})}\n\n"
-            logger.info(f"[{request_id}] Chapter gen complete: {questions_generated} generated, {questions_failed} failed")
+            questions_failed_count = max(0, total_questions - questions_generated)
+            yield f"data: {json.dumps({'status': 'complete', 'progress': 100, 'current_question': questions_generated, 'total_questions': total_questions, 'questions_failed': questions_failed_count, 'message': f'Generated {questions_generated} questions' + (f' ({questions_failed_count} shortfall)' if questions_failed_count > 0 else '')})}\n\n"
+            logger.info(f"[{request_id}] Chapter gen complete: {questions_generated} generated, {questions_failed_count} shortfall")
 
         except Exception as e:
             logger.error(f"[{request_id}] Chapter generation failed: {e}")

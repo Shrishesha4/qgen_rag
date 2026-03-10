@@ -338,14 +338,7 @@ export default function HistoryScreen() {
                                                     </Text>
                                                     <Text style={[styles.statLabel, { color: colors.textSecondary }]}>Generated</Text>
                                                 </View>
-                                                {session.questions_failed > 0 && (
-                                                    <View style={styles.stat}>
-                                                        <Text style={[styles.statValue, { color: '#FF3B30' }]}>
-                                                            {session.questions_failed}
-                                                        </Text>
-                                                        <Text style={[styles.statLabel, { color: colors.textSecondary }]}>Skipped</Text>
-                                                    </View>
-                                                )}
+
                                                 {session.requested_difficulty && (
                                                     <View style={[styles.infoBadge, { backgroundColor: colors.card }]}>
                                                         <Text style={{ fontSize: 10, color: colors.textSecondary }}>

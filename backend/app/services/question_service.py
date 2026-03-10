@@ -374,7 +374,7 @@ class QuestionGenerationService:
 
             # 7. Complete session
             session.questions_generated = questions_generated
-            session.questions_failed = questions_failed
+            session.questions_failed = max(0, request.count - questions_generated)
             session.questions_duplicate = questions_duplicate
             session.status = "completed"
             session.completed_at = datetime.now(timezone.utc)
@@ -389,6 +389,7 @@ class QuestionGenerationService:
                 progress=100,
                 current_question=questions_generated,
                 total_questions=request.count,
+                questions_failed=max(0, request.count - questions_generated),
                 message=f"Generated {questions_generated} questions ({questions_duplicate} duplicates avoided)",
             )
 
@@ -2675,7 +2676,7 @@ Output valid JSON only."""
             session = session_result.scalar_one_or_none()
             if session:
                 session.questions_generated = questions_generated
-                session.questions_failed = questions_failed
+                session.questions_failed = max(0, count - questions_generated)
                 session.status = "completed"
                 session.completed_at = datetime.now(timezone.utc)
                 if session.started_at:
@@ -2690,7 +2691,7 @@ Output valid JSON only."""
                 current_question=questions_generated,
                 total_questions=count,
                 message=f"Successfully generated {questions_generated} questions",
-                questions_failed=questions_failed,
+                questions_failed=max(0, count - questions_generated),
             )
 
         except Exception as e:
@@ -3113,7 +3114,7 @@ Output valid JSON only."""
             
             if session:
                 session.questions_generated = questions_generated
-                session.questions_failed = questions_failed + questions_discarded
+                session.questions_failed = max(0, count - questions_generated)
                 session.questions_duplicate = questions_discarded
                 session.status = "completed"
                 session.completed_at = datetime.now(timezone.utc)
@@ -3132,6 +3133,7 @@ Output valid JSON only."""
                 message=f"Generated {questions_generated} unique questions" + 
                        (f" ({questions_discarded} below novelty threshold)" if questions_discarded > 0 else ""),
                 document_id=document_id,
+                questions_failed=max(0, count - questions_generated),
             )
 
         except Exception as e:
