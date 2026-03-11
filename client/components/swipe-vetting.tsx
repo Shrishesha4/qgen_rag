@@ -218,7 +218,7 @@ export function SwipeVetting({
     }
   }, [currentIndex, questions.length, hasMore, onLoadMore]);
 
-  // Keyboard navigation on web: ArrowRight = approve, ArrowLeft = reject
+  // Keyboard navigation on web: ArrowRight = next question, ArrowLeft = previous question
   useEffect(() => {
     if (Platform.OS !== 'web' || !visible) return;
     const handleKeyDown = (e: KeyboardEvent) => {
@@ -228,15 +228,20 @@ export function SwipeVetting({
       if (tag === 'INPUT' || tag === 'TEXTAREA') return;
       if (e.key === 'ArrowRight') {
         e.preventDefault();
-        gestureCallbacksRef.current.swipeOut('right');
+        keyboardNavCallbacksRef.current.moveToNext();
       } else if (e.key === 'ArrowLeft') {
         e.preventDefault();
-        gestureCallbacksRef.current.swipeOut('left');
+        keyboardNavCallbacksRef.current.moveToPrev();
       }
     };
     window.addEventListener('keydown', handleKeyDown);
     return () => window.removeEventListener('keydown', handleKeyDown);
   }, [visible]);
+
+  const keyboardNavCallbacksRef = useRef<{ moveToNext: () => void; moveToPrev: () => void }>({
+    moveToNext: () => {},
+    moveToPrev: () => {},
+  });
 
   // Reset state when question changes
   const resetState = useCallback(() => {
@@ -584,6 +589,17 @@ export function SwipeVetting({
       onClose();
     }
   };
+
+  const moveToPrev = () => {
+    if (currentIndex <= 0) return;
+    position.setValue({ x: 0, y: 0 });
+    setQuestionOverride(null);
+    setViewMode('question');
+    setCurrentIndex(currentIndex - 1);
+  };
+
+  // Keep keyboard nav ref up to date
+  keyboardNavCallbacksRef.current = { moveToNext, moveToPrev };
 
   const toggleRejectReason = (reasonId: string) => {
     selectionImpact();
