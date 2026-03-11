@@ -126,7 +126,8 @@ export function ExportModal({
       presentationStyle={Platform.OS === 'ios' ? 'pageSheet' : 'fullScreen'}
       onRequestClose={onClose}
     >
-      <View style={[styles.container, { backgroundColor: isDark ? '#1c1c1e' : '#fff' }]}>
+      <View style={{ flex: 1, backgroundColor: colors.background }}>
+      <View style={[styles.container, { backgroundColor: colors.background }]}>
         {/* Header */}
         <View style={[styles.header, { borderBottomColor: borderColor }]}>
           <TouchableOpacity onPress={() => {
@@ -380,6 +381,7 @@ export function ExportModal({
               </View>
             </TouchableOpacity>
           </View>
+      </View>
       </View>
     </Modal>
   );

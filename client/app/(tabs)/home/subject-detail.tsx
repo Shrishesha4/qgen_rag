@@ -1179,6 +1179,7 @@ export default function SubjectDetailScreen() {
           presentationStyle="pageSheet"
           onRequestClose={() => setShowAddTopicModal(false)}
         >
+          <View style={{ flex: 1, backgroundColor: colors.background }}>
           <View style={[styles.modalContainer, { backgroundColor: colors.background }]}>
             <View style={[styles.modalHeader, { backgroundColor: colors.card, borderBottomColor: colors.border }]}>
               <TouchableOpacity onPress={() => {
@@ -1222,15 +1223,17 @@ export default function SubjectDetailScreen() {
               </View>
             </ScrollView>
           </View>
+          </View>
         </Modal>
 
-        {/* Topic Detail Modal */}
+        {/* Topic Detail Modal */}}
         <Modal
           visible={showTopicDetailModal}
           animationType="slide"
           presentationStyle="pageSheet"
           onRequestClose={() => setShowTopicDetailModal(false)}
         >
+          <View style={{ flex: 1, backgroundColor: colors.background }}>
           <View style={[styles.modalContainer, { backgroundColor: colors.background }]}>
             <View style={[styles.modalHeader, { backgroundColor: colors.card, borderBottomColor: colors.border }]}>
               <TouchableOpacity onPress={() => {
@@ -1343,15 +1346,17 @@ export default function SubjectDetailScreen() {
               )}
             </ScrollView>
           </View>
+          </View>
         </Modal>
 
-        {/* Chapter Generation Modal */}
+        {/* Chapter Generation Modal */}}
         <Modal
           visible={showGenerateModal}
           animationType="slide"
           presentationStyle="pageSheet"
           onRequestClose={closeGenerateModal}
         >
+          <View style={{ flex: 1, backgroundColor: colors.background }}>
           <View style={[styles.genModalContainer, { backgroundColor: colors.background }]}>
             {/* Header */}
             <View style={[styles.genModalHeader, { borderBottomColor: colors.border }]}>
@@ -1764,6 +1769,7 @@ export default function SubjectDetailScreen() {
                 </ScrollView>
               </>
             )}
+          </View>
           </View>
         </Modal>
 

@@ -869,6 +869,7 @@ const [editCoMapping, setEditCoMapping] = useState<Record<string, number>>({});
         presentationStyle="pageSheet"
         onRequestClose={() => setShowVetModal(false)}
       >
+        <View style={{ flex: 1, backgroundColor: colors.background }}>
         <SafeAreaView style={[styles.modalContainer, { backgroundColor: colors.background }]}>
           <View style={styles.modalHeader}>
             <Text style={[styles.modalTitle, { color: colors.text }]}>
@@ -1322,9 +1323,10 @@ const [editCoMapping, setEditCoMapping] = useState<Record<string, number>>({});
             )}
           </ScrollView>
         </SafeAreaView>
+        </View>
       </Modal>
 
-      {/* Teacher Picker Modal */}
+      {/* Teacher Picker Modal */}}
       <Modal
         visible={showTeacherPicker}
         animationType="slide"
@@ -1334,6 +1336,7 @@ const [editCoMapping, setEditCoMapping] = useState<Record<string, number>>({});
           setTeacherSearch('');
         }}
       >
+        <View style={{ flex: 1, backgroundColor: colors.background }}>
         <SafeAreaView style={[styles.modalContainer, { backgroundColor: colors.background }]}>
           <View style={styles.modalHeader}>
             <Text style={[styles.modalTitle, { color: colors.text }]}>Select Teacher</Text>
@@ -1423,9 +1426,10 @@ const [editCoMapping, setEditCoMapping] = useState<Record<string, number>>({});
             )}
           </ScrollView>
         </SafeAreaView>
+        </View>
       </Modal>
 
-      {/* Subject Picker Modal */}
+      {/* Subject Picker Modal */}}
       <Modal
         visible={showSubjectPicker}
         animationType="slide"
@@ -1435,6 +1439,7 @@ const [editCoMapping, setEditCoMapping] = useState<Record<string, number>>({});
           setSubjectSearch('');
         }}
       >
+        <View style={{ flex: 1, backgroundColor: colors.background }}>
         <SafeAreaView style={[styles.modalContainer, { backgroundColor: colors.background }]}>
           <View style={styles.modalHeader}>
             <Text style={[styles.modalTitle, { color: colors.text }]}>Select Subject</Text>
@@ -1525,9 +1530,10 @@ const [editCoMapping, setEditCoMapping] = useState<Record<string, number>>({});
             )}
           </ScrollView>
         </SafeAreaView>
+        </View>
       </Modal>
 
-      {/* Floating Start Vetting Button */}
+      {/* Floating Start Vetting Button */}}
       {pendingQuestions.length > 0 && statusFilter === 'pending' && (
         <TouchableOpacity
           style={[styles.floatingButton, { bottom: Platform.OS === 'ios' ? 90 + Spacing.md : Spacing.md }]}

@@ -453,7 +453,7 @@ export default function VetterSettings() {
         onRequestClose={() => setActiveModal(null)}
       >
         <KeyboardAvoidingView
-          style={{ flex: 1 }}
+          style={{ flex: 1, backgroundColor: colors.background }}
           behavior={Platform.OS === 'ios' ? 'padding' : undefined}
         >
           <View style={[styles.modalContainer, { backgroundColor: colors.background }]}>

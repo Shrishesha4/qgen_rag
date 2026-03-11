@@ -760,6 +760,7 @@ export default function QuickGenerateScreen() {
 
       {/* Subject/Topic Picker Modals */}
       <Modal visible={showSubjectPicker} animationType="slide" presentationStyle="pageSheet" onRequestClose={() => setShowSubjectPicker(false)}>
+        <View style={{ flex: 1, backgroundColor: colors.background }}>
         <View style={[styles.modalContainer, { backgroundColor: colors.background }]}>
           <View style={styles.modalHeaderBar}><View style={[styles.modalHandle, { backgroundColor: colors.border }]} /></View>
           <View style={styles.modalTop}>
@@ -781,9 +782,11 @@ export default function QuickGenerateScreen() {
             ))}
           </ScrollView>
         </View>
+        </View>
       </Modal>
 
       <Modal visible={showTopicPicker} animationType="slide" presentationStyle="pageSheet" onRequestClose={() => setShowTopicPicker(false)}>
+        <View style={{ flex: 1, backgroundColor: colors.background }}>
         <View style={[styles.modalContainer, { backgroundColor: colors.background }]}>
           <View style={styles.modalHeaderBar}><View style={[styles.modalHandle, { backgroundColor: colors.border }]} /></View>
           <View style={styles.modalTop}>
@@ -804,6 +807,7 @@ export default function QuickGenerateScreen() {
               </TouchableOpacity>
             ))}
           </ScrollView>
+        </View>
         </View>
       </Modal>
 

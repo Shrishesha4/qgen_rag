@@ -514,6 +514,7 @@ export default function GenerateScreen() {
         presentationStyle="pageSheet"
         onRequestClose={handleCloseModal}
       >
+        <View style={{ flex: 1, backgroundColor: colors.background }}>
         <View style={[styles.modalContainer, { backgroundColor: colors.background }]}>
           <LinearGradient
             colors={['#4A90D9', '#357ABD'] as const}
@@ -832,6 +833,7 @@ export default function GenerateScreen() {
             )}
           </ScrollView>
         </View>
+        </View>
       </Modal>
 
       {/* Generation Progress Modal */}
@@ -841,6 +843,7 @@ export default function GenerateScreen() {
         presentationStyle="pageSheet"
         onRequestClose={handleCancelGeneration}
       >
+        <View style={{ flex: 1, backgroundColor: colors.background }}>
         <View style={[styles.modalContainer, { backgroundColor: colors.background }]}>
           <LinearGradient
             colors={['#4A90D9', '#357ABD'] as const}
@@ -974,6 +977,7 @@ export default function GenerateScreen() {
 
             <View style={{ height: 50 }} />
           </ScrollView>
+        </View>
         </View>
       </Modal>
     </View>

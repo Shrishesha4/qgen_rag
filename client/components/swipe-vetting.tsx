@@ -694,6 +694,7 @@ export function SwipeVetting({
 
   return (
     <Modal visible={visible} animationType="slide" presentationStyle="fullScreen">
+      <View style={{ flex: 1, backgroundColor: colors.background }}>
       <View style={[styles.container, { backgroundColor: colors.background, paddingTop: insets.top }]}>
         <KeyboardAvoidingView 
           style={styles.flex} 
@@ -1462,6 +1463,7 @@ export function SwipeVetting({
           </View>
         </View>
       )}
+      </View>
     </Modal>
   );
 }

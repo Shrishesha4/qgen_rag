@@ -333,6 +333,7 @@ export default function QuestionsScreen() {
         presentationStyle="pageSheet"
         onRequestClose={() => { setSelectedQuestion(null); cancelEditing(); }}
       >
+        <View style={{ flex: 1, backgroundColor: colors.background }}>
         <View style={[styles.modalContainer, { backgroundColor: colors.background }]}>
           {/* iOS-style drag indicator */}
           <View style={styles.dragIndicatorBar}>
@@ -780,6 +781,7 @@ export default function QuestionsScreen() {
             {/* Bottom spacing */}
             <View style={{ height: 40 }} />
           </ScrollView>
+        </View>
         </View>
       </Modal>
     );

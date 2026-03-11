@@ -426,6 +426,7 @@ export default function HistoryScreen() {
                 presentationStyle="pageSheet"
                 onRequestClose={() => setSelectedSession(null)}
             >
+                <View style={{ flex: 1, backgroundColor: colors.background }}>
                 <View style={[styles.modalContainer, { backgroundColor: colors.background }]}>
                     {/* Modal Header */}
                     <View style={styles.modalHeader}>
@@ -783,6 +784,7 @@ export default function HistoryScreen() {
                         presentationStyle="pageSheet"
                         onRequestClose={() => setEditingQuestion(null)}
                     >
+                        <View style={{ flex: 1, backgroundColor: colors.background }}>
                         <View style={[styles.modalContainer, { backgroundColor: colors.background }]}>
                             <View style={[styles.editModalHeader, { borderBottomColor: colors.border }]}>
                                 <TouchableOpacity onPress={() => setEditingQuestion(null)}>
@@ -868,7 +870,9 @@ export default function HistoryScreen() {
                                 <View style={{ height: 50 }} />
                             </ScrollView>
                         </View>
+                        </View>
                     </Modal>
+                </View>
                 </View>
             </Modal>
         </View>

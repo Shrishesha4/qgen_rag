@@ -5,6 +5,8 @@ import { useEffect } from 'react';
 import 'react-native-reanimated';
 import { SafeAreaProvider } from 'react-native-safe-area-context';
 import { Platform } from 'react-native';
+import { useFonts } from 'expo-font';
+import MaterialIcons from '@expo/vector-icons/MaterialIcons';
 
 import Head from 'expo-router/head';
 
@@ -90,6 +92,8 @@ function AuthGuard({ children }: { children: React.ReactNode }) {
 
 export default function RootLayout() {
   const colorScheme = useColorScheme();
+  // Pre-load MaterialIcons font so fontfaceobserver never times out mid-render
+  useFonts(MaterialIcons.font);
 
   return (
     <ErrorBoundary>

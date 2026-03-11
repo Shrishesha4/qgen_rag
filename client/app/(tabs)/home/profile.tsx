@@ -817,6 +817,7 @@ export default function ProfileScreen() {
         presentationStyle="pageSheet"
         onRequestClose={() => setActiveModal(null)}
       >
+        <View style={{ flex: 1, backgroundColor: colors.background }}>
         <View style={[styles.modalContainer, { backgroundColor: colors.background }]}>
           <View style={styles.modalHeader}>
             <TouchableOpacity onPress={() => setActiveModal(null)} style={styles.closeButton}>
@@ -824,6 +825,7 @@ export default function ProfileScreen() {
             </TouchableOpacity>
           </View>
           {renderModalContent()}
+        </View>
         </View>
       </Modal>
     </ScrollView>
