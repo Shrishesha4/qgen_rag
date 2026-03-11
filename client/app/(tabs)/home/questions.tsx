@@ -21,6 +21,7 @@ import { useToast } from '@/components/toast';
 import { ExportModal } from '@/components/export-modal';
 import { selectionImpact, mediumImpact } from '@/utils/haptics';
 import { QuestionSources } from '@/components/question-sources';
+import { useResponsive } from '@/hooks/use-responsive';
 
 const FILTER_OPTIONS = [
   { label: 'All', value: '' },
@@ -48,6 +49,7 @@ export default function QuestionsScreen() {
   const colorScheme = useColorScheme();
   const colors = Colors[colorScheme ?? 'light'];
   const { showError, showSuccess } = useToast();
+  const { desktopContentStyle, modalContentStyle } = useResponsive();
   const { subjectId } = useLocalSearchParams<{ subjectId?: string }>();
 
   const [questions, setQuestions] = useState<Question[]>([]);
@@ -878,7 +880,7 @@ export default function QuestionsScreen() {
           data={questions}
           renderItem={renderQuestion}
           keyExtractor={(item) => item.id}
-          contentContainerStyle={styles.listContent}
+          contentContainerStyle={[styles.listContent, desktopContentStyle]}
           refreshControl={
             <RefreshControl
               refreshing={isRefreshing}
@@ -1051,6 +1053,9 @@ const styles = StyleSheet.create({
   },
   modalContainer: {
     flex: 1,
+    maxWidth: 700,
+    width: '100%',
+    alignSelf: 'center',
   },
   // iOS drag indicator
   dragIndicatorBar: {

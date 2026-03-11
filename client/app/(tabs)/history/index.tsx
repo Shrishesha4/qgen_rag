@@ -920,7 +920,7 @@ const styles = StyleSheet.create({
     pageInfo: { fontSize: FontSizes.sm },
 
     // Modal
-    modalContainer: { flex: 1 },
+    modalContainer: { flex: 1, maxWidth: 700, width: '100%', alignSelf: 'center' },
     modalHeader: { paddingHorizontal: Spacing.md, paddingTop: Spacing.lg, paddingBottom: Spacing.sm, borderBottomWidth: StyleSheet.hairlineWidth, borderBottomColor: '#8882' },
     modalTopRow: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center' },
     modalMeta: { marginTop: Spacing.sm },

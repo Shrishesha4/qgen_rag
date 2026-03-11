@@ -25,6 +25,7 @@ import { extractErrorDetails } from '@/utils/errors';
 import { mediumImpact, selectionImpact } from '@/utils/haptics';
 import { QuestionSources } from '@/components/question-sources';
 import { VoiceInput, isSpeechRecognitionAvailable } from '@/components/voice-input';
+import { useResponsive } from '@/hooks/use-responsive';
 
 const CO_LEVELS = [
   { level: 1, label: 'Basic', color: '#34C759' },
@@ -47,6 +48,7 @@ export default function VettingScreen() {
   const colors = Colors[colorScheme ?? 'light'];
   const isDark = colorScheme === 'dark';
   const { showError, showSuccess } = useToast();
+  const { desktopContentStyle, modalContentStyle } = useResponsive();
 
   const [questions, setQuestions] = useState<PendingQuestion[]>([]);
   const [stats, setStats] = useState<VettingStats | null>(null);
@@ -967,7 +969,7 @@ export default function VettingScreen() {
         data={questions}
         keyExtractor={(item: PendingQuestion) => item.id}
         renderItem={({ item }: { item: PendingQuestion }) => renderQuestionCard(item)}
-        contentContainerStyle={styles.scrollContent}
+        contentContainerStyle={[styles.scrollContent, desktopContentStyle]}
         ListHeaderComponent={() => (
           <>
             {/* Header */}
@@ -1687,6 +1689,9 @@ const styles = StyleSheet.create({
     borderTopLeftRadius: BorderRadius.xl,
     borderTopRightRadius: BorderRadius.xl,
     maxHeight: '70%',
+    maxWidth: 600,
+    width: '100%',
+    alignSelf: 'center',
     paddingBottom: 34,
   },
   modalHeader: {

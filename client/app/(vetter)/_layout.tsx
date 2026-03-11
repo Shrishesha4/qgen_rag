@@ -1,5 +1,5 @@
 import React, { useEffect } from 'react';
-import { Platform, StyleSheet, View } from 'react-native';
+import { Platform, StyleSheet, View, useWindowDimensions } from 'react-native';
 import { Tabs, useRouter } from 'expo-router';
 import { BlurView } from 'expo-blur';
 
@@ -23,6 +23,8 @@ export default function VetterTabLayout() {
   const isDark = colorScheme === 'dark';
   const router = useRouter();
   const { user, isVetter } = useAuthStore();
+  const { width } = useWindowDimensions();
+  const isDesktopWeb = Platform.OS === 'web' && width >= 768;
 
   // Redirect non-vetters away from this portal
   useEffect(() => {
@@ -32,7 +34,7 @@ export default function VetterTabLayout() {
   }, [user]);
 
   // Web: sidebar + hidden tab bar
-  if (Platform.OS === 'web') {
+  if (isDesktopWeb) {
     return (
       <View style={{ flex: 1, flexDirection: 'row', backgroundColor: colors.background }}>
         <WebSidebar items={VETTER_TABS} appTitle="QGen" appSubtitle="Vetter Portal" />

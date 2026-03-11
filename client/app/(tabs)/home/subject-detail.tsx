@@ -32,12 +32,14 @@ import { rubricsService, Rubric, RubricCreateData, GenerationProgress } from '@/
 import { questionsService, GenerationSession, SessionQuestion, Question } from '@/services/questions';
 import { ExportModal } from '@/components/export-modal';
 import { mediumImpact, heavyImpact, selectionImpact } from '@/utils/haptics';
+import { useResponsive } from '@/hooks/use-responsive';
 
 export default function SubjectDetailScreen() {
   const colorScheme = useColorScheme();
   const colors = Colors[colorScheme ?? 'light'];
   const { id } = useLocalSearchParams<{ id: string }>();
   const { showError, showSuccess, showWarning } = useToast();
+  const { desktopContentStyle, modalContentStyle } = useResponsive();
 
   const [subject, setSubject] = useState<Subject | null>(null);
   const [topics, setTopics] = useState<Topic[]>([]);
@@ -757,7 +759,7 @@ export default function SubjectDetailScreen() {
       />
       <View style={[styles.container, { backgroundColor: colors.background }]}>
         <ScrollView
-          contentContainerStyle={styles.scrollContent}
+          contentContainerStyle={[styles.scrollContent, desktopContentStyle]}
           refreshControl={<RefreshControl refreshing={isRefreshing} onRefresh={handleRefresh} />}
         >
           {/* Subject Header */}
@@ -2065,6 +2067,9 @@ const styles = StyleSheet.create({
   },
   modalContainer: {
     flex: 1,
+    maxWidth: 700,
+    width: '100%',
+    alignSelf: 'center',
   },
   modalHeader: {
     flexDirection: 'row',
@@ -2172,6 +2177,9 @@ const styles = StyleSheet.create({
   // ---- Generation Modal Styles ----
   genModalContainer: {
     flex: 1,
+    maxWidth: 700,
+    width: '100%',
+    alignSelf: 'center',
   },
   genModalHeader: {
     flexDirection: 'row',

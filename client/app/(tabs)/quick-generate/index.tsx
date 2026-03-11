@@ -1022,7 +1022,7 @@ const styles = StyleSheet.create({
   marksInput: { width: 50, height: 36, borderWidth: 1, borderRadius: BorderRadius.sm, textAlign: 'center', fontSize: FontSizes.md, fontWeight: '600' },
 
   // Modals
-  modalContainer: { flex: 1 },
+  modalContainer: { flex: 1, maxWidth: 600, width: '100%', alignSelf: 'center' },
   modalHeaderBar: { paddingVertical: Spacing.sm, alignItems: 'center' },
   modalHandle: { width: 40, height: 4, borderRadius: 2 },
   modalTop: { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', paddingHorizontal: Spacing.lg, paddingVertical: Spacing.md },

@@ -23,6 +23,7 @@ import { subjectsService, Subject } from '@/services/subjects';
 import { useToast } from '@/components/toast';
 import { lightImpact, mediumImpact, heavyImpact, selectionImpact } from '@/utils/haptics';
 import { QuestionSources } from '@/components/question-sources';
+import { useResponsive } from '@/hooks/use-responsive';
 
 const EXAM_TYPES = [
   { value: 'final_exam', label: 'Final Exam', icon: 'doc.fill' },
@@ -48,6 +49,7 @@ const DEFAULT_LOS = [
 export default function GenerateScreen() {
   const colorScheme = useColorScheme();
   const colors = Colors[colorScheme ?? 'light'];
+  const { desktopContentStyle, modalContentStyle } = useResponsive();
   const { showError, showSuccess, showWarning } = useToast();
   
   const [rubrics, setRubrics] = useState<Rubric[]>([]);
@@ -458,7 +460,7 @@ export default function GenerateScreen() {
   return (
     <View style={[styles.container, { backgroundColor: colors.background }]}>
       <ScrollView
-        contentContainerStyle={styles.scrollContent}
+        contentContainerStyle={[styles.scrollContent, desktopContentStyle]}
         refreshControl={<RefreshControl refreshing={isRefreshing} onRefresh={handleRefresh} />}
       >
         {/* Header Info Card */}
@@ -1111,6 +1113,9 @@ const styles = StyleSheet.create({
   },
   modalContainer: {
     flex: 1,
+    maxWidth: 700,
+    width: '100%',
+    alignSelf: 'center',
   },
   modalHeader: {
     flexDirection: 'row',

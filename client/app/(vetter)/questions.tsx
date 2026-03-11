@@ -24,6 +24,7 @@ import { SwipeVetting } from '@/components/swipe-vetting';
 import { Colors, Spacing, BorderRadius, FontSizes } from '@/constants/theme';
 import { useColorScheme } from '@/hooks/use-color-scheme';
 import { useToast } from '@/components/toast';
+import { useResponsive } from '@/hooks/use-responsive';
 import {
   vetterService,
   QuestionForVetting,
@@ -64,6 +65,7 @@ export default function QuestionsForVetting() {
   const colorScheme = useColorScheme();
   const colors = Colors[colorScheme ?? 'light'];
   const { showSuccess, showError } = useToast();
+  const { desktopContentStyle, modalContentStyle } = useResponsive();
   const insets = useSafeAreaInsets();
   const params = useLocalSearchParams<{
     teacher_id?: string;
@@ -842,7 +844,7 @@ const [editCoMapping, setEditCoMapping] = useState<Record<string, number>>({});
         data={filteredQuestions}
         keyExtractor={(item) => String(item.id)}
         renderItem={({ item }) => <QuestionCard question={item} />}
-        contentContainerStyle={styles.listContent}
+        contentContainerStyle={[styles.listContent, desktopContentStyle]}
         refreshControl={<RefreshControl refreshing={isRefreshing} onRefresh={onRefresh} />}
         onEndReached={loadMore}
         onEndReachedThreshold={0.5}
@@ -1710,6 +1712,9 @@ const styles = StyleSheet.create({
   // Modal styles
   modalContainer: {
     flex: 1,
+    maxWidth: 700,
+    width: '100%',
+    alignSelf: 'center',
   },
   modalHeader: {
     flexDirection: 'row',

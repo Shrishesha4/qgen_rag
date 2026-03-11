@@ -16,6 +16,7 @@ import { subjectsService, Subject } from '@/services/subjects';
 import { vettingService, VettingStats, SubjectAnalytics } from '@/services/vetting';
 import { exportReport, ReportData, ExportFormat } from '@/services/export';
 import { useToast } from '@/components/toast';
+import { useResponsive } from '@/hooks/use-responsive';
 
 interface AnalyticsData {
   total_questions: number;
@@ -43,6 +44,7 @@ export default function ReportsScreen() {
   const colorScheme = useColorScheme();
   const colors = Colors[colorScheme ?? 'light'];
   const { showSuccess, showError } = useToast();
+  const { desktopContentStyle } = useResponsive();
   
   const [subjects, setSubjects] = useState<Subject[]>([]);
   const [selectedSubject, setSelectedSubject] = useState<string | null>(null);
@@ -223,7 +225,7 @@ export default function ReportsScreen() {
   return (
     <View style={[styles.container, { backgroundColor: colors.background }]}>
       <ScrollView
-        contentContainerStyle={styles.scrollContent}
+        contentContainerStyle={[styles.scrollContent, desktopContentStyle]}
         refreshControl={<RefreshControl refreshing={isRefreshing} onRefresh={handleRefresh} />}
       >
         {/* Header */}

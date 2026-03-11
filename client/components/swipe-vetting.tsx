@@ -1469,6 +1469,9 @@ export function SwipeVetting({
 const styles = StyleSheet.create({
   container: {
     flex: 1,
+    maxWidth: 700,
+    width: '100%',
+    alignSelf: 'center',
   },
   flex: {
     flex: 1,

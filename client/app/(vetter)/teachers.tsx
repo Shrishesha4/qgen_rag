@@ -17,11 +17,13 @@ import { IconSymbol } from '@/components/ui/icon-symbol';
 import { Colors, Spacing, BorderRadius, FontSizes } from '@/constants/theme';
 import { useColorScheme } from '@/hooks/use-color-scheme';
 import { vetterService, TeacherSummary } from '@/services/vetter.service';
+import { useResponsive } from '@/hooks/use-responsive';
 
 export default function TeachersList() {
   const colorScheme = useColorScheme();
   const colors = Colors[colorScheme ?? 'light'];
   const router = useRouter();
+  const { desktopContentStyle } = useResponsive();
   
   const [teachers, setTeachers] = useState<TeacherSummary[]>([]);
   const [isLoading, setIsLoading] = useState(true);
@@ -179,7 +181,7 @@ export default function TeachersList() {
         data={filteredTeachers}
         keyExtractor={(item) => item.id}
         renderItem={({ item }) => <TeacherCard teacher={item} />}
-        contentContainerStyle={styles.listContent}
+        contentContainerStyle={[styles.listContent, desktopContentStyle]}
         refreshControl={
           <RefreshControl refreshing={isRefreshing} onRefresh={onRefresh} />
         }

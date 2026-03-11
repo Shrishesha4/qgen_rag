@@ -28,6 +28,7 @@ import { API_BASE_URL } from '@/services/api';
 import { selectionImpact, mediumImpact, heavyImpact } from '@/utils/haptics';
 import { showConfirmDialog } from '@/utils/alert';
 import { useRouter } from 'expo-router';
+import { useResponsive } from '@/hooks/use-responsive';
 
 type ModalType = 'editProfile' | 'changePassword' | 'notifications' | 'appearance' | 'help' | 'about' | null;
 
@@ -38,6 +39,7 @@ export default function ProfileScreen() {
   const navigation = useNavigation();
   const router = useRouter();
   const { showError, showSuccess, showWarning } = useToast();
+  const { desktopContentStyle, modalContentStyle } = useResponsive();
 
   const [activeModal, setActiveModal] = useState<ModalType>(null);
 
@@ -716,7 +718,7 @@ export default function ProfileScreen() {
   return (
     <ScrollView
       style={[styles.container, { backgroundColor: colors.background }]}
-      contentContainerStyle={styles.contentContainer}
+      contentContainerStyle={[styles.contentContainer, desktopContentStyle]}
       showsVerticalScrollIndicator={false}
     >
       {/* Profile Header */}
@@ -1008,6 +1010,9 @@ const styles = StyleSheet.create({
   // Modal Styles
   modalContainer: {
     flex: 1,
+    maxWidth: 700,
+    width: '100%',
+    alignSelf: 'center',
     paddingTop: Platform.OS === 'ios' ? 20 : 0,
   },
   modalHeader: {

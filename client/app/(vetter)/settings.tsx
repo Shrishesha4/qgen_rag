@@ -23,6 +23,7 @@ import { useToast } from '@/components/toast';
 import { useAuthStore } from '@/stores/authStore';
 import { selectionImpact } from '@/utils/haptics';
 import { showConfirmDialog } from '@/utils/alert';
+import { useResponsive } from '@/hooks/use-responsive';
 
 type ModalType = 'editProfile' | 'changePassword' | 'notifications' | 'help' | 'reportIssue' | null;
 
@@ -30,6 +31,7 @@ export default function VetterSettings() {
   const colorScheme = useColorScheme();
   const colors = Colors[colorScheme ?? 'light'];
   const { showSuccess, showError, showWarning } = useToast();
+  const { desktopContentStyle, modalContentStyle } = useResponsive();
   const { user, logout, updateProfile, changePassword } = useAuthStore();
 
   const [activeModal, setActiveModal] = useState<ModalType>(null);
@@ -385,7 +387,7 @@ export default function VetterSettings() {
 
   return (
     <SafeAreaView style={[styles.container, { backgroundColor: colors.background }]}>
-      <ScrollView contentContainerStyle={styles.scrollContent} showsVerticalScrollIndicator={false}>
+      <ScrollView contentContainerStyle={[styles.scrollContent, desktopContentStyle]} showsVerticalScrollIndicator={false}>
         <View style={styles.header}>
           <Text style={[styles.title, { color: colors.text }]}>Profile</Text>
         </View>
@@ -552,7 +554,7 @@ const styles = StyleSheet.create({
     marginTop: Spacing.md,
   },
   // Modal
-  modalContainer: { flex: 1, paddingTop: Spacing.sm },
+  modalContainer: { flex: 1, paddingTop: Spacing.sm, maxWidth: 600, width: '100%', alignSelf: 'center' },
   modalCloseRow: {
     alignItems: 'flex-end',
     paddingHorizontal: Spacing.md,

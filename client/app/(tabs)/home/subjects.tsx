@@ -24,7 +24,7 @@ export default function SubjectsScreen() {
   const colorScheme = useColorScheme();
   const colors = Colors[colorScheme ?? 'light'];
   const { showError, showSuccess, showWarning } = useToast();
-  const { isDesktop, desktopContentStyle } = useResponsive();
+  const { isDesktop, desktopContentStyle, modalContentStyle } = useResponsive();
 
   const [subjects, setSubjects] = useState<Subject[]>([]);
   const [isLoading, setIsLoading] = useState(true);
@@ -173,7 +173,7 @@ export default function SubjectsScreen() {
         data={subjects}
         renderItem={renderSubject}
         keyExtractor={(item) => item.id}
-        contentContainerStyle={styles.listContent}
+        contentContainerStyle={[styles.listContent, desktopContentStyle]}
         refreshControl={
           <RefreshControl refreshing={isRefreshing} onRefresh={handleRefresh} />
         }
@@ -222,7 +222,7 @@ export default function SubjectsScreen() {
             </TouchableOpacity>
           </View>
 
-          <View style={styles.modalContent}>
+          <View style={[styles.modalContent, modalContentStyle]}>
             <View style={[styles.inputGroup, { backgroundColor: colors.card }]}>
               <Text style={[styles.inputLabel, { color: colors.textSecondary }]}>
                 SUBJECT NAME
