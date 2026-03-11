@@ -6,6 +6,8 @@ import 'react-native-reanimated';
 import { SafeAreaProvider } from 'react-native-safe-area-context';
 import { Platform } from 'react-native';
 
+import Head from 'expo-router/head';
+
 import { useColorScheme } from '@/hooks/use-color-scheme';
 import { useAuthStore } from '@/stores/authStore';
 import { View, ActivityIndicator } from 'react-native';
@@ -95,6 +97,7 @@ export default function RootLayout() {
         <ThemeProvider value={colorScheme === 'dark' ? DarkTheme : DefaultTheme}>
           <ToastProvider>
             <AuthGuard>
+              <Head><title>QGen</title></Head>
               <BlurOnNavigate />
               <Stack
                 screenOptions={{
