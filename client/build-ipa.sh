@@ -1,6 +1,16 @@
 #!/bin/zsh
 set -euo pipefail
 
+# ─── Helpers ─────────────────────────────────────────────────────
+bold()   { printf "\033[1m%s\033[0m\n" "$1"; }
+green()  { printf "\033[1;32m%s\033[0m\n" "$1"; }
+red()    { printf "\033[1;31m%s\033[0m\n" "$1"; }
+yellow() { printf "\033[1;33m%s\033[0m\n" "$1"; }
+
+step() {
+  bold "[$1/5] $2"
+}
+
 # ─── Configuration ───────────────────────────────────────────────
 PROJECT_ROOT="$(cd "$(dirname "$0")" && pwd)"
 IOS_DIR="$PROJECT_ROOT/ios"
@@ -10,14 +20,34 @@ ARCHIVE_PATH="$IOS_DIR/build/QGen.xcarchive"
 EXPORT_OPTIONS="$IOS_DIR/ExportOptions.plist"
 EXPORT_PATH="$IOS_DIR/build/ipa"
 
-# ─── Helpers ─────────────────────────────────────────────────────
-bold()  { printf "\033[1m%s\033[0m\n" "$1"; }
-green() { printf "\033[1;32m%s\033[0m\n" "$1"; }
-red()   { printf "\033[1;31m%s\033[0m\n" "$1"; }
+# Development Team ID (optional for signing). Set via DEVELOPMENT_TEAM env var,
+# or it will be auto-detected from the first available provisioning profile.
+# If not found, xcodebuild will attempt auto-provisioning with -allowProvisioningUpdates.
+DEVELOPMENT_TEAM="${DEVELOPMENT_TEAM:-}"
+if [[ -z "$DEVELOPMENT_TEAM" ]]; then
+  # Try to extract from provisioning profiles
+  PP_PATH="$HOME/Library/MobileDevice/Provisioning\ Profiles"
+  if [[ -d "$PP_PATH" ]]; then
+    # Try to find the team ID from the first provisioning profile
+    for file in "$PP_PATH"/*.mobileprovision; do
+      if [[ -f "$file" ]]; then
+        TEAM_ID=$(security cms -D -i "$file" 2>/dev/null | grep -o 'TeamIdentifier.*</key>' | head -1 | sed 's/.*<string>//;s/<\/string>.*//' 2>/dev/null || echo "")
+        if [[ ! -z "$TEAM_ID" ]]; then
+          DEVELOPMENT_TEAM="$TEAM_ID"
+          bold "[team] Found DEVELOPMENT_TEAM in provisioning profiles: $DEVELOPMENT_TEAM"
+          break
+        fi
+      fi
+    done
+  fi
+fi
 
-step() {
-  bold "[$1/5] $2"
-}
+if [[ -z "$DEVELOPMENT_TEAM" ]]; then
+  yellow "[team] No development team found. Will attempt auto-provisioning."
+  yellow "  If this fails, set: export DEVELOPMENT_TEAM='XXXXX'"
+else
+  bold "[team] Using DEVELOPMENT_TEAM=$DEVELOPMENT_TEAM"
+fi
 
 # ─── Pre-flight checks ──────────────────────────────────────────
 command -v xcodebuild >/dev/null 2>&1 || { red "Error: xcodebuild not found. Install Xcode."; exit 1; }
@@ -56,6 +86,13 @@ pod install --silent
 
 # ─── Step 4: Archive ────────────────────────────────────────────
 step 4 "Archiving (this may take a few minutes)..."
+
+# Build xcodebuild command with conditional DEVELOPMENT_TEAM setting
+TEAM_FLAG=""
+if [[ ! -z "$DEVELOPMENT_TEAM" ]]; then
+  TEAM_FLAG="DEVELOPMENT_TEAM=$DEVELOPMENT_TEAM"
+fi
+
 xcodebuild \
   -workspace "$WORKSPACE" \
   -scheme "$SCHEME" \
@@ -65,6 +102,7 @@ xcodebuild \
   -allowProvisioningUpdates \
   archive \
   CODE_SIGN_STYLE=Automatic \
+  $TEAM_FLAG \
   NODE_BINARY="$(command -v node)" \
   -quiet
 
