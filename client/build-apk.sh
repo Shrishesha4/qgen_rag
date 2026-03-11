@@ -34,11 +34,9 @@ step 1 "Preparing build environment..."
 cd "$PROJECT_ROOT"
 npm install --silent
 
-# Generate native directories if missing
-if [[ ! -d "$ANDROID_DIR" ]]; then
-  bold "[native] Generating android/ via expo prebuild..."
-  npx expo prebuild --clean --platform android
-fi
+# Always regenerate native directories to pick up latest app.json (name, icon, etc.)
+bold "[native] Regenerating android/ via expo prebuild..."
+npx expo prebuild --clean --platform android
 
 # ─── Sync environment variables ─────────────────────────────────
 bold "[env] Syncing environment variables..."

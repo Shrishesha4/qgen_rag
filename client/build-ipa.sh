@@ -29,11 +29,9 @@ step 1 "Preparing build environment..."
 cd "$PROJECT_ROOT"
 npm install --silent
 
-# Generate native directories if missing
-if [[ ! -d "$IOS_DIR" ]]; then
-  bold "[native] Generating ios/ via expo prebuild..."
-  npx expo prebuild --clean --platform ios
-fi
+# Always regenerate native directories to pick up latest app.json (name, icon, etc.)
+bold "[native] Regenerating ios/ via expo prebuild..."
+npx expo prebuild --clean --platform ios
 
 # ─── Sync environment variables ─────────────────────────────────
 bold "[env] Syncing environment variables..."
