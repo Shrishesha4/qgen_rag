@@ -2050,6 +2050,17 @@ Output valid JSON only."""
             # Extract session_id immediately to avoid SQLAlchemy lazy-loading issues after rollback
             session_id = session.id
 
+            # Emit session_id immediately so the client can poll if the connection drops
+            # before the first question is generated (e.g. QUIC stream reset).
+            yield QuickGenerateProgress(
+                status="generating",
+                progress=22,
+                message=f"Session ready — preparing {count} questions...",
+                total_questions=count,
+                document_id=document_id,
+                session_id=session_id,
+            )
+
             # 4. Fetch reference questions for style matching (if available)
             reference_questions: List[Dict[str, Any]] = []
             if subject_id and self.document_service:
@@ -2602,6 +2613,16 @@ Output valid JSON only."""
                 await self.db.refresh(session)
 
             session_id = session.id
+
+            # Emit session_id immediately so the client can poll if the connection drops
+            # before the first question is generated (e.g. QUIC stream reset).
+            yield QuickGenerateProgress(
+                status="generating",
+                progress=18,
+                message=f"Session ready — preparing {count} questions...",
+                total_questions=count,
+                session_id=session_id,
+            )
 
             # 5. Generation loop (mirrors quick_generate)
             questions_generated = 0
