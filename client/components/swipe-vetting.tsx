@@ -218,6 +218,26 @@ export function SwipeVetting({
     }
   }, [currentIndex, questions.length, hasMore, onLoadMore]);
 
+  // Keyboard navigation on web: ArrowRight = approve, ArrowLeft = reject
+  useEffect(() => {
+    if (Platform.OS !== 'web' || !visible) return;
+    const handleKeyDown = (e: KeyboardEvent) => {
+      if (viewModeRef.current !== 'question') return;
+      // Ignore when focus is inside an input / textarea
+      const tag = (e.target as HTMLElement)?.tagName;
+      if (tag === 'INPUT' || tag === 'TEXTAREA') return;
+      if (e.key === 'ArrowRight') {
+        e.preventDefault();
+        gestureCallbacksRef.current.swipeOut('right');
+      } else if (e.key === 'ArrowLeft') {
+        e.preventDefault();
+        gestureCallbacksRef.current.swipeOut('left');
+      }
+    };
+    window.addEventListener('keydown', handleKeyDown);
+    return () => window.removeEventListener('keydown', handleKeyDown);
+  }, [visible]);
+
   // Reset state when question changes
   const resetState = useCallback(() => {
     setViewMode('question');
