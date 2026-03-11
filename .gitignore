@@ -15,6 +15,8 @@ android/
 node_modules/
 dist/   
 .expo/
+.svelte-kit/
+.vscode/
 
 .venv/
 venv/
