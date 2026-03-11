@@ -4,9 +4,9 @@ set -euo pipefail
 # ─── Configuration ───────────────────────────────────────────────
 PROJECT_ROOT="$(cd "$(dirname "$0")" && pwd)"
 IOS_DIR="$PROJECT_ROOT/ios"
-WORKSPACE="$IOS_DIR/client.xcworkspace"
-SCHEME="client"
-ARCHIVE_PATH="$IOS_DIR/build/client.xcarchive"
+WORKSPACE="$IOS_DIR/QGen.xcworkspace"
+SCHEME="QGen"
+ARCHIVE_PATH="$IOS_DIR/build/QGen.xcarchive"
 EXPORT_OPTIONS="$IOS_DIR/ExportOptions.plist"
 EXPORT_PATH="$IOS_DIR/build/ipa"
 
@@ -78,7 +78,7 @@ xcodebuild \
   -quiet
 
 # ─── Done ────────────────────────────────────────────────────────
-IPA_FILE="$EXPORT_PATH/client.ipa"
+IPA_FILE="$EXPORT_PATH/QGen.ipa"
 if [[ -f "$IPA_FILE" ]]; then
   SIZE=$(du -h "$IPA_FILE" | cut -f1)
   green "Build successful! IPA: $IPA_FILE ($SIZE)"
