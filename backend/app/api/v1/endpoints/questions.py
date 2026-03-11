@@ -4106,8 +4106,12 @@ Output valid JSON only."""
                                         questions_failed += 1
                                     continue
 
-                            # Dedupe: reject if too similar to existing or session-generated questions
-                            if _is_duplicate_embedding(candidate_emb, existing_embeddings, generated_embeddings):
+                            # Dedupe: only check within the current session's generated questions.
+                            # Skipping the full DB (existing_embeddings) here because chapter
+                            # generation is expected to produce new questions even for topics
+                            # that already have some questions in the bank. Comparing against
+                            # all DB embeddings with a small LLM causes near-universal rejection.
+                            if _is_duplicate_embedding(candidate_emb, [], generated_embeddings):
                                 logger.debug(f"[{request_id}] Chapter candidate rejected as duplicate (attempt {attempt+1})")
                                 if attempt == RETRY_LIMIT - 1:
                                     questions_failed += 1

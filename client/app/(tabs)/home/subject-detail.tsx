@@ -291,6 +291,9 @@ export default function SubjectDetailScreen() {
             if (progress.question) {
               setGenQuestions((prev) => [...prev, progress.question!]);
             }
+            if (progress.status === 'complete') {
+              setIsGenerating(false);
+            }
             if (progress.status === 'error') {
               showError(new Error(progress.message || 'Generation failed'), 'Generation Failed');
               setIsGenerating(false);
@@ -300,7 +303,7 @@ export default function SubjectDetailScreen() {
           }
         },
         async () => {
-          // Don't setIsGenerating(false) yet — let completion UI stay visible
+          // isGenerating already cleared by the 'complete' SSE event above
           if (isTempRubric) {
             try { await rubricsService.deleteRubric(rubricId); } catch { }
           }
@@ -373,6 +376,9 @@ export default function SubjectDetailScreen() {
             if (progress.question) {
               setGenQuestions((prev) => [...prev, progress.question!]);
             }
+            if (progress.status === 'complete') {
+              setIsGenerating(false);
+            }
             if (progress.status === 'error') {
               showError(new Error(progress.message || 'Generation failed'), 'Generation Failed');
               setIsGenerating(false);
@@ -382,7 +388,7 @@ export default function SubjectDetailScreen() {
           }
         },
         () => {
-          // Don't setIsGenerating(false) — let completion UI stay visible
+          // isGenerating already cleared by the 'complete' SSE event above
         },
         (error) => {
           try {
