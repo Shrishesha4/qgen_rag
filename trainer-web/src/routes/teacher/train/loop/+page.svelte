@@ -10,10 +10,11 @@
 		rejectWithFeedback,
 		type QuestionForVetting,
 	} from '$lib/api/vetting';
-	import { generateFromSubject, cancelGeneration, type GenerationEvent } from '$lib/api/documents';
+	import { generateFromSubject, generateChapter, cancelGeneration, type GenerationEvent } from '$lib/api/documents';
 	import { getSubject, type SubjectDetailResponse } from '$lib/api/subjects';
 
 	let subjectId = $state('');
+	let topicId = $state('');
 
 	// Confirm + cleanup before any SvelteKit navigation
 	beforeNavigate(({ cancel, to }) => {
@@ -37,6 +38,7 @@
 		});
 		const unsubPage = page.subscribe((p) => {
 			subjectId = p.url.searchParams.get('subject') ?? '';
+			topicId = p.url.searchParams.get('topic') ?? '';
 		});
 		loadAndStream();
 
@@ -67,12 +69,25 @@
 	let submitting = $state(false);
 
 	// Background generation
+	const BATCH_SIZE = 5;
 	let generating = $state(false);
 	let genAbortController = $state<AbortController | null>(null);
 	let genCount = $state(0);
 	let genMessage = $state('');
 	let batchComplete = $state(false);
 	let subjectDetail = $state<SubjectDetailResponse | null>(null);
+	let genCtx = $state('');
+	let nextGenAt = $state(0); // totalReviewed count that triggers next batch (0 = disarmed)
+
+	// Trigger next generation when user has vetted ≥70% of current questions
+	$effect(() => {
+		if (batchComplete || generating || !subjectId) return;
+		if (nextGenAt === 0) return;
+		if (totalReviewed >= nextGenAt) {
+			nextGenAt = 0; // disarm before async to prevent double-trigger
+			void doNextBatch();
+		}
+	});
 
 	// Edit mode
 	let editing = $state(false);
@@ -118,6 +133,7 @@
 			const res = await getQuestionsForVetting({
 				status: 'pending',
 				subject_id: subjectId || undefined,
+				topic_id: topicId || undefined,
 				limit: 100,
 			});
 			questions = res.questions;
@@ -130,16 +146,14 @@
 			loading = false;
 		}
 
-		// If we have a subject, start background generation
+		// Start or arm generation
 		if (subjectId && !batchComplete) {
-			// If fewer than 3 questions, generate immediately
-			if (questions.length < 3) {
+			if (questions.length === 0) {
+				// No pending questions — generate first batch immediately
 				startBackgroundGeneration();
 			} else {
-				// Start generating in background after a brief pause
-				setTimeout(() => {
-					if (!batchComplete) startBackgroundGeneration();
-				}, 2000);
+				// Existing questions — wait until 70% are vetted before generating more
+				armNextGen();
 			}
 		}
 	}
@@ -154,18 +168,14 @@
 			if (!subjectDetail) {
 				try { subjectDetail = await getSubject(subjectId); } catch { /* ignore */ }
 			}
-			const ctx = subjectDetail
+			genCtx = subjectDetail
 				? `${subjectDetail.name}: ${subjectDetail.topics.map(t => t.name).join(', ')}`
 				: 'General questions';
 
-			// Generate a batch of 10.
-			// When done, if not stopped, start another batch.
-			await generateBatch(ctx, 10);
+			await generateBatch(genCtx, BATCH_SIZE, topicId || undefined);
 
-			// Continue generating if user hasn't stopped
-			if (!batchComplete) {
-				scheduleNextBatch(ctx);
-			}
+			// Arm threshold: next batch triggers when 70% of current questions are vetted
+			if (!batchComplete) armNextGen();
 		} catch (e: unknown) {
 			if (!batchComplete) {
 				error = e instanceof Error ? e.message : 'Generation failed';
@@ -176,18 +186,27 @@
 		}
 	}
 
-	async function generateBatch(ctx: string, count: number) {
+	async function generateBatch(ctx: string, count: number, forTopicId?: string) {
 		const abort = new AbortController();
 		genAbortController = abort;
 		try {
-			for await (const evt of generateFromSubject({
-				subjectId,
-				context: ctx,
-				count,
-				types: 'mcq',
-				difficulty: 'medium',
-				signal: abort.signal,
-			})) {
+			const gen = forTopicId
+				? generateChapter({
+						topicId: forTopicId,
+						count,
+						types: 'mcq',
+						difficulty: 'medium',
+						signal: abort.signal,
+				  })
+				: generateFromSubject({
+						subjectId,
+						context: ctx,
+						count,
+						types: 'mcq',
+						difficulty: 'medium',
+						signal: abort.signal,
+				  });
+			for await (const evt of gen) {
 				// Hard stop — aborted externally
 				if (batchComplete) break;
 
@@ -197,7 +216,7 @@
 				if (evt.message) genMessage = evt.message;
 				if (evt.question) {
 					genCount++;
-					genMessage = `Generated ${genCount} question${genCount > 1 ? 's' : ''} in background...`;
+					// genMessage = `Generated ${genCount} question${genCount > 1 ? 's' : ''} in background...`;
 					const q = evt.question as unknown as QuestionForVetting;
 					if (q && q.id) {
 						questions = [...questions, q];
@@ -217,25 +236,33 @@
 		}
 	}
 
-	function scheduleNextBatch(ctx: string) {
-		if (batchComplete) return;
-		// Wait 3 seconds between batches
-		setTimeout(async () => {
-			if (batchComplete || generating) return;
-			generating = true;
-			genMessage = 'Generating more questions...';
-			try {
-				await generateBatch(ctx, 10);
-				if (!batchComplete) scheduleNextBatch(ctx);
-			} catch (e: unknown) {
-				if (!batchComplete) {
-					error = e instanceof Error ? e.message : 'Generation failed';
+	function armNextGen() {
+		nextGenAt = Math.max(1, Math.floor(questions.length * 0.7));
+	}
+
+	async function doNextBatch() {
+		if (generating || batchComplete || !subjectId) return;
+		generating = true;
+		genMessage = 'Generating more questions...';
+		try {
+			if (!genCtx) {
+				if (!subjectDetail) {
+					try { subjectDetail = await getSubject(subjectId); } catch { /* ignore */ }
 				}
-			} finally {
-				generating = false;
-				genMessage = '';
+				genCtx = subjectDetail
+					? `${subjectDetail.name}: ${subjectDetail.topics.map(t => t.name).join(', ')}`
+					: 'General questions';
 			}
-		}, 3000);
+			await generateBatch(genCtx, BATCH_SIZE, topicId || undefined);
+			if (!batchComplete) armNextGen();
+		} catch (e: unknown) {
+			if (!batchComplete) {
+				error = e instanceof Error ? e.message : 'Generation failed';
+			}
+		} finally {
+			generating = false;
+			genMessage = '';
+		}
 	}
 
 	function stopBackgroundGen() {

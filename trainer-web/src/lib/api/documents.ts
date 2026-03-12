@@ -76,6 +76,76 @@ export async function cancelGeneration(subjectId: string): Promise<void> {
 	}
 }
 
+export async function* generateChapter(opts: {
+	topicId: string;
+	count?: number;
+	types?: string;
+	difficulty?: string;
+	signal?: AbortSignal;
+}): AsyncGenerator<GenerationEvent> {
+	const { getStoredSession } = await import('./client');
+	const session = getStoredSession();
+
+	const count = opts.count ?? 10;
+	const qType = opts.types ?? 'mcq';
+	const marksMap: Record<string, number> = { mcq: 1, short_answer: 2, long_answer: 5 };
+	// Build question_types dict: e.g. { "mcq": { "count": 10, "marks_each": 1 } }
+	const questionTypes: Record<string, { count: number; marks_each: number }> = {};
+	for (const t of qType.split(',')) {
+		const tt = t.trim();
+		if (tt) questionTypes[tt] = { count, marks_each: marksMap[tt] ?? 2 };
+	}
+
+	const body = JSON.stringify({
+		topic_id: opts.topicId,
+		question_types: questionTypes,
+		difficulty: opts.difficulty ?? 'medium',
+	});
+
+	const res = await fetch(apiUrl('/questions/generate-chapter'), {
+		method: 'POST',
+		headers: {
+			'Content-Type': 'application/json',
+			...(session?.access_token ? { Authorization: `Bearer ${session.access_token}` } : {}),
+		},
+		body,
+		signal: opts.signal,
+	});
+
+	if (!res.ok) {
+		const err = await res.json().catch(() => ({ detail: `HTTP ${res.status}` }));
+		throw new Error(err.detail || `Generation failed (${res.status})`);
+	}
+
+	const reader = res.body?.getReader();
+	if (!reader) throw new Error('No response body');
+
+	const decoder = new TextDecoder();
+	let buffer = '';
+
+	while (true) {
+		const { done, value } = await reader.read();
+		if (done) break;
+		buffer += decoder.decode(value, { stream: true });
+
+		const lines = buffer.split('\n');
+		buffer = lines.pop() ?? '';
+
+		for (const line of lines) {
+			const trimmed = line.trim();
+			if (trimmed.startsWith('data: ')) {
+				const json = trimmed.slice(6);
+				if (json === '[DONE]') return;
+				try {
+					yield JSON.parse(json) as GenerationEvent;
+				} catch {
+					// skip non-JSON heartbeat lines
+				}
+			}
+		}
+	}
+}
+
 export async function* generateFromSubject(opts: {
 	subjectId: string;
 	context: string;

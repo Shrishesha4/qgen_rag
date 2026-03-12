@@ -4214,7 +4214,7 @@ Output valid JSON only."""
                             questions_generated += 1
 
                             progress = 10 + int((questions_generated / max(effective_total_ch, 1)) * 85)
-                            yield f"data: {json.dumps({'status': 'generating', 'progress': min(progress, 95), 'current_question': questions_generated, 'total_questions': effective_total_ch, 'message': f'Generated {questions_generated}/{effective_total_ch} questions', 'question': {'id': str(question.id), 'question_text': question.question_text[:100] + ('...' if len(question.question_text) > 100 else ''), 'question_type': question.question_type, 'marks': question.marks, 'learning_outcome_id': question.learning_outcome_id, 'course_outcome_mapping': question.course_outcome_mapping}})}\n\n"
+                            yield f"data: {json.dumps({'status': 'generating', 'progress': min(progress, 95), 'current_question': questions_generated, 'total_questions': effective_total_ch, 'message': f'Generated {questions_generated}/{effective_total_ch} questions', 'question': {'id': str(question.id), 'question_text': question.question_text, 'question_type': question.question_type, 'marks': question.marks, 'difficulty_level': question.difficulty_level, 'bloom_taxonomy_level': question.bloom_taxonomy_level, 'options': question.options, 'correct_answer': question.correct_answer, 'explanation': question.explanation, 'topic_name': topic_name, 'topic_tags': question.topic_tags, 'learning_outcome_id': question.learning_outcome_id, 'course_outcome_mapping': question.course_outcome_mapping, 'vetting_status': question.vetting_status}})}\n\n"
                             break
 
                         if not accepted:
