@@ -2,7 +2,6 @@
 	import { onMount } from 'svelte';
 	import { goto } from '$app/navigation';
 	import { session } from '$lib/session';
-	import ThemeSelector from '$lib/components/ThemeSelector.svelte';
 	import { getQuestionsForVetting, getVetterDashboard, type QuestionForVetting, type VetterDashboard } from '$lib/api/vetting';
 
 	onMount(() => {
@@ -60,8 +59,6 @@
 <svelte:head>
 	<title>Verifier Mode — QGen Trainer</title>
 </svelte:head>
-
-<ThemeSelector />
 
 <div class="verify-page">
 	<div class="header animate-fade-in">

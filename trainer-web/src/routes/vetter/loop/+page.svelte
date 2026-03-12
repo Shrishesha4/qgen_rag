@@ -3,7 +3,6 @@
 	import { goto, beforeNavigate } from '$app/navigation';
 	import { page } from '$app/stores';
 	import { session } from '$lib/session';
-	import ThemeSelector from '$lib/components/ThemeSelector.svelte';
 	import VoiceRecorder from '$lib/components/VoiceRecorder.svelte';
 	import {
 		getQuestionsForVetting,
@@ -358,14 +357,16 @@
 	<title>Vetting — QGen Vetter</title>
 </svelte:head>
 
-<ThemeSelector />
-
 <div class="loop-page">
 	<div class="loop-hero animate-fade-in">
+		<button class="back-link" onclick={goBack}>
+			<svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+				<path d="M19 12H5M12 19l-7-7 7-7"/>
+			</svg>
+			<span class="back-link-text">Back to subjects</span>
+		</button>
 		<div class="hero-copy">
-			<button class="back-link" onclick={goBack}>Back to subjects</button>
 			<h1 class="hero-title font-serif">Question Vetting</h1>
-			<p class="hero-subtitle">Review and grade incoming community questions.</p>
 		</div>
 		{#if questions.length > 0}
 			<div class="progress-pill">
@@ -1256,6 +1257,13 @@
 		text-transform: uppercase;
 		color: var(--theme-primary);
 		cursor: pointer;
+		display: flex;
+		align-items: center;
+		gap: 0.4rem;
+	}
+
+	.back-link svg {
+		flex-shrink: 0;
 	}
 
 	.hero-title {
@@ -1265,13 +1273,6 @@
 		color: var(--theme-text);
 	}
 
-	.hero-subtitle {
-		margin: 0;
-		max-width: 34rem;
-		font-size: 1rem;
-		line-height: 1.5;
-		color: var(--theme-text-muted);
-	}
 
 	.progress-pill {
 		min-width: 11rem;
@@ -1505,27 +1506,50 @@
 		}
 
 		.loop-hero {
-			flex-direction: column;
-			align-items: stretch;
-			gap: 1rem;
+			flex-direction: row;
+			align-items: center;
+			gap: 0.75rem;
+			flex-wrap: nowrap;
+		}
+
+		.back-link {
+			flex-shrink: 0;
+			width: 2.25rem;
+			height: 2.25rem;
+			padding: 0.5rem;
+			border-radius: 0.5rem;
+			background: rgba(255, 255, 255, 0.1);
+			border: 1px solid rgba(255, 255, 255, 0.15);
+			justify-content: center;
+		}
+
+		.back-link-text {
+			display: none;
+		}
+
+		.hero-copy {
+			flex: 1;
+			min-width: 0;
+			gap: 0;
 		}
 
 		.hero-title {
-			font-size: clamp(2rem, 8vw, 3rem);
-		}
-
-		.hero-subtitle {
-			font-size: 0.9rem;
+			font-size: clamp(1.35rem, 5vw, 1.8rem);
+			line-height: 1.1;
 		}
 
 		.progress-pill {
-			align-self: flex-start;
+			flex-shrink: 0;
 			min-width: auto;
-			padding: 0.7rem 0.9rem;
+			padding: 0.55rem 0.75rem;
 		}
 
 		.progress-pill-count {
-			font-size: 1.1rem;
+			font-size: 0.95rem;
+		}
+
+		.progress-pill-track {
+			min-width: 2.5rem;
 		}
 
 		.question-card {
@@ -1642,37 +1666,52 @@
 
 	@media (max-width: 480px) {
 		.loop-page {
-			padding: 1rem 0.75rem;
+			padding: 0.75rem 0.75rem;
 			gap: 0.85rem;
 		}
 
-		.hero-copy {
-			gap: 0.35rem;
+		.loop-hero {
+			gap: 0.5rem;
+			flex-wrap: nowrap;
 		}
 
 		.back-link {
-			font-size: 0.75rem;
+			width: 2rem;
+			height: 2rem;
+			padding: 0.45rem;
+			border-radius: 0.4rem;
+		}
+
+		.back-link svg {
+			width: 14px;
+			height: 14px;
+		}
+
+		.hero-copy {
+			overflow: hidden;
 		}
 
 		.hero-title {
-			font-size: 1.75rem;
-		}
-
-		.hero-subtitle {
-			font-size: 0.85rem;
+			font-size: 1.1rem;
+			line-height: 1;
+			white-space: nowrap;
+			overflow: hidden;
+			text-overflow: ellipsis;
 		}
 
 		.progress-pill {
-			padding: 0.55rem 0.75rem;
-			gap: 0.6rem;
+			padding: 0.4rem 0.55rem;
+			gap: 0.4rem;
+			min-width: auto;
 		}
 
 		.progress-pill-count {
-			font-size: 0.95rem;
+			font-size: 0.8rem;
 		}
 
 		.progress-pill-track {
-			height: 0.35rem;
+			height: 0.25rem;
+			min-width: 2rem;
 		}
 
 		.question-card {

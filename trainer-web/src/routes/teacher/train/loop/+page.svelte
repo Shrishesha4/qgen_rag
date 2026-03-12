@@ -3,7 +3,6 @@
 	import { goto, beforeNavigate } from '$app/navigation';
 	import { page } from '$app/stores';
 	import { session } from '$lib/session';
-	import ThemeSelector from '$lib/components/ThemeSelector.svelte';
 	import VoiceRecorder from '$lib/components/VoiceRecorder.svelte';
 	import {
 		getQuestionsForVetting,
@@ -546,8 +545,6 @@
 <svelte:head>
 	<title>Training Loop — QGen Trainer</title>
 </svelte:head>
-
-<ThemeSelector />
 
 <div class="loop-page">
 	<div class="loop-hero animate-fade-in">
@@ -1750,14 +1747,6 @@
 		color: var(--theme-text);
 	}
 
-	.hero-subtitle {
-		margin: 0;
-		max-width: 34rem;
-		font-size: 1rem;
-		line-height: 1.5;
-		color: var(--theme-text-muted);
-	}
-
 	.progress-pill {
 		min-width: 11rem;
 		padding: 0.95rem 1.1rem;
@@ -2019,10 +2008,6 @@
 			font-size: clamp(2rem, 8vw, 3rem);
 		}
 
-		.hero-subtitle {
-			font-size: 0.9rem;
-		}
-
 		.progress-pill {
 			align-self: flex-start;
 			min-width: auto;
@@ -2097,10 +2082,6 @@
 
 		.hero-title {
 			font-size: 1.75rem;
-		}
-
-		.hero-subtitle {
-			font-size: 0.85rem;
 		}
 
 		.progress-pill {
@@ -2191,32 +2172,6 @@
 
 		.grade-label {
 			font-size: 0.75rem;
-		}
-
-		.gen-panel {
-			padding: 0.85rem;
-			border-radius: 0.85rem;
-			gap: 0.65rem;
-		}
-
-		.gen-status-row {
-			gap: 0.5rem;
-		}
-
-		.gen-status-label {
-			font-size: 0.72rem;
-		}
-
-		.gen-ctx {
-			font-size: 0.72rem;
-		}
-
-		.gen-progress {
-			height: 0.35rem;
-		}
-
-		.doc-detail {
-			font-size: 0.72rem;
 		}
 	}
 </style>

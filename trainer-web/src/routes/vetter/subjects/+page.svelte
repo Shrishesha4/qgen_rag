@@ -2,7 +2,6 @@
 	import { onMount } from 'svelte';
 	import { goto } from '$app/navigation';
 	import { session } from '$lib/session';
-	import ThemeSelector from '$lib/components/ThemeSelector.svelte';
 	import { getVetterSubjects, type VetterSubjectSummary } from '$lib/api/vetting';
 
 	onMount(() => {
@@ -41,8 +40,6 @@
 <svelte:head>
 	<title>Select Subject — QGen Vetter</title>
 </svelte:head>
-
-<ThemeSelector />
 
 <div class="page">
 	{#if loading}

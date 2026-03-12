@@ -5,7 +5,6 @@
 	import { goto } from '$app/navigation';
 	import { login, register } from '$lib/api/auth';
 	import { session } from '$lib/session';
-	import ThemeSelector from '$lib/components/ThemeSelector.svelte';
 
 	interface Props {
 		role: 'teacher' | 'vetter';
@@ -58,8 +57,6 @@
 		}
 	}
 </script>
-
-<ThemeSelector />
 
 <div class="auth-page">
 	<div class="auth-card glass-panel animate-scale-in">

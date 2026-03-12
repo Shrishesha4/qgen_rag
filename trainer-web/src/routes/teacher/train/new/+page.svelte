@@ -2,7 +2,6 @@
 	import { onMount } from 'svelte';
 	import { goto } from '$app/navigation';
 	import { session } from '$lib/session';
-	import ThemeSelector from '$lib/components/ThemeSelector.svelte';
 	import FileUploadZone from '$lib/components/FileUploadZone.svelte';
 	import { createSubject, createTopic, extractChapters, updateTopic, type TopicResponse } from '$lib/api/subjects';
 	import { uploadDocument } from '$lib/api/documents';
@@ -257,8 +256,6 @@
 <svelte:head>
 	<title>{stepTitle} — New Topic — QGen Trainer</title>
 </svelte:head>
-
-<ThemeSelector />
 
 <div class="wizard">
 	<div class="wizard-meta animate-fade-in">

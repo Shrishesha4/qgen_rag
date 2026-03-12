@@ -2,7 +2,6 @@
 	import { onMount } from 'svelte';
 	import { goto } from '$app/navigation';
 	import { session } from '$lib/session';
-	import ThemeSelector from '$lib/components/ThemeSelector.svelte';
 
 	onMount(() => {
 		const unsub = session.subscribe((s) => {
@@ -15,8 +14,6 @@
 <svelte:head>
 	<title>Train Topic — QGen Trainer</title>
 </svelte:head>
-
-<ThemeSelector />
 
 <div class="page">
 	<div class="header animate-fade-in">

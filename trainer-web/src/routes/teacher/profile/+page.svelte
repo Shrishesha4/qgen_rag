@@ -2,7 +2,6 @@
 	import { onMount } from 'svelte';
 	import { goto } from '$app/navigation';
 	import { logout } from '$lib/api/auth';
-	import ThemeSelector from '$lib/components/ThemeSelector.svelte';
 	import { currentUser, session } from '$lib/session';
 
 	onMount(() => {
@@ -37,8 +36,6 @@
 <svelte:head>
 	<title>Profile — QGen Trainer</title>
 </svelte:head>
-
-<ThemeSelector />
 
 <div class="profile-page">
 	<div class="profile-topbar animate-fade-in">

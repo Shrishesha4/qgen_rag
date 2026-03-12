@@ -39,7 +39,7 @@
 				<path d="M9 22h6"></path>
 			</svg>
 		</div>
-		<h1 class="hero-title font-serif">AI Training</h1>
+		<h1 class="hero-title font-serif">Q Gen</h1>
 		<p class="hero-sub">Select a mode to begin</p>
 	</div>
 

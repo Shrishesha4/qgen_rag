@@ -3,7 +3,6 @@
 	import { goto } from '$app/navigation';
 	import { page } from '$app/stores';
 	import { session } from '$lib/session';
-	import ThemeSelector from '$lib/components/ThemeSelector.svelte';
 	import { getVetterSubject, type VetterSubjectSummary } from '$lib/api/vetting';
 
 	let subjectId = $state('');
@@ -47,8 +46,6 @@
 <svelte:head>
 	<title>{subject?.name ?? 'Subject'} — QGen Vetter</title>
 </svelte:head>
-
-<ThemeSelector />
 
 <div class="page">
 	{#if loading}

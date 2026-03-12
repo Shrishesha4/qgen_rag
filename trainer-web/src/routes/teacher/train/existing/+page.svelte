@@ -2,7 +2,6 @@
 	import { onMount } from 'svelte';
 	import { goto } from '$app/navigation';
 	import { session } from '$lib/session';
-	import ThemeSelector from '$lib/components/ThemeSelector.svelte';
 	import { listSubjects, getSubject, type SubjectResponse, type TopicResponse } from '$lib/api/subjects';
 
 	onMount(() => {
@@ -70,8 +69,6 @@
 <svelte:head>
 	<title>Existing Topics — QGen Trainer</title>
 </svelte:head>
-
-<ThemeSelector />
 
 <div class="page">
 	{#if loading}

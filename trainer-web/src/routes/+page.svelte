@@ -2,7 +2,6 @@
 	import { onMount } from 'svelte';
 	import { goto } from '$app/navigation';
 	import { session } from '$lib/session';
-	import ThemeSelector from '$lib/components/ThemeSelector.svelte';
 
 	onMount(() => {
 		const unsub = session.subscribe((s) => {
@@ -13,8 +12,6 @@
 		return unsub;
 	});
 </script>
-
-<ThemeSelector />
 
 <div class="landing">
 	<div class="hero animate-fade-in">
@@ -190,14 +187,6 @@
 		margin-top: 0.25rem;
 	}
 
-	.footer-note {
-		font-size: 0.85rem;
-		color: var(--theme-text-muted);
-		text-align: center;
-		max-width: 28rem;
-		line-height: 1.5;
-	}
-
 	@media (max-width: 768px) {
 		.landing {
 			padding: 1.5rem 1rem;
@@ -308,10 +297,6 @@
 
 		.card-cta {
 			font-size: 0.8rem;
-		}
-
-		.footer-note {
-			font-size: 0.78rem;
 		}
 	}
 </style>
