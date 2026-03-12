@@ -103,6 +103,21 @@ export async function extractChapters(
 	});
 }
 
+export async function updateTopic(
+	subjectId: string,
+	topicId: string,
+	data: { name?: string; description?: string; syllabus_content?: string; has_syllabus?: boolean }
+): Promise<TopicResponse> {
+	return apiFetch<TopicResponse>(`/subjects/${subjectId}/topics/${topicId}`, {
+		method: 'PUT',
+		body: JSON.stringify(data),
+	});
+}
+
+export async function deleteTopic(subjectId: string, topicId: string): Promise<void> {
+	await apiFetch(`/subjects/${subjectId}/topics/${topicId}`, { method: 'DELETE' });
+}
+
 export async function generateLearningOutcomes(subjectId: string): Promise<SubjectResponse> {
 	return apiFetch<SubjectResponse>(`/subjects/${subjectId}/generate-learning-outcomes`, {
 		method: 'POST',

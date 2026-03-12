@@ -91,7 +91,7 @@ export async function* generateFromSubject(opts: {
 	const form = new FormData();
 	form.append('subject_id', opts.subjectId);
 	form.append('context', opts.context);
-	form.append('count', String(opts.count ?? 10));
+	form.append('count', String(opts.count ?? 3));
 	form.append('types', opts.types ?? 'mcq');
 	form.append('difficulty', opts.difficulty ?? 'medium');
 	if (opts.topicId) form.append('topic_id', opts.topicId);

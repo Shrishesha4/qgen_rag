@@ -2,9 +2,8 @@
 	import { onMount } from 'svelte';
 	import { goto } from '$app/navigation';
 	import { session } from '$lib/session';
-	import GlassCard from '$lib/components/GlassCard.svelte';
 	import PageHeader from '$lib/components/PageHeader.svelte';
-	import { listSubjects, type SubjectResponse } from '$lib/api/subjects';
+	import { listSubjects, getSubject, type SubjectResponse, type TopicResponse } from '$lib/api/subjects';
 
 	onMount(() => {
 		const unsub = session.subscribe((s) => {
@@ -17,6 +16,11 @@
 	let subjects = $state<SubjectResponse[]>([]);
 	let loading = $state(true);
 	let error = $state('');
+
+	// Expanded state: subject id -> topics
+	let expandedId = $state('');
+	let topicsMap = $state<Record<string, TopicResponse[]>>({});
+	let loadingTopics = $state('');
 
 	async function loadSubjects() {
 		loading = true;
@@ -31,8 +35,27 @@
 		}
 	}
 
-	function openSubject(id: string) {
-		goto(`/teacher/train/loop?subject=${id}`);
+	async function toggleSubject(id: string) {
+		if (expandedId === id) {
+			expandedId = '';
+			return;
+		}
+		expandedId = id;
+		if (!topicsMap[id]) {
+			loadingTopics = id;
+			try {
+				const detail = await getSubject(id);
+				topicsMap = { ...topicsMap, [id]: detail.topics };
+			} catch {
+				topicsMap = { ...topicsMap, [id]: [] };
+			} finally {
+				loadingTopics = '';
+			}
+		}
+	}
+
+	function trainTopic(subjectId: string, topicId: string) {
+		goto(`/teacher/train/loop?subject=${subjectId}&topic=${topicId}`);
 	}
 
 	function formatDate(iso: string): string {
@@ -73,21 +96,48 @@
 	{:else}
 		<div class="subject-list">
 			{#each subjects as s}
-				<button class="subject-card glass-card" onclick={() => openSubject(s.id)}>
-					<div class="sc-top">
-						<span class="sc-code">{s.code}</span>
+				<div class="subject-card glass-card" class:expanded={expandedId === s.id}>
+					<button class="sc-header" onclick={() => toggleSubject(s.id)}>
+						<div class="sc-top">
+							<span class="sc-code">{s.code}</span>
+							<span class="sc-arrow">{expandedId === s.id ? '▼' : '▶'}</span>
+						</div>
+						<h2 class="sc-name">{s.name}</h2>
+						<div class="sc-stats">
+							<span class="sc-stat">📝 {s.total_questions} questions</span>
+							<span class="sc-stat">📚 {s.total_topics} topics</span>
+							<span class="sc-stat">📅 {formatDate(s.created_at)}</span>
+						</div>
+					</button>
 
-					</div>
-					<h2 class="sc-name">{s.name}</h2>
-					{#if s.description}
-						<p class="sc-desc">{s.description}</p>
+					{#if expandedId === s.id}
+						<div class="topics-panel">
+							{#if loadingTopics === s.id}
+								<div class="topics-loading">
+									<div class="spinner-sm"></div>
+									<span>Loading topics…</span>
+								</div>
+							{:else if topicsMap[s.id]?.length}
+								{#each topicsMap[s.id] as topic}
+									<button class="topic-row" onclick={() => trainTopic(s.id, topic.id)}>
+										<div class="tr-left">
+											<span class="tr-name">{topic.name}</span>
+											{#if topic.has_syllabus}
+												<span class="tr-badge">📄 Syllabus</span>
+											{/if}
+										</div>
+										<div class="tr-right">
+											<span class="tr-qs">{topic.total_questions} Qs</span>
+											<span class="tr-arrow">→</span>
+										</div>
+									</button>
+								{/each}
+							{:else}
+								<p class="topics-empty">No topics found for this subject</p>
+							{/if}
+						</div>
 					{/if}
-					<div class="sc-stats">
-						<span class="sc-stat">📝 {s.total_questions} questions</span>
-						<span class="sc-stat">📚 {s.total_topics} topics</span>
-						<span class="sc-stat">📅 {formatDate(s.created_at)}</span>
-					</div>
-				</button>
+				</div>
 			{/each}
 		</div>
 	{/if}
@@ -124,23 +174,22 @@
 		animation: spin 0.8s linear infinite;
 	}
 
+	.spinner-sm {
+		width: 18px;
+		height: 18px;
+		border: 2px solid rgba(255, 255, 255, 0.15);
+		border-top-color: var(--theme-primary);
+		border-radius: 50%;
+		animation: spin 0.8s linear infinite;
+	}
+
 	@keyframes spin {
-		to {
-			transform: rotate(360deg);
-		}
+		to { transform: rotate(360deg); }
 	}
 
-	.err-icon {
-		font-size: 2rem;
-	}
-
-	.err-msg {
-		color: #e94560 !important;
-	}
-
-	.empty-icon {
-		font-size: 3rem;
-	}
+	.err-icon { font-size: 2rem; }
+	.err-msg { color: #e94560 !important; }
+	.empty-icon { font-size: 3rem; }
 
 	.subject-list {
 		display: flex;
@@ -149,17 +198,30 @@
 	}
 
 	.subject-card {
+		padding: 0;
+		width: 100%;
+		overflow: hidden;
+		transition: all 0.2s;
+	}
+
+	.subject-card.expanded {
+		border-color: rgba(var(--theme-primary-rgb), 0.3);
+	}
+
+	.sc-header {
+		display: block;
 		text-align: left;
 		cursor: pointer;
 		padding: 1.25rem 1.5rem;
 		width: 100%;
 		font-family: inherit;
-		transition: all 0.2s;
+		background: none;
+		border: none;
+		color: inherit;
 	}
 
-	.subject-card:hover {
-		transform: translateY(-2px);
-		border-color: rgba(var(--theme-primary-rgb), 0.4);
+	.sc-header:hover {
+		background: rgba(255, 255, 255, 0.03);
 	}
 
 	.sc-top {
@@ -180,23 +242,16 @@
 		letter-spacing: 0.05em;
 	}
 
+	.sc-arrow {
+		font-size: 0.75rem;
+		color: var(--theme-text-muted);
+	}
+
 	.sc-name {
 		font-size: 1.1rem;
 		font-weight: 700;
-		margin: 0 0 0.3rem;
+		margin: 0 0 0.5rem;
 		color: var(--theme-text);
-	}
-
-	.sc-desc {
-		font-size: 0.85rem;
-		color: var(--theme-text-muted);
-		margin: 0 0 0.75rem;
-		line-height: 1.4;
-		display: -webkit-box;
-		-webkit-line-clamp: 2;
-		line-clamp: 2;
-		-webkit-box-orient: vertical;
-		overflow: hidden;
 	}
 
 	.sc-stats {
@@ -208,6 +263,86 @@
 	.sc-stat {
 		font-size: 0.75rem;
 		color: var(--theme-text-muted);
+	}
+
+	/* Topics panel */
+	.topics-panel {
+		border-top: 0.5px solid rgba(255, 255, 255, 0.08);
+		padding: 0.5rem 0;
+	}
+
+	.topics-loading {
+		display: flex;
+		align-items: center;
+		gap: 0.5rem;
+		padding: 1rem 1.5rem;
+		color: var(--theme-text-muted);
+		font-size: 0.85rem;
+	}
+
+	.topics-empty {
+		padding: 1rem 1.5rem;
+		color: var(--theme-text-muted);
+		font-size: 0.85rem;
+		margin: 0;
+	}
+
+	.topic-row {
+		display: flex;
+		align-items: center;
+		justify-content: space-between;
+		width: 100%;
+		padding: 0.75rem 1.5rem;
+		background: none;
+		border: none;
+		border-bottom: 0.5px solid rgba(255, 255, 255, 0.04);
+		color: var(--theme-text);
+		cursor: pointer;
+		font-family: inherit;
+		font-size: 0.9rem;
+		transition: background 0.15s;
+	}
+
+	.topic-row:last-child {
+		border-bottom: none;
+	}
+
+	.topic-row:hover {
+		background: rgba(var(--theme-primary-rgb), 0.08);
+	}
+
+	.tr-left {
+		display: flex;
+		align-items: center;
+		gap: 0.5rem;
+	}
+
+	.tr-name {
+		font-weight: 600;
+	}
+
+	.tr-badge {
+		font-size: 0.7rem;
+		padding: 0.1rem 0.4rem;
+		background: rgba(var(--theme-primary-rgb), 0.12);
+		border-radius: 8px;
+		color: var(--theme-primary);
+	}
+
+	.tr-right {
+		display: flex;
+		align-items: center;
+		gap: 0.5rem;
+	}
+
+	.tr-qs {
+		font-size: 0.75rem;
+		color: var(--theme-text-muted);
+	}
+
+	.tr-arrow {
+		color: var(--theme-primary);
+		font-weight: 700;
 	}
 
 	@media (max-width: 768px) {
