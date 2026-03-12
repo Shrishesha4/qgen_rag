@@ -923,8 +923,11 @@
 	}
 
 	.add-btn {
-		padding: 0.75rem 1.25rem;
-		font-size: 0.9rem;
+		padding: 0.75rem 1.35rem;
+		font-size: 0.95rem;
+		font-weight: 600;
+		min-height: 44px;
+		border-radius: 0.75rem;
 	}
 
 	.add-btn:disabled {
@@ -941,6 +944,14 @@
 
 	.import-btn {
 		white-space: nowrap;
+		padding: 0.75rem 1.5rem;
+		font-size: 0.95rem;
+		font-weight: 600;
+		min-height: 44px;
+		border-radius: 0.75rem;
+		display: inline-flex;
+		align-items: center;
+		gap: 0.5rem;
 	}
 
 	.import-hint {
@@ -1328,12 +1339,6 @@
 		-webkit-backdrop-filter: blur(20px) saturate(180%);
 		border-top: 0.5px solid rgba(255, 255, 255, 0.08);
 		z-index: 20;
-	}
-
-	@media (min-width: 769px) {
-		.nav-bar {
-			left: 260px;
-		}
 	}
 
 	.nav-btn {

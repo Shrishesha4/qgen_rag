@@ -81,6 +81,7 @@
 	let docProcessingDocument = $state('');
 	let docProcessingDocumentsTotal = $state(0);
 	let batchComplete = $state(false);
+	let showBatchCompleteNotice = $state(false);
 	let subjectDetail = $state<SubjectDetailResponse | null>(null);
 	let genCtx = $state('');
 	let nextGenAt = $state(0); // totalReviewed count that triggers next batch (0 = disarmed)
@@ -118,6 +119,7 @@
 		currentQuestion ? approved.has(currentQuestion.id) || rejected.has(currentQuestion.id) : false
 	);
 	let showAllCaughtUp = $derived(questions.length > 0 && batchComplete && totalReviewed >= questions.length);
+	let showBatchCompletePanel = $derived(showBatchCompleteNotice || showAllCaughtUp);
 	let voiceRecorderTitle = $derived.by(() => {
 		if (!voiceAction) return '';
 		if (voiceAction.kind === 'reject') return 'Reject Question';
@@ -134,6 +136,7 @@
 	async function loadAndStream() {
 		loading = true;
 		error = '';
+		showBatchCompleteNotice = false;
 		try {
 			const res = await getQuestionsForVetting({
 				status: 'pending',
@@ -287,6 +290,7 @@
 		stopBackgroundGen();
 		generating = false;
 		genMessage = '';
+		showBatchCompleteNotice = true;
 	}
 
 	function resetDocumentProcessingState() {
@@ -580,14 +584,14 @@
 			{#if docProcessingProgress !== null}
 				<div class="gen-progress-card standalone">
 					<div class="gen-progress-head">
-						<span class="gen-progress-label">{docProcessingDocument || 'Document processing'}</span>
-						<span class="gen-progress-value">{docProcessingProgress}%</span>
+						<!-- <span class="gen-progress-label">{docProcessingDocument || 'Document processing'}</span> --> -->
+						<!-- <span class="gen-progress-value">{docProcessingProgress}%</span> -->
 					</div>
 					<div class="gen-progress-track">
 						<div class="gen-progress-fill" style:width="{docProcessingProgress}%"></div>
 					</div>
 					{#if docProcessingDetail}
-						<p class="gen-progress-detail">{docProcessingDetail}</p>
+						<!-- <p class="gen-progress-detail">{docProcessingDetail}</p> -->
 					{/if}
 				</div>
 			{/if}
@@ -607,7 +611,7 @@
 				Back to Home
 			</button>
 		</div>
-	{:else if showAllCaughtUp}
+	{:else if showBatchCompletePanel}
 		<div class="caught-up-panel glass-panel animate-fade-in">
 			<span class="caught-up-kicker">Batch complete</span>
 			<h2 class="caught-up-title font-serif">All Caught Up</h2>
@@ -851,7 +855,7 @@
 	{/if}
 </div>
 
-{#if questions.length > 0 && !showAllCaughtUp}
+{#if questions.length > 0 && !showBatchCompletePanel}
 	<div class="floating-stack">
 		{#if !isReviewed && !editing && !regenerating}
 			<!-- <div class="edit-inline-row">

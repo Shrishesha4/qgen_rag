@@ -111,7 +111,7 @@ export const themes: Record<ThemeName, ThemeConfig> = {
 		name: 'night',
 		label: 'Midnight',
 		icon: '🌙',
-		bgImage: 'https://images.unsplash.com/photo-1567721745901-ea7a159a2528',
+		bgImage: 'https://images.unsplash.com/photo-1595280111512-72b43d49b7e5?q=80&w=2370&auto=format&fit=crop&ixlib=rb-4.1.0&ixid=M3wxMjA3fDB8MHxwaG90by1wYWdlfHx8fGVufDB8fHx8fA%3D%3D',
 		bg: [
 			'radial-gradient(ellipse at 20% 60%, rgba(80,40,140,0.25) 0%, transparent 50%)',
 			'radial-gradient(ellipse at 80% 80%, rgba(40,20,100,0.2) 0%, transparent 45%)',
