@@ -101,8 +101,8 @@ class DocumentService:
         Unlike upload_document(), this does NOT auto-start _process_document.
         Processing is handled by the calling endpoint based on index_type.
         """
-        if index_type not in ("reference_book", "template_paper", "reference_questions"):
-            raise ValueError("index_type must be 'reference_book', 'template_paper', or 'reference_questions'")
+        if index_type not in ("primary", "reference_book", "template_paper", "reference_questions"):
+            raise ValueError("index_type must be 'primary', 'reference_book', 'template_paper', or 'reference_questions'")
         
         # Calculate file hash
         file_hash = hashlib.sha256(file_content).hexdigest()

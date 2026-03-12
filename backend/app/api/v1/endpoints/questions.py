@@ -656,6 +656,19 @@ async def quick_generate_from_subject(
     )
 
 
+@router.post("/cancel-generation")
+async def cancel_generation(
+    subject_id: str = Form(...),
+    current_user: User = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+):
+    """Release the generation lock for a subject, allowing a new generation to start."""
+    from app.services.redis_service import RedisService
+    redis = RedisService()
+    await redis.release_generation_lock(str(current_user.id), subject_id)
+    return {"message": "Generation cancelled", "subject_id": subject_id}
+
+
 @router.get("", response_model=QuestionListResponse)
 async def list_questions(
     document_id: Optional[uuid.UUID] = Query(None, description="Document ID to get questions for"),

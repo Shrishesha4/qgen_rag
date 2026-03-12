@@ -2460,22 +2460,24 @@ Output valid JSON only."""
             # 1. Fetch all completed primary documents for the subject.
             #    First try direct subject linkage (documents uploaded with subject_id set).
             #    Then fall back to documents used in previous generation sessions for this subject.
-            doc_query = select(Document).where(
-                and_(
-                    Document.user_id == user_id,
-                    Document.subject_id == subject_id,
-                    Document.index_type == "primary",
-                    Document.processing_status == "completed",
+            async def _find_completed_docs() -> list:
+                """Search for completed docs using multiple strategies."""
+                # Strategy 1: Direct subject linkage with primary index
+                q1 = select(Document).where(
+                    and_(
+                        Document.user_id == user_id,
+                        Document.subject_id == subject_id,
+                        Document.index_type == "primary",
+                        Document.processing_status == "completed",
+                    )
                 )
-            )
-            doc_result = await self.db.execute(doc_query)
-            primary_docs = list(doc_result.scalars().all())
+                r1 = await self.db.execute(q1)
+                docs = list(r1.scalars().all())
+                if docs:
+                    return docs
 
-            if not primary_docs:
-                # Fallback 1: find completed documents that were used in prior generation
-                # sessions linked to this subject (covers documents uploaded via quick-generate
-                # PDF tab before subject_id propagation was implemented).
-                session_doc_query = (
+                # Strategy 2: Documents from prior generation sessions
+                q2 = (
                     select(Document)
                     .distinct()
                     .join(
@@ -2493,21 +2495,68 @@ Output valid JSON only."""
                         )
                     )
                 )
-                session_doc_result = await self.db.execute(session_doc_query)
-                primary_docs = list(session_doc_result.scalars().all())
+                r2 = await self.db.execute(q2)
+                docs = list(r2.scalars().all())
+                if docs:
+                    return docs
 
-            if not primary_docs:
-                # Fallback 2: use ANY completed document linked to this subject regardless
-                # of index_type (e.g., reference_book docs are still useful content).
-                any_doc_query = select(Document).where(
+                # Strategy 3: Any completed document for this subject
+                q3 = select(Document).where(
                     and_(
                         Document.user_id == user_id,
                         Document.subject_id == subject_id,
                         Document.processing_status == "completed",
                     )
                 )
-                any_doc_result = await self.db.execute(any_doc_query)
-                primary_docs = list(any_doc_result.scalars().all())
+                r3 = await self.db.execute(q3)
+                return list(r3.scalars().all())
+
+            primary_docs = await _find_completed_docs()
+
+            # If no completed docs, check if any are still processing and wait
+            if not primary_docs:
+                processing_query = select(Document).where(
+                    and_(
+                        Document.user_id == user_id,
+                        Document.subject_id == subject_id,
+                        Document.processing_status.in_(["processing", "pending"]),
+                    )
+                )
+                processing_result = await self.db.execute(processing_query)
+                processing_docs = list(processing_result.scalars().all())
+
+                if processing_docs:
+                    logger.info(f"quick_generate_from_subject: {len(processing_docs)} docs still processing, waiting...")
+                    yield QuickGenerateProgress(
+                        status="generating",
+                        progress=6,
+                        message=f"Waiting for {len(processing_docs)} document(s) to finish processing...",
+                    )
+
+                    # Poll every 3 seconds for up to 5 minutes
+                    import asyncio
+                    for attempt in range(100):
+                        await asyncio.sleep(3)
+                        # Expire cached state so we get fresh data
+                        self.db.expire_all()
+                        primary_docs = await _find_completed_docs()
+                        if primary_docs:
+                            break
+
+                        # Check if still processing
+                        processing_result = await self.db.execute(processing_query)
+                        still_processing = list(processing_result.scalars().all())
+                        if not still_processing:
+                            # Documents finished but none completed successfully
+                            primary_docs = await _find_completed_docs()
+                            break
+
+                        progress_pct = min(6 + attempt * 0.4, 9)
+                        yield QuickGenerateProgress(
+                            status="generating",
+                            progress=int(progress_pct),
+                            message=f"Waiting for {len(still_processing)} document(s) to finish processing...",
+                        )
 
             if not primary_docs:
                 yield QuickGenerateProgress(
@@ -2735,6 +2784,8 @@ Output valid JSON only."""
                             previous_questions=generated_questions_text,
                             question_index=total_question_index,
                             reference_questions=reference_questions,
+                            subject_id=subject_id,
+                            topic_id=topic_id,
                         )
 
                         total_question_index += 1
@@ -2846,6 +2897,8 @@ Output valid JSON only."""
         question_index: int = 0,
         reference_questions: Optional[List[Dict[str, Any]]] = None,
         learning_outcome: Optional[str] = None,
+        subject_id: Optional[uuid.UUID] = None,
+        topic_id: Optional[uuid.UUID] = None,
     ) -> Optional[Dict[str, Any]]:
         """Generate a single question for quick generation with context awareness.
         
@@ -2939,6 +2992,18 @@ Output valid JSON only."""
         if learning_outcome:
             lo_section = f"\n\nLEARNING OUTCOME TO ASSESS:\n{learning_outcome}\nEnsure the question directly tests this specific learning outcome."
         
+        # Build rejection avoidance prompt from training patterns
+        rejection_guidance = ""
+        if subject_id or topic_id:
+            try:
+                from app.services.training_service import TrainingService
+                training_svc = TrainingService()
+                rejection_guidance = await training_svc.build_rejection_avoidance_prompt(
+                    self.db, subject_id=subject_id, topic_id=topic_id,
+                )
+            except Exception as rp_err:
+                logger.warning(f"Could not load rejection patterns: {rp_err}")
+
         # Build enhanced prompt with user context
         prompt = f"""Topic/Context: {context}
 
@@ -2952,7 +3017,7 @@ Generate a {question_type.replace('_', ' ')} question with the following require
 - {hint}
 - The question must be answerable using the knowledge from the reference material
 - Write the question AND answer as STANDALONE exam content - do NOT reference "the document", "the passage", "according to the text", "based on the provided content", etc.
-- Both question and answer should read naturally as professional exam questions{exclusion_text}
+- Both question and answer should read naturally as professional exam questions{exclusion_text}{rejection_guidance}
 
 Output valid JSON only."""
 

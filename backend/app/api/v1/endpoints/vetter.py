@@ -52,6 +52,7 @@ class SubjectSummary(BaseModel):
     id: uuid.UUID
     name: str
     code: str
+    description: Optional[str] = None
     teacher_id: uuid.UUID
     teacher_name: str
     pending_count: int
@@ -138,6 +139,28 @@ class VetQuestionRequest(BaseModel):
     custom_feedback: Optional[str] = None
 
 
+class VetQuestionSubmitRequest(BaseModel):
+    """
+    Rich vetting submission — supports Edit & Approve, creating DPO pairs.
+    Maps to POST /api/vetting/submit.
+    """
+    question_id: uuid.UUID
+    decision: str = Field(..., pattern="^(approve|reject|edit)$")
+    # For edits: the corrected question text
+    edited_text: Optional[str] = None
+    edited_options: Optional[List[str]] = None
+    edited_answer: Optional[str] = None
+    edited_explanation: Optional[str] = None
+    # Rejection details
+    rejection_reasons: Optional[List[str]] = None
+    # General feedback
+    feedback: Optional[str] = None
+    notes: Optional[str] = None
+    course_outcome_mapping: Optional[dict] = None
+    # Timing (front-end tracks how long the vetter spent)
+    time_spent_seconds: Optional[int] = None
+
+
 class BulkVetRequest(BaseModel):
     """Request to vet multiple questions at once."""
     question_ids: List[uuid.UUID]
@@ -156,12 +179,22 @@ async def get_vetter_dashboard(
     """
     Get vetter dashboard with aggregate stats across all teachers.
     """
+    # Teachers only see stats for their own subjects
+    ownership_filter = []
+    if current_user.role == "teacher":
+        ownership_filter = [
+            Question.subject_id.in_(
+                select(Subject.id).where(Subject.user_id == current_user.id)
+            )
+        ]
+
     # Count pending questions
     pending_result = await db.execute(
         select(func.count(Question.id)).where(
             Question.vetting_status == "pending",
             Question.is_latest == True,
             Question.is_archived == False,
+            *ownership_filter,
         )
     )
     total_pending = pending_result.scalar() or 0
@@ -172,6 +205,7 @@ async def get_vetter_dashboard(
             Question.vetting_status == "approved",
             Question.is_latest == True,
             Question.is_archived == False,
+            *ownership_filter,
         )
     )
     total_approved = approved_result.scalar() or 0
@@ -182,6 +216,7 @@ async def get_vetter_dashboard(
             Question.vetting_status == "rejected",
             Question.is_latest == True,
             Question.is_archived == False,
+            *ownership_filter,
         )
     )
     total_rejected = rejected_result.scalar() or 0
@@ -195,6 +230,7 @@ async def get_vetter_dashboard(
                     Question.is_latest == True,
                     Question.is_archived == False,
                     Question.subject_id.isnot(None),
+                    *ownership_filter,
                 )
             )
         )
@@ -208,6 +244,7 @@ async def get_vetter_dashboard(
             Question.is_latest == True,
             Question.is_archived == False,
             Question.subject_id.isnot(None),
+            *ownership_filter,
         )
     )
     subjects_with_pending = subjects_result.scalar() or 0
@@ -316,7 +353,7 @@ async def get_subjects_with_questions(
     if teacher_id:
         stats_query = text("""
             SELECT
-                s.id, s.name, s.code, s.user_id,
+                s.id, s.name, s.code, s.user_id, s.description,
                 COUNT(CASE WHEN q.vetting_status = 'pending'  AND q.is_latest = true AND q.is_archived = false THEN 1 END) as pending_count,
                 COUNT(CASE WHEN q.vetting_status = 'approved' AND q.is_latest = true AND q.is_archived = false THEN 1 END) as approved_count,
                 COUNT(CASE WHEN q.vetting_status = 'rejected' AND q.is_latest = true AND q.is_archived = false THEN 1 END) as rejected_count,
@@ -324,7 +361,7 @@ async def get_subjects_with_questions(
             FROM subjects s
             LEFT JOIN questions q ON q.subject_id = s.id
             WHERE s.user_id = :teacher_id
-            GROUP BY s.id, s.name, s.code, s.user_id
+            GROUP BY s.id, s.name, s.code, s.user_id, s.description
             HAVING COUNT(q.id) > 0
             ORDER BY COUNT(CASE WHEN q.vetting_status = 'pending' AND q.is_latest = true THEN 1 END) DESC
         """)
@@ -332,14 +369,14 @@ async def get_subjects_with_questions(
     else:
         stats_query = text("""
             SELECT
-                s.id, s.name, s.code, s.user_id,
+                s.id, s.name, s.code, s.user_id, s.description,
                 COUNT(CASE WHEN q.vetting_status = 'pending'  AND q.is_latest = true AND q.is_archived = false THEN 1 END) as pending_count,
                 COUNT(CASE WHEN q.vetting_status = 'approved' AND q.is_latest = true AND q.is_archived = false THEN 1 END) as approved_count,
                 COUNT(CASE WHEN q.vetting_status = 'rejected' AND q.is_latest = true AND q.is_archived = false THEN 1 END) as rejected_count,
                 COUNT(q.id) as total_questions
             FROM subjects s
             LEFT JOIN questions q ON q.subject_id = s.id
-            GROUP BY s.id, s.name, s.code, s.user_id
+            GROUP BY s.id, s.name, s.code, s.user_id, s.description
             HAVING COUNT(q.id) > 0
             ORDER BY COUNT(CASE WHEN q.vetting_status = 'pending' AND q.is_latest = true THEN 1 END) DESC
         """)
@@ -361,7 +398,7 @@ async def get_subjects_with_questions(
     # 3. Build response, fetching topic stats per subject
     subjects = []
     for row in pg_rows:
-        subject_id, name, code, user_id, pending_count, approved_count, rejected_count, _ = row
+        subject_id, name, code, user_id, description, pending_count, approved_count, rejected_count, _ = row
         teacher = users_map.get(user_id)
         teacher_name = (teacher.full_name or teacher.username) if teacher else "Unknown"
 
@@ -391,6 +428,7 @@ async def get_subjects_with_questions(
             id=subject_id,
             name=name,
             code=code,
+            description=description,
             teacher_id=user_id,
             teacher_name=teacher_name,
             pending_count=pending_count or 0,
@@ -402,7 +440,72 @@ async def get_subjects_with_questions(
     return subjects
 
 
+@router.get("/subjects/{subject_id}", response_model=SubjectSummary)
+async def get_subject_for_vetting(
+    subject_id: uuid.UUID,
+    current_user: User = Depends(get_current_vetter),
+    db: AsyncSession = Depends(get_db),
+):
+    """Get a single subject summary for vetters."""
+    from sqlalchemy import text
 
+    stats_query = text("""
+        SELECT
+            s.id, s.name, s.code, s.user_id, s.description,
+            COUNT(CASE WHEN q.vetting_status = 'pending'  AND q.is_latest = true AND q.is_archived = false THEN 1 END) as pending_count,
+            COUNT(CASE WHEN q.vetting_status = 'approved' AND q.is_latest = true AND q.is_archived = false THEN 1 END) as approved_count,
+            COUNT(CASE WHEN q.vetting_status = 'rejected' AND q.is_latest = true AND q.is_archived = false THEN 1 END) as rejected_count,
+            COUNT(q.id) as total_questions
+        FROM subjects s
+        LEFT JOIN questions q ON q.subject_id = s.id
+        WHERE s.id = :subject_id
+        GROUP BY s.id, s.name, s.code, s.user_id, s.description
+    """)
+    pg_result = await db.execute(stats_query, {"subject_id": str(subject_id)})
+    row = pg_result.fetchone()
+
+    if not row:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Subject not found")
+
+    sid, name, code, user_id, description, pending_count, approved_count, rejected_count, _ = row
+
+    async with AuthSessionLocal() as auth_session:
+        user_result = await auth_session.execute(select(User).where(User.id == user_id))
+        teacher = user_result.scalar_one_or_none()
+    teacher_name = (teacher.full_name or teacher.username) if teacher else "Unknown"
+
+    topics_result = await db.execute(
+        select(Topic).where(Topic.subject_id == sid).order_by(Topic.order_index)
+    )
+    topics = topics_result.scalars().all()
+    topic_stats = []
+    for topic in topics:
+        topic_pending = await db.execute(
+            select(func.count(Question.id)).where(
+                Question.topic_id == topic.id,
+                Question.vetting_status == "pending",
+                Question.is_latest == True,
+                Question.is_archived == False,
+            )
+        )
+        topic_stats.append({
+            "id": str(topic.id),
+            "name": topic.name,
+            "pending_count": topic_pending.scalar() or 0,
+        })
+
+    return SubjectSummary(
+        id=sid,
+        name=name,
+        code=code,
+        description=description,
+        teacher_id=user_id,
+        teacher_name=teacher_name,
+        pending_count=pending_count or 0,
+        approved_count=approved_count or 0,
+        rejected_count=rejected_count or 0,
+        topics=topic_stats,
+    )
 
 
 @router.get("/questions", response_model=dict)
@@ -451,6 +554,14 @@ async def get_questions_for_vetting(
         query = query.where(
             Question.subject_id.in_(
                 select(Subject.id).where(Subject.user_id == teacher_id)
+            )
+        )
+    
+    # Teachers automatically scoped to their own subjects
+    if current_user.role == "teacher" and not teacher_id:
+        query = query.where(
+            Question.subject_id.in_(
+                select(Subject.id).where(Subject.user_id == current_user.id)
             )
         )
     
@@ -587,6 +698,165 @@ async def vet_question(
     }
 
 
+# ============== Rich Vetting Submit (DPO Pair Creation) ==============
+
+
+@router.post("/submit")
+async def submit_vetting(
+    data: VetQuestionSubmitRequest,
+    current_user: User = Depends(get_current_vetter),
+    db: AsyncSession = Depends(get_db),
+):
+    """
+    Rich vetting endpoint that captures edit diffs and creates DPO training pairs.
+
+    - **approve**: Marks question as approved. Stored as positive SFT sample.
+    - **reject**: Marks as rejected. Stores rejection reasons + embedding for RAG.
+    - **edit**: Saves (original, edited) pair for DPO training, then approves.
+    """
+    from app.models.training import VettingLog, TrainingPair
+
+    # 1. Load the question
+    result = await db.execute(
+        select(Question).where(
+            Question.id == data.question_id,
+            Question.is_latest == True,
+            Question.is_archived == False,
+        )
+    )
+    question = result.scalar_one_or_none()
+    if not question:
+        raise HTTPException(status_code=404, detail="Question not found")
+
+    # 2. Build the edit diff (for 'edit' decisions)
+    edit_diff = None
+    original_text = question.question_text
+    if data.decision == "edit":
+        edit_diff = {}
+        if data.edited_text and data.edited_text != question.question_text:
+            edit_diff["question_text"] = {"old": question.question_text, "new": data.edited_text}
+        if data.edited_options is not None and data.edited_options != question.options:
+            edit_diff["options"] = {"old": question.options, "new": data.edited_options}
+        if data.edited_answer and data.edited_answer != question.correct_answer:
+            edit_diff["correct_answer"] = {"old": question.correct_answer, "new": data.edited_answer}
+        if data.edited_explanation and data.edited_explanation != question.explanation:
+            edit_diff["explanation"] = {"old": question.explanation, "new": data.edited_explanation}
+
+    # 3. Create VettingLog
+    vetting_log = VettingLog(
+        question_id=data.question_id,
+        vetter_id=current_user.id,
+        decision=data.decision,
+        original_text=original_text,
+        edited_text=data.edited_text if data.decision == "edit" else None,
+        edit_diff=edit_diff,
+        rejection_reasons=data.rejection_reasons if data.decision == "reject" else None,
+        feedback=data.feedback or data.notes,
+        time_spent_seconds=data.time_spent_seconds,
+    )
+
+    # Embed rejection reasons for RAG retrieval
+    if data.decision == "reject" and data.rejection_reasons:
+        try:
+            embedding_service = EmbeddingService()
+            reason_text = "; ".join(data.rejection_reasons)
+            embedding = await embedding_service.get_embedding(reason_text)
+            vetting_log.rejection_reason_embedding = embedding
+        except Exception:
+            pass  # Non-critical — skip if embedding service unavailable
+
+    db.add(vetting_log)
+
+    # 4. Update the question itself
+    if data.decision == "approve":
+        question.vetting_status = "approved"
+    elif data.decision == "reject":
+        question.vetting_status = "rejected"
+    elif data.decision == "edit":
+        # Apply edits and approve
+        if data.edited_text:
+            question.question_text = data.edited_text
+        if data.edited_options is not None:
+            question.options = data.edited_options
+        if data.edited_answer:
+            question.correct_answer = data.edited_answer
+        if data.edited_explanation:
+            question.explanation = data.edited_explanation
+        question.vetting_status = "approved"
+
+    question.vetted_at = datetime.now(timezone.utc)
+    question.vetted_by = current_user.id
+    question.vetting_notes = data.notes
+
+    if data.course_outcome_mapping:
+        question.course_outcome_mapping = data.course_outcome_mapping
+
+    # 5. Create DPO training pair when appropriate
+    training_pair = None
+    if data.decision == "edit" and edit_diff:
+        # Edit → original is "rejected", edited is "chosen"
+        generation_prompt = _reconstruct_prompt(question)
+        training_pair = TrainingPair(
+            prompt=generation_prompt,
+            chosen_response=data.edited_text or original_text,
+            rejected_response=original_text,
+            vetting_log_id=vetting_log.id,
+            chosen_question_id=question.id,
+            rejected_question_id=question.id,
+            pair_type="edit",
+            confidence=0.9,  # High confidence — direct human edit
+        )
+        db.add(training_pair)
+
+    elif data.decision == "reject" and data.rejection_reasons:
+        # Rejection → save as negative signal. Pair will be completed
+        # later when an alternative version is approved.
+        generation_prompt = _reconstruct_prompt(question)
+        training_pair = TrainingPair(
+            prompt=generation_prompt,
+            chosen_response="",  # Will be filled when an alternative is approved
+            rejected_response=original_text,
+            vetting_log_id=vetting_log.id,
+            rejected_question_id=question.id,
+            pair_type="reject_approve",
+            status="pending",
+            confidence=0.7,
+        )
+        db.add(training_pair)
+
+    await db.commit()
+
+    return {
+        "message": f"Question {data.decision}d successfully",
+        "question_id": str(data.question_id),
+        "decision": data.decision,
+        "vetting_log_id": str(vetting_log.id),
+        "training_pair_created": training_pair is not None,
+    }
+
+
+def _reconstruct_prompt(question: Question) -> str:
+    """
+    Reconstruct the generation prompt from question metadata.
+    Used as the 'prompt' field in DPO training pairs.
+    """
+    parts = []
+    if question.generation_metadata:
+        meta = question.generation_metadata
+        if "system_prompt" in meta:
+            parts.append(meta["system_prompt"])
+        if "user_prompt" in meta:
+            parts.append(meta["user_prompt"])
+    if not parts:
+        # Fallback: construct from question attributes
+        parts.append(f"Generate a {question.question_type or 'question'}")
+        if question.difficulty_level:
+            parts.append(f"at {question.difficulty_level} difficulty")
+        if question.topic and hasattr(question.topic, 'name'):
+            parts.append(f"about {question.topic.name}")
+    return "\n".join(parts)
+
+
 # ============== Bulk Vet ==============
 
 
@@ -707,6 +977,344 @@ class RejectAndRegenerateRequest(BaseModel):
     notes: Optional[str] = None
     rejection_reasons: Optional[List[str]] = None
     custom_feedback: Optional[str] = None
+
+
+class RejectWithFeedbackRequest(BaseModel):
+    """Request to reject a question with feedback for improvement or replacement."""
+    feedback: str = Field(..., min_length=1, max_length=2000)
+    rejection_reasons: Optional[List[str]] = None
+    generate_new: bool = False  # If True: generate brand new question. If False: improve the rejected one.
+
+
+@router.post("/questions/{question_id}/reject-with-feedback")
+async def reject_with_feedback(
+    question_id: uuid.UUID,
+    req: RejectWithFeedbackRequest,
+    current_user: User = Depends(get_current_vetter),
+    db: AsyncSession = Depends(get_db),
+):
+    """
+    Reject a question with feedback. Either improves the current question or generates a new one.
+    - Default (generate_new=false): Uses LLM to improve the same question based on feedback.
+    - generate_new=true: Generates a completely new replacement question.
+    Both create DPO training pairs for the training pipeline.
+    """
+    import logging
+    logger = logging.getLogger(__name__)
+    from app.models.training import VettingLog, TrainingPair
+
+    # 1. Load question
+    result = await db.execute(
+        select(Question)
+        .options(selectinload(Question.subject), selectinload(Question.topic))
+        .where(Question.id == question_id, Question.is_latest == True, Question.is_archived == False)
+    )
+    question = result.scalar_one_or_none()
+    if not question:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Question not found")
+
+    original_text = question.question_text
+    original_options = question.options
+    original_answer = question.correct_answer
+    original_explanation = question.explanation
+
+    # 2. Create VettingLog
+    vetting_log = VettingLog(
+        question_id=question.id,
+        vetter_id=str(current_user.id),
+        decision="reject",
+        original_text=original_text,
+        rejection_reasons=req.rejection_reasons or [req.feedback[:200]],
+        feedback=req.feedback,
+    )
+    db.add(vetting_log)
+
+    # 3. If generate_new, delegate to existing regeneration logic
+    if req.generate_new:
+        await db.flush()
+        # Mark rejected
+        question.vetting_status = "rejected"
+        question.vetted_at = datetime.now(timezone.utc)
+        question.vetted_by = current_user.id
+        question.is_latest = False
+
+        # Create DPO pair (rejected signal — chosen will be filled when replacement is approved)
+        generation_prompt = _reconstruct_prompt(question)
+        training_pair = TrainingPair(
+            prompt=generation_prompt,
+            chosen_response="",
+            rejected_response=original_text,
+            vetting_log_id=vetting_log.id,
+            rejected_question_id=question.id,
+            pair_type="reject_approve",
+            status="pending",
+            confidence=0.7,
+        )
+        db.add(training_pair)
+
+        # Regenerate using existing logic
+        from app.models.document import Document, DocumentChunk
+        from app.models.question import GenerationSession
+        import random, numpy as np
+
+        teacher_id = question.subject.user_id if question.subject else None
+        document_id = question.document_id
+
+        if not document_id and question.subject_id:
+            doc_result = await db.execute(
+                select(Document.id).where(
+                    Document.subject_id == question.subject_id,
+                    Document.processing_status == "completed",
+                ).order_by(Document.upload_timestamp.desc()).limit(1)
+            )
+            document_id = doc_result.scalar_one_or_none()
+
+        if document_id and teacher_id:
+            chunks_result = await db.execute(
+                select(DocumentChunk)
+                .options(joinedload(DocumentChunk.document))
+                .where(DocumentChunk.document_id == document_id)
+                .order_by(DocumentChunk.chunk_index)
+            )
+            chunks = list(chunks_result.scalars().all())
+
+            if chunks:
+                gen_service = QuestionGenerationService(db)
+                embedding_service = EmbeddingService()
+                new_q_data = None
+
+                # Load existing embeddings for dedupe
+                existing_embeddings = []
+                if question.subject_id:
+                    try:
+                        emb_res = await db.execute(
+                            select(Question.question_embedding).where(
+                                Question.subject_id == question.subject_id,
+                                Question.is_archived == False,
+                                Question.question_embedding.isnot(None),
+                            ).limit(2000)
+                        )
+                        existing_embeddings = [r[0] for r in emb_res.all()]
+                    except Exception:
+                        pass
+
+                for attempt in range(3):
+                    try:
+                        selected = random.sample(chunks, min(3, len(chunks)))
+                        candidate = await gen_service._generate_single_question(
+                            chunks=selected,
+                            question_type=question.question_type,
+                            difficulty=question.difficulty_level or "medium",
+                            marks=question.marks,
+                            bloom_levels=[question.bloom_taxonomy_level] if question.bloom_taxonomy_level else None,
+                        )
+                        if not candidate:
+                            continue
+
+                        if existing_embeddings:
+                            emb = await embedding_service.get_embedding(candidate["question_text"])
+                            q_vec = np.array(emb)
+                            matrix = np.array(existing_embeddings)
+                            q_norm = q_vec / (np.linalg.norm(q_vec) or 1.0)
+                            norms = np.linalg.norm(matrix, axis=1, keepdims=True)
+                            norms[norms == 0] = 1.0
+                            if float(np.max(np.dot(matrix / norms, q_norm))) > 0.85:
+                                continue
+
+                        new_q_data = candidate
+                        break
+                    except Exception as e:
+                        logger.error(f"reject-with-feedback regen attempt {attempt+1}: {e}")
+
+                if new_q_data:
+                    session_id = question.session_id
+                    if not session_id:
+                        s = GenerationSession(
+                            user_id=teacher_id, document_id=document_id,
+                            subject_id=question.subject_id, topic_id=question.topic_id,
+                            generation_method="vetter_regen", requested_count=1,
+                            status="completed", started_at=datetime.now(timezone.utc),
+                            completed_at=datetime.now(timezone.utc), questions_generated=1,
+                        )
+                        db.add(s)
+                        await db.flush()
+                        session_id = s.id
+
+                    new_question, _ = await gen_service._save_question(
+                        document_id=document_id, session_id=session_id,
+                        question_data=new_q_data, question_type=question.question_type,
+                        marks=question.marks, difficulty=question.difficulty_level or "medium",
+                        chunk_ids=[c.id for c in selected], chunks=selected,
+                        subject_id=question.subject_id, topic_id=question.topic_id,
+                    )
+                    new_question.replaces_id = question_id
+                    new_question.version_number = (question.version_number or 1) + 1
+                    new_question.is_latest = True
+                    new_question.vetting_status = "pending"
+                    question.replaced_by_id = new_question.id
+
+                    await db.commit()
+                    return {
+                        "message": "Question rejected and new replacement generated",
+                        "question_id": str(question_id),
+                        "new_question_id": str(new_question.id),
+                        "decision": "reject",
+                        "regenerated": True,
+                        "improved": False,
+                    }
+
+        # Regen failed — just reject
+        question.is_latest = True
+        await db.commit()
+        return {
+            "message": "Question rejected (regeneration failed)",
+            "question_id": str(question_id),
+            "decision": "reject",
+            "regenerated": False,
+            "improved": False,
+        }
+
+    # 4. IMPROVE mode (default) — use LLM to improve the same question based on feedback
+    from app.services.llm_service import LLMService
+    llm = LLMService()
+
+    improve_prompt = f"""You are a question quality improvement assistant. A reviewer rejected a question and provided feedback. 
+Your task is to IMPROVE the same question based on the feedback. Do NOT create a completely different question.
+Keep the same topic, type, and difficulty level. Only fix what the reviewer flagged.
+
+REJECTED QUESTION:
+Type: {question.question_type}
+Text: {original_text}
+"""
+    if original_options:
+        improve_prompt += f"Options: {', '.join(original_options)}\n"
+    if original_answer:
+        improve_prompt += f"Correct Answer: {original_answer}\n"
+    if original_explanation:
+        improve_prompt += f"Explanation: {original_explanation}\n"
+
+    improve_prompt += f"""
+REVIEWER FEEDBACK:
+{req.feedback}
+"""
+    if req.rejection_reasons:
+        improve_prompt += f"Rejection Reasons: {', '.join(req.rejection_reasons)}\n"
+
+    improve_prompt += """
+INSTRUCTIONS:
+- Improve the question based on the feedback
+- Keep the same topic and difficulty
+- Fix ONLY the issues mentioned in the feedback
+- Return ONLY valid JSON with these fields:
+{
+  "question_text": "improved question text",
+  "options": ["A) ...", "B) ...", "C) ...", "D) ..."],
+  "correct_answer": "letter of correct option",
+  "explanation": "explanation of the answer"
+}
+For non-MCQ questions, omit the "options" field.
+Return ONLY the JSON, no other text."""
+
+    try:
+        import json as json_module
+        llm_response = await llm.generate(improve_prompt, temperature=0.3)
+        # Parse the JSON response
+        cleaned = llm_response.strip()
+        # Extract JSON from potential markdown code blocks
+        if "```json" in cleaned:
+            cleaned = cleaned.split("```json")[1].split("```")[0].strip()
+        elif "```" in cleaned:
+            cleaned = cleaned.split("```")[1].split("```")[0].strip()
+
+        improved = json_module.loads(cleaned)
+
+        improved_text = improved.get("question_text", original_text)
+        improved_options = improved.get("options", original_options)
+        improved_answer = improved.get("correct_answer", original_answer)
+        improved_explanation = improved.get("explanation", original_explanation)
+
+        # Build edit diff
+        edit_diff = {}
+        if improved_text != original_text:
+            edit_diff["question_text"] = {"old": original_text, "new": improved_text}
+        if improved_options != original_options:
+            edit_diff["options"] = {"old": original_options, "new": improved_options}
+        if improved_answer != original_answer:
+            edit_diff["correct_answer"] = {"old": original_answer, "new": improved_answer}
+        if improved_explanation != original_explanation:
+            edit_diff["explanation"] = {"old": original_explanation, "new": improved_explanation}
+
+        # Update the vetting log with edit info
+        vetting_log.edited_text = improved_text
+        vetting_log.edit_diff = edit_diff
+
+        # Apply improvements to the question
+        question.question_text = improved_text
+        if improved_options:
+            question.options = improved_options
+        question.correct_answer = improved_answer
+        question.explanation = improved_explanation
+        question.vetting_status = "pending"  # Back to pending for re-review
+        question.vetted_at = datetime.now(timezone.utc)
+        question.vetted_by = current_user.id
+
+        # Create DPO training pair (original=rejected, improved=chosen)
+        generation_prompt = _reconstruct_prompt(question)
+        training_pair = TrainingPair(
+            prompt=generation_prompt,
+            chosen_response=improved_text,
+            rejected_response=original_text,
+            vetting_log_id=vetting_log.id,
+            chosen_question_id=question.id,
+            rejected_question_id=question.id,
+            pair_type="edit",
+            confidence=0.8,  # Slightly lower than manual edit since LLM-mediated
+        )
+        db.add(training_pair)
+
+        await db.commit()
+        return {
+            "message": "Question improved based on feedback",
+            "question_id": str(question_id),
+            "decision": "reject",
+            "improved": True,
+            "regenerated": False,
+            "improved_text": improved_text,
+            "improved_options": improved_options,
+            "improved_answer": improved_answer,
+            "improved_explanation": improved_explanation,
+            "changes": edit_diff,
+        }
+
+    except Exception as e:
+        logger.error(f"reject-with-feedback improve failed: {e}")
+        # Fallback: just reject without improvement
+        question.vetting_status = "rejected"
+        question.vetted_at = datetime.now(timezone.utc)
+        question.vetted_by = current_user.id
+
+        generation_prompt = _reconstruct_prompt(question)
+        training_pair = TrainingPair(
+            prompt=generation_prompt,
+            chosen_response="",
+            rejected_response=original_text,
+            vetting_log_id=vetting_log.id,
+            rejected_question_id=question.id,
+            pair_type="reject_approve",
+            status="pending",
+            confidence=0.7,
+        )
+        db.add(training_pair)
+        await db.commit()
+
+        return {
+            "message": "Question rejected (improvement failed, saved as training signal)",
+            "question_id": str(question_id),
+            "decision": "reject",
+            "improved": False,
+            "regenerated": False,
+            "error": str(e),
+        }
 
 
 # ============== Reject and Regenerate ==============

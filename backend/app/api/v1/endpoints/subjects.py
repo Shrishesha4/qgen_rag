@@ -278,6 +278,8 @@ async def create_topic(
         name=topic_data.name,
         description=topic_data.description,
         order_index=topic_data.order_index,
+        syllabus_content=getattr(topic_data, 'syllabus_content', None),
+        has_syllabus=bool(getattr(topic_data, 'syllabus_content', None)),
     )
     db.add(topic)
     

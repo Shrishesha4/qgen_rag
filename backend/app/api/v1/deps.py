@@ -121,9 +121,10 @@ async def get_current_vetter(
     current_user: User = Depends(get_current_user),
 ) -> User:
     """
-    Dependency to get current user with vetter or admin role.
+    Dependency to get current user with vetter, teacher, or admin role.
+    Teachers can access vetter endpoints scoped to their own data.
     """
-    if current_user.role not in ("vetter", "admin") and not current_user.is_superuser:
+    if current_user.role not in ("vetter", "admin", "teacher") and not current_user.is_superuser:
         raise HTTPException(
             status_code=status.HTTP_403_FORBIDDEN,
             detail="Vetter access required",

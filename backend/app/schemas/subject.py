@@ -55,6 +55,7 @@ class TopicBase(BaseModel):
 class TopicCreate(TopicBase):
     """Schema for creating a Topic."""
     subject_id: uuid.UUID
+    syllabus_content: Optional[str] = None
 
 
 class TopicUpdate(BaseModel):

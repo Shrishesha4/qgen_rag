@@ -89,7 +89,10 @@ class EmbeddingService:
 
     def __init__(self):
         if self._client is None:
-            self._ollama_url = f"{settings.OLLAMA_BASE_URL}/api/embed"
+            self._ollama_base = settings.OLLAMA_BASE_URL
+            self._ollama_url = f"{self._ollama_base}/api/embed"
+            self._ollama_url_legacy = f"{self._ollama_base}/api/embeddings"
+            self._verified_endpoint = None  # Will be set after first successful call
             self._model = settings.EMBEDDING_MODEL
             self._client = httpx.AsyncClient(timeout=60.0)
             self._cache = LRUCache(max_size=10000)
@@ -110,7 +113,49 @@ class EmbeddingService:
         return hashlib.md5(key_str.encode()).hexdigest()
 
     async def _call_ollama(self, text: str) -> List[float]:
-        """Call Ollama embedding API for a single text."""
+        """Call Ollama embedding API, trying both modern and legacy endpoints."""
+        try:
+            # If we've already verified which endpoint works, use it directly
+            if self._verified_endpoint == "modern":
+                return await self._try_modern(text)
+            elif self._verified_endpoint == "legacy":
+                return await self._try_legacy(text)
+
+            # Try modern endpoint first (/api/embed)
+            try:
+                result = await self._try_modern(text)
+                self._verified_endpoint = "modern"
+                return result
+            except httpx.HTTPStatusError as e:
+                if e.response.status_code == 404:
+                    logger.info("Ollama /api/embed not available, trying /api/embeddings")
+                else:
+                    raise
+
+            # Try legacy endpoint (/api/embeddings)
+            try:
+                result = await self._try_legacy(text)
+                self._verified_endpoint = "legacy"
+                return result
+            except httpx.HTTPStatusError as e:
+                if e.response.status_code == 404:
+                    # Neither endpoint works — reset verified so next call retries
+                    self._verified_endpoint = None
+                    raise RuntimeError(
+                        f"Ollama at {self._ollama_base} does not support embedding endpoints "
+                        f"(/api/embed or /api/embeddings). Ensure nomic-embed-text is pulled: "
+                        f"ollama pull nomic-embed-text"
+                    ) from e
+                raise
+        except httpx.ConnectError as e:
+            self._verified_endpoint = None  # Reset so next attempt retries
+            raise RuntimeError(
+                f"Cannot connect to Ollama at {self._ollama_base}. "
+                f"Ensure Ollama is running and accessible. Error: {e}"
+            ) from e
+
+    async def _try_modern(self, text: str) -> List[float]:
+        """Call modern /api/embed endpoint."""
         response = await self._client.post(
             self._ollama_url,
             json={"model": self._model, "input": text},
@@ -119,15 +164,59 @@ class EmbeddingService:
         data = response.json()
         return data["embeddings"][0]
 
-    async def _call_ollama_batch(self, texts: List[str]) -> List[List[float]]:
-        """Call Ollama embedding API for a batch of texts."""
+    async def _try_legacy(self, text: str) -> List[float]:
+        """Call legacy /api/embeddings endpoint."""
         response = await self._client.post(
-            self._ollama_url,
-            json={"model": self._model, "input": texts},
+            self._ollama_url_legacy,
+            json={"model": self._model, "prompt": text},
         )
         response.raise_for_status()
         data = response.json()
-        return data["embeddings"]
+        return data["embedding"]
+
+    async def _call_ollama_batch(self, texts: List[str]) -> List[List[float]]:
+        """Call Ollama embedding API for a batch of texts."""
+        try:
+            if self._verified_endpoint == "legacy":
+                # Legacy doesn't support batching
+                return [await self._try_legacy(t) for t in texts]
+
+            if self._verified_endpoint == "modern" or self._verified_endpoint is None:
+                try:
+                    response = await self._client.post(
+                        self._ollama_url,
+                        json={"model": self._model, "input": texts},
+                    )
+                    if response.status_code == 404:
+                        logger.info("Ollama /api/embed batch not available, trying legacy per-item")
+                    else:
+                        response.raise_for_status()
+                        self._verified_endpoint = "modern"
+                        return response.json()["embeddings"]
+                except httpx.HTTPStatusError:
+                    pass
+
+                # Fallback to legacy per-item
+                try:
+                    results = [await self._try_legacy(t) for t in texts]
+                    self._verified_endpoint = "legacy"
+                    return results
+                except httpx.HTTPStatusError as e:
+                    if e.response.status_code == 404:
+                        self._verified_endpoint = None
+                        raise RuntimeError(
+                            f"Ollama at {self._ollama_base} does not support embedding endpoints. "
+                            f"Ensure nomic-embed-text is pulled: ollama pull nomic-embed-text"
+                        ) from e
+                    raise
+
+            return [await self._call_ollama(t) for t in texts]
+        except httpx.ConnectError as e:
+            self._verified_endpoint = None
+            raise RuntimeError(
+                f"Cannot connect to Ollama at {self._ollama_base}. "
+                f"Ensure Ollama is running and accessible. Error: {e}"
+            ) from e
 
     async def get_embedding(self, text: str, is_query: bool = True) -> List[float]:
         """

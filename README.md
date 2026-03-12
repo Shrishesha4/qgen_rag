@@ -100,6 +100,9 @@ ollama pull llama3.2:3b-instruct-q4_K_M
 
 # Or use a larger model for better quality
 ollama pull llama3.1:8b-instruct-q4_K_M
+
+# Pull the embedding model (required for RAG)
+ollama pull nomic-embed-text
 ```
 
 ### 2b. Alternative: Use Google Gemini API (Cloud)
@@ -155,7 +158,22 @@ npx expo start
 # Scan QR code with Expo Go app (iOS/Android)
 ```
 
-### 5. Access Services
+### 5. Run Trainer Web App (SvelteKit)
+
+```bash
+# Navigate to trainer-web directory
+cd trainer-web
+
+# Install dependencies
+npm install
+
+# Start development server
+npm run dev
+
+# Opens at http://localhost:5173
+```
+
+### 6. Access Services
 
 | Service | URL | Description |
 |---------|-----|-------------|
@@ -163,6 +181,7 @@ npx expo start
 | API Docs | http://localhost:8000/docs | Swagger UI |
 | ReDoc | http://localhost:8000/redoc | Alternative docs |
 | Health | http://localhost:8000/health | Health check |
+| Trainer Web | http://localhost:5173 | SvelteKit trainer dashboard |
 
 ---
 
@@ -506,6 +525,58 @@ docker-compose -f docker-compose.yml -f docker-compose.prod.yml up -d
 - [ ] Set `LOG_JSON=true` for centralized logging
 - [ ] Configure backup for PostgreSQL volumes
 - [ ] Use Docker secrets for sensitive values
+
+---
+
+## 🧠 Training Pipeline (LoRA Fine-Tuning)
+
+The trainer web app provides a full feedback loop: generate questions → vet/edit them → fine-tune the local model using approved/rejected data.
+
+### How It Works
+
+1. **Question Generation** — Teachers upload documents and generate questions via the RAG pipeline.
+2. **Vetting** — Teachers or vetters review generated questions (approve, reject, or edit).
+3. **Training Data Collection** — Approved questions become SFT training pairs. Edits and rejections become DPO pairs (chosen vs rejected).
+4. **Fine-Tuning** — An admin triggers LoRA fine-tuning on the collected data, producing a new model version.
+5. **Activation** — The new model version can be activated for subsequent question generation.
+
+### Setup (GPU Required)
+
+```bash
+# 1. Install training dependencies
+cd backend
+pip install transformers>=4.40.0 peft>=0.10.0 trl>=0.8.0 \
+            datasets>=2.18.0 accelerate>=0.29.0 bitsandbytes>=0.43.0
+
+# 2. Configure environment variables (in .env)
+TRAINING_DATA_DIR=./training_data       # Exported SFT/DPO JSONL files
+LORA_ADAPTERS_DIR=./lora_adapters       # Saved LoRA adapter checkpoints
+TRAINING_BASE_MODEL=deepseek-ai/DeepSeek-R1-Distill-Llama-8B  # HuggingFace model ID
+
+# 3. The base model downloads automatically on first training run (~16 GB)
+# Ensure you have sufficient disk space and a CUDA-capable GPU with >= 16 GB VRAM.
+```
+
+### Training API Endpoints
+
+| Endpoint | Method | Description |
+|----------|--------|-------------|
+| `/api/v1/training/status` | GET | Current training status & data counts |
+| `/api/v1/training/trigger` | POST | Start a new training job (admin only) |
+| `/api/v1/training/versions` | GET | List all model versions |
+| `/api/v1/training/versions/{id}/activate` | POST | Activate a model version (admin only) |
+| `/api/v1/training/jobs` | GET | List training job history |
+| `/api/v1/training/pairs` | GET | Browse collected training pairs |
+
+### LoRA Configuration
+
+| Parameter | Default | Description |
+|-----------|---------|-------------|
+| Rank (r) | 16 | Low-rank dimension |
+| Alpha | 32 | Scaling factor (alpha/r = 2) |
+| Dropout | 0.05 | LoRA dropout rate |
+| Target modules | q_proj, v_proj | Attention weight matrices |
+| Training method | SFT (default), DPO | Supervised or preference-based |
 
 ---
 

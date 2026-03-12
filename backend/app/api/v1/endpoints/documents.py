@@ -572,7 +572,7 @@ Rules:
 async def upload_reference_document(
     file: UploadFile = File(..., description="Reference book PDF, template paper PDF, or reference questions PDF/Excel/CSV"),
     subject_id: str = Form(..., description="Subject ID to associate the document with"),
-    index_type: Literal["reference_book", "template_paper", "reference_questions"] = Form(..., description="Type of reference material"),
+    index_type: Literal["primary", "reference_book", "template_paper", "reference_questions"] = Form(..., description="Type of reference material"),
     current_user: User = Depends(rate_limit(requests=20, window_seconds=3600)),
     db: AsyncSession = Depends(get_db),
 ):
