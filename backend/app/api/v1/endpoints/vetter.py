@@ -156,6 +156,7 @@ class VetQuestionSubmitRequest(BaseModel):
     # General feedback
     feedback: Optional[str] = None
     notes: Optional[str] = None
+    approved_difficulty: Optional[str] = Field(None, pattern="^(easy|medium|hard)$")
     course_outcome_mapping: Optional[dict] = None
     # Timing (front-end tracks how long the vetter spent)
     time_spent_seconds: Optional[int] = None
@@ -718,7 +719,9 @@ async def submit_vetting(
 
     # 1. Load the question
     result = await db.execute(
-        select(Question).where(
+        select(Question)
+        .options(selectinload(Question.topic), selectinload(Question.subject))
+        .where(
             Question.id == data.question_id,
             Question.is_latest == True,
             Question.is_archived == False,
@@ -727,6 +730,12 @@ async def submit_vetting(
     question = result.scalar_one_or_none()
     if not question:
         raise HTTPException(status_code=404, detail="Question not found")
+
+    if data.approved_difficulty and data.decision != "approve":
+        raise HTTPException(
+            status_code=400,
+            detail="approved_difficulty can only be sent with approve decisions",
+        )
 
     # 2. Build the edit diff (for 'edit' decisions)
     edit_diff = None
@@ -752,6 +761,7 @@ async def submit_vetting(
         edit_diff=edit_diff,
         rejection_reasons=data.rejection_reasons if data.decision == "reject" else None,
         feedback=data.feedback or data.notes,
+        approved_difficulty=data.approved_difficulty if data.decision == "approve" else None,
         time_spent_seconds=data.time_spent_seconds,
     )
 
@@ -770,6 +780,8 @@ async def submit_vetting(
     # 4. Update the question itself
     if data.decision == "approve":
         question.vetting_status = "approved"
+        if data.approved_difficulty:
+            question.difficulty_level = data.approved_difficulty
     elif data.decision == "reject":
         question.vetting_status = "rejected"
     elif data.decision == "edit":
@@ -786,7 +798,7 @@ async def submit_vetting(
 
     question.vetted_at = datetime.now(timezone.utc)
     question.vetted_by = current_user.id
-    question.vetting_notes = data.notes
+    question.vetting_notes = data.notes or data.feedback
 
     if data.course_outcome_mapping:
         question.course_outcome_mapping = data.course_outcome_mapping
@@ -826,8 +838,14 @@ async def submit_vetting(
 
     await db.commit()
 
+    action_label = {
+        "approve": "approved",
+        "reject": "rejected",
+        "edit": "updated",
+    }[data.decision]
+
     return {
-        "message": f"Question {data.decision}d successfully",
+        "message": f"Question {action_label} successfully",
         "question_id": str(data.question_id),
         "decision": data.decision,
         "vetting_log_id": str(vetting_log.id),
@@ -852,8 +870,11 @@ def _reconstruct_prompt(question: Question) -> str:
         parts.append(f"Generate a {question.question_type or 'question'}")
         if question.difficulty_level:
             parts.append(f"at {question.difficulty_level} difficulty")
-        if question.topic and hasattr(question.topic, 'name'):
-            parts.append(f"about {question.topic.name}")
+        loaded_topic = question.__dict__.get("topic")
+        if loaded_topic and getattr(loaded_topic, "name", None):
+            parts.append(f"about {loaded_topic.name}")
+        elif question.topic_tags:
+            parts.append(f"about {question.topic_tags[0]}")
     return "\n".join(parts)
 
 

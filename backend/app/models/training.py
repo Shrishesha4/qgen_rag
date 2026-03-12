@@ -98,6 +98,12 @@ class VettingLog(Base):
     # Free-text feedback
     feedback: Mapped[Optional[str]] = mapped_column(Text)
 
+    # Rich approval metadata
+    approved_difficulty: Mapped[Optional[str]] = mapped_column(
+        String(20),
+        comment="easy | medium | hard when an approval is explicitly graded",
+    )
+
     # Critique scores (from Constitutional AI auto-review, if available)
     auto_critique_score: Mapped[Optional[float]] = mapped_column(Float)
     auto_critique_reasons: Mapped[Optional[dict]] = mapped_column(JSONB)

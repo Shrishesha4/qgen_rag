@@ -4,11 +4,10 @@
 	import { page } from '$app/stores';
 	import { session } from '$lib/session';
 	import ThemeSelector from '$lib/components/ThemeSelector.svelte';
+	import VoiceRecorder from '$lib/components/VoiceRecorder.svelte';
 	import {
 		getQuestionsForVetting,
 		submitVetting,
-		updateVettedQuestion,
-		rejectWithFeedback,
 		type QuestionForVetting,
 	} from '$lib/api/vetting';
 
@@ -66,27 +65,13 @@
 	let editExplanation = $state('');
 	let optionInputRefs = $state<Array<HTMLInputElement | null>>([]);
 	let activeOptionEditIndex = $state<number | null>(null);
+	type ApprovalDifficulty = 'easy' | 'medium' | 'hard';
+	type PendingVoiceAction = { kind: 'approve'; level: ApprovalDifficulty } | { kind: 'reject' };
 
 	// Source references
 	let showSources = $state(false);
 
-	// Rejection feedback modal
-	let showRejectModal = $state(false);
-	let rejectFeedback = $state('');
-	let rejectReasons = $state<string[]>([]);
-	let rejectGenerateNew = $state(false);
-	let rejectSubmitting = $state(false);
-
-	const REJECTION_REASONS = [
-		'Incorrect answer',
-		'Ambiguous question',
-		'Too vague',
-		'Out of scope',
-		'Poor difficulty level',
-		'Grammar/spelling issues',
-		'Duplicate concept',
-		'Missing key details',
-	];
+	let voiceAction = $state<PendingVoiceAction | null>(null);
 
 	let currentQuestion = $derived(questions[currentIndex]);
 	let totalReviewed = $derived(approved.size + rejected.size);
@@ -94,6 +79,18 @@
 	let isReviewed = $derived(
 		currentQuestion ? approved.has(currentQuestion.id) || rejected.has(currentQuestion.id) : false
 	);
+	let showAllCaughtUp = $derived(questions.length > 0 && totalReviewed >= questions.length);
+	let voiceRecorderTitle = $derived.by(() => {
+		if (!voiceAction) return '';
+		if (voiceAction.kind === 'reject') return 'Reject Question';
+		return `Grade as ${voiceAction.level[0].toUpperCase()}${voiceAction.level.slice(1)}`;
+	});
+	let voiceRecorderAccent = $derived.by(() => {
+		if (!voiceAction) return 'blue';
+		if (voiceAction.kind === 'reject') return 'rose';
+		return voiceAction.level === 'easy' ? 'emerald' : voiceAction.level === 'medium' ? 'amber' : 'rose';
+	});
+	let voiceRecorderSubmitLabel = $derived(voiceAction?.kind === 'reject' ? 'Reject & Next' : 'Approve & Next');
 
 	async function loadQuestions() {
 		loading = true;
@@ -210,15 +207,38 @@
 		}
 	}
 
-	async function approve() {
+	function openApprovalRecorder(level: ApprovalDifficulty) {
+		if (!currentQuestion || submitting) return;
+		voiceAction = { kind: 'approve', level };
+	}
+
+	function openRejectRecorder() {
+		if (!currentQuestion || submitting) return;
+		voiceAction = { kind: 'reject' };
+	}
+
+	function closeVoiceRecorder() {
+		if (submitting) return;
+		voiceAction = null;
+	}
+
+	async function submitApproval(level: ApprovalDifficulty, transcript: string) {
 		if (!currentQuestion || submitting) return;
 		submitting = true;
+		error = '';
 		try {
 			await submitVetting({
 				question_id: currentQuestion.id,
 				decision: 'approve',
+				approved_difficulty: level,
+				feedback: transcript,
+				notes: transcript,
 			});
+			questions = questions.map((question, index) =>
+				index === currentIndex ? { ...question, difficulty_level: level } : question
+			);
 			approved = new Set([...approved, currentQuestion.id]);
+			voiceAction = null;
 			advance();
 		} catch (e: unknown) {
 			error = e instanceof Error ? e.message : 'Failed to submit';
@@ -227,27 +247,35 @@
 		}
 	}
 
-	async function approveWithDifficulty(level: 'easy' | 'medium' | 'hard') {
+	async function submitRejection(transcript: string) {
 		if (!currentQuestion || submitting) return;
 		submitting = true;
+		error = '';
 		try {
-			if (currentQuestion.difficulty_level !== level) {
-				await updateVettedQuestion(currentQuestion.id, { difficulty_level: level });
-				questions = questions.map((question, index) =>
-					index === currentIndex ? { ...question, difficulty_level: level } : question
-				);
-			}
 			await submitVetting({
 				question_id: currentQuestion.id,
-				decision: 'approve',
+				decision: 'reject',
+				feedback: transcript,
+				notes: transcript,
 			});
-			approved = new Set([...approved, currentQuestion.id]);
+			rejected = new Set([...rejected, currentQuestion.id]);
+			voiceAction = null;
 			advance();
 		} catch (e: unknown) {
-			error = e instanceof Error ? e.message : 'Failed to submit';
+			error = e instanceof Error ? e.message : 'Failed to submit rejection';
 		} finally {
 			submitting = false;
 		}
+	}
+
+	async function handleVoiceRecorderSubmit(transcript: string) {
+		if (!voiceAction) return;
+		const action = voiceAction;
+		if (action.kind === 'reject') {
+			await submitRejection(transcript);
+			return;
+		}
+		await submitApproval(action.level, transcript);
 	}
 
 	function formatRelativeTime(iso: string): string {
@@ -260,71 +288,6 @@
 		return `${Math.floor(hrs / 24)} days ago`;
 	}
 
-	function openRejectModal() {
-		if (!currentQuestion) return;
-		rejectFeedback = '';
-		rejectReasons = [];
-		rejectGenerateNew = false;
-		showRejectModal = true;
-	}
-
-	function closeRejectModal() {
-		showRejectModal = false;
-		rejectFeedback = '';
-		rejectReasons = [];
-		rejectGenerateNew = false;
-	}
-
-	function toggleReason(reason: string) {
-		if (rejectReasons.includes(reason)) {
-			rejectReasons = rejectReasons.filter(r => r !== reason);
-		} else {
-			rejectReasons = [...rejectReasons, reason];
-		}
-	}
-
-	async function submitRejection() {
-		if (!currentQuestion || rejectSubmitting) return;
-		if (!rejectFeedback.trim() && rejectReasons.length === 0) {
-			error = 'Please provide feedback or select at least one reason';
-			return;
-		}
-		rejectSubmitting = true;
-		error = '';
-		try {
-			const result = await rejectWithFeedback(currentQuestion.id, {
-				feedback: rejectFeedback.trim() || rejectReasons.join('; '),
-				rejection_reasons: rejectReasons.length > 0 ? rejectReasons : undefined,
-				generate_new: rejectGenerateNew,
-			});
-
-			if (result.improved && result.improved_text) {
-				const updatedQ = { ...currentQuestion };
-				updatedQ.question_text = result.improved_text;
-				if (result.improved_options) updatedQ.options = result.improved_options;
-				if (result.improved_answer) updatedQ.correct_answer = result.improved_answer;
-				if (result.improved_explanation) updatedQ.explanation = result.improved_explanation;
-				updatedQ.vetting_status = 'pending';
-				questions = questions.map(q => q.id === currentQuestion!.id ? updatedQ : q);
-			} else if (result.regenerated && result.new_question_id) {
-				if (result.new_question) {
-					replaceCurrentQuestion(result.new_question);
-				} else {
-					rejected = new Set([...rejected, currentQuestion.id]);
-					advance();
-				}
-			} else {
-				rejected = new Set([...rejected, currentQuestion.id]);
-				advance();
-			}
-			closeRejectModal();
-		} catch (e: unknown) {
-			error = e instanceof Error ? e.message : 'Failed to submit rejection';
-		} finally {
-			rejectSubmitting = false;
-		}
-	}
-
 	function replaceCurrentQuestion(replacement: QuestionForVetting) {
 		questions = questions.map((question, index) => (index === currentIndex ? replacement : question));
 		showSources = false;
@@ -335,6 +298,7 @@
 	function advance() {
 		showSources = false;
 		editing = false;
+		voiceAction = null;
 		for (let i = currentIndex + 1; i < questions.length; i++) {
 			if (!approved.has(questions[i].id) && !rejected.has(questions[i].id)) {
 				currentIndex = i;
@@ -409,6 +373,29 @@
 			<p>No pending questions to review</p>
 			<p class="sub-text">All questions have been vetted</p>
 			<button class="glass-btn" onclick={goBack}>← Go Back</button>
+		</div>
+	{:else if showAllCaughtUp}
+		<div class="caught-up-panel glass-panel animate-fade-in">
+			<span class="caught-up-kicker">Review complete</span>
+			<h2 class="caught-up-title font-serif">All Caught Up</h2>
+			<p class="caught-up-copy">Every question in this queue has been reviewed.</p>
+			<div class="caught-up-stats">
+				<div class="caught-up-stat">
+					<span class="caught-up-value">{approved.size}</span>
+					<span class="caught-up-label">Approved</span>
+				</div>
+				<div class="caught-up-stat">
+					<span class="caught-up-value">{rejected.size}</span>
+					<span class="caught-up-label">Rejected</span>
+				</div>
+				<div class="caught-up-stat">
+					<span class="caught-up-value">{questions.length}</span>
+					<span class="caught-up-label">Reviewed</span>
+				</div>
+			</div>
+			<div class="caught-up-actions">
+				<button class="glass-btn finish-btn" onclick={finish}>Back to dashboard</button>
+			</div>
 		</div>
 	{:else}
 		{#if error}
@@ -516,7 +503,6 @@
 						<div class="answer-panel glass-panel">
 							<div class="answer-panel-head">
 								<span class="answer-panel-title">Answer Options</span>
-								<span class="answer-panel-hint">Correct answer highlighted</span>
 							</div>
 							<div class="options">
 							{#each currentQuestion.options as opt, idx}
@@ -584,23 +570,23 @@
 
 			<!-- Action buttons -->
 			{#if !isReviewed && !editing}
-				<div class="edit-inline-row">
+				<!-- <div class="edit-inline-row">
 					<button class="edit-inline-btn" onclick={startEdit}>Edit question</button>
-				</div>
+				</div> -->
 				<div class="grading-grid">
-					<button class="grade-card easy" onclick={() => approveWithDifficulty('easy')} disabled={submitting}>
+					<button class="grade-card easy" onclick={() => openApprovalRecorder('easy')} disabled={submitting}>
 						<span class="grade-badge">E</span>
 						<span class="grade-label">Easy</span>
 					</button>
-					<button class="grade-card medium" onclick={() => approveWithDifficulty('medium')} disabled={submitting}>
+					<button class="grade-card medium" onclick={() => openApprovalRecorder('medium')} disabled={submitting}>
 						<span class="grade-badge">M</span>
 						<span class="grade-label">Medium</span>
 					</button>
-					<button class="grade-card hard" onclick={() => approveWithDifficulty('hard')} disabled={submitting}>
+					<button class="grade-card hard" onclick={() => openApprovalRecorder('hard')} disabled={submitting}>
 						<span class="grade-badge">H</span>
 						<span class="grade-label">Hard</span>
 					</button>
-					<button class="grade-card reject" onclick={openRejectModal} disabled={submitting}>
+					<button class="grade-card reject" onclick={openRejectRecorder} disabled={submitting}>
 						<span class="grade-badge">×</span>
 						<span class="grade-label">Reject</span>
 					</button>
@@ -615,17 +601,6 @@
 				</div>
 			{/if}
 
-			<!-- Finish -->
-			{#if totalReviewed >= questions.length}
-				<div class="finish-section">
-					<button class="glass-btn finish-btn" onclick={finish}>
-						🎉 Finish Review
-					</button>
-					<p class="finish-stats">
-						Approved: {approved.size} · Rejected: {rejected.size}
-					</p>
-				</div>
-			{/if}
 		{:else}
 			<div class="empty-state">
 				<span class="empty-icon">✅</span>
@@ -636,63 +611,14 @@
 	{/if}
 </div>
 
-<!-- Rejection Feedback Modal -->
-{#if showRejectModal}
-	<!-- svelte-ignore a11y_no_static_element_interactions a11y_click_events_have_key_events a11y_interactive_supports_focus -->
-	<div class="modal-overlay" onclick={closeRejectModal} onkeydown={(e) => e.key === 'Escape' && closeRejectModal()}>
-		<!-- svelte-ignore a11y_click_events_have_key_events a11y_no_static_element_interactions -->
-		<div class="modal glass-panel" onclick={(e) => e.stopPropagation()} role="dialog" aria-modal="true" tabindex="-1">
-			<div class="modal-header">
-				<h3 class="modal-title">Rejection Feedback</h3>
-				<button class="modal-close" onclick={closeRejectModal}>✕</button>
-			</div>
-
-			<div class="modal-body">
-				<p class="modal-desc">Help the AI improve by providing feedback on why this question was rejected.</p>
-
-				<div class="reason-chips">
-					{#each REJECTION_REASONS as reason}
-						<button
-							class="reason-chip"
-							class:selected={rejectReasons.includes(reason)}
-							onclick={() => toggleReason(reason)}
-						>{reason}</button>
-					{/each}
-				</div>
-
-				<label class="feedback-label" for="reject-feedback">Detailed Feedback</label>
-				<textarea
-					id="reject-feedback"
-					class="feedback-textarea"
-					bind:value={rejectFeedback}
-					placeholder="Describe what's wrong and how it should be improved..."
-					rows="3"
-				></textarea>
-
-				<label class="checkbox-row">
-					<input type="checkbox" bind:checked={rejectGenerateNew} />
-					<span>Generate entirely new question (instead of improving this one)</span>
-				</label>
-			</div>
-
-			<div class="modal-actions">
-				<button class="glass-btn" onclick={closeRejectModal}>Cancel</button>
-				<button
-					class="action-btn reject-btn"
-					onclick={submitRejection}
-					disabled={rejectSubmitting || (!rejectFeedback.trim() && rejectReasons.length === 0)}
-				>
-					{#if rejectSubmitting}
-						Submitting...
-					{:else if rejectGenerateNew}
-						✗ Reject & Replace
-					{:else}
-						✗ Reject & Improve
-					{/if}
-				</button>
-			</div>
-		</div>
-	</div>
+{#if voiceAction}
+	<VoiceRecorder
+		title={voiceRecorderTitle}
+		accent={voiceRecorderAccent}
+		submitLabel={voiceRecorderSubmitLabel}
+		onSubmit={handleVoiceRecorderSubmit}
+		onCancel={closeVoiceRecorder}
+	/>
 {/if}
 
 <style>
@@ -800,51 +726,76 @@
 		justify-content: center;
 	}
 
-	.action-btn {
-		display: flex;
-		align-items: center;
-		gap: 0.5rem;
-		padding: 0.85rem 2rem;
-		border: none;
-		border-radius: var(--glass-radius-sm);
-		font-size: 1rem;
-		font-weight: 700;
-		cursor: pointer;
-		transition: all 0.2s;
-		backdrop-filter: blur(12px);
-		-webkit-backdrop-filter: blur(12px);
-		font-family: inherit;
-	}
-
-	.reject-btn {
-		background: rgba(233, 69, 96, 0.3);
-		border: 1px solid rgba(233, 69, 96, 0.4);
-		color: #f07888;
-	}
-
-	.reject-btn:hover {
-		background: rgba(233, 69, 96, 0.45);
-		transform: translateY(-2px);
-		box-shadow: 0 4px 16px rgba(233, 69, 96, 0.2);
-	}
-
-	.finish-section {
-		display: flex;
-		flex-direction: column;
-		align-items: center;
-		gap: 0.75rem;
-		margin-top: 1rem;
-	}
-
 	.finish-btn {
 		padding: 0.85rem 2.5rem;
 		font-size: 1rem;
 	}
 
-	.finish-stats {
-		font-size: 0.85rem;
-		color: var(--theme-text-muted);
+	.caught-up-panel {
+		padding: 2rem 1.5rem;
+		display: flex;
+		flex-direction: column;
+		align-items: center;
+		gap: 1rem;
+		text-align: center;
+	}
+
+	.caught-up-kicker {
+		font-size: 0.75rem;
+		font-weight: 700;
+		letter-spacing: 0.16em;
+		text-transform: uppercase;
+		color: rgba(110, 232, 122, 0.82);
+	}
+
+	.caught-up-title {
 		margin: 0;
+		font-size: clamp(2.1rem, 6vw, 3.25rem);
+		color: var(--theme-text);
+	}
+
+	.caught-up-copy {
+		margin: 0;
+		max-width: 30rem;
+		font-size: 0.98rem;
+		line-height: 1.6;
+		color: var(--theme-text-muted);
+	}
+
+	.caught-up-stats {
+		width: 100%;
+		display: grid;
+		grid-template-columns: repeat(3, minmax(0, 1fr));
+		gap: 0.85rem;
+	}
+
+	.caught-up-stat {
+		padding: 1rem;
+		border-radius: 1rem;
+		background: rgba(255, 255, 255, 0.05);
+		border: 1px solid rgba(255, 255, 255, 0.08);
+		display: flex;
+		flex-direction: column;
+		gap: 0.35rem;
+	}
+
+	.caught-up-value {
+		font-size: 1.8rem;
+		font-weight: 700;
+		color: var(--theme-text);
+	}
+
+	.caught-up-label {
+		font-size: 0.82rem;
+		letter-spacing: 0.08em;
+		text-transform: uppercase;
+		color: var(--theme-text-muted);
+	}
+
+	.caught-up-actions {
+		display: flex;
+		justify-content: center;
+		width: 100%;
 	}
 
 	/* Edit mode */
@@ -1058,6 +1009,10 @@
 			justify-content: stretch;
 		}
 
+		.caught-up-stats {
+			grid-template-columns: 1fr;
+		}
+
 		.edit-footer-btn {
 			flex: 1;
 		}
@@ -1213,145 +1168,6 @@
 		font-family: inherit;
 	}
 
-	/* Modal */
-	.modal-overlay {
-		position: fixed;
-		inset: 0;
-		background: rgba(0, 0, 0, 0.6);
-		backdrop-filter: blur(4px);
-		-webkit-backdrop-filter: blur(4px);
-		display: flex;
-		align-items: center;
-		justify-content: center;
-		z-index: 1000;
-		padding: 1rem;
-	}
-
-	.modal {
-		width: 100%;
-		max-width: 480px;
-		max-height: 90vh;
-		overflow-y: auto;
-		padding: 1.5rem;
-		display: flex;
-		flex-direction: column;
-		gap: 1rem;
-	}
-
-	.modal-header {
-		display: flex;
-		justify-content: space-between;
-		align-items: center;
-	}
-
-	.modal-title {
-		font-size: 1.1rem;
-		font-weight: 700;
-		color: var(--theme-text);
-		margin: 0;
-	}
-
-	.modal-close {
-		background: none;
-		border: none;
-		color: var(--theme-text-muted);
-		font-size: 1.2rem;
-		cursor: pointer;
-		padding: 0.25rem;
-		font-family: inherit;
-	}
-
-	.modal-body {
-		display: flex;
-		flex-direction: column;
-		gap: 0.75rem;
-	}
-
-	.modal-desc {
-		font-size: 0.85rem;
-		color: var(--theme-text-muted);
-		margin: 0;
-		line-height: 1.4;
-	}
-
-	.reason-chips {
-		display: flex;
-		flex-wrap: wrap;
-		gap: 0.4rem;
-	}
-
-	.reason-chip {
-		padding: 0.3rem 0.65rem;
-		font-size: 0.78rem;
-		border-radius: 16px;
-		border: 1px solid rgba(255, 255, 255, 0.12);
-		background: rgba(255, 255, 255, 0.04);
-		color: var(--theme-text-muted);
-		cursor: pointer;
-		transition: all 0.15s;
-		font-family: inherit;
-	}
-
-	.reason-chip:hover { background: rgba(255, 255, 255, 0.08); }
-
-	.reason-chip.selected {
-		background: rgba(233, 69, 96, 0.2);
-		border-color: rgba(233, 69, 96, 0.4);
-		color: #f07888;
-	}
-
-	.feedback-label {
-		font-size: 0.75rem;
-		font-weight: 700;
-		text-transform: uppercase;
-		letter-spacing: 0.05em;
-		color: var(--theme-text-muted);
-	}
-
-	.feedback-textarea {
-		width: 100%;
-		padding: 0.6rem 0.8rem;
-		background: rgba(255, 255, 255, 0.06);
-		border: 1px solid rgba(255, 255, 255, 0.12);
-		border-radius: 8px;
-		color: var(--theme-text);
-		font-family: inherit;
-		font-size: 0.9rem;
-		line-height: 1.5;
-		resize: vertical;
-	}
-
-	.feedback-textarea:focus {
-		outline: none;
-		border-color: var(--theme-primary);
-		box-shadow: 0 0 0 2px rgba(var(--theme-primary-rgb), 0.15);
-	}
-
-	.checkbox-row {
-		display: flex;
-		align-items: center;
-		gap: 0.5rem;
-		font-size: 0.85rem;
-		color: var(--theme-text-muted);
-		cursor: pointer;
-	}
-
-	.checkbox-row input[type="checkbox"] {
-		accent-color: var(--theme-primary);
-		width: 16px;
-		height: 16px;
-		cursor: pointer;
-	}
-
-	.modal-actions {
-		display: flex;
-		gap: 0.75rem;
-		justify-content: flex-end;
-	}
-
-	.modal-actions .reject-btn { padding: 0.65rem 1.5rem; }
-	.modal-actions .reject-btn:disabled { opacity: 0.4; cursor: not-allowed; }
-
 	.loop-page {
 		max-width: 1024px;
 		padding-top: 2rem;
@@ -1496,12 +1312,6 @@
 		letter-spacing: 0.12em;
 		text-transform: uppercase;
 		color: rgba(255, 255, 255, 0.65);
-	}
-
-	.answer-panel-hint {
-		font-size: 0.95rem;
-		font-weight: 600;
-		color: #31d0a1;
 	}
 
 	.options {
@@ -1661,11 +1471,6 @@
 		.options,
 		.grading-grid {
 			grid-template-columns: 1fr;
-		}
-
-		.answer-panel-head {
-			flex-direction: column;
-			align-items: flex-start;
 		}
 	}
 </style>

@@ -65,6 +65,7 @@ export interface QuestionListResult {
 export interface VetSubmission {
 	question_id: string;
 	decision: 'approve' | 'reject' | 'edit';
+	approved_difficulty?: 'easy' | 'medium' | 'hard';
 	edited_text?: string;
 	edited_options?: string[];
 	edited_answer?: string;
