@@ -253,32 +253,34 @@
 
 	async function submitRejection(transcript: string) {
 		if (!currentQuestion || submitting) return;
+		const questionToReplace = currentQuestion;
 		submitting = true;
 		error = '';
 		voiceAction = null;
 		regenerating = true;
 		try {
-			const res = await rejectWithFeedback(currentQuestion.id, {
+			const res = await rejectWithFeedback(questionToReplace.id, {
 				feedback: transcript,
 			});
 
-			if (res.improved && res.improved_text) {
-				// LLM improved the question — update in-place for re-review
+			if (res.improved) {
 				replaceCurrentQuestion({
-					...currentQuestion,
-					question_text: res.improved_text,
-					options: res.improved_options ?? currentQuestion.options,
-					correct_answer: res.improved_answer ?? currentQuestion.correct_answer,
-					explanation: res.improved_explanation ?? currentQuestion.explanation,
+					...questionToReplace,
+					question_text: res.improved_text ?? questionToReplace.question_text,
+					options: res.improved_options ?? questionToReplace.options,
+					correct_answer: res.improved_answer ?? questionToReplace.correct_answer,
+					explanation: res.improved_explanation ?? questionToReplace.explanation,
 				});
-			} else if (res.regenerated && res.new_question) {
-				// Brand new replacement question generated
-				replaceCurrentQuestion(res.new_question);
-			} else {
-				// Improvement failed — mark as rejected and move on
-				rejected = new Set([...rejected, currentQuestion.id]);
-				advance();
+				return;
 			}
+
+			if (res.regenerated && res.new_question) {
+				replaceCurrentQuestion(res.new_question);
+				return;
+			}
+
+			rejected = new Set([...rejected, questionToReplace.id]);
+			advance();
 		} catch (e: unknown) {
 			error = e instanceof Error ? e.message : 'Failed to regenerate question';
 		} finally {

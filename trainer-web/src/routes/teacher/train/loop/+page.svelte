@@ -8,6 +8,7 @@
 	import {
 		getQuestionsForVetting,
 		submitVetting,
+		rejectWithFeedback,
 		type QuestionForVetting,
 	} from '$lib/api/vetting';
 	import { generateFromSubject, generateChapter, cancelGeneration, type GenerationEvent } from '$lib/api/documents';
@@ -67,6 +68,7 @@
 	let approved = $state<Set<string>>(new Set());
 	let rejected = $state<Set<string>>(new Set());
 	let submitting = $state(false);
+	let regenerating = $state(false);
 
 	// Background generation
 	const BATCH_SIZE = 5;
@@ -86,7 +88,7 @@
 
 	// Trigger next generation when user has vetted ≥70% of current questions
 	$effect(() => {
-		if (batchComplete || generating || !subjectId) return;
+		if (batchComplete || generating || regenerating || voiceAction?.kind === 'reject' || !subjectId) return;
 		if (nextGenAt === 0) return;
 		if (totalReviewed >= nextGenAt) {
 			nextGenAt = 0; // disarm before async to prevent double-trigger
@@ -127,7 +129,7 @@
 		if (voiceAction.kind === 'reject') return 'rose';
 		return voiceAction.level === 'easy' ? 'emerald' : voiceAction.level === 'medium' ? 'amber' : 'rose';
 	});
-	let voiceRecorderSubmitLabel = $derived(voiceAction?.kind === 'reject' ? 'Reject & Next' : 'Approve & Next');
+	let voiceRecorderSubmitLabel = $derived(voiceAction?.kind === 'reject' ? 'Reject & Regenerate' : 'Approve & Next');
 
 	// Load existing pending questions, then start background generation
 	async function loadAndStream() {
@@ -451,22 +453,39 @@
 
 	async function submitRejection(transcript: string) {
 		if (!currentQuestion || submitting) return;
+		const questionToReplace = currentQuestion;
 		submitting = true;
 		error = '';
+		voiceAction = null;
+		regenerating = true;
 		try {
-			await submitVetting({
-				question_id: currentQuestion.id,
-				decision: 'reject',
+			const res = await rejectWithFeedback(questionToReplace.id, {
 				feedback: transcript,
-				notes: transcript,
 			});
-			rejected = new Set([...rejected, currentQuestion.id]);
-			voiceAction = null;
+
+			if (res.improved) {
+				replaceCurrentQuestion({
+					...questionToReplace,
+					question_text: res.improved_text ?? questionToReplace.question_text,
+					options: res.improved_options ?? questionToReplace.options,
+					correct_answer: res.improved_answer ?? questionToReplace.correct_answer,
+					explanation: res.improved_explanation ?? questionToReplace.explanation,
+				});
+				return;
+			}
+
+			if (res.regenerated && res.new_question) {
+				replaceCurrentQuestion(res.new_question);
+				return;
+			}
+
+			rejected = new Set([...rejected, questionToReplace.id]);
 			advance();
 		} catch (e: unknown) {
 			error = e instanceof Error ? e.message : 'Failed to submit rejection';
 		} finally {
 			submitting = false;
+			regenerating = false;
 		}
 	}
 
@@ -650,8 +669,14 @@
 	{/if}
 
 	{#if currentQuestion}
+		{#if regenerating}
+			<div class="regen-overlay glass-panel animate-fade-in">
+				<div class="regen-spinner"></div>
+				<p class="regen-text">Regenerating question with your feedback…</p>
+			</div>
+		{/if}
 		<!-- Question card -->
-		<div class="question-card glass-panel animate-scale-in">
+		<div class="question-card glass-panel animate-scale-in" class:hidden-during-regen={regenerating}>
 			<div class="q-context">
 				{#if currentQuestion.subject_name}
 					<span class="q-pill">{currentQuestion.subject_name}</span>
@@ -832,7 +857,7 @@
 
 {#if questions.length > 0 && !showAllCaughtUp}
 	<div class="floating-stack">
-		{#if !isReviewed && !editing}
+		{#if !isReviewed && !editing && !regenerating}
 			<!-- <div class="edit-inline-row">
 				<button class="edit-inline-btn" onclick={startEdit}>Edit question</button>
 			</div> -->
@@ -1643,6 +1668,36 @@
 	.empty-state p {
 		color: var(--theme-text-muted);
 		margin: 0;
+	}
+
+	.regen-overlay {
+		display: flex;
+		flex-direction: column;
+		align-items: center;
+		justify-content: center;
+		gap: 1rem;
+		padding: 3rem 2rem;
+		border-radius: 2rem;
+		text-align: center;
+	}
+
+	.regen-spinner {
+		width: 36px;
+		height: 36px;
+		border: 3px solid rgba(255, 255, 255, 0.1);
+		border-top-color: var(--theme-primary);
+		border-radius: 50%;
+		animation: spin 0.7s linear infinite;
+	}
+
+	.regen-text {
+		margin: 0;
+		font-size: 0.95rem;
+		color: var(--theme-text-muted);
+	}
+
+	.hidden-during-regen {
+		display: none;
 	}
 
 	@media (max-width: 768px) {
