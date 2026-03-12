@@ -8,6 +8,7 @@
 	import {
 		getQuestionsForVetting,
 		submitVetting,
+		rejectWithFeedback,
 		type QuestionForVetting,
 	} from '$lib/api/vetting';
 
@@ -57,6 +58,9 @@
 	let rejected = $state<Set<string>>(new Set());
 	let submitting = $state(false);
 
+	// Regeneration state
+	let regenerating = $state(false);
+
 	// Edit mode
 	let editing = $state(false);
 	let editText = $state('');
@@ -90,7 +94,7 @@
 		if (voiceAction.kind === 'reject') return 'rose';
 		return voiceAction.level === 'easy' ? 'emerald' : voiceAction.level === 'medium' ? 'amber' : 'rose';
 	});
-	let voiceRecorderSubmitLabel = $derived(voiceAction?.kind === 'reject' ? 'Reject & Next' : 'Approve & Next');
+	let voiceRecorderSubmitLabel = $derived(voiceAction?.kind === 'reject' ? 'Reject & Regenerate' : 'Approve & Next');
 
 	async function loadQuestions() {
 		loading = true;
@@ -251,20 +255,35 @@
 		if (!currentQuestion || submitting) return;
 		submitting = true;
 		error = '';
+		voiceAction = null;
+		regenerating = true;
 		try {
-			await submitVetting({
-				question_id: currentQuestion.id,
-				decision: 'reject',
+			const res = await rejectWithFeedback(currentQuestion.id, {
 				feedback: transcript,
-				notes: transcript,
 			});
-			rejected = new Set([...rejected, currentQuestion.id]);
-			voiceAction = null;
-			advance();
+
+			if (res.improved && res.improved_text) {
+				// LLM improved the question — update in-place for re-review
+				replaceCurrentQuestion({
+					...currentQuestion,
+					question_text: res.improved_text,
+					options: res.improved_options ?? currentQuestion.options,
+					correct_answer: res.improved_answer ?? currentQuestion.correct_answer,
+					explanation: res.improved_explanation ?? currentQuestion.explanation,
+				});
+			} else if (res.regenerated && res.new_question) {
+				// Brand new replacement question generated
+				replaceCurrentQuestion(res.new_question);
+			} else {
+				// Improvement failed — mark as rejected and move on
+				rejected = new Set([...rejected, currentQuestion.id]);
+				advance();
+			}
 		} catch (e: unknown) {
-			error = e instanceof Error ? e.message : 'Failed to submit rejection';
+			error = e instanceof Error ? e.message : 'Failed to regenerate question';
 		} finally {
 			submitting = false;
+			regenerating = false;
 		}
 	}
 
@@ -406,8 +425,14 @@
 		{/if}
 
 		{#if currentQuestion}
+			{#if regenerating}
+				<div class="regen-overlay glass-panel animate-fade-in">
+					<div class="regen-spinner"></div>
+					<p class="regen-text">Regenerating question with your feedback…</p>
+				</div>
+			{/if}
 			<!-- Question card -->
-			<div class="question-card glass-panel animate-scale-in">
+			<div class="question-card glass-panel animate-scale-in" class:hidden-during-regen={regenerating}>
 				<div class="q-context">
 					{#if currentQuestion.subject_name}
 						<span class="q-pill">{currentQuestion.subject_name}</span>
@@ -569,7 +594,7 @@
 			</div>
 
 			<!-- Action buttons -->
-			{#if !isReviewed && !editing}
+			{#if !isReviewed && !editing && !regenerating}
 				<!-- <div class="edit-inline-row">
 					<button class="edit-inline-btn" onclick={startEdit}>Edit question</button>
 				</div> -->
@@ -1134,6 +1159,36 @@
 		animation: spin 0.7s linear infinite;
 	}
 	@keyframes spin { to { transform: rotate(360deg); } }
+
+	.regen-overlay {
+		display: flex;
+		flex-direction: column;
+		align-items: center;
+		justify-content: center;
+		gap: 1rem;
+		padding: 3rem 2rem;
+		border-radius: 2rem;
+		text-align: center;
+	}
+
+	.regen-spinner {
+		width: 36px;
+		height: 36px;
+		border: 3px solid rgba(255, 255, 255, 0.1);
+		border-top-color: var(--theme-primary);
+		border-radius: 50%;
+		animation: spin 0.7s linear infinite;
+	}
+
+	.regen-text {
+		margin: 0;
+		font-size: 0.95rem;
+		color: var(--theme-text-muted);
+	}
+
+	.hidden-during-regen {
+		display: none;
+	}
 
 	.empty-state {
 		display: flex;
