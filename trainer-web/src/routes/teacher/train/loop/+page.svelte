@@ -1,5 +1,5 @@
 <script lang="ts">
-	import { onMount, onDestroy } from 'svelte';
+	import { onMount, onDestroy, tick } from 'svelte';
 	import { goto, beforeNavigate } from '$app/navigation';
 	import { page } from '$app/stores';
 	import { session } from '$lib/session';
@@ -74,6 +74,11 @@
 	let genAbortController = $state<AbortController | null>(null);
 	let genCount = $state(0);
 	let genMessage = $state('');
+	let docProcessingProgress = $state<number | null>(null);
+	let docProcessingStep = $state('');
+	let docProcessingDetail = $state('');
+	let docProcessingDocument = $state('');
+	let docProcessingDocumentsTotal = $state(0);
 	let batchComplete = $state(false);
 	let subjectDetail = $state<SubjectDetailResponse | null>(null);
 	let genCtx = $state('');
@@ -96,6 +101,7 @@
 	let editAnswer = $state('');
 	let editExplanation = $state('');
 	let optionInputRefs = $state<Array<HTMLInputElement | null>>([]);
+	let activeOptionEditIndex = $state<number | null>(null);
 
 	// Source references
 	let showSources = $state(false);
@@ -164,6 +170,7 @@
 		generating = true;
 		genCount = 0;
 		genMessage = 'Starting generation...';
+		resetDocumentProcessingState();
 
 		try {
 			if (!subjectDetail) {
@@ -214,8 +221,10 @@
 				if (evt.status === 'error') {
 					throw new Error(evt.message || 'Generation failed');
 				}
+				applyGenerationEvent(evt);
 				if (evt.message) genMessage = evt.message;
 				if (evt.question) {
+					resetDocumentProcessingState();
 					genCount++;
 					// genMessage = `Generated ${genCount} question${genCount > 1 ? 's' : ''} in background...`;
 					const q = evt.question as unknown as QuestionForVetting;
@@ -225,6 +234,7 @@
 				}
 				if (evt.status === 'complete') {
 					genCount = evt.questions_generated ?? genCount;
+					resetDocumentProcessingState();
 					break;
 				}
 			}
@@ -245,6 +255,7 @@
 		if (generating || batchComplete || !subjectId) return;
 		generating = true;
 		genMessage = 'Generating more questions...';
+		resetDocumentProcessingState();
 		try {
 			if (!genCtx) {
 				if (!subjectDetail) {
@@ -270,6 +281,7 @@
 		batchComplete = true;
 		genAbortController?.abort();
 		genAbortController = null;
+		resetDocumentProcessingState();
 		if (subjectId) cancelGeneration(subjectId);
 	}
 
@@ -278,6 +290,33 @@
         goto('../')
 		generating = false;
 		genMessage = '';
+	}
+
+	function resetDocumentProcessingState() {
+		docProcessingProgress = null;
+		docProcessingStep = '';
+		docProcessingDetail = '';
+		docProcessingDocument = '';
+		docProcessingDocumentsTotal = 0;
+	}
+
+	function applyGenerationEvent(evt: GenerationEvent) {
+		if (evt.status !== 'processing' && evt.processing_progress === undefined) {
+			return;
+		}
+
+		docProcessingProgress = evt.processing_progress ?? Math.max(0, evt.progress ?? 0);
+		docProcessingStep = evt.processing_step ?? '';
+		docProcessingDetail = evt.processing_detail ?? evt.message ?? '';
+		docProcessingDocument = evt.processing_document ?? '';
+		docProcessingDocumentsTotal = evt.processing_documents_total ?? 0;
+	}
+
+	function replaceCurrentQuestion(replacement: QuestionForVetting) {
+		questions = questions.map((question, index) => (index === currentIndex ? replacement : question));
+		showSources = false;
+		editing = false;
+		activeOptionEditIndex = null;
 	}
 
 	function getOptionIdentifier(option: string, index: number): string {
@@ -295,8 +334,21 @@
 		editOptions = [...editOptions];
 	}
 
-	function focusOptionInput(index: number) {
+	async function enableOptionEditing(index: number) {
+		activeOptionEditIndex = index;
+		await tick();
 		optionInputRefs[index]?.focus();
+		optionInputRefs[index]?.select();
+	}
+
+	function disableOptionEditing(index: number) {
+		if (activeOptionEditIndex === index) {
+			activeOptionEditIndex = null;
+		}
+	}
+
+	function selectCorrectOption(index: number) {
+		editAnswer = getOptionIdentifier(editOptions[index], index);
 	}
 
 	function normalizeCorrectAnswer(answer: string | null | undefined, options: string[] = []): string {
@@ -326,12 +378,14 @@
 		editText = currentQuestion.question_text;
 		editOptions = currentQuestion.options ? [...currentQuestion.options] : [];
 		optionInputRefs = [];
+		activeOptionEditIndex = null;
 		editAnswer = normalizeCorrectAnswer(currentQuestion.correct_answer, editOptions);
 		editExplanation = currentQuestion.explanation ?? '';
 	}
 
 	function cancelEdit() {
 		editing = false;
+		activeOptionEditIndex = null;
 	}
 
 	async function submitEdit() {
@@ -350,6 +404,7 @@
 			});
 			approved = new Set([...approved, currentQuestion.id]);
 			editing = false;
+			activeOptionEditIndex = null;
 			advance();
 		} catch (e: unknown) {
 			error = e instanceof Error ? e.message : 'Failed to submit edit';
@@ -425,9 +480,12 @@
 				questions = questions.map(q => q.id === currentQuestion!.id ? updatedQ : q);
 				// Don't mark as reviewed — user needs to review the improved version
 			} else if (result.regenerated && result.new_question_id) {
-				// Mark old as rejected, new will appear when loaded
-				rejected = new Set([...rejected, currentQuestion.id]);
-				advance();
+				if (result.new_question) {
+					replaceCurrentQuestion(result.new_question);
+				} else {
+					rejected = new Set([...rejected, currentQuestion.id]);
+					advance();
+				}
 			} else {
 				// Rejected without replacement
 				rejected = new Set([...rejected, currentQuestion.id]);
@@ -496,6 +554,20 @@
 		<div class="center-state">
 			<div class="spinner"></div>
 			<p>{genMessage || 'Generating questions…'}</p>
+			{#if docProcessingProgress !== null}
+				<div class="gen-progress-card standalone">
+					<div class="gen-progress-head">
+						<span class="gen-progress-label">{docProcessingDocument || 'Document processing'}</span>
+						<span class="gen-progress-value">{docProcessingProgress}%</span>
+					</div>
+					<div class="gen-progress-track">
+						<div class="gen-progress-fill" style:width="{docProcessingProgress}%"></div>
+					</div>
+					{#if docProcessingDetail}
+						<p class="gen-progress-detail">{docProcessingDetail}</p>
+					{/if}
+				</div>
+			{/if}
 			<p class="sub-text">Please Wait...</p>
 		</div>
 	{:else if questions.length === 0}
@@ -524,9 +596,28 @@
 		</div>
 		<!-- Background generation indicator -->
 		{#if generating}
-			<div class="gen-indicator">
-				<div class="gen-dot"></div>
-				<span class="gen-text">{genMessage || 'Generating...'}</span>
+			<div class="gen-progress-card">
+				<div class="gen-indicator">
+					<div class="gen-dot"></div>
+					<span class="gen-text">{genMessage || 'Generating...'}</span>
+				</div>
+				{#if docProcessingProgress !== null}
+					<div class="gen-progress-head">
+						<span class="gen-progress-label">
+							{docProcessingDocument || 'Document processing'}
+							{#if docProcessingDocumentsTotal > 1}
+								({docProcessingDocumentsTotal} docs)
+							{/if}
+						</span>
+						<span class="gen-progress-value">{docProcessingProgress}%</span>
+					</div>
+					<div class="gen-progress-track">
+						<div class="gen-progress-fill" style:width="{docProcessingProgress}%"></div>
+					</div>
+					{#if docProcessingDetail}
+						<p class="gen-progress-detail">{docProcessingDetail}</p>
+					{/if}
+				{/if}
 			</div>
 		{/if}
 	</div>
@@ -577,20 +668,42 @@
 									type="button"
 									class="opt-correct-btn"
 									class:active={editAnswer === getOptionIdentifier(editOptions[i], i)}
-									onclick={() => editAnswer = getOptionIdentifier(editOptions[i], i)}
+									onclick={() => selectCorrectOption(i)}
 									title="Mark as correct"
 								>✓</button>
-								<span class="edit-option-prefix">{getOptionIdentifier(editOptions[i], i)})</span>
-								<input
-									class="edit-input edit-option-input"
-									value={getOptionEditableText(editOptions[i], i)}
-									oninput={(e) => updateOptionText(i, (e.currentTarget as HTMLInputElement).value)}
-									bind:this={optionInputRefs[i]}
-								/>
+								<button
+									type="button"
+									class="edit-option-field"
+									class:selected={editAnswer === getOptionIdentifier(editOptions[i], i)}
+									onclick={() => selectCorrectOption(i)}
+									aria-label={`Select option ${getOptionIdentifier(editOptions[i], i)}`}
+								>
+									<span class="edit-option-prefix">{getOptionIdentifier(editOptions[i], i)})</span>
+									<input
+										class="edit-input edit-option-input"
+										class:is-editing={activeOptionEditIndex === i}
+										value={getOptionEditableText(editOptions[i], i)}
+										readonly={activeOptionEditIndex !== i}
+										onclick={(e) => {
+											if (activeOptionEditIndex !== i) {
+												e.preventDefault();
+												selectCorrectOption(i);
+											}
+										}}
+										onfocus={(e) => {
+											if (activeOptionEditIndex !== i) {
+												e.currentTarget.blur();
+											}
+										}}
+										oninput={(e) => updateOptionText(i, (e.currentTarget as HTMLInputElement).value)}
+										onblur={() => disableOptionEditing(i)}
+										bind:this={optionInputRefs[i]}
+									/>
+								</button>
 								<button
 									type="button"
 									class="edit-option-pencil"
-									onclick={() => focusOptionInput(i)}
+									onclick={() => enableOptionEditing(i)}
 									aria-label="Edit option text"
 									title="Edit option text"
 								>
@@ -1175,6 +1288,28 @@
 		gap: 0.5rem;
 	}
 
+	.edit-option-field {
+		flex: 1;
+		display: flex;
+		align-items: center;
+		gap: 0.65rem;
+		padding: 0.5rem 0.8rem;
+		background: rgba(255, 255, 255, 0.06);
+		border: 1px solid rgba(255, 255, 255, 0.12);
+		border-radius: 8px;
+		cursor: pointer;
+		transition: all 0.15s ease;
+	}
+
+	.edit-option-field:hover {
+		background: rgba(255, 255, 255, 0.1);
+	}
+
+	.edit-option-field.selected {
+		border-color: rgba(72, 192, 80, 0.45);
+		background: rgba(72, 192, 80, 0.1);
+	}
+
 	.edit-option-row .edit-input {
 		flex: 1;
 	}
@@ -1188,7 +1323,28 @@
 	}
 
 	.edit-option-input {
+		padding: 0;
+		background: transparent;
+		border: none;
+		border-radius: 0;
+		cursor: pointer;
+		box-shadow: none;
+	}
+
+	.edit-option-input[readonly] {
+		pointer-events: none;
+		caret-color: transparent;
+	}
+
+	.edit-option-input.is-editing {
 		cursor: text;
+		pointer-events: auto;
+		caret-color: auto;
+	}
+
+	.edit-option-input:focus {
+		outline: none;
+		box-shadow: none;
 	}
 
 	.opt-correct-btn {
@@ -1424,6 +1580,64 @@
 		align-items: center;
 		gap: 0.5rem;
 		padding: 0.4rem 0;
+	}
+
+	.gen-progress-card {
+		display: flex;
+		flex-direction: column;
+		gap: 0.5rem;
+		padding: 0.75rem 0.9rem;
+		border: 1px solid rgba(255, 255, 255, 0.08);
+		border-radius: 12px;
+		background: rgba(255, 255, 255, 0.04);
+	}
+
+	.gen-progress-card.standalone {
+		width: min(100%, 420px);
+	}
+
+	.gen-progress-head {
+		display: flex;
+		justify-content: space-between;
+		align-items: center;
+		gap: 0.75rem;
+	}
+
+	.gen-progress-label,
+	.gen-progress-value {
+		font-size: 0.78rem;
+		color: var(--theme-text-muted);
+	}
+
+	.gen-progress-label {
+		font-weight: 600;
+		word-break: break-word;
+	}
+
+	.gen-progress-value {
+		font-variant-numeric: tabular-nums;
+	}
+
+	.gen-progress-track {
+		width: 100%;
+		height: 6px;
+		background: rgba(255, 255, 255, 0.08);
+		border-radius: 999px;
+		overflow: hidden;
+	}
+
+	.gen-progress-fill {
+		height: 100%;
+		background: linear-gradient(90deg, rgba(var(--theme-primary-rgb), 0.55), var(--theme-primary));
+		border-radius: inherit;
+		transition: width 0.3s ease;
+	}
+
+	.gen-progress-detail {
+		margin: 0;
+		font-size: 0.78rem;
+		line-height: 1.45;
+		color: var(--theme-text-muted);
 	}
 
 	.gen-dot {

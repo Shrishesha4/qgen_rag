@@ -59,6 +59,11 @@ export interface GenerationEvent {
 	session_id?: string;
 	questions_generated?: number;
 	question?: Record<string, unknown>;
+	processing_progress?: number;
+	processing_step?: string;
+	processing_detail?: string;
+	processing_document?: string;
+	processing_documents_total?: number;
 }
 
 /**

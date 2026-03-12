@@ -1153,11 +1153,49 @@ async def reject_with_feedback(
                     new_question.vetting_status = "pending"
                     question.replaced_by_id = new_question.id
 
+                    new_source_info = None
+                    gen_meta = new_question.generation_metadata or {}
+                    if "source_info" in gen_meta:
+                        meta_si = gen_meta["source_info"]
+                        if meta_si:
+                            new_source_info = QuestionSourceInfo(**meta_si).model_dump()
+                    elif "sources" in gen_meta:
+                        new_source_info = QuestionSourceInfo(
+                            sources=[SourceReference(**s) for s in gen_meta.get("sources", [])],
+                            generation_reasoning=gen_meta.get("generation_reasoning"),
+                            content_coverage=gen_meta.get("content_coverage"),
+                        ).model_dump()
+
                     await db.commit()
                     return {
                         "message": "Question rejected and new replacement generated",
                         "question_id": str(question_id),
                         "new_question_id": str(new_question.id),
+                        "new_question": {
+                            "id": str(new_question.id),
+                            "question_text": new_question.question_text,
+                            "question_type": new_question.question_type,
+                            "options": new_question.options,
+                            "correct_answer": new_question.correct_answer,
+                            "explanation": new_question.explanation,
+                            "marks": new_question.marks,
+                            "difficulty_level": new_question.difficulty_level,
+                            "bloom_taxonomy_level": new_question.bloom_taxonomy_level,
+                            "vetting_status": new_question.vetting_status,
+                            "vetting_notes": new_question.vetting_notes,
+                            "generated_at": new_question.generated_at.isoformat(),
+                            "teacher_id": str(teacher_id) if teacher_id else None,
+                            "teacher_name": None,
+                            "subject_id": str(new_question.subject_id) if new_question.subject_id else None,
+                            "subject_name": question.subject.name if question.subject else None,
+                            "subject_code": question.subject.code if question.subject else None,
+                            "topic_id": str(new_question.topic_id) if new_question.topic_id else None,
+                            "topic_name": question.topic.name if question.topic else None,
+                            "source_info": new_source_info,
+                            "version_number": new_question.version_number or 1,
+                            "replaces_id": str(new_question.replaces_id) if new_question.replaces_id else None,
+                            "replaced_by_id": str(new_question.replaced_by_id) if new_question.replaced_by_id else None,
+                        },
                         "decision": "reject",
                         "regenerated": True,
                         "improved": False,

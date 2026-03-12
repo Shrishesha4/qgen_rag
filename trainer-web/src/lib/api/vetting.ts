@@ -160,6 +160,7 @@ export interface RejectWithFeedbackResponse {
 	improved: boolean;
 	regenerated: boolean;
 	new_question_id?: string;
+	new_question?: QuestionForVetting;
 	improved_text?: string;
 	improved_options?: string[] | null;
 	improved_answer?: string;

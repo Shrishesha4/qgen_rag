@@ -19,6 +19,16 @@
 	const totalSteps = 7;
 
 	// Step 1: Discipline
+	const presetDisciplines = [
+		{ name: 'Engineering', icon: '⚙️' },
+		{ name: 'Medicine', icon: '🩺' },
+		{ name: 'Dental', icon: '🦷' },
+		{ name: 'Business', icon: '📊' },
+		{ name: 'Law', icon: '⚖️' },
+		{ name: 'Arts & Humanities', icon: '🎨' }
+	] as const;
+	let selectedDiscipline = $state('');
+	let useCustomDiscipline = $state(false);
 	let disciplineName = $state('');
 	let disciplineCode = $state('');
 
@@ -76,6 +86,22 @@
 	let topicsWithSyllabus = $derived(topics.filter(t => t.syllabusContent.trim().length > 0).length);
 
 	// ── Functions ──
+	function syncDisciplineName(value: string) {
+		disciplineName = value;
+	}
+
+	function handleDisciplineSelection(value: string) {
+		useCustomDiscipline = false;
+		selectedDiscipline = value;
+		syncDisciplineName(value);
+	}
+
+	function activateCustomDiscipline() {
+		selectedDiscipline = '';
+		useCustomDiscipline = true;
+		syncDisciplineName('');
+	}
+
 	function addTopic() {
 		const trimmed = topicInput.trim();
 		if (trimmed && !topics.some(t => t.name === trimmed)) {
@@ -255,10 +281,40 @@
 	<div class="step-content">
 		<!-- Step 1: Discipline -->
 		{#if step === 1}
-			<p class="step-desc">Enter the discipline / subject name</p>
+			<p class="step-desc">Pick a discipline card or add your own custom field of study</p>
 			<div class="field-group">
-				<label class="field-label" for="disc-name">Discipline Name *</label>
-				<input id="disc-name" class="glass-input" type="text" placeholder="e.g., Computer Science" bind:value={disciplineName} />
+				<span class="field-label">Discipline Name *</span>
+				<div class="discipline-grid" role="list" aria-label="Choose a discipline">
+					{#each presetDisciplines as discipline}
+						<button
+							type="button"
+							class="discipline-card"
+							class:selected={!useCustomDiscipline && selectedDiscipline === discipline.name}
+							onclick={() => handleDisciplineSelection(discipline.name)}
+						>
+							<span class="discipline-icon">{discipline.icon}</span>
+							<span class="discipline-card-name">{discipline.name}</span>
+						</button>
+					{/each}
+					<button
+						type="button"
+						class="discipline-card discipline-card-custom"
+						class:selected={useCustomDiscipline}
+						onclick={activateCustomDiscipline}
+					>
+						<span class="discipline-icon">＋</span>
+						<span class="discipline-card-name">Add Custom Discipline</span>
+					</button>
+				</div>
+				{#if useCustomDiscipline}
+					<input
+						id="disc-name"
+						class="glass-input discipline-custom-input"
+						type="text"
+						placeholder="e.g., Computer Science"
+						bind:value={disciplineName}
+					/>
+				{/if}
 			</div>
 			<div class="field-group">
 				<label class="field-label" for="disc-code">Subject Code <span class="hint">(optional, auto-generated if empty)</span></label>
@@ -572,6 +628,63 @@
 		font-size: 0.8rem;
 	}
 
+	.discipline-grid {
+		display: grid;
+		grid-template-columns: repeat(2, minmax(0, 1fr));
+		gap: 0.75rem;
+	}
+
+	.discipline-card {
+		display: flex;
+		align-items: center;
+		gap: 0.75rem;
+		padding: 1rem;
+		border-radius: 16px;
+		border: 1px solid rgba(255, 255, 255, 0.12);
+		background: rgba(255, 255, 255, 0.05);
+		color: var(--theme-text);
+		cursor: pointer;
+		font-family: inherit;
+		text-align: left;
+		transition: all 0.2s ease;
+	}
+
+	.discipline-card:hover {
+		background: rgba(255, 255, 255, 0.08);
+		border-color: rgba(var(--theme-primary-rgb), 0.28);
+	}
+
+	.discipline-card.selected {
+		background: rgba(var(--theme-primary-rgb), 0.16);
+		border-color: rgba(var(--theme-primary-rgb), 0.45);
+		box-shadow: 0 0 0 1px rgba(var(--theme-primary-rgb), 0.2);
+	}
+
+	.discipline-icon {
+		display: inline-flex;
+		align-items: center;
+		justify-content: center;
+		width: 2.5rem;
+		height: 2.5rem;
+		border-radius: 12px;
+		background: rgba(255, 255, 255, 0.08);
+		font-size: 1.25rem;
+		flex-shrink: 0;
+	}
+
+	.discipline-card-name {
+		font-size: 0.95rem;
+		font-weight: 600;
+	}
+
+	.discipline-card-custom {
+		border-style: dashed;
+	}
+
+	.discipline-custom-input {
+		margin-top: 0.85rem;
+	}
+
 	/* Step 2: Topics */
 	.topic-input-row {
 		display: flex;
@@ -630,6 +743,12 @@
 	}
 
 	@keyframes spin { to { transform: rotate(360deg); } }
+
+	@media (max-width: 640px) {
+		.discipline-grid {
+			grid-template-columns: 1fr;
+		}
+	}
 
 	.topic-list {
 		display: flex;

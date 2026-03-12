@@ -2527,10 +2527,38 @@ Output valid JSON only."""
 
                 if processing_docs:
                     logger.info(f"quick_generate_from_subject: {len(processing_docs)} docs still processing, waiting...")
+
+                    def _build_processing_progress(docs: list[Document]) -> tuple[int, str | None, str | None, str | None, str]:
+                        active_doc = max(
+                            docs,
+                            key=lambda doc: int(((doc.document_metadata or {}).get("processing_progress") or 0)),
+                        )
+                        metadata = active_doc.document_metadata or {}
+                        progress_value = int(metadata.get("processing_progress") or 0)
+                        step = metadata.get("processing_step")
+                        detail = metadata.get("processing_detail")
+                        filename = active_doc.filename
+
+                        if detail:
+                            message = f"[{filename}] {step or 'processing'}: {progress_value}% - {detail}"
+                        else:
+                            message = f"Waiting for {len(docs)} document(s) to finish processing..."
+
+                        if len(docs) > 1:
+                            message = f"{message} ({len(docs)} docs still processing)"
+
+                        return progress_value, step, detail, filename, message
+
+                    progress_value, step, detail, filename, message = _build_processing_progress(processing_docs)
                     yield QuickGenerateProgress(
-                        status="generating",
-                        progress=6,
-                        message=f"Waiting for {len(processing_docs)} document(s) to finish processing...",
+                        status="processing",
+                        progress=max(6, progress_value),
+                        message=message,
+                        processing_progress=progress_value,
+                        processing_step=step,
+                        processing_detail=detail,
+                        processing_document=filename,
+                        processing_documents_total=len(processing_docs),
                     )
 
                     # Poll every 3 seconds for up to 5 minutes
@@ -2551,11 +2579,16 @@ Output valid JSON only."""
                             primary_docs = await _find_completed_docs()
                             break
 
-                        progress_pct = min(6 + attempt * 0.4, 9)
+                        progress_value, step, detail, filename, message = _build_processing_progress(still_processing)
                         yield QuickGenerateProgress(
-                            status="generating",
-                            progress=int(progress_pct),
-                            message=f"Waiting for {len(still_processing)} document(s) to finish processing...",
+                            status="processing",
+                            progress=max(6, progress_value),
+                            message=message,
+                            processing_progress=progress_value,
+                            processing_step=step,
+                            processing_detail=detail,
+                            processing_document=filename,
+                            processing_documents_total=len(still_processing),
                         )
 
             if not primary_docs:

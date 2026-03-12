@@ -305,3 +305,8 @@ class QuickGenerateProgress(BaseModel):
     document_id: Optional[uuid.UUID] = None
     questions_failed: Optional[int] = None
     session_id: Optional[uuid.UUID] = None
+    processing_progress: Optional[int] = None
+    processing_step: Optional[str] = None
+    processing_detail: Optional[str] = None
+    processing_document: Optional[str] = None
+    processing_documents_total: Optional[int] = None

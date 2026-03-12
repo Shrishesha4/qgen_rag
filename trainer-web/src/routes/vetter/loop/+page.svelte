@@ -1,5 +1,5 @@
 <script lang="ts">
-	import { onMount } from 'svelte';
+	import { onMount, tick } from 'svelte';
 	import { goto, beforeNavigate } from '$app/navigation';
 	import { page } from '$app/stores';
 	import { session } from '$lib/session';
@@ -64,6 +64,7 @@
 	let editAnswer = $state('');
 	let editExplanation = $state('');
 	let optionInputRefs = $state<Array<HTMLInputElement | null>>([]);
+	let activeOptionEditIndex = $state<number | null>(null);
 
 	// Source references
 	let showSources = $state(false);
@@ -129,8 +130,21 @@
 		editOptions = [...editOptions];
 	}
 
-	function focusOptionInput(index: number) {
+	async function enableOptionEditing(index: number) {
+		activeOptionEditIndex = index;
+		await tick();
 		optionInputRefs[index]?.focus();
+		optionInputRefs[index]?.select();
+	}
+
+	function disableOptionEditing(index: number) {
+		if (activeOptionEditIndex === index) {
+			activeOptionEditIndex = null;
+		}
+	}
+
+	function selectCorrectOption(index: number) {
+		editAnswer = getOptionIdentifier(editOptions[index], index);
 	}
 
 	function normalizeCorrectAnswer(answer: string | null | undefined, options: string[] = []): string {
@@ -160,12 +174,14 @@
 		editText = currentQuestion.question_text;
 		editOptions = currentQuestion.options ? [...currentQuestion.options] : [];
 		optionInputRefs = [];
+		activeOptionEditIndex = null;
 		editAnswer = normalizeCorrectAnswer(currentQuestion.correct_answer, editOptions);
 		editExplanation = currentQuestion.explanation ?? '';
 	}
 
 	function cancelEdit() {
 		editing = false;
+		activeOptionEditIndex = null;
 	}
 
 	async function submitEdit() {
@@ -184,6 +200,7 @@
 			});
 			approved = new Set([...approved, currentQuestion.id]);
 			editing = false;
+			activeOptionEditIndex = null;
 			advance();
 		} catch (e: unknown) {
 			error = e instanceof Error ? e.message : 'Failed to submit edit';
@@ -256,8 +273,12 @@
 				updatedQ.vetting_status = 'pending';
 				questions = questions.map(q => q.id === currentQuestion!.id ? updatedQ : q);
 			} else if (result.regenerated && result.new_question_id) {
-				rejected = new Set([...rejected, currentQuestion.id]);
-				advance();
+				if (result.new_question) {
+					replaceCurrentQuestion(result.new_question);
+				} else {
+					rejected = new Set([...rejected, currentQuestion.id]);
+					advance();
+				}
 			} else {
 				rejected = new Set([...rejected, currentQuestion.id]);
 				advance();
@@ -268,6 +289,13 @@
 		} finally {
 			rejectSubmitting = false;
 		}
+	}
+
+	function replaceCurrentQuestion(replacement: QuestionForVetting) {
+		questions = questions.map((question, index) => (index === currentIndex ? replacement : question));
+		showSources = false;
+		editing = false;
+		activeOptionEditIndex = null;
 	}
 
 	function advance() {
@@ -399,20 +427,42 @@
 										type="button"
 										class="opt-correct-btn"
 										class:active={editAnswer === getOptionIdentifier(editOptions[i], i)}
-										onclick={() => editAnswer = getOptionIdentifier(editOptions[i], i)}
+										onclick={() => selectCorrectOption(i)}
 										title="Mark as correct"
 									>✓</button>
-									<span class="edit-option-prefix">{getOptionIdentifier(editOptions[i], i)})</span>
-									<input
-										class="edit-input edit-option-input"
-										value={getOptionEditableText(editOptions[i], i)}
-										oninput={(e) => updateOptionText(i, (e.currentTarget as HTMLInputElement).value)}
-										bind:this={optionInputRefs[i]}
-									/>
+									<button
+										type="button"
+										class="edit-option-field"
+										class:selected={editAnswer === getOptionIdentifier(editOptions[i], i)}
+										onclick={() => selectCorrectOption(i)}
+										aria-label={`Select option ${getOptionIdentifier(editOptions[i], i)}`}
+									>
+										<span class="edit-option-prefix">{getOptionIdentifier(editOptions[i], i)})</span>
+										<input
+											class="edit-input edit-option-input"
+											class:is-editing={activeOptionEditIndex === i}
+											value={getOptionEditableText(editOptions[i], i)}
+											readonly={activeOptionEditIndex !== i}
+											onclick={(e) => {
+												if (activeOptionEditIndex !== i) {
+													e.preventDefault();
+													selectCorrectOption(i);
+												}
+											}}
+											onfocus={(e) => {
+												if (activeOptionEditIndex !== i) {
+													e.currentTarget.blur();
+												}
+											}}
+											oninput={(e) => updateOptionText(i, (e.currentTarget as HTMLInputElement).value)}
+											onblur={() => disableOptionEditing(i)}
+											bind:this={optionInputRefs[i]}
+										/>
+									</button>
 									<button
 										type="button"
 										class="edit-option-pencil"
-										onclick={() => focusOptionInput(i)}
+										onclick={() => enableOptionEditing(i)}
 										aria-label="Edit option text"
 										title="Edit option text"
 									>
@@ -935,6 +985,28 @@
 		gap: 0.5rem;
 	}
 
+	.edit-option-field {
+		flex: 1;
+		display: flex;
+		align-items: center;
+		gap: 0.65rem;
+		padding: 0.5rem 0.8rem;
+		background: rgba(255, 255, 255, 0.06);
+		border: 1px solid rgba(255, 255, 255, 0.12);
+		border-radius: 8px;
+		cursor: pointer;
+		transition: all 0.15s ease;
+	}
+
+	.edit-option-field:hover {
+		background: rgba(255, 255, 255, 0.1);
+	}
+
+	.edit-option-field.selected {
+		border-color: rgba(72, 192, 80, 0.45);
+		background: rgba(72, 192, 80, 0.1);
+	}
+
 	.edit-option-row .edit-input { flex: 1; }
 
 	.edit-option-prefix {
@@ -946,7 +1018,28 @@
 	}
 
 	.edit-option-input {
+		padding: 0;
+		background: transparent;
+		border: none;
+		border-radius: 0;
+		cursor: pointer;
+		box-shadow: none;
+	}
+
+	.edit-option-input[readonly] {
+		pointer-events: none;
+		caret-color: transparent;
+	}
+
+	.edit-option-input.is-editing {
 		cursor: text;
+		pointer-events: auto;
+		caret-color: auto;
+	}
+
+	.edit-option-input:focus {
+		outline: none;
+		box-shadow: none;
 	}
 
 	.opt-correct-btn {
