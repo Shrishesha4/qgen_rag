@@ -344,7 +344,7 @@
 				</div>
 			</div>
 			<div class="field-group">
-				<label class="field-label" for="disc-code">Subject Code <span class="hint">(optional, auto-generated if empty)</span></label>
+				<label class="field-label" for="disc-code">Subject Code <span class="hint">(optional)</span></label>
 				<input id="disc-code" class="glass-input" type="text" placeholder="e.g., CS101" bind:value={disciplineCode} />
 			</div>
 
@@ -863,29 +863,51 @@
 		justify-content: flex-end;
 	}
 
+	.modal-footer button {
+		min-width: 120px;
+		padding: 0.75rem 1.5rem;
+		font-size: 0.95rem;
+		font-weight: 600;
+		border-radius: 0.75rem;
+		border: none;
+		cursor: pointer;
+		transition: all 0.2s ease;
+		display: flex;
+		align-items: center;
+		justify-content: center;
+	}
+
 	.secondary-btn {
 		background: rgba(255, 255, 255, 0.1);
 		color: var(--theme-text-muted);
+		border: 1px solid rgba(255, 255, 255, 0.12);
 	}
 
 	.secondary-btn:hover {
 		background: rgba(255, 255, 255, 0.15);
 		color: var(--theme-text);
+		border: 1px solid rgba(255, 255, 255, 0.2);
+		transform: translateY(-1px);
 	}
 
 	.primary-btn {
 		background: linear-gradient(135deg, var(--theme-primary), rgba(var(--theme-primary-rgb), 0.8));
 		color: white;
+		box-shadow: 0 2px 8px rgba(var(--theme-primary-rgb), 0.3);
 	}
 
 	.primary-btn:hover {
 		background: linear-gradient(135deg, rgba(var(--theme-primary-rgb), 0.9), rgba(var(--theme-primary-rgb), 0.7));
+		transform: translateY(-1px);
+		box-shadow: 0 4px 12px rgba(var(--theme-primary-rgb), 0.4);
 	}
 
 	.primary-btn:disabled {
 		background: rgba(255, 255, 255, 0.1);
 		color: rgba(255, 255, 255, 0.4);
 		cursor: not-allowed;
+		box-shadow: none;
+		transform: none;
 	}
 
 	/* Step 2: Topics */
@@ -1365,6 +1387,8 @@
 
 		.modal-footer button {
 			width: 100%;
+			min-width: unset;
+			padding: 0.85rem 1rem;
 		}
 	}
 </style>
