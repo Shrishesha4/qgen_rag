@@ -1,0 +1,267 @@
+<script lang="ts">
+	import { onMount } from 'svelte';
+	import { goto } from '$app/navigation';
+	import { logout } from '$lib/api/auth';
+	import ThemeSelector from '$lib/components/ThemeSelector.svelte';
+	import { currentUser, session } from '$lib/session';
+
+	onMount(() => {
+		const unsub = session.subscribe((s) => {
+			if (!s || s.user.role !== 'teacher') {
+				goto('/teacher/login');
+			}
+		});
+		return unsub;
+	});
+
+	function getInitials(name?: string | null, username?: string | null) {
+		const source = (name || username || 'Teacher').trim();
+		const parts = source.split(/\s+/).filter(Boolean);
+		if (parts.length === 1) {
+			return parts[0].slice(0, 2).toUpperCase();
+		}
+		return parts
+			.slice(0, 2)
+			.map((part) => part[0])
+			.join('')
+			.toUpperCase();
+	}
+
+	async function handleLogout() {
+		await logout();
+		session.clear();
+		goto('/');
+	}
+</script>
+
+<svelte:head>
+	<title>Profile — QGen Trainer</title>
+</svelte:head>
+
+<ThemeSelector />
+
+<div class="profile-page">
+	<div class="profile-topbar animate-fade-in">
+		<button class="nav-btn glass-panel" onclick={() => goto('/teacher/dashboard')} aria-label="Back to dashboard">
+			<svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+				<polyline points="15 18 9 12 15 6"></polyline>
+			</svg>
+		</button>
+	</div>
+
+	<div class="profile-card glass-panel animate-scale-in">
+		<div class="avatar-ring">
+			<div class="avatar-core">{getInitials($currentUser?.full_name, $currentUser?.username)}</div>
+		</div>
+
+		<div class="profile-copy">
+			<p class="eyebrow">Teacher Profile</p>
+			<h1 class="profile-name font-serif">{$currentUser?.full_name || $currentUser?.username || 'Teacher'}</h1>
+			<p class="profile-email">{$currentUser?.email || 'No email available'}</p>
+		</div>
+
+		<div class="detail-grid">
+			<div class="detail-item">
+				<span class="detail-label">Role</span>
+				<span class="detail-value">Teacher</span>
+			</div>
+			<div class="detail-item">
+				<span class="detail-label">Username</span>
+				<span class="detail-value">{$currentUser?.username || 'Not set'}</span>
+			</div>
+			<div class="detail-item full-width">
+				<span class="detail-label">Workspace</span>
+				<span class="detail-value">AI training and verification</span>
+			</div>
+		</div>
+
+		<div class="profile-actions">
+			<button class="secondary-action glass-panel" onclick={() => goto('/teacher/dashboard')}>Back to Dashboard</button>
+			<button class="primary-action" onclick={handleLogout}>Sign Out</button>
+		</div>
+	</div>
+</div>
+
+<style>
+	.profile-page {
+		min-height: 100vh;
+		padding: 1.5rem;
+		display: flex;
+		flex-direction: column;
+		align-items: center;
+		justify-content: center;
+		gap: 1.25rem;
+	}
+
+	.profile-topbar {
+		width: 100%;
+		max-width: 520px;
+		display: flex;
+		justify-content: flex-start;
+	}
+
+	.nav-btn {
+		width: 44px;
+		height: 44px;
+		display: inline-flex;
+		align-items: center;
+		justify-content: center;
+		border: none;
+		border-radius: 999px;
+		background: transparent;
+		color: var(--theme-text);
+		cursor: pointer;
+	}
+
+	.profile-card {
+		width: min(100%, 520px);
+		padding: 2rem 1.5rem;
+		border-radius: 1.5rem;
+		display: flex;
+		flex-direction: column;
+		align-items: center;
+		gap: 1.5rem;
+		text-align: center;
+	}
+
+	.avatar-ring {
+		width: 108px;
+		height: 108px;
+		padding: 6px;
+		border-radius: 999px;
+		background: linear-gradient(135deg, rgba(var(--theme-primary-rgb), 0.65), rgba(255, 255, 255, 0.24));
+		display: flex;
+		align-items: center;
+		justify-content: center;
+		box-shadow: 0 18px 48px rgba(0, 0, 0, 0.22);
+	}
+
+	.avatar-core {
+		width: 100%;
+		height: 100%;
+		border-radius: 999px;
+		display: flex;
+		align-items: center;
+		justify-content: center;
+		background: rgba(10, 16, 30, 0.72);
+		color: var(--theme-text);
+		font-size: 2rem;
+		font-weight: 800;
+		letter-spacing: 0.08em;
+	}
+
+	.profile-copy {
+		display: flex;
+		flex-direction: column;
+		gap: 0.35rem;
+	}
+
+	.eyebrow {
+		margin: 0;
+		font-size: 0.76rem;
+		font-weight: 700;
+		letter-spacing: 0.14em;
+		text-transform: uppercase;
+		color: var(--theme-primary);
+	}
+
+	.profile-name {
+		margin: 0;
+		font-size: clamp(2rem, 6vw, 2.6rem);
+		line-height: 1.05;
+		color: var(--theme-text);
+	}
+
+	.profile-email {
+		margin: 0;
+		font-size: 0.98rem;
+		color: var(--theme-text-muted);
+	}
+
+	.detail-grid {
+		width: 100%;
+		display: grid;
+		grid-template-columns: repeat(2, minmax(0, 1fr));
+		gap: 0.85rem;
+	}
+
+	.detail-item {
+		padding: 1rem;
+		border-radius: 1rem;
+		background: rgba(255, 255, 255, 0.08);
+		border: 1px solid rgba(255, 255, 255, 0.1);
+		display: flex;
+		flex-direction: column;
+		align-items: flex-start;
+		gap: 0.3rem;
+		text-align: left;
+	}
+
+	.detail-item.full-width {
+		grid-column: 1 / -1;
+	}
+
+	.detail-label {
+		font-size: 0.72rem;
+		font-weight: 700;
+		letter-spacing: 0.08em;
+		text-transform: uppercase;
+		color: var(--theme-text-muted);
+	}
+
+	.detail-value {
+		font-size: 0.98rem;
+		font-weight: 600;
+		color: var(--theme-text);
+	}
+
+	.profile-actions {
+		width: 100%;
+		display: grid;
+		grid-template-columns: repeat(2, minmax(0, 1fr));
+		gap: 0.85rem;
+	}
+
+	.profile-actions button {
+		min-height: 52px;
+		border-radius: 999px;
+		font: inherit;
+		font-weight: 700;
+		cursor: pointer;
+		transition: transform 0.2s ease, box-shadow 0.2s ease, background 0.2s ease;
+	}
+
+	.profile-actions button:hover {
+		transform: translateY(-1px);
+	}
+
+	.secondary-action {
+		border: none;
+		background: transparent;
+		color: var(--theme-text);
+	}
+
+	.primary-action {
+		border: 1px solid rgba(244, 63, 94, 0.35);
+		background: rgba(244, 63, 94, 0.18);
+		color: #ffd6df;
+		box-shadow: 0 12px 32px rgba(244, 63, 94, 0.18);
+	}
+
+	@media (max-width: 640px) {
+		.profile-page {
+			padding: 1rem;
+			justify-content: flex-start;
+			padding-top: max(1rem, env(safe-area-inset-top));
+		}
+
+		.profile-card {
+			padding: 1.5rem 1rem;
+		}
+
+		.detail-grid,
+		.profile-actions {
+			grid-template-columns: 1fr;
+		}
+	}
+</style>

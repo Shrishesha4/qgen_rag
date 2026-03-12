@@ -10,6 +10,9 @@
 	});
 </script>
 
+<div class="bg-image-layer" aria-hidden="true"></div>
+<div class="bg-overlay-layer" aria-hidden="true"></div>
+
 <div class="app-shell">
 	{@render children()}
 </div>
@@ -17,11 +20,8 @@
 <style>
 	.app-shell {
 		min-height: 100vh;
-		background: var(--theme-bg);
-		background-color: var(--theme-bg-color);
 		color: var(--theme-text);
-		transition:
-			background 0.5s ease,
-			color 0.3s ease;
+		position: relative;
+		z-index: 0;
 	}
 </style>

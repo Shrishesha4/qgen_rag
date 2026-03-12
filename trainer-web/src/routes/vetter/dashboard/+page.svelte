@@ -4,9 +4,7 @@
 	import { session, currentUser } from '$lib/session';
 	import { logout } from '$lib/api/auth';
 	import { getVetterDashboard, type VetterDashboard } from '$lib/api/vetting';
-	import GlassCard from '$lib/components/GlassCard.svelte';
-	import IconBadge from '$lib/components/IconBadge.svelte';
-	import ThemePicker from '$lib/components/ThemePicker.svelte';
+	import ThemeSelector from '$lib/components/ThemeSelector.svelte';
 
 	let loading = $state(true);
 	let stats = $state<VetterDashboard | null>(null);
@@ -48,43 +46,54 @@
 </svelte:head>
 
 <div class="vetter-dash">
-	<div class="theme-corner">
-		<ThemePicker />
-	</div>
+	<ThemeSelector />
 
-	<div class="hero">
-		<IconBadge emoji="🔍" size="lg" />
-		<h1 class="title">Vetter Dashboard</h1>
+	<div class="hero animate-fade-in">
+		<div class="hero-icon emerald">
+			<svg width="28" height="28" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+				<circle cx="11" cy="11" r="8"></circle>
+				<path d="m21 21-4.3-4.3"></path>
+			</svg>
+		</div>
+		<h1 class="title font-serif">Vetter Dashboard</h1>
 		{#if $currentUser}
 			<p class="welcome">Welcome, {$currentUser.full_name || $currentUser.username}</p>
 		{/if}
 	</div>
 
-	<div class="stats-row">
-		<div class="stat glass">
+	<div class="stats-row animate-slide-up">
+		<div class="stat glass-panel">
 			<span class="stat-value">{loading ? '…' : (stats?.total_pending ?? 0)}</span>
 			<span class="stat-label">Pending</span>
 		</div>
-		<div class="stat glass">
+		<div class="stat glass-panel">
 			<span class="stat-value">{loading ? '…' : (stats?.total_approved ?? 0)}</span>
 			<span class="stat-label">Approved</span>
 		</div>
-		<div class="stat glass">
+		<div class="stat glass-panel">
 			<span class="stat-value">{loading ? '…' : (stats?.total_rejected ?? 0)}</span>
 			<span class="stat-label">Rejected</span>
 		</div>
 	</div>
 
-	<div class="actions">
-		<GlassCard active padding="1.75rem">
-			<button class="action-row" onclick={startVetting}>
-				<IconBadge emoji="📋" />
+	<div class="actions animate-slide-up">
+		<button class="action-card glass-panel" onclick={startVetting}>
+			<div class="action-row">
+				<div class="action-icon emerald">
+					<svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+						<path d="M9 11l3 3L22 4"></path>
+						<path d="M21 12v7a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h11"></path>
+					</svg>
+				</div>
 				<div class="action-info">
 					<h2 class="action-title">Start Vetting</h2>
 					<p class="action-desc">Review the next batch of AI-generated questions</p>
 				</div>
-			</button>
-		</GlassCard>
+				<svg class="arrow" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+					<polyline points="9 18 15 12 9 6"></polyline>
+				</svg>
+			</div>
+		</button>
 	</div>
 
 	<button class="logout-link" onclick={handleLogout}>Sign Out</button>
@@ -101,19 +110,26 @@
 		gap: 2rem;
 	}
 
-	.theme-corner {
-		position: fixed;
-		top: 1rem;
-		right: 1rem;
-		z-index: 100;
-	}
-
 	.hero {
 		display: flex;
 		flex-direction: column;
 		align-items: center;
 		gap: 0.5rem;
 		text-align: center;
+	}
+
+	.hero-icon {
+		width: 56px;
+		height: 56px;
+		border-radius: 50%;
+		display: flex;
+		align-items: center;
+		justify-content: center;
+		margin-bottom: 0.25rem;
+	}
+	.hero-icon.emerald {
+		background: rgba(16, 185, 129, 0.2);
+		color: #10b981;
 	}
 
 	.title {
@@ -164,18 +180,40 @@
 		max-width: 400px;
 	}
 
+	.action-card {
+		width: 100%;
+		padding: 1.5rem;
+		border-radius: 1rem;
+		cursor: pointer;
+		font-family: inherit;
+		color: inherit;
+		text-align: left;
+		transition: transform 0.2s, box-shadow 0.2s;
+	}
+	.action-card:hover {
+		transform: translateY(-2px);
+		box-shadow: 0 8px 32px rgba(0, 0, 0, 0.2);
+	}
+
 	.action-row {
 		display: flex;
 		align-items: center;
 		gap: 1rem;
 		width: 100%;
-		background: none;
-		border: none;
-		cursor: pointer;
-		padding: 0;
-		font-family: inherit;
-		color: inherit;
-		text-align: left;
+	}
+
+	.action-icon {
+		width: 48px;
+		height: 48px;
+		border-radius: 50%;
+		display: flex;
+		align-items: center;
+		justify-content: center;
+		flex-shrink: 0;
+	}
+	.action-icon.emerald {
+		background: rgba(16, 185, 129, 0.2);
+		color: #10b981;
 	}
 
 	.action-info {
@@ -192,6 +230,11 @@
 		font-size: 0.85rem;
 		color: var(--theme-text-muted);
 		margin: 0;
+	}
+
+	.arrow {
+		opacity: 0.4;
+		flex-shrink: 0;
 	}
 
 	.logout-link {

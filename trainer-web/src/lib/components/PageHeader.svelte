@@ -1,7 +1,5 @@
 <script lang="ts">
 	import { goto } from '$app/navigation';
-	import { setTheme, currentThemeName } from '$lib/theme';
-	import { themes, themeNames, type ThemeName } from '$lib/theme/themes';
 	import { getContext } from 'svelte';
 
 	interface Props {
@@ -13,20 +11,12 @@
 
 	let { title, backHref, step, totalSteps }: Props = $props();
 
-	let showThemeMenu = $state(false);
-
 	// Get hamburger context if available
 	let hamburgerContext: any = $state();
 	try {
 		hamburgerContext = getContext('hamburger');
 	} catch (e) {
-		// Context not available
 		hamburgerContext = null;
-	}
-
-	function pickTheme(name: ThemeName) {
-		setTheme(name);
-		showThemeMenu = false;
 	}
 
 	function goBack() {
@@ -38,16 +28,16 @@
 <header class="page-header">
 	<div class="header-left">
 		{#if hamburgerContext?.toggleSidebar}
-			<button class="hamburger-btn" onclick={hamburgerContext.toggleSidebar} aria-label="Toggle sidebar">
-				<svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+			<button class="header-icon-btn" onclick={hamburgerContext.toggleSidebar} aria-label="Toggle sidebar">
+				<svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
 					<line x1="3" y1="6" x2="21" y2="6"></line>
 					<line x1="3" y1="12" x2="21" y2="12"></line>
 					<line x1="3" y1="18" x2="21" y2="18"></line>
 				</svg>
 			</button>
 		{/if}
-		<button class="back-btn" onclick={goBack} aria-label="Go back">
-			<svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+		<button class="header-icon-btn" onclick={goBack} aria-label="Go back">
+			<svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
 				<polyline points="15 18 9 12 15 6"></polyline>
 			</svg>
 		</button>
@@ -60,32 +50,9 @@
 		{/if}
 	</div>
 
-	<div class="header-right">
-		<button class="theme-toggle" onclick={() => showThemeMenu = !showThemeMenu} aria-label="Change theme">
-			{themes[$currentThemeName].icon}
-		</button>
-		{#if showThemeMenu}
-		<!-- svelte-ignore a11y_click_events_have_key_events a11y_no_static_element_interactions -->
-		<div class="theme-dropdown glass" role="menu" tabindex="-1" onclick={(e) => e.stopPropagation()}>
-				{#each themeNames as name}
-					<button
-						class="theme-option"
-						class:active={$currentThemeName === name}
-						onclick={() => pickTheme(name)}
-					>
-						<span>{themes[name].icon}</span>
-						<span>{themes[name].label}</span>
-					</button>
-				{/each}
-			</div>
-		{/if}
-	</div>
+	<!-- Spacer to keep title centered -->
+	<div class="header-right"></div>
 </header>
-
-{#if showThemeMenu}
-	<!-- svelte-ignore a11y_no_static_element_interactions a11y_click_events_have_key_events -->
-	<div class="backdrop" role="presentation" onclick={() => showThemeMenu = false}></div>
-{/if}
 
 <style>
 	.page-header {
@@ -106,9 +73,10 @@
 		display: flex;
 		align-items: center;
 		gap: 0.25rem;
+		min-width: 72px;
 	}
 
-	.back-btn {
+	.header-icon-btn {
 		display: flex;
 		align-items: center;
 		justify-content: center;
@@ -119,28 +87,10 @@
 		background: rgba(255, 255, 255, 0.1);
 		color: var(--theme-text);
 		cursor: pointer;
-		transition: background 0.2s;
+		transition: all 0.2s;
 	}
 
-	.back-btn:hover {
-		background: rgba(255, 255, 255, 0.18);
-	}
-
-	.hamburger-btn {
-		display: flex;
-		align-items: center;
-		justify-content: center;
-		width: 36px;
-		height: 36px;
-		border: none;
-		border-radius: 10px;
-		background: rgba(255, 255, 255, 0.1);
-		color: var(--theme-text);
-		cursor: pointer;
-		transition: background 0.2s;
-	}
-
-	.hamburger-btn:hover {
+	.header-icon-btn:hover {
 		background: rgba(255, 255, 255, 0.18);
 	}
 
@@ -166,65 +116,6 @@
 	}
 
 	.header-right {
-		position: relative;
-	}
-
-	.theme-toggle {
-		display: flex;
-		align-items: center;
-		justify-content: center;
-		width: 36px;
-		height: 36px;
-		border: none;
-		border-radius: 10px;
-		background: rgba(255, 255, 255, 0.1);
-		font-size: 1.2rem;
-		cursor: pointer;
-		transition: background 0.2s;
-	}
-
-	.theme-toggle:hover {
-		background: rgba(255, 255, 255, 0.18);
-	}
-
-	.theme-dropdown {
-		position: absolute;
-		top: calc(100% + 8px);
-		right: 0;
-		padding: 0.5rem;
-		display: flex;
-		flex-direction: column;
-		gap: 0.25rem;
-		min-width: 140px;
-		z-index: 60;
-	}
-
-	.theme-option {
-		display: flex;
-		align-items: center;
-		gap: 0.5rem;
-		padding: 0.5rem 0.75rem;
-		border: none;
-		border-radius: 8px;
-		background: transparent;
-		color: var(--theme-text);
-		font-size: 0.9rem;
-		cursor: pointer;
-		transition: background 0.15s;
-	}
-
-	.theme-option:hover {
-		background: rgba(255, 255, 255, 0.1);
-	}
-
-	.theme-option.active {
-		background: rgba(var(--theme-primary-rgb), 0.2);
-		color: var(--theme-primary);
-	}
-
-	.backdrop {
-		position: fixed;
-		inset: 0;
-		z-index: 40;
+		min-width: 72px;
 	}
 </style>

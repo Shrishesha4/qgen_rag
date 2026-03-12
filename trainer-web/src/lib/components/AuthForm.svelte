@@ -1,12 +1,11 @@
 <script lang="ts">
 	/**
 	 * Unified auth form for both Teacher and Vetter login/register.
-	 * Props:
-	 *   role — 'teacher' | 'vetter'
 	 */
 	import { goto } from '$app/navigation';
 	import { login, register } from '$lib/api/auth';
 	import { session } from '$lib/session';
+	import ThemeSelector from '$lib/components/ThemeSelector.svelte';
 
 	interface Props {
 		role: 'teacher' | 'vetter';
@@ -23,7 +22,6 @@
 	let loading = $state(false);
 
 	const roleLabel = $derived(role === 'teacher' ? 'Teacher' : 'Vetter');
-	const roleIcon = $derived(role === 'teacher' ? '📝' : '🔍');
 	const dashboardPath = $derived(role === 'teacher' ? '/teacher/dashboard' : '/vetter/dashboard');
 
 	async function handleSubmit() {
@@ -61,13 +59,32 @@
 	}
 </script>
 
+<ThemeSelector />
+
 <div class="auth-page">
-	<div class="auth-card">
-		<a href="/" class="back-link">&larr; Back</a>
+	<div class="auth-card glass-panel animate-scale-in">
+		<a href="/" class="back-link">
+			<svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+				<polyline points="15 18 9 12 15 6"></polyline>
+			</svg>
+			Back
+		</a>
 
 		<div class="auth-header">
-			<span class="auth-icon">{roleIcon}</span>
-			<h1 class="auth-title">{roleLabel} {mode === 'login' ? 'Sign In' : 'Sign Up'}</h1>
+			<div class="auth-icon" class:teacher={role === 'teacher'} class:vetter={role === 'vetter'}>
+				{#if role === 'teacher'}
+					<svg width="28" height="28" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+						<path d="M12 20h9"></path>
+						<path d="M16.5 3.5a 2.12 2.12 0 0 1 3 3L7 19l-4 1 1-4Z"></path>
+					</svg>
+				{:else}
+					<svg width="28" height="28" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+						<circle cx="11" cy="11" r="8"></circle>
+						<path d="m21 21-4.3-4.3"></path>
+					</svg>
+				{/if}
+			</div>
+			<h1 class="auth-title font-serif">{roleLabel} {mode === 'login' ? 'Sign In' : 'Sign Up'}</h1>
 			<p class="auth-subtitle">
 				{#if role === 'teacher'}
 					Generate AI-powered assessments from your materials.
@@ -170,21 +187,16 @@
 	}
 
 	.auth-card {
-		background: linear-gradient(135deg, rgba(255,255,255,0.12) 0%, rgba(255,255,255,0.06) 100%);
-		backdrop-filter: blur(24px) saturate(180%);
-		-webkit-backdrop-filter: blur(24px) saturate(180%);
-		border: 0.5px solid rgba(255,255,255,0.18);
-		border-radius: 1.25rem;
 		padding: 2.5rem 2rem;
 		width: 100%;
 		max-width: 26rem;
-		box-shadow:
-			inset 0 1px 0 0 rgba(255,255,255,0.1),
-			0 8px 32px rgba(0, 0, 0, 0.15);
+		border-radius: 1.5rem;
 	}
 
 	.back-link {
-		display: inline-block;
+		display: inline-flex;
+		align-items: center;
+		gap: 0.35rem;
 		font-size: 0.85rem;
 		color: var(--theme-text-muted);
 		text-decoration: none;
@@ -202,9 +214,25 @@
 	}
 
 	.auth-icon {
-		font-size: 2.5rem;
-		display: block;
-		margin-bottom: 0.5rem;
+		width: 64px;
+		height: 64px;
+		border-radius: 50%;
+		display: flex;
+		align-items: center;
+		justify-content: center;
+		margin: 0 auto 0.75rem;
+	}
+
+	.auth-icon.teacher {
+		background: rgba(59, 130, 246, 0.2);
+		color: #93c5fd;
+		border: 1px solid rgba(59, 130, 246, 0.3);
+	}
+
+	.auth-icon.vetter {
+		background: rgba(16, 185, 129, 0.2);
+		color: #6ee7b7;
+		border: 1px solid rgba(16, 185, 129, 0.3);
 	}
 
 	.auth-title {
@@ -224,7 +252,7 @@
 		background: rgba(220, 38, 38, 0.15);
 		border: 0.5px solid rgba(220, 38, 38, 0.3);
 		color: #f87171;
-		border-radius: 0.5rem;
+		border-radius: 0.75rem;
 		padding: 0.65rem 0.85rem;
 		font-size: 0.85rem;
 		margin-bottom: 1rem;
@@ -254,9 +282,9 @@
 	}
 
 	.field-input {
-		padding: 0.6rem 0.8rem;
-		border: 0.5px solid rgba(255,255,255,0.15);
-		border-radius: 0.5rem;
+		padding: 0.65rem 0.85rem;
+		border: 1px solid rgba(255,255,255,0.15);
+		border-radius: 0.75rem;
 		background: rgba(255,255,255,0.08);
 		backdrop-filter: blur(12px);
 		-webkit-backdrop-filter: blur(12px);
@@ -279,23 +307,25 @@
 
 	.submit-btn {
 		margin-top: 0.5rem;
-		padding: 0.7rem;
+		padding: 0.75rem;
 		border: none;
-		border-radius: 0.5rem;
+		border-radius: 0.75rem;
 		background: var(--theme-primary);
 		color: white;
 		font-size: 1rem;
 		font-weight: 600;
 		cursor: pointer;
-		transition: background 0.2s, transform 0.1s;
+		transition: all 0.2s;
 		display: flex;
 		align-items: center;
 		justify-content: center;
 		min-height: 2.75rem;
+		font-family: inherit;
 	}
 
 	.submit-btn:hover:not(:disabled) {
-		background: var(--theme-primary-hover);
+		filter: brightness(1.1);
+		transform: translateY(-1px);
 	}
 
 	.submit-btn:active:not(:disabled) {
@@ -341,9 +371,26 @@
 		cursor: pointer;
 		font-size: 0.85rem;
 		padding: 0;
+		font-family: inherit;
 	}
 
 	.switch-btn:hover {
 		text-decoration: underline;
+	}
+
+	@media (max-width: 480px) {
+		.auth-card {
+			padding: 2rem 1.5rem;
+		}
+
+		.auth-icon {
+			width: 52px;
+			height: 52px;
+		}
+
+		.auth-icon svg {
+			width: 22px;
+			height: 22px;
+		}
 	}
 </style>

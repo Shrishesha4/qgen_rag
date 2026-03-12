@@ -31,7 +31,7 @@ class Settings(BaseSettings):
 
     # LLM Provider Configuration
     # Options: "ollama", "gemini", "deepseek"
-    LLM_PROVIDER: str = Field(default="ollama")
+    LLM_PROVIDER: str = Field(default="deepseek")
     
     # Ollama LLM (local)
     OLLAMA_BASE_URL: str = Field(default="http://localhost:11434")

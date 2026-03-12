@@ -75,6 +75,17 @@ export interface VetSubmission {
 	time_spent_seconds?: number;
 }
 
+export interface VetterQuestionUpdate {
+	marks?: number;
+	difficulty_level?: 'easy' | 'medium' | 'hard';
+	bloom_taxonomy_level?: string;
+	correct_answer?: string;
+	options?: string[];
+	question_text?: string;
+	course_outcome_mapping?: Record<string, unknown>;
+	learning_outcome_id?: string;
+}
+
 export interface VetterTopicSummary {
 	id: string;
 	name: string;
@@ -133,6 +144,17 @@ export async function submitVetting(data: VetSubmission): Promise<{
 }> {
 	return apiFetch('/vetter/submit', {
 		method: 'POST',
+		body: JSON.stringify(data),
+	});
+}
+
+export async function updateVettedQuestion(questionId: string, data: VetterQuestionUpdate): Promise<{
+	message: string;
+	question_id: string;
+	question: QuestionForVetting;
+}> {
+	return apiFetch(`/vetter/questions/${questionId}`, {
+		method: 'PUT',
 		body: JSON.stringify(data),
 	});
 }

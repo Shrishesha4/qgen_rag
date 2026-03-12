@@ -2,7 +2,7 @@
 	import { onMount } from 'svelte';
 	import { goto } from '$app/navigation';
 	import { session } from '$lib/session';
-	import PageHeader from '$lib/components/PageHeader.svelte';
+	import ThemeSelector from '$lib/components/ThemeSelector.svelte';
 	import { getVetterSubjects, type VetterSubjectSummary } from '$lib/api/vetting';
 
 	onMount(() => {
@@ -42,7 +42,7 @@
 	<title>Select Subject — QGen Vetter</title>
 </svelte:head>
 
-<PageHeader title="Select Subject" backHref="/vetter/dashboard" />
+<ThemeSelector />
 
 <div class="page">
 	{#if loading}

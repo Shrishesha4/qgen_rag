@@ -2,9 +2,7 @@
 	import { onMount } from 'svelte';
 	import { goto } from '$app/navigation';
 	import { session } from '$lib/session';
-	import GlassCard from '$lib/components/GlassCard.svelte';
-	import IconBadge from '$lib/components/IconBadge.svelte';
-	import PageHeader from '$lib/components/PageHeader.svelte';
+	import ThemeSelector from '$lib/components/ThemeSelector.svelte';
 
 	onMount(() => {
 		const unsub = session.subscribe((s) => {
@@ -18,18 +16,23 @@
 	<title>Train Topic — QGen Trainer</title>
 </svelte:head>
 
-<PageHeader title="Train Topic" backHref="/teacher/dashboard" />
+<ThemeSelector />
 
 <div class="page">
-	<div class="header">
-		<h1 class="title">Train Topic</h1>
+	<div class="header animate-fade-in">
+		<h1 class="title font-serif">Train Topic</h1>
 		<p class="subtitle">Choose how to proceed</p>
 	</div>
 
-	<div class="cards">
-		<GlassCard href="/teacher/train/new" padding="2rem">
+	<div class="cards animate-slide-up">
+		<a href="/teacher/train/new" class="card-link glass-panel">
 			<div class="card-row">
-				<IconBadge emoji="✨" />
+				<div class="card-icon amber">
+					<svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+						<path d="M12 3H5a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h14a2 2 0 0 0 2-2v-7"></path>
+						<path d="M18.375 2.625a1 1 0 0 1 3 3l-9.013 9.014a2 2 0 0 1-.853.505l-2.873.84a.5.5 0 0 1-.62-.62l.84-2.873a2 2 0 0 1 .506-.852z"></path>
+					</svg>
+				</div>
 				<div class="card-info">
 					<h2 class="card-title">New Topic</h2>
 					<p class="card-desc">Start from scratch with a new discipline, syllabus, and reference materials</p>
@@ -38,11 +41,16 @@
 					<polyline points="9 18 15 12 9 6"></polyline>
 				</svg>
 			</div>
-		</GlassCard>
+		</a>
 
-		<GlassCard href="/teacher/train/existing" padding="2rem">
+		<a href="/teacher/train/existing" class="card-link glass-panel">
 			<div class="card-row">
-				<IconBadge emoji="🔄" />
+				<div class="card-icon blue">
+					<svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+						<path d="M21 12a9 9 0 1 1-9-9c2.52 0 4.93 1 6.74 2.74L21 8"></path>
+						<path d="M21 3v5h-5"></path>
+					</svg>
+				</div>
 				<div class="card-info">
 					<h2 class="card-title">Existing Topic</h2>
 					<p class="card-desc">Continue training with a previously configured topic and materials</p>
@@ -51,7 +59,7 @@
 					<polyline points="9 18 15 12 9 6"></polyline>
 				</svg>
 			</div>
-		</GlassCard>
+		</a>
 	</div>
 </div>
 
@@ -91,10 +99,40 @@
 		max-width: 480px;
 	}
 
+	.card-link {
+		text-decoration: none;
+		color: inherit;
+		padding: 1.5rem;
+		border-radius: 1rem;
+		transition: transform 0.2s, box-shadow 0.2s;
+	}
+	.card-link:hover {
+		transform: translateY(-2px);
+		box-shadow: 0 8px 32px rgba(0, 0, 0, 0.2);
+	}
+
 	.card-row {
 		display: flex;
 		align-items: center;
 		gap: 1rem;
+	}
+
+	.card-icon {
+		width: 48px;
+		height: 48px;
+		border-radius: 50%;
+		display: flex;
+		align-items: center;
+		justify-content: center;
+		flex-shrink: 0;
+	}
+	.card-icon.amber {
+		background: rgba(245, 158, 11, 0.2);
+		color: #f59e0b;
+	}
+	.card-icon.blue {
+		background: rgba(59, 130, 246, 0.2);
+		color: #3b82f6;
 	}
 
 	.card-info {

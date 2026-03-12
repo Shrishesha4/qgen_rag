@@ -2,9 +2,7 @@
 	import { onMount } from 'svelte';
 	import { goto } from '$app/navigation';
 	import { session } from '$lib/session';
-	import GlassCard from '$lib/components/GlassCard.svelte';
-	import IconBadge from '$lib/components/IconBadge.svelte';
-	import ThemePicker from '$lib/components/ThemePicker.svelte';
+	import ThemeSelector from '$lib/components/ThemeSelector.svelte';
 
 	onMount(() => {
 		const unsub = session.subscribe((s) => {
@@ -16,44 +14,53 @@
 	});
 </script>
 
-<div class="landing">
-	<div class="theme-corner">
-		<ThemePicker />
-	</div>
+<ThemeSelector />
 
-	<div class="hero">
-		<IconBadge emoji="🧠" size="lg" />
-		<h1 class="hero-title">QGen <span class="accent">Trainer</span></h1>
+<div class="landing">
+	<div class="hero animate-fade-in">
+		<div class="hero-icon">
+			<svg width="40" height="40" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round">
+				<path d="M12 2a7.5 7.5 0 0 0-5.5 12.5l.5.5V20h10v-5l.5-.5A7.5 7.5 0 0 0 12 2z"></path>
+				<path d="M9 22h6"></path>
+			</svg>
+		</div>
+		<h1 class="hero-title font-serif">QGen <span class="accent">Trainer</span></h1>
 		<p class="hero-sub">
 			Self-correcting AI for educational content — powered by human feedback.
 		</p>
 	</div>
 
-	<div class="cards">
-		<GlassCard href="/teacher/login" padding="2rem 1.5rem">
-			<div class="role-inner">
-				<IconBadge emoji="📝" />
-				<h2 class="card-title">Teacher</h2>
-				<p class="card-desc">
-					Generate high-quality questions from your course materials with AI assistance.
-				</p>
-				<span class="card-cta">Sign in as Teacher →</span>
+	<div class="cards animate-slide-up">
+		<a href="/teacher/login" class="role-card glass-panel">
+			<div class="role-icon teacher-icon">
+				<svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+					<path d="M12 20h9"></path>
+					<path d="M16.5 3.5a 2.12 2.12 0 0 1 3 3L7 19l-4 1 1-4Z"></path>
+				</svg>
 			</div>
-		</GlassCard>
+			<h2 class="card-title">Teacher</h2>
+			<p class="card-desc">
+				Generate high-quality questions from your course materials with AI assistance.
+			</p>
+			<span class="card-cta">Sign in as Teacher →</span>
+		</a>
 
-		<GlassCard href="/vetter/login" padding="2rem 1.5rem">
-			<div class="role-inner">
-				<IconBadge emoji="🔍" />
-				<h2 class="card-title">Vetter</h2>
-				<p class="card-desc">
-					Review, approve, and improve AI-generated questions to train the model.
-				</p>
-				<span class="card-cta">Sign in as Vetter →</span>
+		<a href="/vetter/login" class="role-card glass-panel">
+			<div class="role-icon vetter-icon">
+				<svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+					<circle cx="11" cy="11" r="8"></circle>
+					<path d="m21 21-4.3-4.3"></path>
+				</svg>
 			</div>
-		</GlassCard>
+			<h2 class="card-title">Vetter</h2>
+			<p class="card-desc">
+				Review, approve, and improve AI-generated questions to train the model.
+			</p>
+			<span class="card-cta">Sign in as Vetter →</span>
+		</a>
 	</div>
 
-	<p class="footer-note">
+	<p class="footer-note animate-fade-in" style="animation-delay: 0.4s">
 		Every review you make teaches the AI to generate better questions next time.
 	</p>
 </div>
@@ -69,13 +76,6 @@
 		gap: 2.5rem;
 	}
 
-	.theme-corner {
-		position: fixed;
-		top: 1rem;
-		right: 1rem;
-		z-index: 100;
-	}
-
 	.hero {
 		text-align: center;
 		max-width: 36rem;
@@ -83,6 +83,19 @@
 		flex-direction: column;
 		align-items: center;
 		gap: 0.75rem;
+	}
+
+	.hero-icon {
+		width: 72px;
+		height: 72px;
+		border-radius: 50%;
+		background: rgba(255, 255, 255, 0.1);
+		border: 1px solid rgba(255, 255, 255, 0.15);
+		display: flex;
+		align-items: center;
+		justify-content: center;
+		color: var(--theme-primary);
+		margin-bottom: 0.5rem;
 	}
 
 	.hero-title {
@@ -102,6 +115,7 @@
 		color: var(--theme-text-muted);
 		margin: 0;
 		line-height: 1.6;
+		max-width: 28rem;
 	}
 
 	.cards {
@@ -118,18 +132,52 @@
 		}
 	}
 
-	.role-inner {
+	.role-card {
 		display: flex;
 		flex-direction: column;
 		align-items: center;
 		gap: 0.75rem;
 		text-align: center;
+		padding: 2rem 1.5rem;
+		text-decoration: none;
+		color: inherit;
+		border-radius: 1.5rem;
+		transition: all 0.3s ease;
+		cursor: pointer;
+	}
+
+	.role-card:hover {
+		transform: translateY(-4px);
+		background: rgba(255, 255, 255, 0.15);
+		box-shadow: 0 8px 32px rgba(0, 0, 0, 0.2);
+	}
+
+	.role-icon {
+		width: 56px;
+		height: 56px;
+		border-radius: 50%;
+		display: flex;
+		align-items: center;
+		justify-content: center;
+	}
+
+	.teacher-icon {
+		background: rgba(59, 130, 246, 0.2);
+		color: #93c5fd;
+		border: 1px solid rgba(59, 130, 246, 0.3);
+	}
+
+	.vetter-icon {
+		background: rgba(16, 185, 129, 0.2);
+		color: #6ee7b7;
+		border: 1px solid rgba(16, 185, 129, 0.3);
 	}
 
 	.card-title {
 		font-size: 1.4rem;
 		font-weight: 700;
 		margin: 0;
+		color: var(--theme-text);
 	}
 
 	.card-desc {
@@ -152,5 +200,21 @@
 		text-align: center;
 		max-width: 28rem;
 		line-height: 1.5;
+	}
+
+	@media (max-width: 480px) {
+		.hero-title {
+			font-size: 2.25rem;
+		}
+
+		.hero-icon {
+			width: 56px;
+			height: 56px;
+		}
+
+		.hero-icon svg {
+			width: 28px;
+			height: 28px;
+		}
 	}
 </style>

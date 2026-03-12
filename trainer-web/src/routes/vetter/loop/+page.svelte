@@ -3,10 +3,11 @@
 	import { goto, beforeNavigate } from '$app/navigation';
 	import { page } from '$app/stores';
 	import { session } from '$lib/session';
-	import PageHeader from '$lib/components/PageHeader.svelte';
+	import ThemeSelector from '$lib/components/ThemeSelector.svelte';
 	import {
 		getQuestionsForVetting,
 		submitVetting,
+		updateVettedQuestion,
 		rejectWithFeedback,
 		type QuestionForVetting,
 	} from '$lib/api/vetting';
@@ -226,6 +227,39 @@
 		}
 	}
 
+	async function approveWithDifficulty(level: 'easy' | 'medium' | 'hard') {
+		if (!currentQuestion || submitting) return;
+		submitting = true;
+		try {
+			if (currentQuestion.difficulty_level !== level) {
+				await updateVettedQuestion(currentQuestion.id, { difficulty_level: level });
+				questions = questions.map((question, index) =>
+					index === currentIndex ? { ...question, difficulty_level: level } : question
+				);
+			}
+			await submitVetting({
+				question_id: currentQuestion.id,
+				decision: 'approve',
+			});
+			approved = new Set([...approved, currentQuestion.id]);
+			advance();
+		} catch (e: unknown) {
+			error = e instanceof Error ? e.message : 'Failed to submit';
+		} finally {
+			submitting = false;
+		}
+	}
+
+	function formatRelativeTime(iso: string): string {
+		const diff = Date.now() - new Date(iso).getTime();
+		const mins = Math.floor(diff / 60000);
+		if (mins < 1) return 'just now';
+		if (mins < 60) return `${mins} min ago`;
+		const hrs = Math.floor(mins / 60);
+		if (hrs < 24) return `${hrs} hours ago`;
+		return `${Math.floor(hrs / 24)} days ago`;
+	}
+
 	function openRejectModal() {
 		if (!currentQuestion) return;
 		rejectFeedback = '';
@@ -339,9 +373,25 @@
 	<title>Vetting — QGen Vetter</title>
 </svelte:head>
 
-<PageHeader title="Vetting" backHref={subjectId ? `/vetter/subjects/${subjectId}` : '/vetter/subjects'} />
+<ThemeSelector />
 
 <div class="loop-page">
+	<div class="loop-hero animate-fade-in">
+		<div class="hero-copy">
+			<button class="back-link" onclick={goBack}>Back to subjects</button>
+			<h1 class="hero-title font-serif">Question Vetting</h1>
+			<p class="hero-subtitle">Review and grade incoming community questions.</p>
+		</div>
+		{#if questions.length > 0}
+			<div class="progress-pill">
+				<span class="progress-pill-count">{currentIndex + 1}/{questions.length}</span>
+				<div class="progress-pill-track">
+					<div class="progress-pill-fill" style:width="{progressPct}%"></div>
+				</div>
+			</div>
+		{/if}
+	</div>
+
 	{#if loading}
 		<div class="center-state">
 			<div class="spinner"></div>
@@ -361,27 +411,6 @@
 			<button class="glass-btn" onclick={goBack}>← Go Back</button>
 		</div>
 	{:else}
-		<!-- Progress header -->
-		<div class="loop-header">
-			<div class="batch-info">
-				<span class="batch-label">Review Queue</span>
-				<span class="review-count">{totalReviewed}/{questions.length} reviewed</span>
-			</div>
-			<div class="progress-track">
-				<div class="progress-fill" style:width="{progressPct}%"></div>
-			</div>
-			{#if currentQuestion?.subject_name || currentQuestion?.topic_name}
-				<div class="context-info">
-					{#if currentQuestion.subject_name}
-						<span class="ctx-badge">{currentQuestion.subject_name}</span>
-					{/if}
-					{#if currentQuestion.topic_name}
-						<span class="ctx-badge topic">{currentQuestion.topic_name}</span>
-					{/if}
-				</div>
-			{/if}
-		</div>
-
 		{#if error}
 			<div class="err-banner">
 				<span class="err-msg">{error}</span>
@@ -391,27 +420,19 @@
 
 		{#if currentQuestion}
 			<!-- Question card -->
-			<div class="question-card glass">
-				<div class="q-header">
-					<span class="q-type">
-						{#if currentQuestion.question_type === 'mcq'}📝 MCQ
-						{:else if currentQuestion.question_type === 'true_false'}✅ True/False
-						{:else}✍️ Short Answer
-						{/if}
-					</span>
-					<div class="q-meta">
-						{#if currentQuestion.difficulty_level}
-							<span class="q-difficulty {currentQuestion.difficulty_level}">{currentQuestion.difficulty_level}</span>
-						{/if}
-						{#if currentQuestion.marks}
-							<span class="q-marks">{currentQuestion.marks} mk{currentQuestion.marks > 1 ? 's' : ''}</span>
-						{/if}
-						<span class="q-number">#{currentIndex + 1}</span>
-					</div>
+			<div class="question-card glass-panel animate-scale-in">
+				<div class="q-context">
+					{#if currentQuestion.subject_name}
+						<span class="q-pill">{currentQuestion.subject_name}</span>
+					{/if}
+					{#if currentQuestion.teacher_name}
+						<span class="q-meta-inline">{currentQuestion.teacher_name}</span>
+					{/if}
+					<span class="q-meta-inline">{formatRelativeTime(currentQuestion.generated_at)}</span>
 				</div>
 
 				{#if currentQuestion.topic_name}
-					<span class="q-topic">{currentQuestion.topic_name}</span>
+					<p class="q-topic-label">{currentQuestion.topic_name}</p>
 				{/if}
 
 				{#if editing}
@@ -489,16 +510,22 @@
 						</div>
 					</div>
 				{:else}
-					<p class="q-text">{currentQuestion.question_text}</p>
+					<p class="q-text font-serif">{currentQuestion.question_text}</p>
 
 					{#if currentQuestion.options}
-						<div class="options">
-							{#each currentQuestion.options as opt}
+						<div class="answer-panel glass-panel">
+							<div class="answer-panel-head">
+								<span class="answer-panel-title">Answer Options</span>
+								<span class="answer-panel-hint">Correct answer highlighted</span>
+							</div>
+							<div class="options">
+							{#each currentQuestion.options as opt, idx}
 								<div class="option" class:correct={isCorrectOption(opt, currentQuestion.correct_answer)}>
-									<span class="opt-marker">{isCorrectOption(opt, currentQuestion.correct_answer) ? '✓' : '○'}</span>
+									<span class="opt-marker">{isCorrectOption(opt, currentQuestion.correct_answer) ? '✓' : getOptionIdentifier(opt, idx)}</span>
 									<span>{opt}</span>
 								</div>
 							{/each}
+							</div>
 						</div>
 					{:else if currentQuestion.correct_answer}
 						<div class="answer-box">
@@ -557,18 +584,25 @@
 
 			<!-- Action buttons -->
 			{#if !isReviewed && !editing}
-				<div class="actions">
-					<button class="action-btn reject-btn" onclick={openRejectModal} disabled={submitting}>
-						<span class="action-icon">✗</span>
-						<span>Reject</span>
+				<div class="edit-inline-row">
+					<button class="edit-inline-btn" onclick={startEdit}>Edit question</button>
+				</div>
+				<div class="grading-grid">
+					<button class="grade-card easy" onclick={() => approveWithDifficulty('easy')} disabled={submitting}>
+						<span class="grade-badge">E</span>
+						<span class="grade-label">Easy</span>
 					</button>
-					<button class="action-btn edit-btn" onclick={startEdit}>
-						<span class="action-icon">✎</span>
-						<span>Edit</span>
+					<button class="grade-card medium" onclick={() => approveWithDifficulty('medium')} disabled={submitting}>
+						<span class="grade-badge">M</span>
+						<span class="grade-label">Medium</span>
 					</button>
-					<button class="action-btn approve-btn" onclick={approve} disabled={submitting}>
-						<span class="action-icon">✓</span>
-						<span>Approve</span>
+					<button class="grade-card hard" onclick={() => approveWithDifficulty('hard')} disabled={submitting}>
+						<span class="grade-badge">H</span>
+						<span class="grade-label">Hard</span>
+					</button>
+					<button class="grade-card reject" onclick={openRejectModal} disabled={submitting}>
+						<span class="grade-badge">×</span>
+						<span class="grade-label">Reject</span>
 					</button>
 				</div>
 			{:else if isReviewed}
@@ -607,7 +641,7 @@
 	<!-- svelte-ignore a11y_no_static_element_interactions a11y_click_events_have_key_events a11y_interactive_supports_focus -->
 	<div class="modal-overlay" onclick={closeRejectModal} onkeydown={(e) => e.key === 'Escape' && closeRejectModal()}>
 		<!-- svelte-ignore a11y_click_events_have_key_events a11y_no_static_element_interactions -->
-		<div class="modal glass" onclick={(e) => e.stopPropagation()} role="dialog" aria-modal="true" tabindex="-1">
+		<div class="modal glass-panel" onclick={(e) => e.stopPropagation()} role="dialog" aria-modal="true" tabindex="-1">
 			<div class="modal-header">
 				<h3 class="modal-title">Rejection Feedback</h3>
 				<button class="modal-close" onclick={closeRejectModal}>✕</button>
@@ -670,91 +704,6 @@
 		flex-direction: column;
 		gap: 1.5rem;
 		min-height: 100vh;
-	}
-
-	.loop-header {
-		display: flex;
-		flex-direction: column;
-		gap: 0.5rem;
-	}
-
-	.batch-info {
-		display: flex;
-		justify-content: space-between;
-		align-items: center;
-	}
-
-	.batch-label {
-		font-weight: 700;
-		font-size: 1.1rem;
-		color: var(--theme-text);
-	}
-
-	.review-count {
-		font-size: 0.85rem;
-		color: var(--theme-text-muted);
-	}
-
-	.progress-track {
-		width: 100%;
-		height: 4px;
-		background: rgba(255, 255, 255, 0.1);
-		border-radius: 2px;
-		overflow: hidden;
-	}
-
-	.progress-fill {
-		height: 100%;
-		background: var(--theme-primary);
-		border-radius: 2px;
-		transition: width 0.4s ease;
-	}
-
-	.context-info {
-		display: flex;
-		gap: 0.4rem;
-		flex-wrap: wrap;
-	}
-
-	.ctx-badge {
-		font-size: 0.72rem;
-		font-weight: 600;
-		padding: 0.15rem 0.5rem;
-		background: rgba(var(--theme-primary-rgb), 0.1);
-		color: var(--theme-primary);
-		border-radius: 4px;
-	}
-
-	.ctx-badge.topic {
-		background: rgba(255, 255, 255, 0.06);
-		color: var(--theme-text-muted);
-	}
-
-	/* Question card */
-	.question-card {
-		padding: 1.5rem;
-	}
-
-	.q-header {
-		display: flex;
-		justify-content: space-between;
-		align-items: center;
-		margin-bottom: 1rem;
-	}
-
-	.q-type {
-		font-size: 0.8rem;
-		font-weight: 600;
-		padding: 0.25rem 0.6rem;
-		background: rgba(255, 255, 255, 0.08);
-		border-radius: 6px;
-		color: var(--theme-text-muted);
-	}
-
-	.q-number {
-		font-size: 0.8rem;
-		color: var(--theme-text-muted);
-		font-weight: 600;
 	}
 
 	.q-text {
@@ -867,18 +816,6 @@
 		font-family: inherit;
 	}
 
-	.approve-btn {
-		background: rgba(72, 192, 80, 0.3);
-		border: 1px solid rgba(72, 192, 80, 0.4);
-		color: #6ee87a;
-	}
-
-	.approve-btn:hover {
-		background: rgba(72, 192, 80, 0.45);
-		transform: translateY(-2px);
-		box-shadow: 0 4px 16px rgba(72, 192, 80, 0.2);
-	}
-
 	.reject-btn {
 		background: rgba(233, 69, 96, 0.3);
 		border: 1px solid rgba(233, 69, 96, 0.4);
@@ -889,23 +826,6 @@
 		background: rgba(233, 69, 96, 0.45);
 		transform: translateY(-2px);
 		box-shadow: 0 4px 16px rgba(233, 69, 96, 0.2);
-	}
-
-	.action-icon {
-		font-size: 1.2rem;
-		font-weight: 900;
-	}
-
-	.edit-btn {
-		background: rgba(56, 178, 230, 0.3);
-		border: 1px solid rgba(56, 178, 230, 0.4);
-		color: #6dd4f0;
-	}
-
-	.edit-btn:hover {
-		background: rgba(56, 178, 230, 0.45);
-		transform: translateY(-2px);
-		box-shadow: 0 4px 16px rgba(56, 178, 230, 0.2);
 	}
 
 	.finish-section {
@@ -1235,44 +1155,6 @@
 		margin: 0;
 	}
 
-	/* Meta */
-	.q-meta {
-		display: flex;
-		align-items: center;
-		gap: 0.4rem;
-	}
-
-	.q-difficulty {
-		font-size: 0.7rem;
-		font-weight: 600;
-		padding: 0.15rem 0.5rem;
-		border-radius: 6px;
-		text-transform: capitalize;
-	}
-
-	.q-difficulty.easy { background: rgba(72, 192, 80, 0.15); color: #6ee87a; }
-	.q-difficulty.medium { background: rgba(240, 180, 40, 0.15); color: #f0c060; }
-	.q-difficulty.hard { background: rgba(233, 69, 96, 0.15); color: #f07888; }
-
-	.q-marks {
-		font-size: 0.7rem;
-		font-weight: 600;
-		padding: 0.15rem 0.5rem;
-		background: rgba(255, 255, 255, 0.08);
-		border-radius: 6px;
-		color: var(--theme-text-muted);
-	}
-
-	.q-topic {
-		display: inline-block;
-		font-size: 0.72rem;
-		font-weight: 500;
-		padding: 0.2rem 0.6rem;
-		background: rgba(var(--theme-primary-rgb), 0.1);
-		border-radius: 6px;
-		color: var(--theme-primary);
-		margin-bottom: 0.75rem;
-	}
 
 	/* States */
 	.center-state {
@@ -1470,9 +1352,320 @@
 	.modal-actions .reject-btn { padding: 0.65rem 1.5rem; }
 	.modal-actions .reject-btn:disabled { opacity: 0.4; cursor: not-allowed; }
 
+	.loop-page {
+		max-width: 1024px;
+		padding-top: 2rem;
+		padding-bottom: 3rem;
+	}
+
+	.loop-hero {
+		display: flex;
+		align-items: flex-start;
+		justify-content: space-between;
+		gap: 1.5rem;
+	}
+
+	.hero-copy {
+		display: flex;
+		flex-direction: column;
+		gap: 0.5rem;
+	}
+
+	.back-link {
+		align-self: flex-start;
+		padding: 0;
+		border: none;
+		background: transparent;
+		font: inherit;
+		font-size: 0.82rem;
+		font-weight: 700;
+		letter-spacing: 0.06em;
+		text-transform: uppercase;
+		color: var(--theme-primary);
+		cursor: pointer;
+	}
+
+	.hero-title {
+		margin: 0;
+		font-size: clamp(2.8rem, 6vw, 4rem);
+		line-height: 0.95;
+		color: var(--theme-text);
+	}
+
+	.hero-subtitle {
+		margin: 0;
+		max-width: 34rem;
+		font-size: 1rem;
+		line-height: 1.5;
+		color: var(--theme-text-muted);
+	}
+
+	.progress-pill {
+		min-width: 11rem;
+		padding: 0.95rem 1.1rem;
+		border-radius: 999px;
+		background: rgba(255, 255, 255, 0.12);
+		border: 1px solid rgba(255, 255, 255, 0.12);
+		display: flex;
+		align-items: center;
+		gap: 0.85rem;
+	}
+
+	.progress-pill-count {
+		font-size: 1.35rem;
+		font-weight: 700;
+		color: var(--theme-text);
+		font-variant-numeric: tabular-nums;
+	}
+
+	.progress-pill-track {
+		flex: 1;
+		height: 0.5rem;
+		border-radius: 999px;
+		background: rgba(255, 255, 255, 0.12);
+		overflow: hidden;
+	}
+
+	.progress-pill-fill {
+		height: 100%;
+		background: linear-gradient(90deg, rgba(var(--theme-primary-rgb), 0.55), var(--theme-primary));
+		border-radius: inherit;
+	}
+
+	.question-card {
+		padding: 2rem;
+		border-radius: 2rem;
+	}
+
+	.q-context {
+		display: flex;
+		align-items: center;
+		gap: 1rem;
+		flex-wrap: wrap;
+		margin-bottom: 1.25rem;
+	}
+
+	.q-pill,
+	.q-meta-inline {
+		display: inline-flex;
+		align-items: center;
+		gap: 0.45rem;
+		font-size: 0.95rem;
+		color: rgba(255, 255, 255, 0.72);
+	}
+
+	.q-pill {
+		padding: 0.7rem 1rem;
+		border-radius: 999px;
+		background: rgba(255, 255, 255, 0.12);
+		border: 1px solid rgba(255, 255, 255, 0.14);
+	}
+
+	.q-topic-label {
+		margin: 0 0 1rem;
+		font-size: 0.82rem;
+		font-weight: 700;
+		letter-spacing: 0.08em;
+		text-transform: uppercase;
+		color: var(--theme-primary);
+	}
+
+	.q-text {
+		font-size: clamp(2.1rem, 3.3vw, 3.2rem);
+		line-height: 1.12;
+		margin-bottom: 1.75rem;
+	}
+
+	.answer-panel {
+		padding: 1.25rem;
+		border-radius: 1.75rem;
+		background: rgba(255, 255, 255, 0.08);
+	}
+
+	.answer-panel-head {
+		display: flex;
+		justify-content: space-between;
+		align-items: center;
+		gap: 1rem;
+		margin-bottom: 1rem;
+	}
+
+	.answer-panel-title {
+		font-size: 0.88rem;
+		font-weight: 700;
+		letter-spacing: 0.12em;
+		text-transform: uppercase;
+		color: rgba(255, 255, 255, 0.65);
+	}
+
+	.answer-panel-hint {
+		font-size: 0.95rem;
+		font-weight: 600;
+		color: #31d0a1;
+	}
+
+	.options {
+		display: grid;
+		grid-template-columns: repeat(2, minmax(0, 1fr));
+		gap: 0.8rem;
+	}
+
+	.option {
+		min-height: 5.5rem;
+		padding: 1.2rem 1.35rem;
+		border-radius: 1rem;
+		border: 1px solid rgba(255, 255, 255, 0.12);
+		background: rgba(255, 255, 255, 0.05);
+		font-size: 1.05rem;
+	}
+
+	.opt-marker {
+		width: 2.2rem;
+		height: 2.2rem;
+		display: inline-flex;
+		align-items: center;
+		justify-content: center;
+		border-radius: 999px;
+		background: rgba(255, 255, 255, 0.1);
+	}
+
+	.option.correct {
+		background: rgba(62, 153, 117, 0.24);
+		border-color: rgba(49, 208, 161, 0.4);
+	}
+
+	.option.correct .opt-marker {
+		background: rgba(49, 208, 161, 0.22);
+		color: #d3fff1;
+	}
+
+	.edit-inline-row {
+		display: flex;
+		justify-content: flex-end;
+		margin-top: 1rem;
+	}
+
+	.edit-inline-btn {
+		border: none;
+		background: transparent;
+		font: inherit;
+		font-size: 0.9rem;
+		font-weight: 700;
+		color: var(--theme-text-muted);
+		cursor: pointer;
+	}
+
+	.grading-grid {
+		display: grid;
+		grid-template-columns: repeat(4, minmax(0, 1fr));
+		gap: 0.9rem;
+		margin-top: 1rem;
+	}
+
+	.grade-card {
+		min-height: 9rem;
+		border-radius: 1.4rem;
+		border: 1px solid rgba(255, 255, 255, 0.12);
+		background: rgba(255, 255, 255, 0.08);
+		color: var(--theme-text);
+		display: flex;
+		flex-direction: column;
+		align-items: center;
+		justify-content: center;
+		gap: 0.9rem;
+		font: inherit;
+		font-weight: 700;
+		cursor: pointer;
+		transition: transform 0.2s ease, border-color 0.2s ease, background 0.2s ease;
+	}
+
+	.grade-card:hover {
+		transform: translateY(-2px);
+	}
+
+	.grade-badge {
+		width: 3.15rem;
+		height: 3.15rem;
+		border-radius: 999px;
+		display: inline-flex;
+		align-items: center;
+		justify-content: center;
+		font-size: 1.9rem;
+		font-weight: 800;
+	}
+
+	.grade-card.easy .grade-badge,
+	.grade-card.easy {
+		color: #7df0ca;
+	}
+
+	.grade-card.easy .grade-badge {
+		background: rgba(49, 208, 161, 0.2);
+	}
+
+	.grade-card.medium .grade-badge,
+	.grade-card.medium {
+		color: #ffd76b;
+	}
+
+	.grade-card.medium .grade-badge {
+		background: rgba(245, 179, 62, 0.2);
+	}
+
+	.grade-card.hard .grade-badge,
+	.grade-card.hard {
+		color: #ff899d;
+	}
+
+	.grade-card.hard .grade-badge {
+		background: rgba(244, 63, 94, 0.2);
+	}
+
+	.grade-card.reject .grade-badge,
+	.grade-card.reject {
+		color: #ff728f;
+	}
+
+	.grade-card.reject .grade-badge {
+		background: rgba(233, 69, 96, 0.18);
+	}
+
 	@media (max-width: 768px) {
-		.loop-page { padding-top: 1rem; }
-		.actions { flex-wrap: wrap; }
-		.action-btn { padding: 0.7rem 1.2rem; font-size: 0.9rem; }
+		.loop-page {
+			padding-top: 1.25rem;
+			padding-bottom: 2rem;
+		}
+
+		.loop-hero {
+			flex-direction: column;
+			align-items: stretch;
+		}
+
+		.hero-title {
+			font-size: 4rem;
+		}
+
+		.progress-pill {
+			align-self: flex-start;
+		}
+
+		.question-card {
+			padding: 1.35rem;
+			border-radius: 1.75rem;
+		}
+
+		.q-text {
+			font-size: 2.95rem;
+		}
+
+		.options,
+		.grading-grid {
+			grid-template-columns: 1fr;
+		}
+
+		.answer-panel-head {
+			flex-direction: column;
+			align-items: flex-start;
+		}
 	}
 </style>

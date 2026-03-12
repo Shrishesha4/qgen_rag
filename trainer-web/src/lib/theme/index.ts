@@ -29,6 +29,7 @@ function applyTheme(config: ThemeConfig) {
 	const root = document.documentElement;
 	root.style.setProperty('--theme-bg', config.bg);
 	root.style.setProperty('--theme-bg-color', config.bgColor);
+	root.style.setProperty('--theme-bg-image', `url(${config.bgImage})`);
 	root.style.setProperty('--theme-primary', config.primary);
 	root.style.setProperty('--theme-primary-hover', config.primaryHover);
 	root.style.setProperty('--theme-primary-rgb', config.primaryRgb);

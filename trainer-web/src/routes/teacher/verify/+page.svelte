@@ -2,7 +2,7 @@
 	import { onMount } from 'svelte';
 	import { goto } from '$app/navigation';
 	import { session } from '$lib/session';
-	import PageHeader from '$lib/components/PageHeader.svelte';
+	import ThemeSelector from '$lib/components/ThemeSelector.svelte';
 	import { getQuestionsForVetting, getVetterDashboard, type QuestionForVetting, type VetterDashboard } from '$lib/api/vetting';
 
 	onMount(() => {
@@ -61,24 +61,24 @@
 	<title>Verifier Mode — QGen Trainer</title>
 </svelte:head>
 
-<PageHeader title="Verifier Mode" backHref="/teacher/dashboard" />
+<ThemeSelector />
 
 <div class="verify-page">
-	<div class="header">
-		<h1 class="title">Verifier Mode</h1>
+	<div class="header animate-fade-in">
+		<h1 class="title font-serif">Verifier Mode</h1>
 		<p class="subtitle">Review AI-generated questions for quality</p>
 	</div>
 
-	<div class="stats-row">
-		<div class="stat glass">
+	<div class="stats-row animate-slide-up">
+		<div class="stat glass-panel">
 			<span class="stat-value">{stats?.total_pending ?? '—'}</span>
 			<span class="stat-label">Pending</span>
 		</div>
-		<div class="stat glass">
+		<div class="stat glass-panel">
 			<span class="stat-value">{stats?.total_approved ?? '—'}</span>
 			<span class="stat-label">Approved</span>
 		</div>
-		<div class="stat glass">
+		<div class="stat glass-panel">
 			<span class="stat-value">{stats?.total_rejected ?? '—'}</span>
 			<span class="stat-label">Rejected</span>
 		</div>
@@ -101,11 +101,11 @@
 			<p>All caught up! No questions to review.</p>
 		</div>
 	{:else}
-		<div class="queue-section">
+		<div class="queue-section animate-slide-up">
 			<h2 class="section-title">Review Queue</h2>
 			<div class="queue-list">
 				{#each queue as item}
-					<button class="queue-item glass-card" onclick={() => startVerifying(item)}>
+					<button class="queue-item glass-panel" onclick={() => startVerifying(item)}>
 						<div class="qi-top">
 							<span class="qi-type">{typeLabel(item.question_type)}</span>
 							{#if item.topic_name}

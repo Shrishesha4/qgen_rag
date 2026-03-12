@@ -2,7 +2,7 @@
 	import { onMount } from 'svelte';
 	import { goto } from '$app/navigation';
 	import { session } from '$lib/session';
-	import PageHeader from '$lib/components/PageHeader.svelte';
+	import ThemeSelector from '$lib/components/ThemeSelector.svelte';
 	import FileUploadZone from '$lib/components/FileUploadZone.svelte';
 	import { createSubject, createTopic, extractChapters, updateTopic, type TopicResponse } from '$lib/api/subjects';
 	import { uploadDocument } from '$lib/api/documents';
@@ -258,14 +258,13 @@
 	<title>{stepTitle} — New Topic — QGen Trainer</title>
 </svelte:head>
 
-<PageHeader
-	title={stepTitle}
-	backHref={step > 1 ? undefined : '/teacher/train'}
-	{step}
-	{totalSteps}
-/>
+<ThemeSelector />
 
 <div class="wizard">
+	<div class="wizard-meta animate-fade-in">
+		<p class="wizard-kicker">New Topic Setup</p>
+		<div class="wizard-progress-pill">{step}/{totalSteps}</div>
+	</div>
 	<!-- Step indicator -->
 	<div class="step-bar">
 		{#each Array(totalSteps) as _, i}
@@ -537,6 +536,36 @@
 		padding: 2rem 1.5rem 6rem;
 		max-width: 600px;
 		margin: 0 auto;
+	}
+
+	.wizard-meta {
+		display: flex;
+		align-items: center;
+		justify-content: space-between;
+		gap: 1rem;
+		width: 100%;
+		margin-bottom: 0.5rem;
+	}
+
+	.wizard-kicker {
+		margin: 0;
+		font-size: 0.78rem;
+		font-weight: 700;
+		letter-spacing: 0.14em;
+		text-transform: uppercase;
+		color: var(--theme-primary);
+	}
+
+	.wizard-progress-pill {
+		min-width: 4.75rem;
+		padding: 0.8rem 1rem;
+		border-radius: 999px;
+		background: rgba(255, 255, 255, 0.12);
+		border: 1px solid rgba(255, 255, 255, 0.12);
+		color: var(--theme-text);
+		font-size: 0.95rem;
+		font-weight: 700;
+		text-align: center;
 	}
 
 	/* Step bar */

@@ -3,7 +3,7 @@
 	import { goto } from '$app/navigation';
 	import { page } from '$app/stores';
 	import { session } from '$lib/session';
-	import PageHeader from '$lib/components/PageHeader.svelte';
+	import ThemeSelector from '$lib/components/ThemeSelector.svelte';
 	import { getVetterSubject, type VetterSubjectSummary } from '$lib/api/vetting';
 
 	let subjectId = $state('');
@@ -48,7 +48,7 @@
 	<title>{subject?.name ?? 'Subject'} — QGen Vetter</title>
 </svelte:head>
 
-<PageHeader title={subject?.name ?? 'Topics'} backHref="/vetter/subjects" />
+<ThemeSelector />
 
 <div class="page">
 	{#if loading}

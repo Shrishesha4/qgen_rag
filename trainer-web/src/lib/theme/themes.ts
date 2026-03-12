@@ -1,6 +1,6 @@
 /**
- * Theme definitions — 5 atmospheric presets for liquid glass UI.
- * All backgrounds are dark/rich gradients so glass cards pop.
+ * Theme definitions — 5 atmospheric presets with background images.
+ * Each theme has an Unsplash background image and a CSS gradient fallback.
  */
 
 export type ThemeName = 'ice' | 'water' | 'fire' | 'earth' | 'night';
@@ -9,7 +9,9 @@ export interface ThemeConfig {
 	name: ThemeName;
 	label: string;
 	icon: string;
-	/** Rich atmospheric gradient */
+	/** Background image URL (Unsplash) */
+	bgImage: string;
+	/** Rich atmospheric gradient fallback */
 	bg: string;
 	/** Solid fallback */
 	bgColor: string;
@@ -30,8 +32,9 @@ export interface ThemeConfig {
 export const themes: Record<ThemeName, ThemeConfig> = {
 	ice: {
 		name: 'ice',
-		label: 'Ice',
+		label: 'Aurora',
 		icon: '❄️',
+		bgImage: 'https://images.unsplash.com/photo-1534447677768-be436bb09401?q=80&w=2694&auto=format&fit=crop',
 		bg: [
 			'radial-gradient(ellipse at 25% 70%, rgba(180,200,230,0.25) 0%, transparent 50%)',
 			'radial-gradient(ellipse at 75% 30%, rgba(150,185,220,0.2) 0%, transparent 40%)',
@@ -49,8 +52,9 @@ export const themes: Record<ThemeName, ThemeConfig> = {
 	},
 	water: {
 		name: 'water',
-		label: 'Water',
+		label: 'Deep Ocean',
 		icon: '🌊',
+		bgImage: 'https://images.unsplash.com/photo-1582967788606-a171c1080cb0?q=80&w=2564&auto=format&fit=crop',
 		bg: [
 			'radial-gradient(ellipse at 30% 80%, rgba(20,80,160,0.35) 0%, transparent 50%)',
 			'radial-gradient(ellipse at 70% 20%, rgba(30,100,180,0.25) 0%, transparent 45%)',
@@ -67,8 +71,9 @@ export const themes: Record<ThemeName, ThemeConfig> = {
 	},
 	fire: {
 		name: 'fire',
-		label: 'Fire',
+		label: 'Abstract Glass',
 		icon: '🔥',
+		bgImage: 'https://images.unsplash.com/photo-1618005182384-a83a8bd57fbe?q=80&w=2564&auto=format&fit=crop',
 		bg: [
 			'radial-gradient(ellipse at 40% 80%, rgba(200,60,20,0.2) 0%, transparent 50%)',
 			'radial-gradient(ellipse at 60% 20%, rgba(220,100,40,0.15) 0%, transparent 45%)',
@@ -85,8 +90,9 @@ export const themes: Record<ThemeName, ThemeConfig> = {
 	},
 	earth: {
 		name: 'earth',
-		label: 'Earth',
+		label: 'Dark Forest',
 		icon: '🌿',
+		bgImage: 'https://images.unsplash.com/photo-1511497584788-876760111969?q=80&w=2689&auto=format&fit=crop',
 		bg: [
 			'radial-gradient(ellipse at 25% 75%, rgba(40,120,50,0.25) 0%, transparent 50%)',
 			'radial-gradient(ellipse at 75% 25%, rgba(50,140,60,0.2) 0%, transparent 40%)',
@@ -103,8 +109,9 @@ export const themes: Record<ThemeName, ThemeConfig> = {
 	},
 	night: {
 		name: 'night',
-		label: 'Night',
+		label: 'Midnight',
 		icon: '🌙',
+		bgImage: 'https://images.unsplash.com/photo-1475274047050-1d0c55b0033f?q=80&w=2672&auto=format&fit=crop',
 		bg: [
 			'radial-gradient(ellipse at 20% 60%, rgba(80,40,140,0.25) 0%, transparent 50%)',
 			'radial-gradient(ellipse at 80% 80%, rgba(40,20,100,0.2) 0%, transparent 45%)',
