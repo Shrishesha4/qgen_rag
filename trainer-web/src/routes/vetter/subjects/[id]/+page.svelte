@@ -355,7 +355,173 @@
 		background: rgba(72, 192, 80, 0.15);
 		color: #6ee87a;
 	}
+
 	@media (max-width: 768px) {
-		.page { padding-top: 1rem; }
+		.page {
+			padding: 1.5rem 1rem;
+			gap: 0.85rem;
+		}
+
+		.subject-hero {
+			padding: 1.25rem;
+		}
+
+		.hero-code,
+		.hero-pending,
+		.hero-done {
+			font-size: 0.68rem;
+		}
+
+		.hero-name {
+			font-size: 1.25rem;
+		}
+
+		.hero-desc {
+			font-size: 0.85rem;
+		}
+
+		.hero-stats {
+			gap: 0.75rem;
+		}
+
+		.hero-stat {
+			font-size: 0.75rem;
+		}
+
+		.vet-all-btn {
+			padding: 1rem 1.25rem;
+			gap: 0.85rem;
+		}
+
+		.vet-all-icon {
+			font-size: 1.35rem;
+		}
+
+		.vet-all-title {
+			font-size: 0.95rem;
+		}
+
+		.vet-all-desc {
+			font-size: 0.78rem;
+		}
+
+		.topic-card {
+			padding: 0.9rem 1.1rem;
+			gap: 0.85rem;
+		}
+
+		.tc-number {
+			width: 26px;
+			height: 26px;
+			font-size: 0.75rem;
+		}
+
+		.tc-name {
+			font-size: 0.9rem;
+		}
+	}
+
+	@media (max-width: 480px) {
+		.page {
+			padding: 1.25rem 0.75rem;
+			gap: 0.75rem;
+		}
+
+		.center-state {
+			padding: 3rem 0.75rem;
+		}
+
+		.empty-icon {
+			font-size: 2.5rem;
+		}
+
+		.subject-hero {
+			padding: 1rem;
+			gap: 0.4rem;
+			border-radius: 12px;
+		}
+
+		.hero-code,
+		.hero-pending,
+		.hero-done {
+			font-size: 0.62rem;
+			padding: 0.15rem 0.5rem;
+		}
+
+		.hero-name {
+			font-size: 1.1rem;
+		}
+
+		.hero-desc {
+			font-size: 0.8rem;
+		}
+
+		.hero-stats {
+			gap: 0.6rem;
+			margin-top: 0.15rem;
+		}
+
+		.hero-stat {
+			font-size: 0.7rem;
+		}
+
+		.vet-all-btn {
+			padding: 0.9rem 1rem;
+			gap: 0.75rem;
+			border-radius: 12px;
+		}
+
+		.vet-all-icon {
+			font-size: 1.2rem;
+		}
+
+		.vet-all-title {
+			font-size: 0.88rem;
+		}
+
+		.vet-all-desc {
+			font-size: 0.72rem;
+		}
+
+		.divider {
+			padding: 0.15rem 0;
+		}
+
+		.divider-text {
+			font-size: 0.68rem;
+		}
+
+		.topic-list {
+			gap: 0.5rem;
+		}
+
+		.topic-card {
+			padding: 0.8rem 0.9rem;
+			gap: 0.7rem;
+			border-radius: 10px;
+		}
+
+		.tc-number {
+			width: 24px;
+			height: 24px;
+			font-size: 0.7rem;
+			border-radius: 6px;
+		}
+
+		.tc-name {
+			font-size: 0.85rem;
+		}
+
+		.tc-pending,
+		.tc-done {
+			font-size: 0.65rem;
+			width: 18px;
+			height: 18px;
+			min-width: 18px;
+		}
+
+		.tc-pending {
+			padding: 0 0.35rem;
+		}
 	}
 </style>

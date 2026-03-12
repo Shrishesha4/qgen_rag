@@ -269,3 +269,56 @@ a:hover {
 .animate-scale-in {
 	animation: scaleIn 0.3s ease-out both;
 }
+
+/* ── Mobile responsive utilities ── */
+@media (max-width: 480px) {
+	:root {
+		--glass-radius: 12px;
+		--glass-radius-sm: 8px;
+		--glass-radius-lg: 16px;
+	}
+
+	body {
+		font-size: 14px;
+	}
+
+	.glass-btn {
+		padding: 0.65rem 1.25rem;
+		font-size: 0.9rem;
+		border-radius: var(--glass-radius-sm);
+	}
+
+	.glass-btn-secondary {
+		padding: 0.6rem 1rem;
+		font-size: 0.85rem;
+	}
+
+	.glass-panel {
+		border-radius: var(--glass-radius);
+	}
+
+	.glass-input {
+		padding: 0.65rem 0.9rem;
+		font-size: 0.9rem;
+	}
+
+	.font-serif {
+		font-size: 0.95em;
+		line-height: 1.45;
+	}
+}
+
+@media (max-width: 768px) {
+	:root {
+		--glass-radius: 14px;
+		--glass-radius-sm: 10px;
+		--glass-radius-lg: 18px;
+	}
+}
+
+/* ── Touch-friendly tap targets ── */
+@media (hover: none) and (pointer: coarse) {
+	button, a, [role="button"] {
+		min-height: 44px;
+	}
+}

@@ -278,11 +278,122 @@
 
 	@media (max-width: 768px) {
 		.verify-page {
-			padding-top: 1rem;
+			padding: 1.5rem 1rem;
+			gap: 1.25rem;
 		}
 
 		.title {
-			font-size: 1.4rem;
+			font-size: 1.5rem;
+		}
+
+		.subtitle {
+			font-size: 0.9rem;
+		}
+
+		.stats-row {
+			gap: 0.5rem;
+		}
+
+		.stat {
+			padding: 0.85rem 0.5rem;
+		}
+
+		.stat-value {
+			font-size: 1.3rem;
+		}
+
+		.stat-label {
+			font-size: 0.7rem;
+		}
+
+		.section-title {
+			font-size: 0.9rem;
+		}
+
+		.queue-item {
+			padding: 0.9rem 1rem;
+		}
+
+		.qi-text {
+			font-size: 0.88rem;
+		}
+	}
+
+	@media (max-width: 480px) {
+		.verify-page {
+			padding: 1.25rem 0.75rem;
+			gap: 1rem;
+		}
+
+		.title {
+			font-size: 1.35rem;
+		}
+
+		.subtitle {
+			font-size: 0.85rem;
+		}
+
+		.stats-row {
+			gap: 0.4rem;
+		}
+
+		.stat {
+			padding: 0.75rem 0.4rem;
+			border-radius: 10px;
+		}
+
+		.stat-value {
+			font-size: 1.15rem;
+		}
+
+		.stat-label {
+			font-size: 0.65rem;
+		}
+
+		.section-title {
+			font-size: 0.82rem;
+		}
+
+		.queue-list {
+			gap: 0.6rem;
+			margin-top: 0.6rem;
+		}
+
+		.queue-item {
+			padding: 0.8rem 0.9rem;
+			border-radius: 10px;
+		}
+
+		.qi-top {
+			gap: 0.35rem;
+			margin-bottom: 0.4rem;
+		}
+
+		.qi-type,
+		.qi-topic {
+			font-size: 0.65rem;
+			padding: 0.1rem 0.4rem;
+		}
+
+		.qi-text {
+			font-size: 0.82rem;
+		}
+
+		.qi-time {
+			font-size: 0.7rem;
+			margin-top: 0.4rem;
+		}
+
+		.empty {
+			padding: 2rem 0.75rem;
+		}
+
+		.empty-icon {
+			font-size: 2.5rem;
+		}
+
+		.empty p {
+			font-size: 0.9rem;
 		}
 	}
 </style>

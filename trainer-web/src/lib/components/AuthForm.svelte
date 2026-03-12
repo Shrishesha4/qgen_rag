@@ -378,19 +378,109 @@
 		text-decoration: underline;
 	}
 
-	@media (max-width: 480px) {
+	@media (max-width: 768px) {
+		.auth-page {
+			padding: 1.5rem 0.75rem;
+		}
+
 		.auth-card {
 			padding: 2rem 1.5rem;
+			border-radius: 1.25rem;
 		}
 
 		.auth-icon {
-			width: 52px;
-			height: 52px;
+			width: 56px;
+			height: 56px;
 		}
 
 		.auth-icon svg {
-			width: 22px;
-			height: 22px;
+			width: 24px;
+			height: 24px;
+		}
+
+		.auth-title {
+			font-size: 1.35rem;
+		}
+
+		.auth-subtitle {
+			font-size: 0.85rem;
+		}
+	}
+
+	@media (max-width: 480px) {
+		.auth-page {
+			padding: 1rem 0.5rem;
+			align-items: flex-start;
+			padding-top: 2rem;
+		}
+
+		.auth-card {
+			padding: 1.5rem 1.25rem;
+			border-radius: 1rem;
+		}
+
+		.back-link {
+			font-size: 0.8rem;
+			margin-bottom: 1rem;
+		}
+
+		.auth-header {
+			margin-bottom: 1.25rem;
+		}
+
+		.auth-icon {
+			width: 48px;
+			height: 48px;
+			margin-bottom: 0.5rem;
+		}
+
+		.auth-icon svg {
+			width: 20px;
+			height: 20px;
+		}
+
+		.auth-title {
+			font-size: 1.25rem;
+		}
+
+		.auth-subtitle {
+			font-size: 0.82rem;
+		}
+
+		.error-banner {
+			padding: 0.55rem 0.75rem;
+			font-size: 0.8rem;
+			border-radius: 0.6rem;
+		}
+
+		form {
+			gap: 0.85rem;
+		}
+
+		.field-label {
+			font-size: 0.75rem;
+		}
+
+		.field-input {
+			padding: 0.6rem 0.75rem;
+			font-size: 0.9rem;
+			border-radius: 0.65rem;
+		}
+
+		.submit-btn {
+			padding: 0.65rem;
+			font-size: 0.95rem;
+			border-radius: 0.65rem;
+			min-height: 2.5rem;
+		}
+
+		.mode-switch {
+			margin-top: 1rem;
+			font-size: 0.8rem;
+		}
+
+		.switch-btn {
+			font-size: 0.8rem;
 		}
 	}
 </style>

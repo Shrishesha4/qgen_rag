@@ -59,10 +59,6 @@
 			<span class="card-cta">Sign in as Vetter →</span>
 		</a>
 	</div>
-
-	<p class="footer-note animate-fade-in" style="animation-delay: 0.4s">
-		Every review you make teaches the AI to generate better questions next time.
-	</p>
 </div>
 
 <style>
@@ -202,19 +198,120 @@
 		line-height: 1.5;
 	}
 
-	@media (max-width: 480px) {
-		.hero-title {
-			font-size: 2.25rem;
+	@media (max-width: 768px) {
+		.landing {
+			padding: 1.5rem 1rem;
+			gap: 2rem;
 		}
 
 		.hero-icon {
-			width: 56px;
-			height: 56px;
+			width: 64px;
+			height: 64px;
 		}
 
 		.hero-icon svg {
-			width: 28px;
-			height: 28px;
+			width: 32px;
+			height: 32px;
+		}
+
+		.hero-title {
+			font-size: 2.5rem;
+		}
+
+		.hero-sub {
+			font-size: 1rem;
+		}
+
+		.role-card {
+			padding: 1.5rem 1.25rem;
+		}
+
+		.role-icon {
+			width: 50px;
+			height: 50px;
+		}
+
+		.role-icon svg {
+			width: 22px;
+			height: 22px;
+		}
+
+		.card-title {
+			font-size: 1.25rem;
+		}
+
+		.card-desc {
+			font-size: 0.88rem;
+		}
+
+		.card-cta {
+			font-size: 0.85rem;
+		}
+	}
+
+	@media (max-width: 480px) {
+		.landing {
+			padding: 1.25rem 0.75rem;
+			gap: 1.5rem;
+		}
+
+		.hero {
+			gap: 0.5rem;
+		}
+
+		.hero-icon {
+			width: 52px;
+			height: 52px;
+			margin-bottom: 0.25rem;
+		}
+
+		.hero-icon svg {
+			width: 26px;
+			height: 26px;
+		}
+
+		.hero-title {
+			font-size: 2rem;
+		}
+
+		.hero-sub {
+			font-size: 0.92rem;
+		}
+
+		.cards {
+			gap: 0.75rem;
+		}
+
+		.role-card {
+			padding: 1.25rem 1rem;
+			border-radius: 1.25rem;
+			gap: 0.5rem;
+		}
+
+		.role-icon {
+			width: 46px;
+			height: 46px;
+		}
+
+		.role-icon svg {
+			width: 20px;
+			height: 20px;
+		}
+
+		.card-title {
+			font-size: 1.15rem;
+		}
+
+		.card-desc {
+			font-size: 0.82rem;
+		}
+
+		.card-cta {
+			font-size: 0.8rem;
+		}
+
+		.footer-note {
+			font-size: 0.78rem;
 		}
 	}
 </style>

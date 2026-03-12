@@ -160,12 +160,104 @@
 
 	@media (max-width: 768px) {
 		.page {
-			padding-top: 1rem;
+			padding: 1.5rem 1rem;
 			min-height: calc(100vh - 60px);
+			gap: 1.5rem;
 		}
 
 		.title {
-			font-size: 1.5rem;
+			font-size: 1.65rem;
+		}
+
+		.subtitle {
+			font-size: 0.95rem;
+		}
+
+		.cards {
+			max-width: 100%;
+			gap: 0.85rem;
+		}
+
+		.card-link {
+			padding: 1.25rem;
+		}
+
+		.card-row {
+			gap: 0.85rem;
+		}
+
+		.card-icon {
+			width: 42px;
+			height: 42px;
+		}
+
+		.card-icon svg {
+			width: 18px;
+			height: 18px;
+		}
+
+		.card-title {
+			font-size: 1rem;
+		}
+
+		.card-desc {
+			font-size: 0.82rem;
+		}
+	}
+
+	@media (max-width: 480px) {
+		.page {
+			padding: 1.25rem 0.75rem;
+			gap: 1.25rem;
+		}
+
+		.header {
+			gap: 0.35rem;
+		}
+
+		.title {
+			font-size: 1.45rem;
+		}
+
+		.subtitle {
+			font-size: 0.88rem;
+		}
+
+		.cards {
+			gap: 0.7rem;
+		}
+
+		.card-link {
+			padding: 1rem;
+			border-radius: 0.85rem;
+		}
+
+		.card-row {
+			gap: 0.75rem;
+		}
+
+		.card-icon {
+			width: 38px;
+			height: 38px;
+		}
+
+		.card-icon svg {
+			width: 16px;
+			height: 16px;
+		}
+
+		.card-title {
+			font-size: 0.95rem;
+			margin-bottom: 0.15rem;
+		}
+
+		.card-desc {
+			font-size: 0.78rem;
+		}
+
+		.arrow {
+			width: 16px;
+			height: 16px;
 		}
 	}
 </style>

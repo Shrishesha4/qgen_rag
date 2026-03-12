@@ -317,4 +317,132 @@
 		background: rgba(233, 69, 96, 0.15);
 		color: #e94560;
 	}
+
+	@media (max-width: 768px) {
+		.sidebar-inner {
+			padding: 1.25rem 0.85rem;
+		}
+
+		.logo-section {
+			margin-bottom: 1.5rem;
+		}
+
+		.logo-icon {
+			width: 40px;
+			height: 40px;
+		}
+
+		.logo-icon svg {
+			width: 18px;
+			height: 18px;
+		}
+
+		.logo-title {
+			font-size: 0.95rem;
+		}
+
+		.logo-sub {
+			font-size: 0.7rem;
+		}
+
+		.nav-item {
+			padding: 0.65rem 0.7rem;
+			font-size: 0.9rem;
+		}
+
+		.nav-icon-wrap svg {
+			width: 16px;
+			height: 16px;
+		}
+
+		.theme-thumb {
+			width: 32px;
+			height: 32px;
+		}
+
+		.logout-btn {
+			font-size: 0.85rem;
+			padding: 0.55rem 0.7rem;
+		}
+	}
+
+	@media (max-width: 480px) {
+		.sidebar-inner {
+			padding: 1rem 0.75rem;
+		}
+
+		.logo-section {
+			gap: 0.6rem;
+			margin-bottom: 1.25rem;
+		}
+
+		.logo-icon {
+			width: 36px;
+			height: 36px;
+			border-radius: 10px;
+		}
+
+		.logo-icon svg {
+			width: 16px;
+			height: 16px;
+		}
+
+		.logo-title {
+			font-size: 0.88rem;
+		}
+
+		.logo-sub {
+			font-size: 0.65rem;
+		}
+
+		.nav-section {
+			gap: 0.2rem;
+		}
+
+		.nav-item {
+			padding: 0.6rem 0.65rem;
+			font-size: 0.85rem;
+			border-radius: 10px;
+			gap: 0.6rem;
+		}
+
+		.nav-icon-wrap {
+			width: 24px;
+		}
+
+		.nav-icon-wrap svg {
+			width: 15px;
+			height: 15px;
+		}
+
+		.sidebar-footer {
+			padding-top: 0.75rem;
+			gap: 0.6rem;
+		}
+
+		.theme-label-text {
+			font-size: 0.6rem;
+			margin-bottom: 0.4rem;
+		}
+
+		.theme-thumbs {
+			gap: 0.4rem;
+		}
+
+		.theme-thumb {
+			width: 28px;
+			height: 28px;
+		}
+
+		.logout-btn {
+			font-size: 0.82rem;
+			padding: 0.5rem 0.6rem;
+			gap: 0.5rem;
+		}
+
+		.logout-btn svg {
+			width: 16px;
+			height: 16px;
+		}
+	}
 </style>

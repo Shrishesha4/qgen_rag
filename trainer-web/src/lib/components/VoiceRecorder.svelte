@@ -929,4 +929,126 @@
 		cursor: not-allowed;
 		transform: none;
 	}
+
+	@media (max-width: 480px) {
+		.recorder-overlay {
+			padding: 0.75rem;
+			align-items: flex-end;
+		}
+
+		.recorder-modal {
+			max-width: 100%;
+			padding: 1.25rem;
+			gap: 1rem;
+			border-radius: 1.25rem 1.25rem 0 0;
+			max-height: 85vh;
+			overflow-y: auto;
+		}
+
+		.recorder-title {
+			font-size: 1rem;
+		}
+
+		.recorder-close {
+			width: 28px;
+			height: 28px;
+			border-radius: 6px;
+		}
+
+		.mic-container {
+			width: 72px;
+			height: 72px;
+		}
+
+		.mic-btn {
+			width: 56px;
+			height: 56px;
+		}
+
+		.mic-btn svg {
+			width: 20px;
+			height: 20px;
+		}
+
+		.recording-timer {
+			font-size: 1.6rem;
+		}
+
+		.waveform {
+			height: 32px;
+			gap: 1.5px;
+		}
+
+		.wave-bar {
+			width: 2.5px;
+		}
+
+		.recording-hint {
+			font-size: 0.75rem;
+			max-width: 100%;
+		}
+
+		.retry-btn {
+			padding: 0.6rem 0.85rem;
+			font-size: 0.8rem;
+		}
+
+		.transcription-status-panel {
+			padding: 0.75rem 0.85rem;
+			border-radius: 0.85rem;
+		}
+
+		.live-transcript-label,
+		.audio-preview-label {
+			font-size: 0.68rem;
+		}
+
+		.live-transcript-copy {
+			font-size: 0.82rem;
+		}
+
+		.audio-preview {
+			padding: 0.75rem 0.85rem;
+			border-radius: 0.85rem;
+		}
+
+		.audio-preview-player {
+			height: 36px;
+		}
+
+		.transcript-warning {
+			padding: 0.65rem 0.75rem;
+			font-size: 0.78rem;
+		}
+
+		.transcript-label {
+			font-size: 0.7rem;
+		}
+
+		.transcript-input {
+			padding: 0.65rem;
+			font-size: 0.88rem;
+			border-radius: 10px;
+		}
+
+		.transcript-hint {
+			font-size: 0.7rem;
+		}
+
+		.recorder-actions {
+			gap: 0.6rem;
+		}
+
+		.recorder-cancel-btn,
+		.recorder-submit-btn {
+			padding: 0.65rem;
+			font-size: 0.88rem;
+			border-radius: 10px;
+		}
+
+		.recorder-submit-btn svg {
+			width: 14px;
+			height: 14px;
+		}
+	}
 </style>

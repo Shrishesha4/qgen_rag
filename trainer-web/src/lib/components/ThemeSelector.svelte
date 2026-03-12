@@ -92,16 +92,54 @@
 		display: block;
 	}
 
+	@media (max-width: 768px) {
+		.theme-selector {
+			bottom: 1.25rem;
+			right: 1.25rem;
+			padding: 0.45rem 0.85rem;
+			gap: 0.6rem;
+		}
+
+		.selector-icon {
+			width: 14px;
+			height: 14px;
+		}
+
+		.selector-label {
+			font-size: 0.8rem;
+		}
+
+		.thumb {
+			width: 1.35rem;
+			height: 1.35rem;
+		}
+	}
+
 	@media (max-width: 480px) {
 		.theme-selector {
 			bottom: 1rem;
 			right: 1rem;
-			padding: 0.4rem 0.75rem;
-			gap: 0.5rem;
+			padding: 0.4rem 0.65rem;
+			gap: 0.4rem;
+		}
+
+		.selector-icon {
+			width: 12px;
+			height: 12px;
 		}
 
 		.selector-label {
 			display: none;
+		}
+
+		.selector-thumbs {
+			gap: 0.35rem;
+		}
+
+		.thumb {
+			width: 1.15rem;
+			height: 1.15rem;
+			border-width: 1.5px;
 		}
 	}
 </style>

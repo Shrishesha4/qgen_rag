@@ -118,4 +118,77 @@
 	.header-right {
 		min-width: 72px;
 	}
+
+	@media (max-width: 768px) {
+		.page-header {
+			padding: 0.65rem 0.85rem;
+		}
+
+		.header-left {
+			min-width: 64px;
+			gap: 0.2rem;
+		}
+
+		.header-icon-btn {
+			width: 32px;
+			height: 32px;
+			border-radius: 8px;
+		}
+
+		.header-icon-btn svg {
+			width: 18px;
+			height: 18px;
+		}
+
+		.header-title {
+			font-size: 0.95rem;
+		}
+
+		.step-badge {
+			font-size: 0.7rem;
+			padding: 0.1rem 0.4rem;
+		}
+
+		.header-right {
+			min-width: 64px;
+		}
+	}
+
+	@media (max-width: 480px) {
+		.page-header {
+			padding: 0.55rem 0.75rem;
+		}
+
+		.header-left {
+			min-width: 56px;
+		}
+
+		.header-icon-btn {
+			width: 30px;
+			height: 30px;
+		}
+
+		.header-icon-btn svg {
+			width: 16px;
+			height: 16px;
+		}
+
+		.header-center {
+			gap: 0.35rem;
+		}
+
+		.header-title {
+			font-size: 0.88rem;
+		}
+
+		.step-badge {
+			font-size: 0.65rem;
+			padding: 0.08rem 0.35rem;
+			border-radius: 6px;
+		}
+
+		.header-right {
+			min-width: 56px;
+		}
+	}
 </style>

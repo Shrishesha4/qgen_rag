@@ -63,4 +63,20 @@
 	.gc-active:hover {
 		background: linear-gradient(135deg, rgba(var(--theme-primary-rgb),0.4) 0%, rgba(var(--theme-primary-rgb),0.2) 100%);
 	}
+
+	@media (max-width: 768px) {
+		.gc {
+			border-radius: 12px;
+		}
+	}
+
+	@media (max-width: 480px) {
+		.gc {
+			border-radius: 10px;
+		}
+
+		.gc:hover {
+			transform: translateY(-1px);
+		}
+	}
 </style>

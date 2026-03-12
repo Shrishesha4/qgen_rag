@@ -267,6 +267,135 @@
 	}
 
 	@media (max-width: 768px) {
-		.page { padding-top: 1rem; }
+		.page {
+			padding: 1.5rem 1rem;
+			gap: 0.85rem;
+		}
+
+		.vet-all-btn {
+			padding: 1rem 1.25rem;
+			gap: 0.85rem;
+		}
+
+		.vet-all-icon {
+			font-size: 1.35rem;
+		}
+
+		.vet-all-title {
+			font-size: 0.95rem;
+		}
+
+		.vet-all-desc {
+			font-size: 0.78rem;
+		}
+
+		.subject-card {
+			padding: 1rem 1.25rem;
+		}
+
+		.sc-code {
+			font-size: 0.65rem;
+		}
+
+		.sc-pending,
+		.sc-done {
+			font-size: 0.68rem;
+		}
+
+		.sc-name {
+			font-size: 1rem;
+		}
+
+		.sc-desc {
+			font-size: 0.82rem;
+			margin-bottom: 0.6rem;
+		}
+
+		.sc-stats {
+			gap: 0.75rem;
+		}
+
+		.sc-stat {
+			font-size: 0.72rem;
+		}
+	}
+
+	@media (max-width: 480px) {
+		.page {
+			padding: 1.25rem 0.75rem;
+			gap: 0.75rem;
+		}
+
+		.center-state {
+			padding: 3rem 0.75rem;
+		}
+
+		.empty-icon {
+			font-size: 2.5rem;
+		}
+
+		.divider {
+			padding: 0.15rem 0;
+		}
+
+		.divider-text {
+			font-size: 0.68rem;
+		}
+
+		.vet-all-btn {
+			padding: 0.9rem 1rem;
+			gap: 0.75rem;
+			border-radius: 12px;
+		}
+
+		.vet-all-icon {
+			font-size: 1.2rem;
+		}
+
+		.vet-all-title {
+			font-size: 0.88rem;
+		}
+
+		.vet-all-desc {
+			font-size: 0.72rem;
+		}
+
+		.subject-card {
+			padding: 0.9rem 1rem;
+			border-radius: 12px;
+		}
+
+		.sc-top {
+			margin-bottom: 0.35rem;
+		}
+
+		.sc-code {
+			font-size: 0.6rem;
+			padding: 0.1rem 0.4rem;
+		}
+
+		.sc-pending,
+		.sc-done {
+			font-size: 0.62rem;
+			padding: 0.1rem 0.4rem;
+		}
+
+		.sc-name {
+			font-size: 0.95rem;
+			margin-bottom: 0.2rem;
+		}
+
+		.sc-desc {
+			font-size: 0.78rem;
+			margin-bottom: 0.5rem;
+		}
+
+		.sc-stats {
+			gap: 0.6rem;
+		}
+
+		.sc-stat {
+			font-size: 0.68rem;
+		}
 	}
 </style>

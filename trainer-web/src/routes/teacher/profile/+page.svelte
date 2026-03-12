@@ -248,20 +248,138 @@
 		box-shadow: 0 12px 32px rgba(244, 63, 94, 0.18);
 	}
 
-	@media (max-width: 640px) {
+	@media (max-width: 768px) {
 		.profile-page {
-			padding: 1rem;
+			padding: 1.25rem;
+			gap: 1rem;
+		}
+
+		.profile-card {
+			padding: 1.75rem 1.25rem;
+			border-radius: 1.25rem;
+			gap: 1.25rem;
+		}
+
+		.avatar-ring {
+			width: 90px;
+			height: 90px;
+			padding: 5px;
+		}
+
+		.avatar-core {
+			font-size: 1.75rem;
+		}
+
+		.eyebrow {
+			font-size: 0.7rem;
+		}
+
+		.profile-name {
+			font-size: clamp(1.75rem, 6vw, 2.2rem);
+		}
+
+		.profile-email {
+			font-size: 0.9rem;
+		}
+
+		.detail-grid {
+			gap: 0.7rem;
+		}
+
+		.detail-item {
+			padding: 0.85rem;
+		}
+
+		.detail-label {
+			font-size: 0.68rem;
+		}
+
+		.detail-value {
+			font-size: 0.9rem;
+		}
+
+		.profile-actions button {
+			min-height: 48px;
+			font-size: 0.9rem;
+		}
+	}
+
+	@media (max-width: 480px) {
+		.profile-page {
+			padding: 1rem 0.75rem;
 			justify-content: flex-start;
 			padding-top: max(1rem, env(safe-area-inset-top));
+			gap: 0.85rem;
+		}
+
+		.nav-btn {
+			width: 40px;
+			height: 40px;
+		}
+
+		.nav-btn svg {
+			width: 18px;
+			height: 18px;
 		}
 
 		.profile-card {
 			padding: 1.5rem 1rem;
+			border-radius: 1rem;
+			gap: 1rem;
+		}
+
+		.avatar-ring {
+			width: 80px;
+			height: 80px;
+			padding: 4px;
+		}
+
+		.avatar-core {
+			font-size: 1.5rem;
+		}
+
+		.profile-copy {
+			gap: 0.25rem;
+		}
+
+		.eyebrow {
+			font-size: 0.65rem;
+		}
+
+		.profile-name {
+			font-size: 1.5rem;
+		}
+
+		.profile-email {
+			font-size: 0.85rem;
 		}
 
 		.detail-grid,
 		.profile-actions {
 			grid-template-columns: 1fr;
+			gap: 0.6rem;
+		}
+
+		.detail-item {
+			padding: 0.75rem 0.85rem;
+			border-radius: 0.75rem;
+		}
+
+		.detail-label {
+			font-size: 0.65rem;
+		}
+
+		.detail-value {
+			font-size: 0.85rem;
+		}
+
+		.profile-actions {
+			gap: 0.5rem;
+		}
+
+		.profile-actions button {
+			min-height: 44px;
+			font-size: 0.85rem;
 		}
 	}
 </style>

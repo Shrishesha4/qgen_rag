@@ -246,16 +246,147 @@
 
 	@media (max-width: 768px) {
 		.home {
-			padding-top: 4.5rem;
+			padding: 4.5rem 1rem 2rem;
 			min-height: 100vh;
+			gap: 1.5rem;
 		}
 
 		.dashboard-topbar {
 			right: 1rem;
 		}
 
+		.profile-shortcut {
+			width: 46px;
+			height: 46px;
+		}
+
+		.profile-avatar {
+			width: 34px;
+			height: 34px;
+			font-size: 0.88rem;
+		}
+
+		.hero {
+			gap: 0.6rem;
+		}
+
+		.hero-icon {
+			width: 56px;
+			height: 56px;
+		}
+
+		.hero-icon svg {
+			width: 28px;
+			height: 28px;
+		}
+
 		.hero-title {
-			font-size: 1.75rem;
+			font-size: 1.85rem;
+		}
+
+		.hero-sub {
+			font-size: 0.95rem;
+		}
+
+		.mode-cards {
+			max-width: 100%;
+			gap: 0.85rem;
+		}
+
+		.mode-card {
+			padding: 1.25rem;
+			gap: 0.85rem;
+		}
+
+		.mode-icon {
+			width: 44px;
+			height: 44px;
+		}
+
+		.mode-title {
+			font-size: 1rem;
+		}
+
+		.mode-desc {
+			font-size: 0.82rem;
+		}
+	}
+
+	@media (max-width: 480px) {
+		.home {
+			padding: 4rem 0.75rem 1.5rem;
+			gap: 1.25rem;
+		}
+
+		.dashboard-topbar {
+			top: max(1rem, env(safe-area-inset-top));
+			right: 0.75rem;
+		}
+
+		.profile-shortcut {
+			width: 42px;
+			height: 42px;
+		}
+
+		.profile-avatar {
+			width: 30px;
+			height: 30px;
+			font-size: 0.82rem;
+		}
+
+		.hero {
+			gap: 0.45rem;
+		}
+
+		.hero-icon {
+			width: 50px;
+			height: 50px;
+		}
+
+		.hero-icon svg {
+			width: 24px;
+			height: 24px;
+		}
+
+		.hero-title {
+			font-size: 1.6rem;
+		}
+
+		.hero-sub {
+			font-size: 0.88rem;
+		}
+
+		.mode-cards {
+			gap: 0.7rem;
+		}
+
+		.mode-card {
+			padding: 1rem;
+			border-radius: 1rem;
+			gap: 0.75rem;
+		}
+
+		.mode-icon {
+			width: 40px;
+			height: 40px;
+		}
+
+		.mode-icon svg {
+			width: 18px;
+			height: 18px;
+		}
+
+		.mode-title {
+			font-size: 0.95rem;
+			margin-bottom: 0.15rem;
+		}
+
+		.mode-desc {
+			font-size: 0.78rem;
+		}
+
+		.welcome-text {
+			font-size: 0.78rem;
 		}
 	}
 </style>

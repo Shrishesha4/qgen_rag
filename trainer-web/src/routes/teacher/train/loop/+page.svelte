@@ -554,7 +554,6 @@
 		<div class="hero-copy">
 			<button class="back-link" onclick={() => goto('/teacher/train')}>Back to topics</button>
 			<h1 class="hero-title font-serif">Question Vetting</h1>
-			<p class="hero-subtitle">Review and grade generated questions before they enter the question bank.</p>
 		</div>
 		{#if questions.length > 0}
 			<div class="progress-pill">
@@ -2005,40 +2004,219 @@
 
 	@media (max-width: 768px) {
 		.loop-page {
-			padding-top: 1.25rem;
+			padding: 1.25rem 1rem;
 			padding-bottom: 2rem;
+			gap: 1rem;
 		}
 
 		.loop-hero {
 			flex-direction: column;
 			align-items: stretch;
+			gap: 1rem;
 		}
 
 		.hero-title {
-			font-size: 4rem;
+			font-size: clamp(2rem, 8vw, 3rem);
+		}
+
+		.hero-subtitle {
+			font-size: 0.9rem;
 		}
 
 		.progress-pill {
 			align-self: flex-start;
+			min-width: auto;
+			padding: 0.7rem 0.9rem;
+		}
+
+		.progress-pill-count {
+			font-size: 1.1rem;
 		}
 
 		.question-card {
-			padding: 1.35rem;
-			border-radius: 1.75rem;
+			padding: 1.25rem;
+			border-radius: 1.5rem;
 		}
 
 		.q-text {
-			font-size: 2.95rem;
+			font-size: clamp(1.4rem, 5vw, 2rem);
+			line-height: 1.25;
+			margin-bottom: 1.25rem;
 		}
 
-		.options,
-		.grading-grid {
+		.options {
 			grid-template-columns: 1fr;
+			gap: 0.6rem;
+		}
+
+		.option {
+			min-height: auto;
+			padding: 0.9rem 1rem;
+			font-size: 0.95rem;
+		}
+
+		.grading-grid {
+			grid-template-columns: repeat(2, 1fr);
+			gap: 0.6rem;
+		}
+
+		.grade-card {
+			min-height: 6rem;
+			padding: 0.75rem;
+		}
+
+		.grade-badge {
+			width: 2.5rem;
+			height: 2.5rem;
+			font-size: 1.4rem;
+		}
+
+		.grade-label {
+			font-size: 0.85rem;
 		}
 
 		.answer-panel-head {
 			flex-direction: column;
 			align-items: flex-start;
+		}
+	}
+
+	@media (max-width: 480px) {
+		.loop-page {
+			padding: 1rem 0.75rem;
+			gap: 0.85rem;
+		}
+
+		.hero-copy {
+			gap: 0.35rem;
+		}
+
+		.back-link {
+			font-size: 0.75rem;
+		}
+
+		.hero-title {
+			font-size: 1.75rem;
+		}
+
+		.hero-subtitle {
+			font-size: 0.85rem;
+		}
+
+		.progress-pill {
+			padding: 0.55rem 0.75rem;
+			gap: 0.6rem;
+		}
+
+		.progress-pill-count {
+			font-size: 0.95rem;
+		}
+
+		.progress-pill-track {
+			height: 0.35rem;
+		}
+
+		.question-card {
+			padding: 1rem;
+			border-radius: 1.25rem;
+		}
+
+		.q-context {
+			flex-wrap: wrap;
+			gap: 0.5rem;
+			margin-bottom: 0.75rem;
+		}
+
+		.q-pill {
+			padding: 0.4rem 0.6rem;
+			font-size: 0.75rem;
+		}
+
+		.q-meta-inline {
+			font-size: 0.75rem;
+		}
+
+		.q-topic-label {
+			font-size: 0.72rem;
+			margin-bottom: 0.6rem;
+		}
+
+		.q-text {
+			font-size: 1.15rem;
+			line-height: 1.35;
+			margin-bottom: 1rem;
+		}
+
+		.answer-panel {
+			padding: 0.85rem;
+			border-radius: 1rem;
+		}
+
+		.answer-panel-title {
+			font-size: 0.75rem;
+		}
+
+		.options {
+			gap: 0.5rem;
+		}
+
+		.option {
+			padding: 0.75rem 0.85rem;
+			font-size: 0.88rem;
+			gap: 0.5rem;
+		}
+
+		.opt-marker {
+			width: 1.6rem;
+			height: 1.6rem;
+			font-size: 0.75rem;
+		}
+
+		.grading-grid {
+			gap: 0.5rem;
+			margin-top: 0.75rem;
+		}
+
+		.grade-card {
+			min-height: 5rem;
+			border-radius: 0.85rem;
+			gap: 0.5rem;
+		}
+
+		.grade-badge {
+			width: 2rem;
+			height: 2rem;
+			font-size: 1.15rem;
+		}
+
+		.grade-label {
+			font-size: 0.75rem;
+		}
+
+		.gen-panel {
+			padding: 0.85rem;
+			border-radius: 0.85rem;
+			gap: 0.65rem;
+		}
+
+		.gen-status-row {
+			gap: 0.5rem;
+		}
+
+		.gen-status-label {
+			font-size: 0.72rem;
+		}
+
+		.gen-ctx {
+			font-size: 0.72rem;
+		}
+
+		.gen-progress {
+			height: 0.35rem;
+		}
+
+		.doc-detail {
+			font-size: 0.72rem;
 		}
 	}
 </style>

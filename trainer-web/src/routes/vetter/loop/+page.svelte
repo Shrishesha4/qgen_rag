@@ -1499,35 +1499,381 @@
 
 	@media (max-width: 768px) {
 		.loop-page {
-			padding-top: 1.25rem;
+			padding: 1.25rem 1rem;
 			padding-bottom: 2rem;
+			gap: 1rem;
 		}
 
 		.loop-hero {
 			flex-direction: column;
 			align-items: stretch;
+			gap: 1rem;
 		}
 
 		.hero-title {
-			font-size: 4rem;
+			font-size: clamp(2rem, 8vw, 3rem);
+		}
+
+		.hero-subtitle {
+			font-size: 0.9rem;
 		}
 
 		.progress-pill {
 			align-self: flex-start;
+			min-width: auto;
+			padding: 0.7rem 0.9rem;
+		}
+
+		.progress-pill-count {
+			font-size: 1.1rem;
 		}
 
 		.question-card {
-			padding: 1.35rem;
-			border-radius: 1.75rem;
+			padding: 1.25rem;
+			border-radius: 1.5rem;
+		}
+
+		.q-context {
+			gap: 0.6rem;
+			margin-bottom: 1rem;
+		}
+
+		.q-pill {
+			padding: 0.5rem 0.75rem;
+			font-size: 0.85rem;
+		}
+
+		.q-meta-inline {
+			font-size: 0.8rem;
 		}
 
 		.q-text {
-			font-size: 2.95rem;
+			font-size: clamp(1.4rem, 5vw, 2rem);
+			line-height: 1.25;
+			margin-bottom: 1.25rem;
 		}
 
-		.options,
-		.grading-grid {
+		.answer-panel {
+			padding: 1rem;
+			border-radius: 1.25rem;
+		}
+
+		.options {
 			grid-template-columns: 1fr;
+			gap: 0.6rem;
+		}
+
+		.option {
+			min-height: auto;
+			padding: 0.9rem 1rem;
+			font-size: 0.95rem;
+		}
+
+		.opt-marker {
+			width: 1.8rem;
+			height: 1.8rem;
+			font-size: 0.85rem;
+		}
+
+		.grading-grid {
+			grid-template-columns: repeat(2, 1fr);
+			gap: 0.6rem;
+		}
+
+		.grade-card {
+			min-height: 6rem;
+			border-radius: 1rem;
+			padding: 0.75rem;
+		}
+
+		.grade-badge {
+			width: 2.5rem;
+			height: 2.5rem;
+			font-size: 1.4rem;
+		}
+
+		.grade-label {
+			font-size: 0.85rem;
+		}
+
+		.caught-up-panel {
+			padding: 1.5rem 1rem;
+		}
+
+		.caught-up-title {
+			font-size: clamp(1.75rem, 6vw, 2.5rem);
+		}
+
+		.caught-up-stats {
+			grid-template-columns: repeat(3, 1fr);
+			gap: 0.5rem;
+		}
+
+		.caught-up-stat {
+			padding: 0.75rem 0.5rem;
+		}
+
+		.caught-up-value {
+			font-size: 1.4rem;
+		}
+
+		.caught-up-label {
+			font-size: 0.7rem;
+		}
+
+		.edit-actions {
+			flex-direction: column;
+			gap: 0.5rem;
+		}
+
+		.edit-footer-btn {
+			width: 100%;
+			min-width: auto;
+		}
+
+		.explanation {
+			padding: 0.65rem 0.85rem;
+		}
+
+		.expl-text {
+			font-size: 0.85rem;
+		}
+	}
+
+	@media (max-width: 480px) {
+		.loop-page {
+			padding: 1rem 0.75rem;
+			gap: 0.85rem;
+		}
+
+		.hero-copy {
+			gap: 0.35rem;
+		}
+
+		.back-link {
+			font-size: 0.75rem;
+		}
+
+		.hero-title {
+			font-size: 1.75rem;
+		}
+
+		.hero-subtitle {
+			font-size: 0.85rem;
+		}
+
+		.progress-pill {
+			padding: 0.55rem 0.75rem;
+			gap: 0.6rem;
+		}
+
+		.progress-pill-count {
+			font-size: 0.95rem;
+		}
+
+		.progress-pill-track {
+			height: 0.35rem;
+		}
+
+		.question-card {
+			padding: 1rem;
+			border-radius: 1.25rem;
+		}
+
+		.q-context {
+			flex-wrap: wrap;
+			gap: 0.5rem;
+			margin-bottom: 0.75rem;
+		}
+
+		.q-pill {
+			padding: 0.4rem 0.6rem;
+			font-size: 0.75rem;
+		}
+
+		.q-meta-inline {
+			font-size: 0.75rem;
+		}
+
+		.q-topic-label {
+			font-size: 0.72rem;
+			margin-bottom: 0.6rem;
+		}
+
+		.q-text {
+			font-size: 1.15rem;
+			line-height: 1.35;
+			margin-bottom: 1rem;
+		}
+
+		.answer-panel {
+			padding: 0.85rem;
+			border-radius: 1rem;
+		}
+
+		.answer-panel-title {
+			font-size: 0.75rem;
+		}
+
+		.options {
+			gap: 0.5rem;
+		}
+
+		.option {
+			padding: 0.75rem 0.85rem;
+			font-size: 0.88rem;
+			gap: 0.5rem;
+		}
+
+		.opt-marker {
+			width: 1.6rem;
+			height: 1.6rem;
+			font-size: 0.75rem;
+		}
+
+		.grading-grid {
+			grid-template-columns: repeat(2, 1fr);
+			gap: 0.5rem;
+			margin-top: 0.75rem;
+		}
+
+		.grade-card {
+			min-height: 5rem;
+			border-radius: 0.85rem;
+			gap: 0.5rem;
+		}
+
+		.grade-badge {
+			width: 2rem;
+			height: 2rem;
+			font-size: 1.15rem;
+		}
+
+		.grade-label {
+			font-size: 0.75rem;
+		}
+
+		.caught-up-panel {
+			padding: 1.25rem 0.85rem;
+			border-radius: 1.25rem;
+		}
+
+		.caught-up-kicker {
+			font-size: 0.65rem;
+		}
+
+		.caught-up-title {
+			font-size: 1.5rem;
+		}
+
+		.caught-up-copy {
+			font-size: 0.85rem;
+		}
+
+		.caught-up-stats {
+			gap: 0.4rem;
+		}
+
+		.caught-up-stat {
+			padding: 0.6rem 0.4rem;
+			border-radius: 0.75rem;
+		}
+
+		.caught-up-value {
+			font-size: 1.2rem;
+		}
+
+		.caught-up-label {
+			font-size: 0.65rem;
+		}
+
+		.finish-btn {
+			padding: 0.7rem 1.5rem;
+			font-size: 0.9rem;
+		}
+
+		.edit-section {
+			gap: 0.5rem;
+		}
+
+		.edit-label {
+			font-size: 0.7rem;
+		}
+
+		.edit-textarea,
+		.edit-input {
+			font-size: 0.85rem;
+			padding: 0.5rem 0.7rem;
+		}
+
+		.edit-option-row {
+			gap: 0.35rem;
+		}
+
+		.opt-correct-btn {
+			min-width: 32px;
+			height: 28px;
+			font-size: 0.75rem;
+		}
+
+		.edit-option-pencil {
+			width: 28px;
+			height: 28px;
+		}
+
+		.edit-footer-btn {
+			padding: 0.7rem 1rem;
+			font-size: 0.9rem;
+			border-radius: 12px;
+		}
+
+		.explanation {
+			padding: 0.6rem 0.75rem;
+			margin-top: 0.75rem;
+		}
+
+		.expl-label {
+			font-size: 0.65rem;
+		}
+
+		.expl-text {
+			font-size: 0.82rem;
+		}
+
+		.sources-toggle {
+			font-size: 0.75rem;
+			padding: 0.4rem 0.6rem;
+		}
+
+		.source-card {
+			padding: 0.5rem 0.65rem;
+		}
+
+		.source-doc {
+			font-size: 0.75rem;
+		}
+
+		.source-highlight,
+		.source-snippet {
+			font-size: 0.75rem;
+		}
+
+		.center-state,
+		.empty-state {
+			padding: 3rem 0.75rem;
+		}
+
+		.empty-icon {
+			font-size: 2.5rem;
+		}
+
+		.regen-overlay {
+			padding: 2rem 1rem;
+			border-radius: 1.25rem;
+		}
+
+		.regen-text {
+			font-size: 0.88rem;
 		}
 	}
 </style>

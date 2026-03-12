@@ -250,4 +250,145 @@
 	.logout-link:hover {
 		color: #e94560;
 	}
+
+	@media (max-width: 768px) {
+		.vetter-dash {
+			padding: 1.5rem 1rem;
+			gap: 1.5rem;
+		}
+
+		.hero-icon {
+			width: 48px;
+			height: 48px;
+		}
+
+		.hero-icon svg {
+			width: 24px;
+			height: 24px;
+		}
+
+		.title {
+			font-size: 1.75rem;
+		}
+
+		.welcome {
+			font-size: 0.88rem;
+		}
+
+		.stats-row {
+			gap: 0.5rem;
+			max-width: 100%;
+		}
+
+		.stat {
+			padding: 0.85rem 0.5rem;
+		}
+
+		.stat-value {
+			font-size: 1.3rem;
+		}
+
+		.stat-label {
+			font-size: 0.65rem;
+		}
+
+		.actions {
+			max-width: 100%;
+		}
+
+		.action-card {
+			padding: 1.25rem;
+		}
+
+		.action-icon {
+			width: 42px;
+			height: 42px;
+		}
+
+		.action-title {
+			font-size: 1rem;
+		}
+
+		.action-desc {
+			font-size: 0.8rem;
+		}
+	}
+
+	@media (max-width: 480px) {
+		.vetter-dash {
+			padding: 1.25rem 0.75rem;
+			gap: 1.25rem;
+		}
+
+		.hero {
+			gap: 0.35rem;
+		}
+
+		.hero-icon {
+			width: 44px;
+			height: 44px;
+		}
+
+		.hero-icon svg {
+			width: 22px;
+			height: 22px;
+		}
+
+		.title {
+			font-size: 1.5rem;
+		}
+
+		.welcome {
+			font-size: 0.82rem;
+		}
+
+		.stats-row {
+			gap: 0.4rem;
+		}
+
+		.stat {
+			padding: 0.75rem 0.4rem;
+			border-radius: 0.75rem;
+		}
+
+		.stat-value {
+			font-size: 1.15rem;
+		}
+
+		.stat-label {
+			font-size: 0.6rem;
+		}
+
+		.action-card {
+			padding: 1rem;
+			border-radius: 0.85rem;
+		}
+
+		.action-row {
+			gap: 0.75rem;
+		}
+
+		.action-icon {
+			width: 38px;
+			height: 38px;
+		}
+
+		.action-icon svg {
+			width: 18px;
+			height: 18px;
+		}
+
+		.action-title {
+			font-size: 0.95rem;
+		}
+
+		.action-desc {
+			font-size: 0.75rem;
+			line-height: 1.35;
+		}
+
+		.logout-link {
+			font-size: 0.8rem;
+		}
+	}
 </style>
