@@ -80,6 +80,7 @@
 
 		.sidebar-overlay {
 			display: block;
+			top: calc(env(safe-area-inset-top, 0px) + 4.25rem);
 		}
 	}
 </style>

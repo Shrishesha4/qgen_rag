@@ -133,7 +133,11 @@
 
 	@media (max-width: 1024px) {
 		.sidebar {
+			top: calc(env(safe-area-inset-top, 0px) + 4.25rem);
+			height: calc(100dvh - env(safe-area-inset-top, 0px) - 4.25rem);
 			width: min(260px, calc(100vw - 3rem));
+			border-top-right-radius: 22px;
+			border-bottom-right-radius: 22px;
 		}
 	}
 
