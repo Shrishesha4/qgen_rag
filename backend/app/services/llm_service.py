@@ -81,6 +81,7 @@ class LLMProvider(Protocol):
         prompt: str,
         system_prompt: Optional[str] = None,
         temperature: float = 0.3,
+        max_tokens: int = 8192,
     ) -> Dict[str, Any]:
         """Generate a JSON response."""
         ...
@@ -589,6 +590,7 @@ def LLMService(model: Optional[str] = None) -> LLMProvider:
     Uses LLM_PROVIDER environment variable to select provider:
     - "ollama": Local Ollama instance (default)
     - "gemini": Google Gemini API
+    - "deepseek": DeepSeek API (OpenAI-compatible)
     
     Args:
         model: Optional model name override. If not provided, uses the default
@@ -610,6 +612,10 @@ def LLMService(model: Optional[str] = None) -> LLMProvider:
         from app.services.gemini_service import GeminiService
         logger.info(f"Creating GeminiService (provider={provider})")
         return GeminiService(model=model)
+    elif provider == "deepseek":
+        from app.services.deepseek_service import DeepSeekService
+        logger.info(f"Creating DeepSeekService (provider={provider})")
+        return DeepSeekService(model=model)
     elif provider == "ollama":
         logger.info(f"Creating OllamaLLMService (provider={provider})")
         return OllamaLLMService(model=model)
@@ -627,6 +633,13 @@ def get_llm_provider_info() -> Dict[str, Any]:
             "provider": "gemini",
             "model": settings.GEMINI_MODEL,
             "api_configured": bool(settings.GEMINI_API_KEY),
+        }
+    elif provider == "deepseek":
+        return {
+            "provider": "deepseek",
+            "model": settings.DEEPSEEK_MODEL,
+            "base_url": settings.DEEPSEEK_BASE_URL,
+            "api_configured": bool(settings.DEEPSEEK_API_KEY),
         }
     else:
         return {

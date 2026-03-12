@@ -9,30 +9,35 @@ import json
 import asyncio
 import logging
 from typing import Optional, AsyncGenerator, Any, Dict, List
-from abc import ABC, abstractmethod
 
 from app.core.config import settings
+from app.services.llm_service import (
+    LLMError,
+    LLMConnectionError,
+    LLMTimeoutError,
+    LLMResponseError,
+)
 
 
 logger = logging.getLogger(__name__)
 
 
-class GeminiError(Exception):
+class GeminiError(LLMError):
     """Base exception for Gemini errors."""
     pass
 
 
-class GeminiConnectionError(GeminiError):
+class GeminiConnectionError(GeminiError, LLMConnectionError):
     """Raised when unable to connect to Gemini API."""
     pass
 
 
-class GeminiTimeoutError(GeminiError):
+class GeminiTimeoutError(GeminiError, LLMTimeoutError):
     """Raised when Gemini request times out."""
     pass
 
 
-class GeminiResponseError(GeminiError):
+class GeminiResponseError(GeminiError, LLMResponseError):
     """Raised when Gemini returns invalid response."""
     pass
 
@@ -254,6 +259,7 @@ class GeminiService:
         prompt: str,
         system_prompt: Optional[str] = None,
         temperature: float = 0.3,
+        max_tokens: int = 8192,
     ) -> Dict[str, Any]:
         """Generate a JSON response from Gemini using structured output."""
         from google.genai import types
@@ -273,7 +279,7 @@ class GeminiService:
         # Configure generation with JSON response format
         config = types.GenerateContentConfig(
             temperature=temperature,
-            max_output_tokens=8192,
+            max_output_tokens=max_tokens,
             candidate_count=1,
             safety_settings=self._get_safety_settings(),
             response_mime_type="application/json",  # Force JSON output
@@ -577,8 +583,3 @@ class GeminiService:
             return False
 
 
-# Alias exceptions to match LLM service interface
-LLMError = GeminiError
-LLMConnectionError = GeminiConnectionError
-LLMTimeoutError = GeminiTimeoutError
-LLMResponseError = GeminiResponseError

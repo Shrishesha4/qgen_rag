@@ -2,11 +2,11 @@
 CritiqueService — Constitutional AI filter for auto-reviewing generated questions.
 
 Phase 2 of the Dual-Engine loop:
-  Before a question reaches a human vetter, the local model critiques it
+  Before a question reaches a human vetter, the configured LLM critiques it
   against a "Constitution" of quality rules. Low-scoring questions are
   auto-rejected or regenerated, reducing vetter workload.
 
-Uses the local LLM (Ollama) to evaluate questions on:
+Uses the configured LLM provider (Ollama, Gemini, or DeepSeek) to evaluate questions on:
   1. Solvability — Can the question actually be answered from the content?
   2. Clarity — Is the question free of ambiguity?
   3. Answer Correctness — Does the answer key match the question?
@@ -19,7 +19,7 @@ import logging
 from typing import Optional
 from dataclasses import dataclass
 
-from app.services.llm_service import OllamaLLMService, LLMError
+from app.services.llm_service import LLMService, LLMError
 from app.core.config import settings
 
 
@@ -88,7 +88,7 @@ class CritiqueResult:
 
 class CritiqueService:
     """
-    Constitutional AI filter using the local LLM (Ollama).
+    Constitutional AI filter using the configured LLM provider.
 
     Evaluates generated questions before they reach human vetters.
     Questions scoring below the threshold are auto-rejected.
@@ -99,12 +99,13 @@ class CritiqueService:
         model: Optional[str] = None,
         pass_threshold: float = 4.0,
     ):
-        # Use the local model for critique. Default to whatever Ollama model is configured,
-        # but can be overridden (e.g. to use a fine-tuned LoRA variant).
-        self.llm = OllamaLLMService(model=model)
+        # Use the configured LLM provider for critique.
+        # Can be overridden with a specific model (e.g. fine-tuned LoRA variant).
+        self.llm = LLMService(model=model)
         self.pass_threshold = pass_threshold
+        model_name = getattr(self.llm, 'model', None) or getattr(self.llm, 'model_name', 'unknown')
         logger.info(
-            f"CritiqueService initialized — model={self.llm.model}, "
+            f"CritiqueService initialized — model={model_name}, "
             f"threshold={self.pass_threshold}"
         )
 

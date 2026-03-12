@@ -30,7 +30,7 @@ class Settings(BaseSettings):
     REFRESH_TOKEN_EXPIRE_DAYS: int = Field(default=30)
 
     # LLM Provider Configuration
-    # Options: "ollama", "gemini"
+    # Options: "ollama", "gemini", "deepseek"
     LLM_PROVIDER: str = Field(default="ollama")
     
     # Ollama LLM (local)
@@ -42,6 +42,11 @@ class Settings(BaseSettings):
     GEMINI_MODEL: str = Field(default="gemini-2.0-flash")  # Options: gemini-2.0-flash, gemini-1.5-pro, gemini-1.5-flash
     GEMINI_MAX_OUTPUT_TOKENS: int = Field(default=2048)
     GEMINI_SAFETY_BLOCK_NONE: bool = Field(default=True)  # Disable safety filters for educational content
+
+    # DeepSeek API (cloud, OpenAI-compatible)
+    DEEPSEEK_API_KEY: str = Field(default="")  # Get from platform.deepseek.com
+    DEEPSEEK_MODEL: str = Field(default="deepseek-chat")  # Options: deepseek-chat, deepseek-reasoner
+    DEEPSEEK_BASE_URL: str = Field(default="https://api.deepseek.com/v1")
 
     # File Upload
     UPLOAD_DIR: str = Field(default="./uploads")
