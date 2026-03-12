@@ -1405,7 +1405,7 @@
 		background: rgba(49, 208, 161, 0.22);
 		color: #d3fff1;
 	}
-
+/* 
 	.edit-inline-row {
 		display: flex;
 		justify-content: flex-end;
@@ -1420,7 +1420,7 @@
 		font-weight: 700;
 		color: var(--theme-text-muted);
 		cursor: pointer;
-	}
+	} */
 
 	.grading-grid {
 		display: grid;

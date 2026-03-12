@@ -1905,7 +1905,7 @@
 		align-items: stretch;
 		pointer-events: auto;
 	}
-
+/* 
 	.edit-inline-row {
 		display: flex;
 		justify-content: flex-end;
@@ -1919,7 +1919,7 @@
 		font-weight: 700;
 		color: var(--theme-text-muted);
 		cursor: pointer;
-	}
+	} */
 
 	.grading-grid {
 		display: grid;
