@@ -31,6 +31,10 @@
 	let disciplineName = $state('');
 	let disciplineCode = $state('');
 
+	// Custom discipline modal
+	let showCustomDisciplineModal = $state(false);
+	let customDisciplineInput = $state('');
+
 	// Step 2: Topics
 	interface TopicItem { name: string; syllabusContent: string; }
 	let topics = $state<TopicItem[]>([]);
@@ -97,8 +101,38 @@
 
 	function activateCustomDiscipline() {
 		selectedDiscipline = '';
-		useCustomDiscipline = true;
-		syncDisciplineName('');
+		customDisciplineInput = '';
+		showCustomDisciplineModal = true;
+	}
+
+	function closeCustomDisciplineModal() {
+		showCustomDisciplineModal = false;
+		customDisciplineInput = '';
+	}
+
+	function submitCustomDiscipline() {
+		const trimmed = customDisciplineInput.trim();
+		if (trimmed) {
+			disciplineName = trimmed;
+			useCustomDiscipline = true;
+			selectedDiscipline = '';
+			showCustomDisciplineModal = false;
+			customDisciplineInput = '';
+		}
+	}
+
+	function handleCustomDisciplineKeydown(e: KeyboardEvent) {
+		if (e.key === 'Enter') {
+			e.preventDefault();
+			submitCustomDiscipline();
+		} else if (e.key === 'Escape') {
+			e.preventDefault();
+			closeCustomDisciplineModal();
+		}
+	}
+
+	function focusInput(element: HTMLInputElement) {
+		element.focus();
 	}
 
 	function addTopic() {
@@ -299,18 +333,15 @@
 						onclick={activateCustomDiscipline}
 					>
 						<span class="discipline-icon">＋</span>
-						<span class="discipline-card-name">Add Custom Discipline</span>
+						<span class="discipline-card-name">
+							{#if useCustomDiscipline && disciplineName}
+								{disciplineName}
+							{:else}
+								Add Custom Discipline
+							{/if}
+						</span>
 					</button>
 				</div>
-				{#if useCustomDiscipline}
-					<input
-						id="disc-name"
-						class="glass-input discipline-custom-input"
-						type="text"
-						placeholder="e.g., Computer Science"
-						bind:value={disciplineName}
-					/>
-				{/if}
 			</div>
 			<div class="field-group">
 				<label class="field-label" for="disc-code">Subject Code <span class="hint">(optional, auto-generated if empty)</span></label>
@@ -524,6 +555,59 @@
 	</div>
 </div>
 
+<!-- Custom Discipline Modal -->
+{#if showCustomDisciplineModal}
+	<!-- svelte-ignore a11y_click_events_have_key_events a11y_no_static_element_interactions -->
+	<div
+		class="modal-backdrop"
+		onclick={closeCustomDisciplineModal}
+		role="button"
+		tabindex="0"
+		aria-label="Close modal"
+	>
+		<!-- svelte-ignore a11y_click_events_have_key_events a11y_no_static_element_interactions -->
+		<div class="discipline-modal glass-panel animate-scale-in" onclick={(e) => e.stopPropagation()} role="dialog" aria-modal="true" tabindex="-1">
+			<!-- Header -->
+			<div class="modal-header">
+				<h3 class="modal-title">Add Custom Discipline</h3>
+				<button class="modal-close" onclick={closeCustomDisciplineModal} aria-label="Close">
+					<svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+						<line x1="18" y1="6" x2="6" y2="18"></line>
+						<line x1="6" y1="6" x2="18" y2="18"></line>
+					</svg>
+				</button>
+			</div>
+
+			<!-- Content -->
+			<div class="modal-body">
+				<p class="modal-description">Enter the name of your custom discipline</p>
+				<input
+					class="glass-input"
+					type="text"
+					placeholder="e.g., Computer Science"
+					bind:value={customDisciplineInput}
+					onkeydown={handleCustomDisciplineKeydown}
+					use:focusInput
+				/>
+			</div>
+
+			<!-- Footer -->
+			<div class="modal-footer">
+				<button class="glass-btn secondary-btn" onclick={closeCustomDisciplineModal}>
+					Cancel
+				</button>
+				<button 
+					class="glass-btn primary-btn" 
+					onclick={submitCustomDiscipline}
+					disabled={!customDisciplineInput.trim()}
+				>
+					Add Discipline
+				</button>
+			</div>
+		</div>
+	</div>
+{/if}
+
 <style>
 	.wizard {
 		display: flex;
@@ -707,8 +791,101 @@
 		border-style: dashed;
 	}
 
-	.discipline-custom-input {
-		margin-top: 0.85rem;
+	/* Modal Styles */
+	.modal-backdrop {
+		position: fixed;
+		inset: 0;
+		background: rgba(0, 0, 0, 0.6);
+		backdrop-filter: blur(4px);
+		display: flex;
+		align-items: center;
+		justify-content: center;
+		z-index: 1000;
+		padding: 1rem;
+	}
+
+	.discipline-modal {
+		width: 100%;
+		max-width: 420px;
+		border-radius: 1.5rem;
+		padding: 1.5rem;
+		display: flex;
+		flex-direction: column;
+		gap: 1.25rem;
+	}
+
+	.modal-header {
+		display: flex;
+		justify-content: space-between;
+		align-items: center;
+	}
+
+	.modal-title {
+		font-size: 1.25rem;
+		font-weight: 700;
+		margin: 0;
+		color: var(--theme-text);
+	}
+
+	.modal-close {
+		background: none;
+		border: none;
+		padding: 0.5rem;
+		cursor: pointer;
+		border-radius: 0.5rem;
+		color: var(--theme-text-muted);
+		transition: all 0.2s ease;
+		display: flex;
+		align-items: center;
+		justify-content: center;
+	}
+
+	.modal-close:hover {
+		background: rgba(255, 255, 255, 0.1);
+		color: var(--theme-text);
+	}
+
+	.modal-body {
+		display: flex;
+		flex-direction: column;
+		gap: 1rem;
+	}
+
+	.modal-description {
+		margin: 0;
+		color: var(--theme-text-muted);
+		font-size: 0.95rem;
+	}
+
+	.modal-footer {
+		display: flex;
+		gap: 0.75rem;
+		justify-content: flex-end;
+	}
+
+	.secondary-btn {
+		background: rgba(255, 255, 255, 0.1);
+		color: var(--theme-text-muted);
+	}
+
+	.secondary-btn:hover {
+		background: rgba(255, 255, 255, 0.15);
+		color: var(--theme-text);
+	}
+
+	.primary-btn {
+		background: linear-gradient(135deg, var(--theme-primary), rgba(var(--theme-primary-rgb), 0.8));
+		color: white;
+	}
+
+	.primary-btn:hover {
+		background: linear-gradient(135deg, rgba(var(--theme-primary-rgb), 0.9), rgba(var(--theme-primary-rgb), 0.7));
+	}
+
+	.primary-btn:disabled {
+		background: rgba(255, 255, 255, 0.1);
+		color: rgba(255, 255, 255, 0.4);
+		cursor: not-allowed;
 	}
 
 	/* Step 2: Topics */
@@ -1164,6 +1341,30 @@
 
 		.step-title {
 			font-size: 1.35rem;
+		}
+
+		/* Modal mobile styles */
+		.modal-backdrop {
+			padding: 0.5rem;
+		}
+
+		.discipline-modal {
+			max-width: none;
+			border-radius: 1.25rem;
+			padding: 1.25rem;
+		}
+
+		.modal-title {
+			font-size: 1.1rem;
+		}
+
+		.modal-footer {
+			flex-direction: column;
+			gap: 0.5rem;
+		}
+
+		.modal-footer button {
+			width: 100%;
 		}
 	}
 </style>

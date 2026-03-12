@@ -16,7 +16,7 @@
 :root {
   --theme-bg: linear-gradient(175deg, #0a1e38 0%, #152e50 20%, #1f4268 40%, #2a5680 60%, #356a98 80%, #407eb0 100%);
   --theme-bg-color: #1f4268;
-  --theme-bg-image: url('https://images.unsplash.com/photo-1582967788606-a171c1080cb0?q=80&w=2564&auto=format&fit=crop');
+  /* --theme-bg-image: url('https://images.unsplash.com/photo-1582967788606-a171c1080cb0?q=80&w=2564&auto=format&fit=crop'); */
   --theme-primary: #3898e0;
   --theme-primary-hover: #2888d4;
   --theme-primary-rgb: 56, 152, 224;
