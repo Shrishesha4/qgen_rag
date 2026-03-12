@@ -99,7 +99,7 @@ workerScope.onmessage = async (event: MessageEvent<WorkerInboundMessage>) => {
 			return;
 		}
 
-		post({ type: 'transcription-started', message: 'Transcribing on this device…' });
+		post({ type: 'transcription-started', message: 'Transcribing…' });
 		const transcriber = await getTranscriber();
 		const audio = new Float32Array(event.data.audio);
 		const result = (await transcriber(audio, {

@@ -40,7 +40,7 @@
 	let isStopping = $state(false);
 	let isTranscribing = $state(false);
 	let transcriptionReady = $state(false);
-	let transcriptionStatus = $state('Loading on-device transcription model in this browser...');
+	let transcriptionStatus = $state('Loading transcription model in this browser...');
 	let audioPreviewUrl = $state('');
 	let audioPreviewSize = $state('');
 
@@ -179,7 +179,7 @@
 			if (message.type === 'model-ready') {
 				transcriptionReady = true;
 				if (!isTranscribing) {
-					transcriptionStatus = 'On-device transcription is ready.';
+					transcriptionStatus = 'Transcription is ready.';
 				}
 				return;
 			}
@@ -203,7 +203,7 @@
 			}
 
 			isTranscribing = false;
-			recorderError = `On-device transcription failed. ${message.message}`;
+			recorderError = `Transcription failed. ${message.message}`;
 			transcriptionStatus = 'Transcription failed. You can still type feedback manually.';
 		};
 
@@ -334,7 +334,7 @@
 		transcript = '';
 		transcriptionStatus = transcriptionReady
 			? 'Transcribing on this device...'
-			: 'Preparing on-device transcription model...';
+			: 'Preparing transcription model...';
 
 		try {
 			const mono16k = await resampleTo16k(samples, sampleRate);
@@ -345,7 +345,7 @@
 		} catch (error) {
 			isTranscribing = false;
 			const message = error instanceof Error ? error.message : 'Unable to process the recording locally.';
-			recorderError = `On-device transcription setup failed. ${message}`;
+			recorderError = `Transcription setup failed. ${message}`;
 			transcriptionStatus = 'Unable to process this recording locally.';
 		}
 	}
@@ -428,8 +428,8 @@
 		isTranscribing = false;
 		recorderError = '';
 		transcriptionStatus = transcriptionReady
-			? 'On-device transcription is ready.'
-			: 'Loading on-device transcription model in this browser...';
+			? 'Transcription is ready.'
+			: 'Loading transcription model in this browser...';
 	}
 
 	function handleSubmit() {
@@ -560,7 +560,7 @@
 
 				{#if isTranscribing || transcriptionStatus}
 					<div class="transcription-status-panel">
-						<span class="live-transcript-label">On-device transcription</span>
+						<span class="live-transcript-label">Transcription</span>
 						<p class="live-transcript-copy">{transcriptionStatus}</p>
 					</div>
 				{/if}
@@ -584,7 +584,7 @@
 					placeholder="Edit or type your feedback..."
 				></textarea>
 				<p class="transcript-hint">
-					Review the on-device transcript above before submitting. You can edit it if needed.
+					Review the transcription above before submitting. You can edit it if needed.
 				</p>
 			</div>
 
