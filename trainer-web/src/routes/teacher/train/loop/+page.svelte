@@ -95,6 +95,7 @@
 	let editOptions = $state<string[]>([]);
 	let editAnswer = $state('');
 	let editExplanation = $state('');
+	let optionInputRefs = $state<Array<HTMLInputElement | null>>([]);
 
 	// Source references
 	let showSources = $state(false);
@@ -273,9 +274,49 @@
 	}
 
 	function completeBatch() {
-		stopBackgroundGen();
+        stopBackgroundGen();
+        goto('../')
 		generating = false;
 		genMessage = '';
+	}
+
+	function getOptionIdentifier(option: string, index: number): string {
+		return option.trim().match(/^([A-Z])[).:\s]/)?.[1]?.toUpperCase() ?? String.fromCharCode(65 + index);
+	}
+
+	function getOptionEditableText(option: string, index: number): string {
+		const identifier = getOptionIdentifier(option, index);
+		return option.trim().replace(new RegExp(`^${identifier}[).:\\s]+`, 'i'), '').trim();
+	}
+
+	function updateOptionText(index: number, text: string) {
+		const identifier = getOptionIdentifier(editOptions[index] ?? '', index);
+		editOptions[index] = text.trim().length > 0 ? `${identifier}) ${text}` : `${identifier})`;
+		editOptions = [...editOptions];
+	}
+
+	function focusOptionInput(index: number) {
+		optionInputRefs[index]?.focus();
+	}
+
+	function normalizeCorrectAnswer(answer: string | null | undefined, options: string[] = []): string {
+		const value = answer?.trim();
+		if (!value) return '';
+		const label = value.match(/^([A-Z])[).:\s]?$/i)?.[1]?.toUpperCase();
+		if (label) return label;
+
+		const matchedIndex = options.findIndex((option, index) => {
+			const normalizedOption = option.trim();
+			const optionLabel = getOptionIdentifier(option, index);
+			const optionText = normalizedOption.replace(/^[A-Z][).:\s]+/i, '').trim();
+			return (
+				normalizedOption.toLowerCase() === value.toLowerCase() ||
+				optionText.toLowerCase() === value.toLowerCase() ||
+				optionLabel === value.toUpperCase()
+			);
+		});
+
+		return matchedIndex >= 0 ? getOptionIdentifier(options[matchedIndex], matchedIndex) : value.toUpperCase();
 	}
 
 	// Edit mode
@@ -284,7 +325,8 @@
 		editing = true;
 		editText = currentQuestion.question_text;
 		editOptions = currentQuestion.options ? [...currentQuestion.options] : [];
-		editAnswer = currentQuestion.correct_answer ?? '';
+		optionInputRefs = [];
+		editAnswer = normalizeCorrectAnswer(currentQuestion.correct_answer, editOptions);
 		editExplanation = currentQuestion.explanation ?? '';
 	}
 
@@ -296,12 +338,14 @@
 		if (!currentQuestion || submitting) return;
 		submitting = true;
 		try {
+			const normalizedAnswer = normalizeCorrectAnswer(editAnswer, editOptions);
+			const originalAnswer = normalizeCorrectAnswer(currentQuestion.correct_answer, currentQuestion.options ?? []);
 			await submitVetting({
 				question_id: currentQuestion.id,
 				decision: 'edit',
 				edited_text: editText !== currentQuestion.question_text ? editText : undefined,
 				edited_options: JSON.stringify(editOptions) !== JSON.stringify(currentQuestion.options) ? editOptions : undefined,
-				edited_answer: editAnswer !== currentQuestion.correct_answer ? editAnswer : undefined,
+				edited_answer: normalizedAnswer !== originalAnswer ? normalizedAnswer : undefined,
 				edited_explanation: editExplanation !== currentQuestion.explanation ? editExplanation : undefined,
 			});
 			approved = new Set([...approved, currentQuestion.id]);
@@ -426,17 +470,7 @@
 	}
 
 	function isCorrectOption(opt: string, correctAnswer: string | null): boolean {
-		if (!correctAnswer) return false;
-		const ca = correctAnswer.trim();
-		const o = opt.trim();
-		if (o === ca) return true;
-		const optLabel = o.match(/^([A-Da-d])[).:\s]/)?.[1]?.toUpperCase();
-		const ansLabel = ca.match(/^([A-Da-d])[).:\s]?$/)?.[1]?.toUpperCase();
-		if (optLabel && ansLabel && optLabel === ansLabel) return true;
-		if (ca.length > 3 && o.toLowerCase().includes(ca.toLowerCase())) return true;
-		const optText = o.replace(/^[A-Da-d][).:\s]+\s*/, '').trim();
-		if (optText && optText.toLowerCase() === ca.toLowerCase()) return true;
-		return false;
+		return normalizeCorrectAnswer(correctAnswer, currentQuestion?.options ?? []) === normalizeCorrectAnswer(opt, [opt]);
 	}
 </script>
 
@@ -493,10 +527,7 @@
 			<div class="gen-indicator">
 				<div class="gen-dot"></div>
 				<span class="gen-text">{genMessage || 'Generating...'}</span>
-				<button class="complete-batch-btn" onclick={completeBatch}>✓ Complete Batch</button>
 			</div>
-		{:else if !batchComplete && subjectId}
-			<button class="complete-batch-btn done-btn" onclick={completeBatch}>✓ Complete Batch</button>
 		{/if}
 	</div>
 
@@ -542,27 +573,46 @@
 						<span class="edit-label">Options</span>
 						{#each editOptions as opt, i}
 							<div class="edit-option-row">
-								<input class="edit-input" bind:value={editOptions[i]} />
 								<button
+									type="button"
 									class="opt-correct-btn"
-									class:active={editAnswer === opt}
-									onclick={() => editAnswer = opt}
+									class:active={editAnswer === getOptionIdentifier(editOptions[i], i)}
+									onclick={() => editAnswer = getOptionIdentifier(editOptions[i], i)}
 									title="Mark as correct"
 								>✓</button>
+								<span class="edit-option-prefix">{getOptionIdentifier(editOptions[i], i)})</span>
+								<input
+									class="edit-input edit-option-input"
+									value={getOptionEditableText(editOptions[i], i)}
+									oninput={(e) => updateOptionText(i, (e.currentTarget as HTMLInputElement).value)}
+									bind:this={optionInputRefs[i]}
+								/>
+								<button
+									type="button"
+									class="edit-option-pencil"
+									onclick={() => focusOptionInput(i)}
+									aria-label="Edit option text"
+									title="Edit option text"
+								>
+									<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+										<path d="M12 20h9"></path>
+										<path d="M16.5 3.5a2.12 2.12 0 0 1 3 3L7 19l-4 1 1-4Z"></path>
+									</svg>
+								</button>
 							</div>
 						{/each}
 					{/if}
 
 					<span class="edit-label">Correct Answer</span>
-					<input class="edit-input" bind:value={editAnswer} />
+					<input class="edit-input" bind:value={editAnswer} maxlength="1" oninput={() => editAnswer = normalizeCorrectAnswer(editAnswer, editOptions)} />
 
 					<span class="edit-label">Explanation</span>
-					<textarea class="edit-textarea" bind:value={editExplanation} rows="2"></textarea>
+					<textarea class="edit-textarea" bind:value={editExplanation} rows="4"></textarea>
 
 					<div class="edit-actions">
-						<button class="glass-btn" onclick={cancelEdit}>Cancel</button>
-						<button class="action-btn approve-btn" onclick={submitEdit} disabled={submitting}>
-							{submitting ? 'Saving...' : '✓ Save & Approve'}
+						<button class="edit-footer-btn edit-cancel-btn" onclick={cancelEdit}>Cancel</button>
+						<button class="edit-footer-btn edit-save-btn" onclick={submitEdit} disabled={submitting}>
+							{submitting ? 'Saving...' : 'Save'}
 						</button>
 					</div>
 				</div>
@@ -635,7 +685,23 @@
 			{/if}
 		</div>
 
-		<!-- Action buttons -->
+	{:else}
+		<div class="empty-state">
+			<span class="empty-icon">📭</span>
+			<p>No questions to review in this batch</p>
+			{#if subjectId}
+				<button class="glass-btn" onclick={startBackgroundGeneration}>🔄 Generate Questions</button>
+			{/if}
+			<button class="glass-btn secondary-btn" onclick={() => goto('/teacher/dashboard')}>
+				Back to Home
+			</button>
+		</div>
+	{/if}
+	{/if}
+</div>
+
+{#if questions.length > 0}
+	<div class="floating-stack">
 		{#if !isReviewed && !editing}
 			<div class="actions">
 				<button class="action-btn reject-btn" onclick={openRejectModal} disabled={submitting}>
@@ -651,17 +717,20 @@
 					<span>Approve</span>
 				</button>
 			</div>
-		{:else if isReviewed}
-			<div class="actions">
-				{#if currentIndex < questions.length - 1}
-					<button class="glass-btn" onclick={() => { advance(); }} style="padding: 0.75rem 2rem;">
-						Next Question →
-					</button>
-				{/if}
+		{:else if isReviewed && currentIndex < questions.length - 1}
+			<div class="actions actions-single">
+				<button class="glass-btn next-question-btn" onclick={() => { advance(); }}>
+					Next Question →
+				</button>
 			</div>
 		{/if}
 
-		<!-- Finish -->
+		{#if !editing && !generating && !batchComplete && subjectId}
+			<button class="complete-batch-fab" onclick={completeBatch}>
+				✓ Complete Batch
+			</button>
+		{/if}
+
 		{#if batchComplete && totalReviewed >= questions.length}
 			<div class="finish-section">
 				<button class="glass-btn finish-btn" onclick={finish}>
@@ -672,20 +741,8 @@
 				</p>
 			</div>
 		{/if}
-	{:else}
-		<div class="empty-state">
-			<span class="empty-icon">📭</span>
-			<p>No questions to review in this batch</p>
-			{#if subjectId}
-				<button class="glass-btn" onclick={startBackgroundGeneration}>🔄 Generate Questions</button>
-			{/if}
-			<button class="glass-btn secondary-btn" onclick={() => goto('/teacher/dashboard')}>
-				Back to Home
-			</button>
-		</div>
-	{/if}
-	{/if}
-</div>
+	</div>
+{/if}
 
 <!-- Rejection Feedback Modal -->
 {#if showRejectModal}
@@ -753,11 +810,12 @@
 	.loop-page {
 		max-width: 600px;
 		margin: 0 auto;
-		padding: 2rem 1.5rem;
+		padding: 2rem 1.5rem 10rem;
 		display: flex;
 		flex-direction: column;
 		gap: 1.5rem;
 		min-height: 100vh;
+		padding-bottom: 12rem;
 	}
 
 	/* Progress */
@@ -917,10 +975,36 @@
 	}
 
 	/* Actions */
+	.floating-stack {
+		position: fixed;
+		left: 50%;
+		bottom: 1rem;
+		transform: translateX(-50%);
+		display: flex;
+		flex-direction: column;
+		align-items: center;
+		gap: 0.75rem;
+		z-index: 100;
+		width: min(calc(100vw - 2rem), 640px);
+		pointer-events: none;
+	}
+
 	.actions {
 		display: flex;
 		gap: 1rem;
 		justify-content: center;
+		padding: 0.75rem 1rem;
+		background: rgba(20, 20, 30, 0.8);
+		backdrop-filter: blur(12px);
+		-webkit-backdrop-filter: blur(12px);
+		border-radius: 12px;
+		border: 1px solid rgba(255, 255, 255, 0.08);
+		pointer-events: auto;
+		width: fit-content;
+	}
+
+	.actions-single {
+		width: auto;
 	}
 
 	.action-btn {
@@ -937,6 +1021,10 @@
 		backdrop-filter: blur(12px);
 		-webkit-backdrop-filter: blur(12px);
 		font-family: inherit;
+	}
+
+	.next-question-btn {
+		padding: 0.75rem 2rem;
 	}
 
 	.approve-btn {
@@ -969,12 +1057,40 @@
 	}
 
 	/* Finish */
+	.complete-batch-fab {
+		pointer-events: auto;
+		padding: 0.85rem 1.5rem;
+		border: 1px solid rgba(72, 192, 80, 0.4);
+		border-radius: 999px;
+		background: rgba(72, 192, 80, 0.3);
+		color: #6ee87a;
+		font-size: 0.95rem;
+		font-weight: 700;
+		cursor: pointer;
+		backdrop-filter: blur(12px);
+		-webkit-backdrop-filter: blur(12px);
+		transition: all 0.2s ease;
+		font-family: inherit;
+	}
+
+	.complete-batch-fab:hover {
+		background: rgba(72, 192, 80, 0.45);
+		transform: translateY(-2px);
+		box-shadow: 0 4px 16px rgba(72, 192, 80, 0.2);
+	}
+
 	.finish-section {
 		display: flex;
 		flex-direction: column;
 		align-items: center;
 		gap: 0.75rem;
-		margin-top: 1rem;
+		padding: 0.75rem 1rem;
+		background: rgba(20, 20, 30, 0.8);
+		backdrop-filter: blur(12px);
+		-webkit-backdrop-filter: blur(12px);
+		border-radius: 12px;
+		border: 1px solid rgba(255, 255, 255, 0.08);
+		pointer-events: auto;
 	}
 
 	.finish-btn {
@@ -1063,15 +1179,29 @@
 		flex: 1;
 	}
 
+	.edit-option-prefix {
+		min-width: 2rem;
+		font-size: 0.9rem;
+		font-weight: 700;
+		color: var(--theme-text-muted);
+		text-align: center;
+	}
+
+	.edit-option-input {
+		cursor: text;
+	}
+
 	.opt-correct-btn {
-		width: 32px;
+		min-width: 40px;
 		height: 32px;
 		flex-shrink: 0;
-		border-radius: 50%;
+		padding: 0 0.75rem;
+		border-radius: 999px;
 		border: 1.5px solid rgba(255, 255, 255, 0.15);
 		background: rgba(255, 255, 255, 0.04);
 		color: var(--theme-text-muted);
-		font-size: 0.9rem;
+		font-size: 0.85rem;
+		font-weight: 700;
 		cursor: pointer;
 		transition: all 0.15s;
 		display: flex;
@@ -1086,11 +1216,112 @@
 		color: #6ee87a;
 	}
 
+	.edit-option-pencil {
+		width: 34px;
+		height: 34px;
+		flex-shrink: 0;
+		display: flex;
+		align-items: center;
+		justify-content: center;
+		border-radius: 10px;
+		border: 1px solid rgba(56, 178, 230, 0.3);
+		background: rgba(56, 178, 230, 0.12);
+		color: #86e0f7;
+		cursor: pointer;
+		transition: all 0.2s ease;
+	}
+
+	.edit-option-pencil:hover {
+		background: rgba(56, 178, 230, 0.22);
+		transform: translateY(-1px);
+	}
+
 	.edit-actions {
 		display: flex;
 		gap: 0.75rem;
 		justify-content: flex-end;
 		margin-top: 0.5rem;
+	}
+
+	.edit-footer-btn {
+		min-width: 120px;
+		padding: 0.85rem 1.4rem;
+		border-radius: 16px;
+		border: 1px solid transparent;
+		font-size: 0.98rem;
+		font-weight: 700;
+		cursor: pointer;
+		transition: all 0.2s ease;
+		font-family: inherit;
+	}
+
+	.edit-footer-btn:disabled {
+		opacity: 0.6;
+		cursor: not-allowed;
+	}
+
+	.edit-cancel-btn {
+		background: rgba(233, 69, 96, 0.3);
+		border-color: rgba(233, 69, 96, 0.4);
+		color: #f4c7cf;
+	}
+
+	.edit-cancel-btn:hover {
+		background: rgba(233, 69, 96, 0.42);
+	}
+
+	.edit-save-btn {
+		background: rgba(56, 178, 230, 0.3);
+		border-color: rgba(56, 178, 230, 0.45);
+		color: #86e0f7;
+	}
+
+	.edit-save-btn:hover {
+		background: rgba(56, 178, 230, 0.42);
+		transform: translateY(-1px);
+		box-shadow: 0 4px 16px rgba(56, 178, 230, 0.2);
+	}
+
+	@media (max-width: 768px) {
+		.loop-page {
+			padding: 1.25rem 1rem 11.5rem;
+		}
+
+		.floating-stack {
+			width: calc(100vw - 1rem);
+		}
+
+		.actions {
+			gap: 0.75rem;
+			padding: 0.65rem 0.75rem;
+			width: calc(100vw - 2rem);
+		}
+
+		.edit-option-row {
+			gap: 0.4rem;
+		}
+
+		.edit-option-prefix {
+			min-width: 1.7rem;
+		}
+
+		.action-btn {
+			flex: 1;
+			justify-content: center;
+			padding: 0.85rem 1rem;
+		}
+
+		.complete-batch-fab {
+			width: calc(100vw - 2rem);
+		}
+
+		.edit-actions {
+			justify-content: stretch;
+		}
+
+		.edit-footer-btn {
+			flex: 1;
+		}
 	}
 
 	/* Source references */
@@ -1212,29 +1443,6 @@
 		font-size: 0.78rem;
 		color: var(--theme-text-muted);
 		flex: 1;
-	}
-
-	.complete-batch-btn {
-		padding: 0.35rem 0.8rem;
-		font-size: 0.78rem;
-		font-weight: 600;
-		background: rgba(72, 192, 80, 0.2);
-		border: 1px solid rgba(72, 192, 80, 0.3);
-		border-radius: 6px;
-		color: #6ee87a;
-		cursor: pointer;
-		transition: all 0.15s;
-		font-family: inherit;
-		white-space: nowrap;
-	}
-
-	.complete-batch-btn:hover {
-		background: rgba(72, 192, 80, 0.35);
-	}
-
-	.done-btn {
-		margin-top: 0.25rem;
-		align-self: flex-end;
 	}
 
 	/* Error banner */
@@ -1535,10 +1743,15 @@
 	@media (max-width: 768px) {
 		.loop-page {
 			padding-top: 1rem;
+			padding-bottom: 10rem;
 		}
 
 		.actions {
-			flex-wrap: wrap;
+			bottom: 0.5rem;
+		}
+
+		.finish-section {
+			bottom: 4.5rem;
 		}
 
 		.action-btn {

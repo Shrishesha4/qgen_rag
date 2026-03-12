@@ -1,4 +1,9 @@
 <script lang="ts">
+	import { goto } from '$app/navigation';
+	import { setTheme, currentThemeName } from '$lib/theme';
+	import { themes, themeNames, type ThemeName } from '$lib/theme/themes';
+	import { getContext } from 'svelte';
+
 	interface Props {
 		title: string;
 		backHref?: string;
@@ -8,11 +13,16 @@
 
 	let { title, backHref, step, totalSteps }: Props = $props();
 
-	import { goto } from '$app/navigation';
-	import { setTheme, currentThemeName } from '$lib/theme';
-	import { themes, themeNames, type ThemeName } from '$lib/theme/themes';
-
 	let showThemeMenu = $state(false);
+
+	// Get hamburger context if available
+	let hamburgerContext: any = $state();
+	try {
+		hamburgerContext = getContext('hamburger');
+	} catch (e) {
+		// Context not available
+		hamburgerContext = null;
+	}
 
 	function pickTheme(name: ThemeName) {
 		setTheme(name);
@@ -26,11 +36,22 @@
 </script>
 
 <header class="page-header">
-	<button class="back-btn" onclick={goBack} aria-label="Go back">
-		<svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
-			<polyline points="15 18 9 12 15 6"></polyline>
-		</svg>
-	</button>
+	<div class="header-left">
+		{#if hamburgerContext?.toggleSidebar}
+			<button class="hamburger-btn" onclick={hamburgerContext.toggleSidebar} aria-label="Toggle sidebar">
+				<svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+					<line x1="3" y1="6" x2="21" y2="6"></line>
+					<line x1="3" y1="12" x2="21" y2="12"></line>
+					<line x1="3" y1="18" x2="21" y2="18"></line>
+				</svg>
+			</button>
+		{/if}
+		<button class="back-btn" onclick={goBack} aria-label="Go back">
+			<svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+				<polyline points="15 18 9 12 15 6"></polyline>
+			</svg>
+		</button>
+	</div>
 
 	<div class="header-center">
 		<span class="header-title">{title}</span>
@@ -68,7 +89,7 @@
 
 <style>
 	.page-header {
-		display: none;
+		display: flex;
 		align-items: center;
 		justify-content: space-between;
 		padding: 0.75rem 1rem;
@@ -81,10 +102,10 @@
 		border-bottom: 0.5px solid rgba(255, 255, 255, 0.08);
 	}
 
-	@media (max-width: 768px) {
-		.page-header {
-			display: flex;
-		}
+	.header-left {
+		display: flex;
+		align-items: center;
+		gap: 0.25rem;
 	}
 
 	.back-btn {
@@ -102,6 +123,24 @@
 	}
 
 	.back-btn:hover {
+		background: rgba(255, 255, 255, 0.18);
+	}
+
+	.hamburger-btn {
+		display: flex;
+		align-items: center;
+		justify-content: center;
+		width: 36px;
+		height: 36px;
+		border: none;
+		border-radius: 10px;
+		background: rgba(255, 255, 255, 0.1);
+		color: var(--theme-text);
+		cursor: pointer;
+		transition: background 0.2s;
+	}
+
+	.hamburger-btn:hover {
 		background: rgba(255, 255, 255, 0.18);
 	}
 

@@ -14,9 +14,11 @@
 
 	interface Props {
 		items?: NavItem[];
+		isOpen?: boolean;
+		onClose?: () => void;
 	}
 
-	let { items = [] }: Props = $props();
+	let { items = [], isOpen = false, onClose = () => {} }: Props = $props();
 
 	let showThemeMenu = $state(false);
 
@@ -46,7 +48,7 @@
 	}
 </script>
 
-<aside class="sidebar glass-sidebar">
+<aside class="sidebar glass-sidebar" class:open={isOpen}>
 	<div class="sidebar-inner">
 		<!-- Logo -->
 		<div class="logo-section">
@@ -64,6 +66,7 @@
 					href={item.href}
 					class="nav-item"
 					class:nav-active={isActive(item.href)}
+					onclick={onClose}
 				>
 					<span class="nav-icon">{item.icon}</span>
 					<span class="nav-label">{item.label}</span>
@@ -120,13 +123,21 @@
 		flex-direction: column;
 		z-index: 30;
 		overflow-y: auto;
+		transform: translateX(-100%);
+		transition: transform 0.3s ease;
 	}
 
-	@media (max-width: 768px) {
+	.sidebar.open {
+		transform: translateX(0);
+	}
+
+	@media (max-width: 1024px) {
 		.sidebar {
-			display: none;
+			width: min(260px, calc(100vw - 3rem));
 		}
 	}
+
+
 
 	.sidebar-inner {
 		display: flex;
