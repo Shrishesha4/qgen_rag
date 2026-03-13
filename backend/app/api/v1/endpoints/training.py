@@ -11,7 +11,7 @@ Endpoints for monitoring and controlling the LLM fine-tuning pipeline:
 """
 
 import uuid
-from typing import Optional, List
+from typing import Optional, List, Any
 from datetime import datetime, timezone
 
 from fastapi import APIRouter, Depends, HTTPException, status, Query
@@ -92,6 +92,21 @@ class TrainingPairResponse(BaseModel):
     status: str
     confidence: Optional[float]
     created_at: Optional[str]
+
+
+class DatasetBuildRequest(BaseModel):
+    snapshot_filter: Optional[dict[str, Any]] = None
+
+
+class DatasetResponse(BaseModel):
+    id: str
+    dataset_tag: str
+    created_at: Optional[str]
+    created_by: Optional[str]
+    snapshot_filter: Optional[dict]
+    sample_counts: Optional[dict]
+    manifest_path: Optional[str]
+    checksum: Optional[str]
 
 
 # ══════════════════════════════════════
@@ -265,3 +280,99 @@ async def list_training_pairs(
         "limit": limit,
         "pages": (total + limit - 1) // limit if total > 0 else 0,
     }
+
+
+@router.post("/datasets/build", response_model=dict)
+async def build_training_dataset(
+    payload: DatasetBuildRequest,
+    current_user: User = Depends(get_current_superuser),
+    db: AsyncSession = Depends(get_db),
+):
+    """Build and register a frozen training dataset snapshot."""
+    return await training_service.build_dataset_snapshot(
+        db=db,
+        created_by=current_user.id,
+        snapshot_filter=payload.snapshot_filter,
+    )
+
+
+@router.get("/datasets", response_model=List[DatasetResponse])
+async def list_training_datasets(
+    limit: int = Query(50, ge=1, le=200),
+    current_user: User = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+):
+    """List registered training datasets."""
+    return await training_service.list_datasets(db=db, limit=limit)
+
+
+@router.get("/datasets/{dataset_id}", response_model=DatasetResponse)
+async def get_training_dataset(
+    dataset_id: uuid.UUID,
+    current_user: User = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+):
+    """Get a single training dataset snapshot by ID."""
+    dataset = await training_service.get_dataset(db=db, dataset_id=dataset_id)
+    if not dataset:
+        raise HTTPException(status_code=404, detail="Dataset not found")
+    return dataset
+
+
+@router.post("/evaluate/{version_id}", response_model=dict)
+async def evaluate_model_version(
+    version_id: uuid.UUID,
+    dataset_tag: Optional[str] = Query(None),
+    eval_type: str = Query("offline"),
+    current_user: User = Depends(get_current_superuser),
+    db: AsyncSession = Depends(get_db),
+):
+    """Register evaluation for a model version and queue evaluation work."""
+    return await training_service.evaluate_version(
+        db=db,
+        version_id=version_id,
+        dataset_tag=dataset_tag,
+        eval_type=eval_type,
+    )
+
+
+@router.post("/versions/{version_id}/canary", response_model=dict)
+async def canary_model_version(
+    version_id: uuid.UUID,
+    current_user: User = Depends(get_current_superuser),
+    db: AsyncSession = Depends(get_db),
+):
+    """Queue canary analysis for a model version against stable model."""
+    return await training_service.canary_version(db=db, version_id=version_id)
+
+
+@router.post("/versions/{version_id}/promote", response_model=dict)
+async def promote_model_version(
+    version_id: uuid.UUID,
+    current_user: User = Depends(get_current_superuser),
+    db: AsyncSession = Depends(get_db),
+):
+    """Promote a candidate model version if all gate checks pass."""
+    return await training_service.promote_version(
+        db=db,
+        version_id=version_id,
+        promoted_by=current_user.id,
+    )
+
+
+@router.post("/versions/{version_id}/rollback", response_model=dict)
+async def rollback_model_version(
+    version_id: uuid.UUID,
+    current_user: User = Depends(get_current_superuser),
+    db: AsyncSession = Depends(get_db),
+):
+    """Rollback active model to a specified completed model version."""
+    return await training_service.rollback_to_version(db=db, version_id=version_id)
+
+
+@router.get("/queue/status", response_model=dict)
+async def get_training_queue_status(
+    current_user: User = Depends(get_current_user),
+):
+    """Get queue depth and dead-letter counts by training pipeline queue."""
+    return await training_service.get_queue_status()

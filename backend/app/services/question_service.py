@@ -780,6 +780,12 @@ Output JSON only, no explanation."""
             }
             bloom_level = bloom_defaults.get(question_type, "apply")
 
+        difficulty_guidance = {
+            "easy": "Target foundational comprehension with direct but non-trivial checks.",
+            "medium": "Target applied understanding requiring reasoning across at least two ideas.",
+            "hard": "Target analytical/evaluative reasoning with plausible distractors and edge-case awareness.",
+        }.get(difficulty, "Target applied understanding requiring reasoning.")
+
         # Build prompt
         prompt = f"""Context from the document:
 {context}
@@ -788,6 +794,7 @@ Generate a {question_type.replace('_', ' ')} question with the following require
 - Difficulty: {difficulty}
 - Bloom's Taxonomy Level: {bloom_level}
 - Marks: {marks or 'appropriate for the question type'}
+- Difficulty Guidance: {difficulty_guidance}
 
 The question should be based directly on the provided context.
 Ensure the question is clear, specific, and examines understanding of the material.
@@ -800,6 +807,9 @@ Output valid JSON only."""
                 system_prompt=system_prompt,
                 temperature=0.7,
             )
+
+            if settings.GENERATION_SCHEMA_ENFORCEMENT and not self._validate_generation_schema(response, question_type):
+                return None
             
             response["bloom_taxonomy_level"] = bloom_level
             return response
@@ -3112,6 +3122,17 @@ Output valid JSON only."""
                     system_prompt=system_prompt,
                     temperature=temperature,
                 )
+
+                if settings.ENABLE_TWO_PASS_GENERATION:
+                    response = await self._repair_with_self_critique(
+                        response=response,
+                        prompt=prompt,
+                        question_type=question_type,
+                    )
+
+                if settings.GENERATION_SCHEMA_ENFORCEMENT and not self._validate_generation_schema(response, question_type):
+                    raise ValueError("Generated response failed schema validation")
+
                 return response
             except Exception as e:
                 last_error = e
@@ -3120,6 +3141,63 @@ Output valid JSON only."""
         # All retries exhausted - log and return None instead of raising
         logger.error(f"All {max_retries} attempts failed for {question_type}: {last_error}")
         return None
+
+    def _validate_generation_schema(self, payload: Dict[str, Any], question_type: str) -> bool:
+        """Validate generated payload against strict question-type schema."""
+        if not isinstance(payload, dict):
+            return False
+
+        if not payload.get("question_text"):
+            return False
+
+        if question_type == "mcq":
+            options = payload.get("options")
+            answer = payload.get("correct_answer")
+            if not isinstance(options, list) or len(options) < 3:
+                return False
+            if not isinstance(answer, str) or len(answer.strip()) == 0:
+                return False
+            if "explanation" not in payload:
+                return False
+
+        if question_type == "short_answer":
+            if not (payload.get("expected_answer") or payload.get("correct_answer")):
+                return False
+
+        if question_type == "long_answer":
+            key_points = payload.get("key_points")
+            if not isinstance(key_points, list) or len(key_points) < 2:
+                return False
+
+        return True
+
+    async def _repair_with_self_critique(
+        self,
+        response: Dict[str, Any],
+        prompt: str,
+        question_type: str,
+    ) -> Dict[str, Any]:
+        """Second-pass self-critique and repair to improve schema and quality compliance."""
+        critique_prompt = f"""You are validating a generated {question_type} question.
+Return ONLY valid JSON for the corrected item.
+
+Original generation prompt:
+{prompt}
+
+Generated JSON candidate:
+{json.dumps(response, ensure_ascii=False)}
+
+Tasks:
+1. Ensure output strictly follows required schema for {question_type}
+2. Remove ambiguity and fix factual or formatting issues
+3. Keep question intent intact
+"""
+        repaired = await self.llm_service.generate_json(
+            prompt=critique_prompt,
+            system_prompt="You are a strict JSON repair assistant for exam question generation.",
+            temperature=0.2,
+        )
+        return repaired if isinstance(repaired, dict) else response
 
     async def quick_generate_with_novelty(
         self,

@@ -5,7 +5,15 @@ from app.models.question import Question, GenerationSession
 from app.models.auth import RefreshToken, AuditLog
 from app.models.subject import Subject, Topic
 from app.models.rubric import Rubric
-from app.models.training import VettingLog, TrainingPair, ModelVersion, TrainingJob
+from app.models.training import (
+    VettingLog,
+    TrainingPair,
+    ModelVersion,
+    TrainingJob,
+    VettingReasonCode,
+    TrainingDataset,
+    ModelEvaluation,
+)
 
 __all__ = [
     "User",
@@ -22,4 +30,7 @@ __all__ = [
     "TrainingPair",
     "ModelVersion",
     "TrainingJob",
+    "VettingReasonCode",
+    "TrainingDataset",
+    "ModelEvaluation",
 ]

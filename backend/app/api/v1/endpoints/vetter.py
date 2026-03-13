@@ -22,8 +22,12 @@ from app.api.v1.deps import get_current_vetter
 from app.models.user import User
 from app.models.question import Question
 from app.models.subject import Subject, Topic
+from app.models.rubric import Rubric
+from app.models.training import VettingReasonCode
 from app.services.question_service import QuestionGenerationService
 from app.services.embedding_service import EmbeddingService
+from app.api.v1.deps import get_current_superuser
+from app.services.metrics_service import vetting_submit_success_total, vetting_submit_failure_total, edit_distance_mean
 from app.schemas.question import QuestionSourceInfo, SourceReference
 
 
@@ -153,6 +157,12 @@ class VetQuestionSubmitRequest(BaseModel):
     edited_explanation: Optional[str] = None
     # Rejection details
     rejection_reasons: Optional[List[str]] = None
+    reason_codes: Optional[List[str]] = None
+    severity_level: Optional[str] = Field(None, pattern="^(minor|major|critical)$")
+    quality_score: Optional[float] = Field(None, ge=0.0, le=1.0)
+    review_version: int = Field(default=1, ge=1)
+    rubric_snapshot: Optional[dict] = None
+    field_change_rationale: Optional[dict] = None
     # General feedback
     feedback: Optional[str] = None
     notes: Optional[str] = None
@@ -162,11 +172,71 @@ class VetQuestionSubmitRequest(BaseModel):
     time_spent_seconds: Optional[int] = None
 
 
+class ReasonCodeResponse(BaseModel):
+    id: uuid.UUID
+    code: str
+    label: str
+    description: Optional[str]
+    severity_default: str
+    is_active: bool
+    created_at: datetime
+
+    model_config = {"from_attributes": True}
+
+
+class ReasonCodeCreateRequest(BaseModel):
+    code: str = Field(..., min_length=2, max_length=80)
+    label: str = Field(..., min_length=2, max_length=255)
+    description: Optional[str] = None
+    severity_default: str = Field(default="minor", pattern="^(minor|major|critical)$")
+    is_active: bool = True
+
+
 class BulkVetRequest(BaseModel):
     """Request to vet multiple questions at once."""
     question_ids: List[uuid.UUID]
     status: str = Field(..., pattern="^(approved|rejected)$")
     notes: Optional[str] = None
+
+
+@router.get("/reason-codes", response_model=List[ReasonCodeResponse])
+async def list_reason_codes(
+    include_inactive: bool = Query(False),
+    current_user: User = Depends(get_current_vetter),
+    db: AsyncSession = Depends(get_db),
+):
+    """List controlled reason codes for vetting reject/edit decisions."""
+    query = select(VettingReasonCode).order_by(VettingReasonCode.code.asc())
+    if not include_inactive:
+        query = query.where(VettingReasonCode.is_active == True)
+
+    result = await db.execute(query)
+    return result.scalars().all()
+
+
+@router.post("/reason-codes", response_model=ReasonCodeResponse)
+async def create_reason_code(
+    payload: ReasonCodeCreateRequest,
+    current_user: User = Depends(get_current_superuser),
+    db: AsyncSession = Depends(get_db),
+):
+    """Create a controlled reason-code taxonomy entry. Admin only."""
+    existing = await db.execute(select(VettingReasonCode).where(VettingReasonCode.code == payload.code))
+    if existing.scalar_one_or_none():
+        raise HTTPException(status_code=409, detail="Reason code already exists")
+
+    reason_code = VettingReasonCode(
+        code=payload.code,
+        label=payload.label,
+        description=payload.description,
+        severity_default=payload.severity_default,
+        is_active=payload.is_active,
+        created_by=current_user.id,
+    )
+    db.add(reason_code)
+    await db.commit()
+    await db.refresh(reason_code)
+    return reason_code
 
 
 # ============== Dashboard ==============
@@ -715,142 +785,227 @@ async def submit_vetting(
     - **reject**: Marks as rejected. Stores rejection reasons + embedding for RAG.
     - **edit**: Saves (original, edited) pair for DPO training, then approves.
     """
+    import hashlib
+    from difflib import SequenceMatcher
     from app.models.training import VettingLog, TrainingPair
-
-    # 1. Load the question
-    result = await db.execute(
-        select(Question)
-        .options(selectinload(Question.topic), selectinload(Question.subject))
-        .where(
-            Question.id == data.question_id,
-            Question.is_latest == True,
-            Question.is_archived == False,
+    try:
+        # 1. Load the question
+        result = await db.execute(
+            select(Question)
+            .options(selectinload(Question.topic), selectinload(Question.subject))
+            .where(
+                Question.id == data.question_id,
+                Question.is_latest == True,
+                Question.is_archived == False,
+            )
         )
-    )
-    question = result.scalar_one_or_none()
-    if not question:
-        raise HTTPException(status_code=404, detail="Question not found")
+        question = result.scalar_one_or_none()
+        if not question:
+            raise HTTPException(status_code=404, detail="Question not found")
 
-    if data.approved_difficulty and data.decision != "approve":
-        raise HTTPException(
-            status_code=400,
-            detail="approved_difficulty can only be sent with approve decisions",
+        if data.approved_difficulty and data.decision != "approve":
+            raise HTTPException(
+                status_code=400,
+                detail="approved_difficulty can only be sent with approve decisions",
+            )
+        if data.decision == "reject" and (not data.reason_codes or len(data.reason_codes) == 0):
+            raise HTTPException(
+                status_code=422,
+                detail="At least one structured reason code is required when rejecting",
+            )
+
+        # Validate reason codes against controlled taxonomy
+        if data.reason_codes:
+            valid_codes_result = await db.execute(
+                select(VettingReasonCode.code).where(
+                    VettingReasonCode.code.in_(data.reason_codes),
+                    VettingReasonCode.is_active == True,
+                )
+            )
+            valid_codes = {row[0] for row in valid_codes_result.fetchall()}
+            invalid_codes = sorted(set(data.reason_codes) - valid_codes)
+            if invalid_codes:
+                raise HTTPException(
+                    status_code=422,
+                    detail=f"Invalid reason codes: {', '.join(invalid_codes)}",
+                )
+
+        rubric_snapshot = data.rubric_snapshot
+        if rubric_snapshot is None and question.subject_id:
+            latest_rubric_result = await db.execute(
+                select(Rubric)
+                .where(Rubric.subject_id == question.subject_id)
+                .order_by(Rubric.updated_at.desc())
+                .limit(1)
+            )
+            latest_rubric = latest_rubric_result.scalar_one_or_none()
+            if latest_rubric:
+                rubric_snapshot = {
+                    "rubric_id": str(latest_rubric.id),
+                    "name": latest_rubric.name,
+                    "exam_type": latest_rubric.exam_type,
+                    "question_type_distribution": latest_rubric.question_type_distribution,
+                    "learning_outcomes_distribution": latest_rubric.learning_outcomes_distribution,
+                }
+
+        # 2. Build the edit diff (for 'edit' decisions)
+        edit_diff = None
+        original_text = question.question_text
+        if data.decision == "edit":
+            edit_diff = {}
+            rationale = data.field_change_rationale or {}
+            if data.edited_text and data.edited_text != question.question_text:
+                edit_diff["question_text"] = {
+                    "old": question.question_text,
+                    "new": data.edited_text,
+                    "rationale": rationale.get("question_text"),
+                }
+            if data.edited_options is not None and data.edited_options != question.options:
+                edit_diff["options"] = {
+                    "old": question.options,
+                    "new": data.edited_options,
+                    "rationale": rationale.get("options"),
+                }
+            if data.edited_answer and data.edited_answer != question.correct_answer:
+                edit_diff["correct_answer"] = {
+                    "old": question.correct_answer,
+                    "new": data.edited_answer,
+                    "rationale": rationale.get("correct_answer"),
+                }
+            if data.edited_explanation and data.edited_explanation != question.explanation:
+                edit_diff["explanation"] = {
+                    "old": question.explanation,
+                    "new": data.edited_explanation,
+                    "rationale": rationale.get("explanation"),
+                }
+
+        # 3. Create VettingLog
+        vetting_log = VettingLog(
+            question_id=data.question_id,
+            vetter_id=current_user.id,
+            decision=data.decision,
+            review_version=data.review_version,
+            quality_score=data.quality_score,
+            rubric_snapshot=rubric_snapshot,
+            reason_codes=data.reason_codes,
+            severity_level=data.severity_level,
+            original_text=original_text,
+            edited_text=data.edited_text if data.decision == "edit" else None,
+            edit_diff=edit_diff,
+            rejection_reasons=data.rejection_reasons if data.decision == "reject" else None,
+            feedback=data.feedback or data.notes,
+            approved_difficulty=data.approved_difficulty if data.decision == "approve" else None,
+            time_spent_seconds=data.time_spent_seconds,
         )
 
-    # 2. Build the edit diff (for 'edit' decisions)
-    edit_diff = None
-    original_text = question.question_text
-    if data.decision == "edit":
-        edit_diff = {}
-        if data.edited_text and data.edited_text != question.question_text:
-            edit_diff["question_text"] = {"old": question.question_text, "new": data.edited_text}
-        if data.edited_options is not None and data.edited_options != question.options:
-            edit_diff["options"] = {"old": question.options, "new": data.edited_options}
-        if data.edited_answer and data.edited_answer != question.correct_answer:
-            edit_diff["correct_answer"] = {"old": question.correct_answer, "new": data.edited_answer}
-        if data.edited_explanation and data.edited_explanation != question.explanation:
-            edit_diff["explanation"] = {"old": question.explanation, "new": data.edited_explanation}
+        # Embed rejection reasons for RAG retrieval
+        if data.decision == "reject" and data.rejection_reasons:
+            try:
+                embedding_service = EmbeddingService()
+                reason_text = "; ".join(data.rejection_reasons)
+                embedding = await embedding_service.get_embedding(reason_text)
+                vetting_log.rejection_reason_embedding = embedding
+            except Exception:
+                pass  # Non-critical — skip if embedding service unavailable
 
-    # 3. Create VettingLog
-    vetting_log = VettingLog(
-        question_id=data.question_id,
-        vetter_id=current_user.id,
-        decision=data.decision,
-        original_text=original_text,
-        edited_text=data.edited_text if data.decision == "edit" else None,
-        edit_diff=edit_diff,
-        rejection_reasons=data.rejection_reasons if data.decision == "reject" else None,
-        feedback=data.feedback or data.notes,
-        approved_difficulty=data.approved_difficulty if data.decision == "approve" else None,
-        time_spent_seconds=data.time_spent_seconds,
-    )
+        db.add(vetting_log)
+        await db.flush()
 
-    # Embed rejection reasons for RAG retrieval
-    if data.decision == "reject" and data.rejection_reasons:
-        try:
-            embedding_service = EmbeddingService()
-            reason_text = "; ".join(data.rejection_reasons)
-            embedding = await embedding_service.get_embedding(reason_text)
-            vetting_log.rejection_reason_embedding = embedding
-        except Exception:
-            pass  # Non-critical — skip if embedding service unavailable
+        # 4. Update the question itself
+        if data.decision == "approve":
+            question.vetting_status = "approved"
+            if data.approved_difficulty:
+                question.difficulty_level = data.approved_difficulty
+        elif data.decision == "reject":
+            question.vetting_status = "rejected"
+        elif data.decision == "edit":
+            # Apply edits and approve
+            if data.edited_text:
+                question.question_text = data.edited_text
+            if data.edited_options is not None:
+                question.options = data.edited_options
+            if data.edited_answer:
+                question.correct_answer = data.edited_answer
+            if data.edited_explanation:
+                question.explanation = data.edited_explanation
+            question.vetting_status = "approved"
 
-    db.add(vetting_log)
+        question.vetted_at = datetime.now(timezone.utc)
+        question.vetted_by = current_user.id
+        question.vetting_notes = data.notes or data.feedback
 
-    # 4. Update the question itself
-    if data.decision == "approve":
-        question.vetting_status = "approved"
-        if data.approved_difficulty:
-            question.difficulty_level = data.approved_difficulty
-    elif data.decision == "reject":
-        question.vetting_status = "rejected"
-    elif data.decision == "edit":
-        # Apply edits and approve
-        if data.edited_text:
-            question.question_text = data.edited_text
-        if data.edited_options is not None:
-            question.options = data.edited_options
-        if data.edited_answer:
-            question.correct_answer = data.edited_answer
-        if data.edited_explanation:
-            question.explanation = data.edited_explanation
-        question.vetting_status = "approved"
+        if data.course_outcome_mapping:
+            question.course_outcome_mapping = data.course_outcome_mapping
 
-    question.vetted_at = datetime.now(timezone.utc)
-    question.vetted_by = current_user.id
-    question.vetting_notes = data.notes or data.feedback
+        # 5. Create DPO training pair when appropriate
+        training_pair = None
+        if data.decision == "edit" and edit_diff:
+            generation_prompt = _reconstruct_prompt(question)
+            chosen_text = data.edited_text or original_text
+            dedupe_source = f"{generation_prompt}|{chosen_text}|{original_text}|edit"
+            training_pair = TrainingPair(
+                prompt=generation_prompt,
+                chosen_response=chosen_text,
+                rejected_response=original_text,
+                vetting_log_id=vetting_log.id,
+                chosen_question_id=question.id,
+                rejected_question_id=question.id,
+                pair_type="edit",
+                confidence=0.9,
+                pair_weight=1.0,
+                language="en",
+                source_split="train",
+                dedupe_hash=hashlib.sha256(dedupe_source.encode("utf-8")).hexdigest(),
+                rejected_reason_codes=data.reason_codes,
+            )
+            db.add(training_pair)
 
-    if data.course_outcome_mapping:
-        question.course_outcome_mapping = data.course_outcome_mapping
+            if chosen_text and original_text:
+                ratio = 1.0 - SequenceMatcher(None, original_text, chosen_text).ratio()
+                edit_distance_mean.set(ratio)
 
-    # 5. Create DPO training pair when appropriate
-    training_pair = None
-    if data.decision == "edit" and edit_diff:
-        # Edit → original is "rejected", edited is "chosen"
-        generation_prompt = _reconstruct_prompt(question)
-        training_pair = TrainingPair(
-            prompt=generation_prompt,
-            chosen_response=data.edited_text or original_text,
-            rejected_response=original_text,
-            vetting_log_id=vetting_log.id,
-            chosen_question_id=question.id,
-            rejected_question_id=question.id,
-            pair_type="edit",
-            confidence=0.9,  # High confidence — direct human edit
-        )
-        db.add(training_pair)
+        elif data.decision == "reject" and data.reason_codes:
+            generation_prompt = _reconstruct_prompt(question)
+            dedupe_source = f"{generation_prompt}|{original_text}|reject"
+            training_pair = TrainingPair(
+                prompt=generation_prompt,
+                chosen_response="",
+                rejected_response=original_text,
+                vetting_log_id=vetting_log.id,
+                rejected_question_id=question.id,
+                pair_type="reject_approve",
+                status="pending",
+                confidence=0.7,
+                pair_weight=0.8,
+                language="en",
+                source_split="train",
+                dedupe_hash=hashlib.sha256(dedupe_source.encode("utf-8")).hexdigest(),
+                rejected_reason_codes=data.reason_codes,
+            )
+            db.add(training_pair)
 
-    elif data.decision == "reject" and data.rejection_reasons:
-        # Rejection → save as negative signal. Pair will be completed
-        # later when an alternative version is approved.
-        generation_prompt = _reconstruct_prompt(question)
-        training_pair = TrainingPair(
-            prompt=generation_prompt,
-            chosen_response="",  # Will be filled when an alternative is approved
-            rejected_response=original_text,
-            vetting_log_id=vetting_log.id,
-            rejected_question_id=question.id,
-            pair_type="reject_approve",
-            status="pending",
-            confidence=0.7,
-        )
-        db.add(training_pair)
+        await db.commit()
+        vetting_submit_success_total.inc()
 
-    await db.commit()
+        action_label = {
+            "approve": "approved",
+            "reject": "rejected",
+            "edit": "updated",
+        }[data.decision]
 
-    action_label = {
-        "approve": "approved",
-        "reject": "rejected",
-        "edit": "updated",
-    }[data.decision]
-
-    return {
-        "message": f"Question {action_label} successfully",
-        "question_id": str(data.question_id),
-        "decision": data.decision,
-        "vetting_log_id": str(vetting_log.id),
-        "training_pair_created": training_pair is not None,
-    }
+        return {
+            "message": f"Question {action_label} successfully",
+            "question_id": str(data.question_id),
+            "decision": data.decision,
+            "vetting_log_id": str(vetting_log.id),
+            "training_pair_created": training_pair is not None,
+        }
+    except HTTPException:
+        vetting_submit_failure_total.inc()
+        raise
+    except Exception:
+        vetting_submit_failure_total.inc()
+        raise
 
 
 def _reconstruct_prompt(question: Question) -> str:

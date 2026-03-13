@@ -108,6 +108,23 @@ class Settings(BaseSettings):
     LOG_JSON: bool = Field(default=False)    # True for production (structured JSON logs)
     ENABLE_METRICS: bool = Field(default=True)  # Enable Prometheus metrics endpoint
 
+    # Training and Promotion Gates
+    PROMOTION_MIN_OFFLINE_PASS_RATE: float = Field(default=0.8)
+    PROMOTION_MAX_CANARY_APPROVE_DROP: float = Field(default=0.02)
+    PROMOTION_MAX_CRITICAL_REJECT_INCREASE: float = Field(default=0.01)
+    PROMOTION_MAX_P95_LATENCY_MS: int = Field(default=2500)
+    PROMOTION_MAX_TIMEOUT_RATE: float = Field(default=0.02)
+
+    # Queue + Worker Controls
+    QUEUE_BACKEND: str = Field(default="redis")  # redis | celery
+    QUEUE_MAX_RETRIES: int = Field(default=3)
+    QUEUE_RETRY_BACKOFF_SECONDS: int = Field(default=30)
+    QUEUE_DEAD_LETTER_PREFIX: str = Field(default="dlq")
+
+    # Generation Controls
+    ENABLE_TWO_PASS_GENERATION: bool = Field(default=False)
+    GENERATION_SCHEMA_ENFORCEMENT: bool = Field(default=True)
+
     class Config:
         env_file = ".env"
         case_sensitive = True

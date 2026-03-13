@@ -79,6 +79,27 @@ class VettingLog(Base):
         String(10), nullable=False,
         comment="approve | reject | edit",
     )
+    review_version: Mapped[int] = mapped_column(
+        Integer,
+        default=1,
+        comment="Review contract version used when this decision was submitted",
+    )
+    quality_score: Mapped[Optional[float]] = mapped_column(
+        Float,
+        comment="Normalized quality score between 0 and 1",
+    )
+    rubric_snapshot: Mapped[Optional[dict]] = mapped_column(
+        JSONB,
+        comment="Rubric snapshot used at decision time",
+    )
+    reason_codes: Mapped[Optional[List[str]]] = mapped_column(
+        ARRAY(Text),
+        comment="Controlled taxonomy reason codes linked to the decision",
+    )
+    severity_level: Mapped[Optional[str]] = mapped_column(
+        String(20),
+        comment="minor | major | critical",
+    )
 
     # Edit data (populated when decision == 'edit')
     original_text: Mapped[Optional[str]] = mapped_column(Text)
@@ -177,6 +198,29 @@ class TrainingPair(Base):
     # Quality signal
     confidence: Mapped[Optional[float]] = mapped_column(
         Float, comment="How confident we are this is a good training signal (0-1)",
+    )
+    dedupe_hash: Mapped[Optional[str]] = mapped_column(
+        String(64),
+        unique=True,
+        index=True,
+        comment="Deterministic identity hash for pair deduplication",
+    )
+    pair_weight: Mapped[float] = mapped_column(
+        Float,
+        default=1.0,
+        comment="Training-time weight for this pair",
+    )
+    language: Mapped[str] = mapped_column(
+        String(10),
+        default="en",
+    )
+    source_split: Mapped[Optional[str]] = mapped_column(
+        String(10),
+        comment="train | val | test",
+    )
+    rejected_reason_codes: Mapped[Optional[List[str]]] = mapped_column(
+        ARRAY(Text),
+        comment="Controlled taxonomy reason codes for the rejected sample",
     )
 
     created_at: Mapped[datetime] = mapped_column(
@@ -327,3 +371,62 @@ class TrainingJob(Base):
 
     def __repr__(self) -> str:
         return f"<TrainingJob {self.id} type={self.job_type} status={self.status}>"
+
+
+class VettingReasonCode(Base):
+    """Controlled taxonomy of vetting reason codes."""
+
+    __tablename__ = "vetting_reason_codes"
+
+    id: Mapped[uuid.UUID] = mapped_column(
+        UUID(as_uuid=True), primary_key=True, default=uuid.uuid4
+    )
+    code: Mapped[str] = mapped_column(String(80), unique=True, nullable=False, index=True)
+    label: Mapped[str] = mapped_column(String(255), nullable=False)
+    description: Mapped[Optional[str]] = mapped_column(Text)
+    severity_default: Mapped[str] = mapped_column(String(20), default="minor")
+    is_active: Mapped[bool] = mapped_column(Boolean, default=True)
+    created_by: Mapped[Optional[str]] = mapped_column(String(36))
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), server_default=func.now(), index=True,
+    )
+
+
+class TrainingDataset(Base):
+    """Immutable dataset snapshot registry for reproducible training."""
+
+    __tablename__ = "training_datasets"
+
+    id: Mapped[uuid.UUID] = mapped_column(
+        UUID(as_uuid=True), primary_key=True, default=uuid.uuid4
+    )
+    dataset_tag: Mapped[str] = mapped_column(String(100), unique=True, nullable=False, index=True)
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), server_default=func.now(),
+    )
+    created_by: Mapped[Optional[str]] = mapped_column(String(36))
+    snapshot_filter: Mapped[Optional[dict]] = mapped_column(JSONB)
+    sample_counts: Mapped[Optional[dict]] = mapped_column(JSONB)
+    manifest_path: Mapped[Optional[str]] = mapped_column(String(500))
+    checksum: Mapped[Optional[str]] = mapped_column(String(128))
+
+
+class ModelEvaluation(Base):
+    """Evaluation registry for model versions against frozen datasets."""
+
+    __tablename__ = "model_evaluations"
+
+    id: Mapped[uuid.UUID] = mapped_column(
+        UUID(as_uuid=True), primary_key=True, default=uuid.uuid4
+    )
+    model_version_id: Mapped[uuid.UUID] = mapped_column(
+        UUID(as_uuid=True), ForeignKey("model_versions.id", ondelete="CASCADE"),
+        nullable=False, index=True,
+    )
+    dataset_tag: Mapped[str] = mapped_column(String(100), nullable=False, index=True)
+    eval_type: Mapped[str] = mapped_column(String(50), nullable=False)
+    metrics: Mapped[Optional[dict]] = mapped_column(JSONB)
+    pass_fail: Mapped[Optional[bool]] = mapped_column(Boolean)
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), server_default=func.now(),
+    )

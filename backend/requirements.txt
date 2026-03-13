@@ -51,6 +51,8 @@ aiofiles==23.2.1
 # Monitoring & Logging
 loguru==0.7.2
 prometheus-fastapi-instrumentator==6.1.0
+prometheus-client==0.20.0
+celery[redis]==5.4.0
 
 # Training Pipeline (LoRA fine-tuning)
 # Install these on GPU nodes only — not needed for inference-only deployments
