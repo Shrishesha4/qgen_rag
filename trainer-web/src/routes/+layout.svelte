@@ -13,8 +13,8 @@
 			// Non-blocking; adapter will retry on demand.
 		});
 		initAiOps();
-		if ('serviceWorker' in navigator) {
-			navigator.serviceWorker.register('/service-worker.js');
+		if (import.meta.env.PROD && 'serviceWorker' in navigator) {
+			navigator.serviceWorker.register('/service-worker.js', { type: 'module' });
 		}
 		const root = document.documentElement;
 		const forceRepaint = () => {

@@ -1167,8 +1167,10 @@ class TrainingService:
         rejected_result = await db.execute(
             select(func.count(Question.id)).where(Question.vetting_status == "rejected", Question.is_latest == True)
         )
-        total_reviewed = int((approved_result.scalar() or 0) + (rejected_result.scalar() or 0))
-        approve_rate = float((approved_result.scalar() or 0) / total_reviewed) if total_reviewed else 0.0
+        approved_count = int(approved_result.scalar() or 0)
+        rejected_count = int(rejected_result.scalar() or 0)
+        total_reviewed = approved_count + rejected_count
+        approve_rate = float(approved_count / total_reviewed) if total_reviewed else 0.0
 
         approve_rate_by_model.labels(model_version=active_tag).set(approve_rate)
         generation_timeout_rate.labels(model_version=active_tag).set(
