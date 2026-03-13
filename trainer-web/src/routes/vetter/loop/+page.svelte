@@ -701,7 +701,7 @@
 	}
 
 	.option.correct .opt-marker {
-		color: #48c050;
+		color: #2cda38;
 	}
 
 	.answer-box {

@@ -555,7 +555,9 @@
 <div class="loop-page">
 	<div class="loop-hero animate-fade-in">
 		<div class="hero-copy">
-			<button class="back-link" onclick={() => goto('/teacher/train')}>Back to topics</button>
+			<button class="back-link" onclick={() => goto('/teacher/train')}>
+				←---
+			</button>
 			<h1 class="hero-title font-serif">Question Vetting</h1>
 		</div>
 		{#if questions.length > 0}
@@ -864,28 +866,29 @@
 				<button class="edit-inline-btn" onclick={startEdit}>Edit question</button>
 			</div> -->
 			<div class="grading-grid">
-				<button class="grade-card easy" onclick={() => openApprovalRecorder('easy')} disabled={submitting}>
+				<button class="glass-panel grade-card easy" onclick={() => openApprovalRecorder('easy')} disabled={submitting}>
 					<span class="grade-badge">E</span>
 					<span class="grade-label">Easy</span>
 				</button>
-				<button class="grade-card medium" onclick={() => openApprovalRecorder('medium')} disabled={submitting}>
+				<button class="glass-panel grade-card medium" onclick={() => openApprovalRecorder('medium')} disabled={submitting}>
 					<span class="grade-badge">M</span>
 					<span class="grade-label">Medium</span>
 				</button>
-				<button class="grade-card hard" onclick={() => openApprovalRecorder('hard')} disabled={submitting}>
+				<button class="glass-panel grade-card hard" onclick={() => openApprovalRecorder('hard')} disabled={submitting}>
 					<span class="grade-badge">H</span>
 					<span class="grade-label">Hard</span>
 				</button>
-				<button class="grade-card reject" onclick={openRejectRecorder} disabled={submitting}>
+				<button class="glass-panel grade-card reject" onclick={openRejectRecorder} disabled={submitting}>
 					<span class="grade-badge">×</span>
 					<span class="grade-label">Reject</span>
 				</button>
 			</div>
 		{:else if isReviewed && currentIndex < questions.length - 1}
 			<div class="actions actions-single">
-				<button class="glass-btn next-question-btn" onclick={() => { advance(); }}>
+				<!-- <button class="glass-btn next-question-btn" onclick={() => { advance(); }}>
 					Next Question →
-				</button>
+				</button> -->
+				<h2>Generating</h2>
 			</div>
 		{/if}
 
@@ -964,7 +967,7 @@
 	}
 
 	.option.correct .opt-marker {
-		color: #48c050;
+		color: #2cda38;
 	}
 
 	/* Answer box */
@@ -1047,9 +1050,9 @@
 		width: auto;
 	}
 
-	.next-question-btn {
+	/* .next-question-btn {
 		padding: 0.75rem 2rem;
-	}
+	} */
 
 	/* Finish */
 	.complete-batch-fab {
@@ -1877,17 +1880,17 @@
 		align-items: center;
 		justify-content: center;
 		border-radius: 999px;
-		background: rgba(255, 255, 255, 0.1);
+		background: rgba(255, 255, 255, 0.406);
 	}
 
 	.option.correct {
-		background: rgba(62, 153, 117, 0.24);
-		border-color: rgba(49, 208, 161, 0.4);
+		background: rgba(32, 178, 49, 0.423);
+		border-color: rgba(55, 255, 95, 0.615);
 	}
 
 	.option.correct .opt-marker {
-		background: rgba(49, 208, 161, 0.22);
-		color: #d3fff1;
+		background: rgba(32, 255, 103, 0.574);
+		color: #9fff9e;
 	}
 
 	.floating-stack {

@@ -34,7 +34,7 @@ export const themes: Record<ThemeName, ThemeConfig> = {
 		name: 'ice',
 		label: 'Aurora',
 		icon: '❄️',
-		bgImage: 'https://images.unsplash.com/photo-1534447677768-be436bb09401',
+		bgImage: '/theme-pictures/aurora.webp',
 		bg: [
 			'radial-gradient(ellipse at 25% 70%, rgba(180,200,230,0.25) 0%, transparent 50%)',
 			'radial-gradient(ellipse at 75% 30%, rgba(150,185,220,0.2) 0%, transparent 40%)',
@@ -54,7 +54,7 @@ export const themes: Record<ThemeName, ThemeConfig> = {
 		name: 'water',
 		label: 'Deep Ocean',
 		icon: '🌊',
-		bgImage: 'https://images.unsplash.com/photo-1582967788606-a171c1080cb0',
+		bgImage: '/theme-pictures/deep-ocean.webp',
 		bg: [
 			'radial-gradient(ellipse at 30% 80%, rgba(20,80,160,0.35) 0%, transparent 50%)',
 			'radial-gradient(ellipse at 70% 20%, rgba(30,100,180,0.25) 0%, transparent 45%)',
@@ -71,9 +71,9 @@ export const themes: Record<ThemeName, ThemeConfig> = {
 	},
 	fire: {
 		name: 'fire',
-		label: 'Abstract Glass',
-		icon: '🔥',
-		bgImage: 'https://images.unsplash.com/photo-1503401639559-b16332601594?q=80&w=2148&auto=format&fit=crop&ixlib=rb-4.1.0&ixid=M3wxMjA3fDB8MHxwaG90by1wYWdlfHx8fGVufDB8fHx8fA%3D%3D',
+		label: 'Landscape',
+		icon: '🌄',
+		bgImage: '/theme-pictures/landscape.webp',
 		bg: [
 			'radial-gradient(ellipse at 40% 80%, rgba(200,60,20,0.2) 0%, transparent 50%)',
 			'radial-gradient(ellipse at 60% 20%, rgba(220,100,40,0.15) 0%, transparent 45%)',
@@ -84,7 +84,7 @@ export const themes: Record<ThemeName, ThemeConfig> = {
 		primaryHover: '#e06020',
 		primaryRgb: '240, 112, 48',
 		text: '#f4ece4',
-		textMuted: '#c0a898',
+		textMuted: '#ffffff',
 		border: 'rgba(255,255,255,0.14)',
 		glow: 'rgba(240,112,48,0.35)'
 	},
@@ -92,7 +92,7 @@ export const themes: Record<ThemeName, ThemeConfig> = {
 		name: 'earth',
 		label: 'Dark Forest',
 		icon: '🌿',
-		bgImage: 'https://images.unsplash.com/photo-1542273917363-3b1817f69a2d?q=80&w=2674&auto=format&fit=crop&ixlib=rb-4.1.0&ixid=M3wxMjA3fDB8MHxwaG90by1wYWdlfHx8fGVufDB8fHx8fA%3D%3D',
+		bgImage: '/theme-pictures/dark-forest.webp',
 		bg: [
 			'radial-gradient(ellipse at 25% 75%, rgba(40,120,50,0.25) 0%, transparent 50%)',
 			'radial-gradient(ellipse at 75% 25%, rgba(50,140,60,0.2) 0%, transparent 40%)',
@@ -111,7 +111,7 @@ export const themes: Record<ThemeName, ThemeConfig> = {
 		name: 'night',
 		label: 'Midnight',
 		icon: '🌙',
-		bgImage: 'https://images.unsplash.com/photo-1595280111512-72b43d49b7e5?q=80&w=2370&auto=format&fit=crop&ixlib=rb-4.1.0&ixid=M3wxMjA3fDB8MHxwaG90by1wYWdlfHx8fGVufDB8fHx8fA%3D%3D',
+		bgImage: '/theme-pictures/midnight.webp',
 		bg: [
 			'radial-gradient(ellipse at 20% 60%, rgba(80,40,140,0.25) 0%, transparent 50%)',
 			'radial-gradient(ellipse at 80% 80%, rgba(40,20,100,0.2) 0%, transparent 45%)',

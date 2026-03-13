@@ -318,7 +318,7 @@
 					{#each presetDisciplines as discipline}
 						<button
 							type="button"
-							class="discipline-card"
+							class="glass-panel discipline-card"
 							class:selected={!useCustomDiscipline && selectedDiscipline === discipline.name}
 							onclick={() => handleDisciplineSelection(discipline.name)}
 						>
@@ -328,7 +328,7 @@
 					{/each}
 					<button
 						type="button"
-						class="discipline-card discipline-card-custom"
+						class="glass-panel discipline-card discipline-card-custom"
 						class:selected={useCustomDiscipline}
 						onclick={activateCustomDiscipline}
 					>
@@ -765,7 +765,7 @@
 	}
 
 	.discipline-card.selected {
-		background: rgba(var(--theme-primary-rgb), 0.16);
+		background: rgba(var(--theme-primary-rgb), 0.46);
 		border-color: rgba(var(--theme-primary-rgb), 0.45);
 		box-shadow: 0 0 0 1px rgba(var(--theme-primary-rgb), 0.2);
 	}
