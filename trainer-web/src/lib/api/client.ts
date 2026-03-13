@@ -1,5 +1,11 @@
 /** API base URL — configured for local dev, override via env. */
-export const API_BASE = 'http://localhost:8000/api/v1';
+const API_BASE_FALLBACK = 'http://localhost:8000/api/v1';
+
+function normalizeApiBase(url: string): string {
+	return url.replace(/\/+$/, '');
+}
+
+export const API_BASE = normalizeApiBase(import.meta.env.VITE_API_BASE || API_BASE_FALLBACK);
 
 /** Build a full API URL. */
 export function apiUrl(path: string): string {

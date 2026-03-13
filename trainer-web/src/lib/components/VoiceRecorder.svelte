@@ -56,6 +56,8 @@
 	let transcriptionStatus = $state('Checking browser speech recognition support...');
 	let audioPreviewUrl = $state('');
 	let audioPreviewSize = $state('');
+	let finalTranscript = $state('');
+	let interimTranscript = $state('');
 
 	let mediaStream: MediaStream | null = null;
 	let speechRecognition: SpeechRecognitionLike | null = null;
@@ -109,6 +111,8 @@
 		isRequestingPermission = true;
 		recorderError = '';
 		transcript = '';
+		finalTranscript = '';
+		interimTranscript = '';
 		recordingTime = 0;
 		revokeAudioPreview();
 		recordedPcmChunks = [];
@@ -204,21 +208,22 @@
 		speechRecognition.lang = 'en-US';
 
 		speechRecognition.onresult = (event) => {
-			let interim = '';
-			let final = '';
+			let nextFinal = finalTranscript;
+			let nextInterim = '';
 			for (let i = event.resultIndex; i < event.results.length; i += 1) {
 				const result = event.results[i];
-				const text = result[0]?.transcript ?? '';
+				const text = normalizeTranscript(result[0]?.transcript ?? '');
+				if (!text) continue;
 				if (result.isFinal) {
-					final += text;
+					nextFinal = appendTranscriptChunk(nextFinal, text);
 				} else {
-					interim += text;
+					nextInterim = appendTranscriptChunk(nextInterim, text);
 				}
 			}
-			const merged = `${transcript} ${final} ${interim}`.replace(/\s+/g, ' ').trim();
-			if (merged) {
-				transcript = merged;
-			}
+
+			finalTranscript = nextFinal;
+			interimTranscript = nextInterim;
+			transcript = normalizeTranscript(`${finalTranscript} ${interimTranscript}`);
 		};
 
 		speechRecognition.onerror = (event) => {
@@ -423,10 +428,45 @@
 		isRecording = false;
 		isRequestingPermission = false;
 		isTranscribing = false;
+		finalTranscript = '';
+		interimTranscript = '';
+		transcript = '';
 		recorderError = '';
 		transcriptionStatus = transcriptionReady
 			? 'Using built-in browser speech recognition.'
 			: 'Built-in speech recognition is unavailable. Type feedback manually.';
+	}
+
+	function normalizeTranscript(value: string): string {
+		return value.replace(/\s+/g, ' ').trim();
+	}
+
+	function appendTranscriptChunk(existing: string, incoming: string): string {
+		const base = normalizeTranscript(existing);
+		const chunk = normalizeTranscript(incoming);
+		if (!chunk) return base;
+
+		// If recognition sends the same phrase repeatedly, keep one copy.
+		if (base && base.toLowerCase().endsWith(chunk.toLowerCase())) {
+			return base;
+		}
+
+		if (!base) return chunk;
+
+		const baseTokens = base.split(' ');
+		const chunkTokens = chunk.split(' ');
+		const maxOverlap = Math.min(baseTokens.length, chunkTokens.length, 12);
+
+		for (let size = maxOverlap; size > 0; size -= 1) {
+			const baseTail = baseTokens.slice(baseTokens.length - size).join(' ').toLowerCase();
+			const chunkHead = chunkTokens.slice(0, size).join(' ').toLowerCase();
+			if (baseTail === chunkHead) {
+				const mergedTokens = [...baseTokens, ...chunkTokens.slice(size)];
+				return mergedTokens.join(' ');
+			}
+		}
+
+		return `${base} ${chunk}`;
 	}
 
 	function handleSubmit() {

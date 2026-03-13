@@ -3,6 +3,9 @@ __pycache__/
 *.pyo
 *.pyd
 
+training_data/
+lora_adapters/
+
 # Distribution / packaging
 .Python
 build/

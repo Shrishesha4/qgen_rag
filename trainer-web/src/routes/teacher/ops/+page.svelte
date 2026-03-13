@@ -500,7 +500,7 @@
 	{/if}
 	{#if operationResult}
 		<div class="glass-panel result">
-			<h3>Last Operation Result</h3>
+			<h2>Last Operation Result</h2>
 			<pre>{getPretty(operationResult)}</pre>
 		</div>
 	{/if}
@@ -809,10 +809,6 @@
 
 	.error {
 		border: 1px solid rgba(255, 99, 99, 0.35);
-	}
-
-	.result h3 {
-		margin: 0 0 0.5rem;
 	}
 
 	@media (max-width: 640px) {

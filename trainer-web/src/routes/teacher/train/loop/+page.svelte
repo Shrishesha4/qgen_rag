@@ -924,8 +924,8 @@
 	}
 
 	.q-text {
-		font-size: 1.05rem;
-		line-height: 1.6;
+		font-size: 1.25rem;
+		line-height: 1.2;
 		color: var(--theme-text);
 		margin: 0 0 1.25rem;
 		font-weight: 500;
@@ -1827,7 +1827,7 @@
 	}
 
 	.q-text {
-		font-size: clamp(2.1rem, 3.3vw, 3.2rem);
+		font-size: clamp(0.9rem, 3.3vw, 1.8rem);
 		line-height: 1.12;
 		margin-bottom: 1.75rem;
 	}

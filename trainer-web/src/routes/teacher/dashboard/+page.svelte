@@ -78,9 +78,7 @@
 	</div>
 
 	{#if $currentUser}
-		<p class="welcome-text animate-fade-in" style="animation-delay: 0.3s">
-			Welcome back, {$currentUser.full_name || $currentUser.username}
-		</p>
+		<h1 class="hero-title font-serif animate-fade-in" style="animation-delay: 0.3s; font-size: 1.25rem; font-style: italic;">Welcome back, {$currentUser.full_name || $currentUser.username}</h1>
 	{/if}
 </div>
 
@@ -237,12 +235,12 @@
 		color: var(--theme-text);
 	}
 
-	.welcome-text {
+	/* .welcome-text {
 		font-size: 0.85rem;
 		color: var(--theme-text-muted);
 		text-align: center;
 		margin: 0;
-	}
+	} */
 
 	@media (max-width: 768px) {
 		.home {
@@ -385,8 +383,8 @@
 			font-size: 0.78rem;
 		}
 
-		.welcome-text {
+		/* .welcome-text {
 			font-size: 0.78rem;
-		}
+		} */
 	}
 </style>
