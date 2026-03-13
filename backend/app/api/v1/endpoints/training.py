@@ -20,7 +20,11 @@ from sqlalchemy import select, func
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.database import get_db
-from app.api.v1.deps import get_current_user, get_current_superuser
+from app.api.v1.deps import (
+    get_current_user,
+    get_current_superuser,
+    get_current_teacher_or_admin,
+)
 from app.models.user import User
 from app.models.training import ModelVersion, TrainingJob, TrainingPair, VettingLog
 from app.services.training_service import TrainingService
@@ -129,7 +133,7 @@ async def get_training_status(
 @router.post("/trigger")
 async def trigger_training(
     request: TriggerTrainingRequest,
-    current_user: User = Depends(get_current_superuser),
+    current_user: User = Depends(get_current_teacher_or_admin),
     db: AsyncSession = Depends(get_db),
 ):
     """
@@ -285,7 +289,7 @@ async def list_training_pairs(
 @router.post("/datasets/build", response_model=dict)
 async def build_training_dataset(
     payload: DatasetBuildRequest,
-    current_user: User = Depends(get_current_superuser),
+    current_user: User = Depends(get_current_teacher_or_admin),
     db: AsyncSession = Depends(get_db),
 ):
     """Build and register a frozen training dataset snapshot."""
@@ -324,7 +328,7 @@ async def evaluate_model_version(
     version_id: uuid.UUID,
     dataset_tag: Optional[str] = Query(None),
     eval_type: str = Query("offline"),
-    current_user: User = Depends(get_current_superuser),
+    current_user: User = Depends(get_current_teacher_or_admin),
     db: AsyncSession = Depends(get_db),
 ):
     """Register evaluation for a model version and queue evaluation work."""
@@ -339,7 +343,7 @@ async def evaluate_model_version(
 @router.post("/versions/{version_id}/canary", response_model=dict)
 async def canary_model_version(
     version_id: uuid.UUID,
-    current_user: User = Depends(get_current_superuser),
+    current_user: User = Depends(get_current_teacher_or_admin),
     db: AsyncSession = Depends(get_db),
 ):
     """Queue canary analysis for a model version against stable model."""
@@ -349,7 +353,7 @@ async def canary_model_version(
 @router.post("/versions/{version_id}/promote", response_model=dict)
 async def promote_model_version(
     version_id: uuid.UUID,
-    current_user: User = Depends(get_current_superuser),
+    current_user: User = Depends(get_current_teacher_or_admin),
     db: AsyncSession = Depends(get_db),
 ):
     """Promote a candidate model version if all gate checks pass."""
@@ -363,7 +367,7 @@ async def promote_model_version(
 @router.post("/versions/{version_id}/rollback", response_model=dict)
 async def rollback_model_version(
     version_id: uuid.UUID,
-    current_user: User = Depends(get_current_superuser),
+    current_user: User = Depends(get_current_teacher_or_admin),
     db: AsyncSession = Depends(get_db),
 ):
     """Rollback active model to a specified completed model version."""
