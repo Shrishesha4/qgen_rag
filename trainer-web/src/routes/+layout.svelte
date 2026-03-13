@@ -7,6 +7,9 @@
 
 	onMount(() => {
 		initTheme();
+		if ('serviceWorker' in navigator) {
+			navigator.serviceWorker.register('/service-worker.js');
+		}
 		const root = document.documentElement;
 		const forceRepaint = () => {
 			root.classList.add('bf-repaint');
@@ -24,6 +27,16 @@
 		return () => document.removeEventListener('visibilitychange', onVisibility);
 	});
 </script>
+
+<svelte:head>
+	<link rel="manifest" href="/manifest.webmanifest" />
+	<meta name="theme-color" content="#1f4268" />
+	<meta name="application-name" content="QGen Trainer" />
+	<meta name="apple-mobile-web-app-capable" content="yes" />
+	<meta name="apple-mobile-web-app-title" content="QGen Trainer" />
+	<meta name="apple-mobile-web-app-status-bar-style" content="black-translucent" />
+	<link rel="apple-touch-icon" sizes="180x180" href="/icons/icon-180.png" />
+</svelte:head>
 
 <div class="bg-image-layer" aria-hidden="true"></div>
 <div class="bg-overlay-layer" aria-hidden="true"></div>
