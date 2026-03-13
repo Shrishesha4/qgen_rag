@@ -2,11 +2,17 @@
 	import './layout.css';
 	import { onMount } from 'svelte';
 	import { initTheme } from '$lib/theme';
+	import { warmVettingTaxonomy } from '$lib/api/vetting';
+	import { initAiOps } from '$lib/api/ops';
 
 	let { children } = $props();
 
 	onMount(() => {
 		initTheme();
+		warmVettingTaxonomy().catch(() => {
+			// Non-blocking; adapter will retry on demand.
+		});
+		initAiOps();
 		if ('serviceWorker' in navigator) {
 			navigator.serviceWorker.register('/service-worker.js');
 		}

@@ -76,6 +76,23 @@ export interface VetSubmission {
 	time_spent_seconds?: number;
 }
 
+interface ReasonCodeEntry {
+	id: string;
+	code: string;
+	label: string;
+	description?: string | null;
+	severity_default: string;
+	is_active: boolean;
+	created_at: string;
+}
+
+const TAXONOMY_CACHE_TTL_MS = 5 * 60 * 1000;
+let taxonomyLoadedAt = 0;
+let reasonCodeEntries: ReasonCodeEntry[] = [];
+let reasonLabelToCode = new Map<string, string>();
+let reasonCodeSet = new Set<string>();
+let fallbackReasonCode = 'OTHER';
+
 export interface VetterQuestionUpdate {
 	marks?: number;
 	difficulty_level?: 'easy' | 'medium' | 'hard';
@@ -104,6 +121,117 @@ export interface VetterSubjectSummary {
 	approved_count: number;
 	rejected_count: number;
 	topics: VetterTopicSummary[];
+}
+
+function normalizeReasonLabel(value: string): string {
+	return value.trim().toLowerCase().replace(/\s+/g, ' ');
+}
+
+function toCandidateCode(label: string): string {
+	return label
+		.trim()
+		.toUpperCase()
+		.replace(/[^A-Z0-9]+/g, '_')
+		.replace(/^_+|_+$/g, '');
+}
+
+export async function warmVettingTaxonomy(force = false): Promise<void> {
+	const now = Date.now();
+	if (!force && now - taxonomyLoadedAt < TAXONOMY_CACHE_TTL_MS && reasonCodeEntries.length > 0) {
+		return;
+	}
+
+	try {
+		const entries = await apiFetch<ReasonCodeEntry[]>('/vetter/reason-codes');
+		reasonCodeEntries = entries;
+		reasonLabelToCode = new Map();
+		reasonCodeSet = new Set(entries.map((entry) => entry.code));
+
+		for (const entry of entries) {
+			reasonLabelToCode.set(normalizeReasonLabel(entry.label), entry.code);
+			if (entry.description) {
+				reasonLabelToCode.set(normalizeReasonLabel(entry.description), entry.code);
+			}
+		}
+
+		fallbackReasonCode = reasonCodeSet.has('OTHER')
+			? 'OTHER'
+			: entries[0]?.code ?? 'OTHER';
+		taxonomyLoadedAt = now;
+	} catch {
+		if (reasonCodeEntries.length === 0) {
+			fallbackReasonCode = 'OTHER';
+		}
+	}
+}
+
+async function mapReasonLabelsToCodes(labels?: string[]): Promise<string[]> {
+	await warmVettingTaxonomy(false);
+	if (!labels || labels.length === 0) {
+		return [fallbackReasonCode];
+	}
+
+	const mapped: string[] = [];
+	for (const label of labels) {
+		const normalized = normalizeReasonLabel(label);
+		const exact = reasonLabelToCode.get(normalized);
+		if (exact) {
+			mapped.push(exact);
+			continue;
+		}
+
+		const candidateCode = toCandidateCode(label);
+		if (reasonCodeSet.has(candidateCode)) {
+			mapped.push(candidateCode);
+			continue;
+		}
+
+		const fuzzy = reasonCodeEntries.find((entry) => {
+			const labelText = normalizeReasonLabel(entry.label);
+			const descText = normalizeReasonLabel(entry.description || '');
+			return labelText.includes(normalized) || normalized.includes(labelText) || descText.includes(normalized);
+		});
+		mapped.push(fuzzy?.code ?? fallbackReasonCode);
+	}
+
+	const uniqueCodes = [...new Set(mapped.filter(Boolean))];
+	return uniqueCodes.length > 0 ? uniqueCodes : [fallbackReasonCode];
+}
+
+function buildFieldChangeRationale(data: VetSubmission): Record<string, string> | undefined {
+	if (data.decision !== 'edit') return undefined;
+	const rationale: Record<string, string> = {};
+	if (typeof data.edited_text !== 'undefined') {
+		rationale.question_text = 'Teacher edited wording';
+	}
+	if (typeof data.edited_answer !== 'undefined') {
+		rationale.correct_answer = 'Correct answer corrected';
+	}
+	if (typeof data.edited_options !== 'undefined') {
+		rationale.options = 'Options adjusted';
+	}
+	if (typeof data.edited_explanation !== 'undefined') {
+		rationale.explanation = 'Explanation clarified';
+	}
+	return Object.keys(rationale).length > 0 ? rationale : undefined;
+}
+
+async function adaptVettingPayload(data: VetSubmission): Promise<Record<string, unknown>> {
+	const payload: Record<string, unknown> = {
+		...data,
+		review_version: 1,
+	};
+
+	if (data.decision === 'reject') {
+		payload.reason_codes = await mapReasonLabelsToCodes(data.rejection_reasons);
+	}
+
+	if (data.decision === 'edit') {
+		const rationale = buildFieldChangeRationale(data);
+		if (rationale) payload.field_change_rationale = rationale;
+	}
+
+	return payload;
 }
 
 // ── API calls ──
@@ -143,9 +271,10 @@ export async function submitVetting(data: VetSubmission): Promise<{
 	vetting_log_id: string;
 	training_pair_created: boolean;
 }> {
+	const adapted = await adaptVettingPayload(data);
 	return apiFetch('/vetter/submit', {
 		method: 'POST',
-		body: JSON.stringify(data),
+		body: JSON.stringify(adapted),
 	});
 }
 
@@ -162,12 +291,22 @@ export async function updateVettedQuestion(questionId: string, data: VetterQuest
 
 export async function vetQuestion(
 	questionId: string,
-	data: { status: 'approved' | 'rejected'; notes?: string }
+	data: { status: 'approved' | 'rejected'; notes?: string; rejection_reasons?: string[] }
 ): Promise<{ message: string; question_id: string; status: string }> {
-	return apiFetch(`/vetter/questions/${questionId}/vet`, {
-		method: 'POST',
-		body: JSON.stringify(data),
-	});
+	const decision = data.status === 'approved' ? 'approve' : 'reject';
+	const submission: VetSubmission = {
+		question_id: questionId,
+		decision,
+		notes: data.notes,
+		feedback: data.notes,
+		rejection_reasons: data.rejection_reasons,
+	};
+	const result = await submitVetting(submission);
+	return {
+		message: result.message,
+		question_id: result.question_id,
+		status: data.status,
+	};
 }
 
 export interface RejectWithFeedbackRequest {

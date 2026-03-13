@@ -66,6 +66,17 @@ export interface TrainingJobResponse {
 	error_message: string | null;
 }
 
+export interface TrainingDatasetResponse {
+	id: string;
+	dataset_tag: string;
+	created_at: string | null;
+	created_by: string | null;
+	snapshot_filter: Record<string, unknown> | null;
+	sample_counts: Record<string, number> | null;
+	manifest_path: string | null;
+	checksum: string | null;
+}
+
 // ── API calls ──
 
 export async function getTrainingStatus(): Promise<TrainingStatus> {
@@ -97,4 +108,50 @@ export async function activateModelVersion(id: string): Promise<Record<string, u
 
 export async function listTrainingJobs(limit = 20): Promise<TrainingJobResponse[]> {
 	return apiFetch<TrainingJobResponse[]>(`/training/jobs?limit=${limit}`);
+}
+
+export async function buildTrainingDataset(snapshot_filter?: Record<string, unknown>): Promise<Record<string, unknown>> {
+	return apiFetch('/training/datasets/build', {
+		method: 'POST',
+		body: JSON.stringify({ snapshot_filter }),
+	});
+}
+
+export async function listTrainingDatasets(limit = 50): Promise<TrainingDatasetResponse[]> {
+	return apiFetch<TrainingDatasetResponse[]>(`/training/datasets?limit=${limit}`);
+}
+
+export async function getTrainingDataset(id: string): Promise<TrainingDatasetResponse> {
+	return apiFetch<TrainingDatasetResponse>(`/training/datasets/${id}`);
+}
+
+export async function evaluateModelVersion(
+	versionId: string,
+	opts: { dataset_tag?: string; eval_type?: string } = {}
+): Promise<Record<string, unknown>> {
+	const params = new URLSearchParams();
+	if (opts.dataset_tag) params.set('dataset_tag', opts.dataset_tag);
+	if (opts.eval_type) params.set('eval_type', opts.eval_type);
+	const suffix = params.toString() ? `?${params.toString()}` : '';
+	return apiFetch(`/training/evaluate/${versionId}${suffix}`, { method: 'POST' });
+}
+
+export async function canaryModelVersion(versionId: string): Promise<Record<string, unknown>> {
+	return apiFetch(`/training/versions/${versionId}/canary`, { method: 'POST' });
+}
+
+export async function promoteModelVersion(versionId: string): Promise<Record<string, unknown>> {
+	return apiFetch(`/training/versions/${versionId}/promote`, { method: 'POST' });
+}
+
+export async function rollbackModelVersion(versionId: string): Promise<Record<string, unknown>> {
+	return apiFetch(`/training/versions/${versionId}/rollback`, { method: 'POST' });
+}
+
+export async function getTrainingQueueStatus(): Promise<Record<string, unknown>> {
+	return apiFetch('/training/queue/status');
+}
+
+export async function getLiveModelMetrics(): Promise<Record<string, unknown>> {
+	return apiFetch('/models/live-metrics');
 }
