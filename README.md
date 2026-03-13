@@ -22,12 +22,12 @@ QuestionGeneration AI is an intelligent exam question generation platform that l
 
 ### Key Capabilities
 
-- 📄 **Document Processing**: Upload PDFs, DOCX, or TXT files and automatically extract content
+- 📄 **Document Processing**: Upload PDFs, DOCX, TXT, XLSX, or CSV files with OCR fallback for scanned PDFs
 - 🧠 **Intelligent Generation**: Generate MCQs, short-answer, and long-answer questions using LLMs
 - 🔍 **Hybrid Search**: Combines BM25 keyword search with vector similarity for optimal retrieval
 - 📊 **Bloom's Taxonomy**: Target specific cognitive levels (Remember → Create)
 - ✅ **Quality Validation**: Automatic scoring for answerability, specificity, and confidence
-- 📱 **Mobile-First**: Beautiful React Native app with real-time streaming updates
+- 📱 **Multi-Client UX**: React Native mobile app + SvelteKit trainer web with role-based vetting flows
 
 ---
 
@@ -38,7 +38,7 @@ QuestionGeneration AI is an intelligent exam question generation platform that l
 |---------|-------------|
 | **Hybrid Search** | BM25 + pgvector cosine similarity with score fusion |
 | **Smart Chunking** | RecursiveCharacterTextSplitter (1000 tokens, 200 overlap) |
-| **Cross-Encoder Reranking** | ms-marco-MiniLM-L-6-v2 for precision retrieval |
+| **Cross-Encoder Reranking** | `mixedbread-ai/mxbai-rerank-large-v1` for precision retrieval |
 | **Query Expansion** | LLM-based query reformulation for better coverage |
 | **Embedding Cache** | Two-tier caching (L1: LRU, L2: Redis) |
 
@@ -55,7 +55,8 @@ QuestionGeneration AI is an intelligent exam question generation platform that l
 | Feature | Description |
 |---------|-------------|
 | **Vector Database** | PostgreSQL + pgvector with IVFFlat indexing |
-| **Authentication** | JWT with refresh tokens + Redis blacklist |
+| **Authentication** | JWT with refresh tokens + Redis blacklist + decoupled auth SQLite store |
+| **LLM Providers** | Ollama (local), Gemini (cloud), DeepSeek (cloud) |
 | **Real-time Updates** | Server-Sent Events (SSE) streaming |
 | **Error Recovery** | Exponential backoff with jitter for LLM calls |
 | **Monitoring** | Structured logging (loguru) + Prometheus metrics |
@@ -76,14 +77,17 @@ QuestionGeneration AI is an intelligent exam question generation platform that l
 
 ```bash
 # Clone the repository
-git clone https://github.com/yourusername/qgen_llm_2.git
-cd qgen_llm_2
+git clone <your-repo-url>
+cd qgen_rag
 
 # Copy environment template
-cp .env.example .env
+cp .env.local.example .env.local
 
-# Edit .env with your settings
-nano .env
+# Edit .env.local with your settings
+nano .env.local
+
+# (Optional) mobile client env template
+cp client/.env.local.example client/.env.local
 ```
 
 ### 2. Setup Ollama (Local)
@@ -113,7 +117,7 @@ Instead of running Ollama locally, you can use Google's Gemini API for better qu
 # Install the Gemini SDK
 pip install google-genai
 
-# Set environment variables in your .env file:
+# Set environment variables in your .env.local file:
 LLM_PROVIDER=gemini
 GEMINI_API_KEY=your-gemini-api-key-here
 GEMINI_MODEL=gemini-2.0-flash  # Options: gemini-2.0-flash, gemini-1.5-pro, gemini-1.5-flash
@@ -128,11 +132,23 @@ GEMINI_MODEL=gemini-2.0-flash  # Options: gemini-2.0-flash, gemini-1.5-pro, gemi
 | `gemini-1.5-flash` | Fastest | Good | Lowest |
 | `gemini-1.5-pro` | Moderate | Best | Higher |
 
+### 2c. Alternative: Use DeepSeek API (Cloud)
+
+```bash
+# Set environment variables in .env.local
+LLM_PROVIDER=deepseek
+DEEPSEEK_API_KEY=your-deepseek-api-key
+DEEPSEEK_MODEL=deepseek-chat      # or deepseek-reasoner
+DEEPSEEK_BASE_URL=https://api.deepseek.com/v1
+```
+
+**Get an API key:** Visit [DeepSeek Platform](https://platform.deepseek.com) to create an API key.
+
 ### 3. Start Backend Services
 
 ```bash
 # Start all services (PostgreSQL, Redis, API)
-docker-compose up -d
+docker-compose --env-file .env.local up -d
 
 # Check service health
 docker-compose ps
@@ -152,10 +168,21 @@ cd client
 # Install dependencies
 npm install
 
+# Sync root .env.local values to Expo public env vars
+npm run sync-env
+
 # Start Expo development server
 npx expo start
 
 # Scan QR code with Expo Go app (iOS/Android)
+```
+
+Build release binaries (optional):
+
+```bash
+cd client
+./build-apk.sh
+./build-ipa.sh
 ```
 
 ### 5. Run Trainer Web App (SvelteKit)
@@ -181,6 +208,7 @@ npm run dev
 | API Docs | http://localhost:8000/docs | Swagger UI |
 | ReDoc | http://localhost:8000/redoc | Alternative docs |
 | Health | http://localhost:8000/health | Health check |
+| Metrics | http://localhost:8000/metrics | Prometheus metrics |
 | Trainer Web | http://localhost:5173 | SvelteKit trainer dashboard |
 
 ---
@@ -250,13 +278,22 @@ Interactive API documentation available at:
 - **Swagger UI**: http://localhost:8000/docs
 - **ReDoc**: http://localhost:8000/redoc
 
+Current API modules under `/api/v1` include:
+- `auth` (sessions, profile, avatar, password, token refresh)
+- `documents` (upload/list/chunks/status + reference uploads)
+- `questions` (SSE generation, chapter generation, sessions, analytics, vetting)
+- `subjects` (subjects/topics CRUD, chapter extraction, learning outcomes)
+- `rubrics` (rubric CRUD)
+- `vetter` (dashboard, queueing, submit/bulk vetting, reject/regenerate, version history)
+- `training` (pipeline status, trigger, versions, jobs, pairs)
+
 ---
 
 ## ⚙️ Configuration
 
 ### Environment Variables
 
-Create a `.env` file in the project root:
+Create a `.env.local` file in the project root (or copy from `.env.local.example`):
 
 ```bash
 # =============================================================================
@@ -280,6 +317,12 @@ ACCESS_TOKEN_EXPIRE_MINUTES=60
 REFRESH_TOKEN_EXPIRE_DAYS=30
 
 # =============================================================================
+# LLM Provider Selection
+# =============================================================================
+# Options: ollama | gemini | deepseek
+LLM_PROVIDER=ollama
+
+# =============================================================================
 # Ollama LLM
 # =============================================================================
 # For local Ollama: http://host.docker.internal:11434 (Docker)
@@ -294,14 +337,26 @@ OLLAMA_BASE_URL=http://host.docker.internal:11434
 OLLAMA_MODEL=llama3.2:3b-instruct-q4_K_M
 
 # =============================================================================
+# Gemini API (optional)
+# =============================================================================
+GEMINI_API_KEY=
+GEMINI_MODEL=gemini-2.0-flash
+GEMINI_MAX_OUTPUT_TOKENS=2048
+GEMINI_SAFETY_BLOCK_NONE=true
+
+# =============================================================================
+# DeepSeek API (optional)
+# =============================================================================
+DEEPSEEK_API_KEY=
+DEEPSEEK_MODEL=deepseek-chat
+DEEPSEEK_BASE_URL=https://api.deepseek.com/v1
+
+# =============================================================================
 # Embedding Model
 # =============================================================================
-# Options:
-#   - all-MiniLM-L6-v2 (384 dims, fast, good) - DEFAULT
-#   - all-mpnet-base-v2 (768 dims, better, slower)
-#   - BAAI/bge-base-en-v1.5 (768 dims, best for Q&A)
-EMBEDDING_MODEL=all-MiniLM-L6-v2
-EMBEDDING_DIMENSION=384
+# Default: nomic-embed-text via Ollama (768 dims)
+EMBEDDING_MODEL=nomic-embed-text
+EMBEDDING_DIMENSION=768
 
 # For BGE models, enable instruction prefixes
 EMBEDDING_USE_INSTRUCTION=false
@@ -313,13 +368,18 @@ EMBEDDING_CACHE_TTL=604800  # 7 days
 # =============================================================================
 # Reranker (Cross-Encoder)
 # =============================================================================
-RERANKER_MODEL=cross-encoder/ms-marco-MiniLM-L-6-v2
+RERANKER_MODEL=mixedbread-ai/mxbai-rerank-large-v1
 RERANKER_ENABLED=true
+
+# =============================================================================
+# Auth Database (decoupled from pgvector DB)
+# =============================================================================
+AUTH_DATABASE_URL=sqlite+aiosqlite:///./auth.db
 
 # =============================================================================
 # Document Processing
 # =============================================================================
-MAX_UPLOAD_SIZE_MB=50
+MAX_UPLOAD_SIZE_MB=500
 CHUNK_SIZE=1000
 CHUNK_OVERLAP=200
 
@@ -350,25 +410,38 @@ ENABLE_METRICS=true
 # API Port
 # =============================================================================
 API_PORT=8000
+
+# =============================================================================
+# Mobile Client Env Sync Inputs (used by client/scripts/sync-env.js)
+# =============================================================================
+DEV_MACHINE_IP=10.0.0.4
+USE_SIMULATOR=false
+PRODUCTION_API_URL=http://10.0.0.4:8000/api/v1
+USE_PRODUCTION_API=false
+
+# =============================================================================
+# Training Pipeline
+# =============================================================================
+TRAINING_DATA_DIR=./training_data
+LORA_ADAPTERS_DIR=./lora_adapters
+TRAINING_BASE_MODEL=deepseek-ai/DeepSeek-R1-Distill-Llama-1.7B
 ```
 
 ### Embedding Model Comparison
 
 | Model | Dimensions | Speed | Quality | Best For |
 |-------|------------|-------|---------|----------|
-| `all-MiniLM-L6-v2` | 384 | ⚡⚡⚡ | ⭐⭐⭐ | General use, fast inference |
+| `nomic-embed-text` | 768 | ⚡⚡ | ⭐⭐⭐⭐ | Default in this repo; strong general retrieval |
+| `all-MiniLM-L6-v2` | 384 | ⚡⚡⚡ | ⭐⭐⭐ | Fast local CPU inference |
 | `all-mpnet-base-v2` | 768 | ⚡⚡ | ⭐⭐⭐⭐ | Better semantic understanding |
-| `BAAI/bge-base-en-v1.5` | 768 | ⚡⚡ | ⭐⭐⭐⭐⭐ | Q&A tasks, with instructions |
 
 ### LLM Model Comparison
 
-| Model | VRAM | Speed | Quality | Notes |
-|-------|------|-------|---------|-------|
-| `llama3.2:3b-instruct-q4_K_M` | ~3GB | ⚡⚡⚡ | ⭐⭐⭐ | Best for quick iteration |
-| `llama3.1:8b-instruct-q4_K_M` | ~6GB | ⚡⚡ | ⭐⭐⭐⭐ | Balanced choice |
-| `llama3.1:70b-instruct-q4_K_M` | ~40GB | ⚡ | ⭐⭐⭐⭐⭐ | Best quality |
-| `mistral:7b-instruct-q4_K_M` | ~5GB | ⚡⚡ | ⭐⭐⭐⭐ | Good alternative |
-| `qwen2.5:7b-instruct-q4_K_M` | ~5GB | ⚡⚡ | ⭐⭐⭐⭐ | Strong reasoning |
+| Provider | Model Examples | Notes |
+|----------|----------------|-------|
+| `ollama` | `llama3.1:8b`, `llama3.2:3b-instruct-q4_K_M` | Local inference; lowest cloud cost |
+| `gemini` | `gemini-2.0-flash`, `gemini-1.5-pro` | Managed cloud API |
+| `deepseek` | `deepseek-chat`, `deepseek-reasoner` | OpenAI-compatible cloud API |
 
 ---
 
@@ -389,7 +462,7 @@ pytest --cov=app --cov-report=html
 
 ```bash
 # Enter API container
-docker-compose exec api bash
+docker-compose --env-file .env.local exec api bash
 
 # Create new migration
 alembic revision --autogenerate -m "Add new column"
@@ -405,14 +478,14 @@ alembic downgrade -1
 
 ```bash
 # Rebuild API after dependency changes
-docker-compose up -d --build api
+docker-compose --env-file .env.local up -d --build api
 
 # Full rebuild (clears cache)
-docker-compose build --no-cache
+docker-compose --env-file .env.local build --no-cache
 
 # Reset database (WARNING: deletes all data)
 docker-compose down -v
-docker-compose up -d
+docker-compose --env-file .env.local up -d
 ```
 
 ### Viewing Logs
@@ -444,6 +517,9 @@ Response:
   "status": "healthy",
   "database": "connected",
   "redis": "connected",
+  "llm_provider": {
+    "provider": "ollama"
+  },
   "version": "1.0.0"
 }
 ```
@@ -485,34 +561,14 @@ Structured JSON logs (when `LOG_JSON=true`):
 
 ### Docker Compose Production
 
-Create `docker-compose.prod.yml`:
-
-```yaml
-version: '3.8'
-
-services:
-  api:
-    command: >
-      gunicorn app.main:app
-      --workers 4
-      --worker-class uvicorn.workers.UvicornWorker
-      --bind 0.0.0.0:8000
-      --access-logfile -
-      --error-logfile -
-    environment:
-      - LOG_JSON=true
-      - LOG_LEVEL=WARNING
-    deploy:
-      resources:
-        limits:
-          memory: 8G
-        reservations:
-          memory: 2G
-```
+The repository already includes `docker-compose.prod.yml` with these production overrides:
+- Uses `uvicorn` with `--workers 4` (no `--reload`)
+- Removes source-code bind mount and runs image-as-built
+- Forces `LOG_JSON=true`
 
 Run with:
 ```bash
-docker-compose -f docker-compose.yml -f docker-compose.prod.yml up -d
+docker-compose --env-file .env.local -f docker-compose.yml -f docker-compose.prod.yml up -d --build
 ```
 
 ### Security Checklist
@@ -548,13 +604,13 @@ cd backend
 pip install transformers>=4.40.0 peft>=0.10.0 trl>=0.8.0 \
             datasets>=2.18.0 accelerate>=0.29.0 bitsandbytes>=0.43.0
 
-# 2. Configure environment variables (in .env)
+# 2. Configure environment variables (in .env.local)
 TRAINING_DATA_DIR=./training_data       # Exported SFT/DPO JSONL files
 LORA_ADAPTERS_DIR=./lora_adapters       # Saved LoRA adapter checkpoints
-TRAINING_BASE_MODEL=deepseek-ai/DeepSeek-R1-Distill-Llama-8B  # HuggingFace model ID
+TRAINING_BASE_MODEL=deepseek-ai/DeepSeek-R1-Distill-Llama-1.7B  # HuggingFace model ID
 
-# 3. The base model downloads automatically on first training run (~16 GB)
-# Ensure you have sufficient disk space and a CUDA-capable GPU with >= 16 GB VRAM.
+# 3. The base model downloads automatically on first training run.
+# Ensure you have sufficient disk space and a CUDA-capable GPU.
 ```
 
 ### Training API Endpoints
@@ -607,8 +663,8 @@ docker-compose exec db psql -U qgen_user -d qgen_db -c "SELECT 1"
 # Models download on first use - check API logs
 docker-compose logs -f api
 
-# Manually download in container
-docker-compose exec api python -c "from sentence_transformers import SentenceTransformer; SentenceTransformer('all-MiniLM-L6-v2')"
+# If using Ollama embeddings, ensure model is available locally
+ollama pull nomic-embed-text
 ```
 
 #### Memory issues
