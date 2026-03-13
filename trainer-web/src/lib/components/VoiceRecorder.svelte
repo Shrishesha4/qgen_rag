@@ -5,15 +5,28 @@
 	 * Matches the next-ui reference design.
 	 */
 
-	import TranscriptionWorker from '$lib/workers/transcription.worker.ts?worker';
 	import pcmCaptureWorkletUrl from '$lib/worklets/pcm-capture.worklet.ts?url';
 
-	type RecorderWorkerMessage =
-		| { type: 'model-loading'; message: string }
-		| { type: 'model-ready' }
-		| { type: 'transcription-started'; message: string }
-		| { type: 'transcription-complete'; text: string }
-		| { type: 'error'; message: string };
+	type SpeechRecognitionResultLike = {
+		isFinal: boolean;
+		0: { transcript: string };
+	};
+
+	type SpeechRecognitionEventLike = Event & {
+		resultIndex: number;
+		results: ArrayLike<SpeechRecognitionResultLike>;
+	};
+
+	type SpeechRecognitionLike = {
+		continuous: boolean;
+		interimResults: boolean;
+		lang: string;
+		onresult: ((event: SpeechRecognitionEventLike) => void) | null;
+		onerror: ((event: Event & { error?: string }) => void) | null;
+		onend: (() => void) | null;
+		start: () => void;
+		stop: () => void;
+	};
 
 	interface Props {
 		/** Title shown at top of popup, e.g. "Grade: Easy" or "Reject" */
@@ -40,12 +53,13 @@
 	let isStopping = $state(false);
 	let isTranscribing = $state(false);
 	let transcriptionReady = $state(false);
-	let transcriptionStatus = $state('Loading transcription model in this browser...');
+	let transcriptionStatus = $state('Checking browser speech recognition support...');
 	let audioPreviewUrl = $state('');
 	let audioPreviewSize = $state('');
 
 	let mediaStream: MediaStream | null = null;
-	let transcriptionWorker: Worker | null = null;
+	let speechRecognition: SpeechRecognitionLike | null = null;
+	let speechRecognitionActive = $state(false);
 	let audioContext: AudioContext | null = null;
 	let mediaSourceNode: MediaStreamAudioSourceNode | null = null;
 	let processorNode: AudioWorkletNode | null = null;
@@ -69,11 +83,11 @@
 
 	$effect(() => {
 		if (typeof window === 'undefined') return;
-		setupTranscriptionWorker();
+		setupSpeechRecognition();
 
 		return () => {
 			cleanupResources();
-			cleanupTranscriptionWorker();
+			stopSpeechRecognition();
 		};
 	});
 
@@ -109,6 +123,7 @@
 			});
 
 			await setupAudioCapture(mediaStream);
+			startSpeechRecognition();
 			isCaptureActive = true;
 			isRecording = true;
 			if (timer) clearInterval(timer);
@@ -165,55 +180,80 @@
 		}
 	}
 
-	function setupTranscriptionWorker() {
-		if (transcriptionWorker || typeof window === 'undefined') return;
+	function setupSpeechRecognition() {
+		if (typeof window === 'undefined') return;
+		const Ctor =
+			(window as Window & {
+				SpeechRecognition?: new () => SpeechRecognitionLike;
+				webkitSpeechRecognition?: new () => SpeechRecognitionLike;
+			}).SpeechRecognition ??
+			(window as Window & {
+				SpeechRecognition?: new () => SpeechRecognitionLike;
+				webkitSpeechRecognition?: new () => SpeechRecognitionLike;
+			}).webkitSpeechRecognition;
 
-		transcriptionWorker = new TranscriptionWorker();
-		transcriptionWorker.onmessage = (event: MessageEvent<RecorderWorkerMessage>) => {
-			const message = event.data;
-			if (message.type === 'model-loading') {
-				transcriptionStatus = message.message;
-				return;
-			}
+		if (!Ctor) {
+			transcriptionReady = false;
+			transcriptionStatus = 'Built-in speech recognition is unavailable in this browser. You can still type feedback manually.';
+			return;
+		}
 
-			if (message.type === 'model-ready') {
-				transcriptionReady = true;
-				if (!isTranscribing) {
-					transcriptionStatus = 'Transcription is ready.';
+		speechRecognition = new Ctor();
+		speechRecognition.continuous = true;
+		speechRecognition.interimResults = true;
+		speechRecognition.lang = 'en-US';
+
+		speechRecognition.onresult = (event) => {
+			let interim = '';
+			let final = '';
+			for (let i = event.resultIndex; i < event.results.length; i += 1) {
+				const result = event.results[i];
+				const text = result[0]?.transcript ?? '';
+				if (result.isFinal) {
+					final += text;
+				} else {
+					interim += text;
 				}
-				return;
 			}
-
-			if (message.type === 'transcription-started') {
-				isTranscribing = true;
-				transcriptionStatus = message.message;
-				return;
+			const merged = `${transcript} ${final} ${interim}`.replace(/\s+/g, ' ').trim();
+			if (merged) {
+				transcript = merged;
 			}
-
-			if (message.type === 'transcription-complete') {
-				isTranscribing = false;
-				transcript = message.text;
-				transcriptionStatus = message.text
-					? 'Transcription complete. Review and edit before submitting.'
-					: 'No speech was detected. You can type feedback manually.';
-				if (!message.text) {
-					recorderError = 'No speech was detected in the recording. Type the feedback manually or record again.';
-				}
-				return;
-			}
-
-			isTranscribing = false;
-			recorderError = `Transcription failed. ${message.message}`;
-			transcriptionStatus = 'Transcription failed. You can still type feedback manually.';
 		};
 
-		transcriptionWorker.postMessage({ type: 'init' });
+		speechRecognition.onerror = (event) => {
+			speechRecognitionActive = false;
+			if (event.error && event.error !== 'no-speech' && event.error !== 'aborted') {
+				recorderError = `Speech recognition issue: ${event.error}. You can still type feedback manually.`;
+			}
+		};
+
+		speechRecognition.onend = () => {
+			speechRecognitionActive = false;
+		};
+
+		transcriptionReady = true;
+		transcriptionStatus = 'Using built-in browser speech recognition.';
 	}
 
-	function cleanupTranscriptionWorker() {
-		if (!transcriptionWorker) return;
-		transcriptionWorker.terminate();
-		transcriptionWorker = null;
+	function startSpeechRecognition() {
+		if (!speechRecognition || speechRecognitionActive) return;
+		try {
+			speechRecognition.start();
+			speechRecognitionActive = true;
+			transcriptionStatus = 'Listening… speak clearly in English.';
+		} catch {
+			// Some browsers throw if start is called too quickly.
+		}
+	}
+
+	function stopSpeechRecognition() {
+		if (!speechRecognition || !speechRecognitionActive) return;
+		try {
+			speechRecognition.stop();
+		} finally {
+			speechRecognitionActive = false;
+		}
 	}
 
 	async function handleRecordingButton() {
@@ -239,12 +279,15 @@
 		const recordedAudio = await stopAudioCapture();
 		isCaptureActive = false;
 		isRecording = false;
+		stopSpeechRecognition();
 		await stopAudioContext();
 		stopMediaStream();
 		phase = 'transcript';
 		if (recordedAudio) {
 			finalizeAudioPreview(recordedAudio.wavBlob);
-			await transcribeAudioSamples(recordedAudio.samples, recordedAudio.sampleRate);
+			if (!transcript.trim()) {
+				transcriptionStatus = 'No speech was detected. You can type feedback manually.';
+			}
 		} else {
 			recorderError = 'No audio was captured. Please record again.';
 			transcriptionStatus = 'No audio available for transcription.';
@@ -323,53 +366,7 @@
 		audioPreviewSize = formatBytes(audioBlob.size);
 	}
 
-	async function transcribeAudioSamples(samples: Float32Array, sampleRate: number) {
-		if (!transcriptionWorker) {
-			recorderError = 'Local transcription worker is unavailable. You can still type feedback manually.';
-			return;
-		}
 
-		isTranscribing = true;
-		recorderError = '';
-		transcript = '';
-		transcriptionStatus = transcriptionReady
-			? 'Transcribing on this device...'
-			: 'Preparing transcription model...';
-
-		try {
-			const mono16k = await resampleTo16k(samples, sampleRate);
-			transcriptionWorker.postMessage(
-				{ type: 'transcribe', audio: mono16k.buffer, language: 'en' },
-				[mono16k.buffer]
-			);
-		} catch (error) {
-			isTranscribing = false;
-			const message = error instanceof Error ? error.message : 'Unable to process the recording locally.';
-			recorderError = `Transcription setup failed. ${message}`;
-			transcriptionStatus = 'Unable to process this recording locally.';
-		}
-	}
-
-	async function resampleTo16k(source: Float32Array, sampleRate: number): Promise<Float32Array> {
-		if (sampleRate === 16000) {
-			return source;
-		}
-
-		const frameCount = Math.ceil((source.length * 16000) / sampleRate);
-		const offlineContext = new OfflineAudioContext(1, frameCount, 16000);
-		const audioBuffer = offlineContext.createBuffer(1, source.length, sampleRate);
-		const normalizedSource = new Float32Array(source.length);
-		normalizedSource.set(source);
-		audioBuffer.copyToChannel(normalizedSource, 0);
-
-		const sourceNode = offlineContext.createBufferSource();
-		sourceNode.buffer = audioBuffer;
-		sourceNode.connect(offlineContext.destination);
-		sourceNode.start(0);
-
-		const rendered = await offlineContext.startRendering();
-		return rendered.getChannelData(0).slice();
-	}
 
 	function revokeAudioPreview() {
 		if (!audioPreviewUrl) return;
@@ -428,8 +425,8 @@
 		isTranscribing = false;
 		recorderError = '';
 		transcriptionStatus = transcriptionReady
-			? 'Transcription is ready.'
-			: 'Loading transcription model in this browser...';
+			? 'Using built-in browser speech recognition.'
+			: 'Built-in speech recognition is unavailable. Type feedback manually.';
 	}
 
 	function handleSubmit() {
@@ -467,7 +464,7 @@
 		if (!isRecording) return 'Tap the mic to start recording. Your speech stays on this device.';
 		if (!transcriptionReady) return transcriptionStatus;
 		if (recorderError) return recorderError;
-		return 'Recording audio in English. It will be transcribed locally when you stop.';
+		return 'Recording audio in English using built-in browser speech recognition.';
 	});
 </script>
 

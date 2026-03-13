@@ -412,10 +412,6 @@
 					<span class="caught-up-value">{rejected.size}</span>
 					<span class="caught-up-label">Rejected</span>
 				</div>
-				<div class="caught-up-stat">
-					<span class="caught-up-value">{questions.length}</span>
-					<span class="caught-up-label">Reviewed</span>
-				</div>
 			</div>
 			<div class="caught-up-actions">
 				<button class="glass-btn finish-btn" onclick={finish}>Back to dashboard</button>
