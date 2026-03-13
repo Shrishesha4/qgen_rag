@@ -16,7 +16,7 @@ function getInitialTheme(): ThemeName {
 			return stored as ThemeName;
 		}
 	}
-	return 'water';
+	return 'fire';
 }
 
 export const currentThemeName = writable<ThemeName>(getInitialTheme());
