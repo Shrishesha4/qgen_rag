@@ -21,7 +21,7 @@
 				<path d="M9 22h6"></path>
 			</svg>
 		</div>
-		<h1 class="hero-title font-serif">QGen <span class="accent">Trainer</span></h1>
+		<h1 class="hero-title font-serif">QGen</h1>
 		<p class="hero-sub">
 			Self-correcting AI for educational content — powered by human feedback.
 		</p>
@@ -97,10 +97,6 @@
 		letter-spacing: -0.02em;
 		margin: 0;
 		color: var(--theme-text);
-	}
-
-	.accent {
-		color: var(--theme-primary);
 	}
 
 	.hero-sub {

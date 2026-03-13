@@ -22,7 +22,6 @@
 			<circle cx="9" cy="9" r="2"></circle>
 			<path d="m21 15-3.086-3.086a2 2 0 0 0-2.828 0L6 21"></path>
 		</svg>
-		<span class="selector-label">Theme</span>
 	</button>
 	<div class="selector-thumbs">
 		{#each themeNames as name, i}
@@ -70,13 +69,6 @@
 	.selector-icon {
 		color: rgba(255, 255, 255, 0.7);
 		flex-shrink: 0;
-	}
-
-	.selector-label {
-		font-size: 0.875rem;
-		font-weight: 500;
-		color: rgba(255, 255, 255, 0.7);
-		white-space: nowrap;
 	}
 
 	.selector-thumbs {
@@ -128,10 +120,6 @@
 		.selector-icon {
 			width: 14px;
 			height: 14px;
-		}
-
-		.selector-label {
-			font-size: 0.8rem;
 		}
 
 		.thumb {
@@ -188,10 +176,6 @@
 		.selector-icon {
 			width: 20px;
 			height: 20px;
-		}
-
-		.selector-label {
-			display: none;
 		}
 
 		.selector-thumbs {

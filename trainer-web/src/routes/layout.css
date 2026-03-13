@@ -16,11 +16,11 @@
 :root {
   --theme-bg: linear-gradient(175deg, #0a1e38 0%, #152e50 20%, #1f4268 40%, #2a5680 60%, #356a98 80%, #407eb0 100%);
   --theme-bg-color: #1f4268;
-  /* --theme-bg-image: url('https://images.unsplash.com/photo-1582967788606-a171c1080cb0?q=80&w=2564&auto=format&fit=crop'); */
+  --theme-bg-image: url('https://images.unsplash.com/photo-1582967788606-a171c1080cb0?q=80&w=2564&auto=format&fit=crop');
   --theme-primary: #3898e0;
   --theme-primary-hover: #2888d4;
   --theme-primary-rgb: 56, 152, 224;
-  --theme-text: #e0e8f4;
+  --theme-text: #e0e8f4; 
   --theme-text-muted: #8aa8c8;
   --theme-border: rgba(255,255,255,0.14);
   --theme-glow: rgba(56,152,224,0.35);
@@ -86,6 +86,11 @@
   box-sizing: border-box;
 }
 
+html,
+body {
+  min-height: 100%; 
+}
+
 body {
   margin: 0;
   font-family:
@@ -99,6 +104,29 @@ body {
   -webkit-font-smoothing: antialiased;
   -moz-osx-font-smoothing: grayscale;
   color: var(--theme-text);
+  background-image: var(--theme-bg-image, none), var(--theme-bg);
+  background-color: var(--theme-bg-color);
+  background-size: cover;
+  background-position: center;
+  background-repeat: no-repeat;
+  isolation: isolate;
+}
+
+.app-shell {
+  position: relative;
+  isolation: isolate;
+}
+
+html.bf-repaint .glass,
+html.bf-repaint .glass-heavy,
+html.bf-repaint .glass-card,
+html.bf-repaint .glass-card-active,
+html.bf-repaint .glass-input,
+html.bf-repaint .glass-btn,
+html.bf-repaint .glass-btn-secondary,
+html.bf-repaint .glass-panel {
+  backdrop-filter: none !important;
+  -webkit-backdrop-filter: none !important;
 }
 
 a {
@@ -118,6 +146,8 @@ a:hover {
   background: var(--liquid-bg);
   backdrop-filter: var(--glass-blur);
   -webkit-backdrop-filter: var(--glass-blur);
+  will-change: backdrop-filter;
+  transform: translateZ(0);
   border-radius: var(--glass-radius);
   box-shadow:
     /* Main shadow */
@@ -224,6 +254,8 @@ a:hover {
   );
   backdrop-filter: var(--glass-blur-heavy);
   -webkit-backdrop-filter: var(--glass-blur-heavy);
+  will-change: backdrop-filter;
+  transform: translateZ(0);
   border-radius: var(--glass-radius-lg);
   box-shadow:
     0 16px 48px rgba(0, 0, 0, 0.2),
@@ -283,6 +315,8 @@ a:hover {
   );
   backdrop-filter: var(--glass-blur);
   -webkit-backdrop-filter: var(--glass-blur);
+  will-change: backdrop-filter;
+  transform: translateZ(0);
   border-radius: var(--glass-radius);
   box-shadow:
     0 8px 32px rgba(0, 0, 0, 0.12),
@@ -381,6 +415,8 @@ a:hover {
   );
   backdrop-filter: var(--glass-blur);
   -webkit-backdrop-filter: var(--glass-blur);
+  will-change: backdrop-filter;
+  transform: translateZ(0);
   border-radius: var(--glass-radius);
   box-shadow:
     0 4px 24px rgba(var(--theme-primary-rgb), 0.2),
@@ -494,6 +530,8 @@ a:hover {
   background: rgba(255, 255, 255, 0.06);
   backdrop-filter: blur(20px) saturate(180%);
   -webkit-backdrop-filter: blur(20px) saturate(180%);
+  will-change: backdrop-filter;
+  transform: translateZ(0);
   border-radius: var(--glass-radius-sm);
   color: var(--theme-text);
   border: none;
@@ -532,6 +570,8 @@ a:hover {
   );
   backdrop-filter: blur(16px);
   -webkit-backdrop-filter: blur(16px);
+  will-change: backdrop-filter;
+  transform: translateZ(0);
   border-radius: var(--glass-radius-sm);
   color: #fff;
   font-weight: 600;
@@ -626,6 +666,8 @@ a:hover {
   );
   backdrop-filter: blur(16px);
   -webkit-backdrop-filter: blur(16px);
+  will-change: backdrop-filter;
+  transform: translateZ(0);
   border-radius: var(--glass-radius-sm);
   color: var(--theme-text);
   font-weight: 600;
@@ -706,6 +748,8 @@ a:hover {
   );
   backdrop-filter: blur(50px) saturate(200%) brightness(1.05);
   -webkit-backdrop-filter: blur(50px) saturate(200%) brightness(1.05);
+  will-change: backdrop-filter;
+  transform: translateZ(0);
   border-radius: var(--glass-radius);
   box-shadow:
     0 8px 40px rgba(0, 0, 0, 0.25),
@@ -732,7 +776,7 @@ a:hover {
   -webkit-mask: 
     linear-gradient(#fff 0 0) content-box, 
     linear-gradient(#fff 0 0);
-  mask: 
+  mask:  
     linear-gradient(#fff 0 0) content-box, 
     linear-gradient(#fff 0 0);
   -webkit-mask-composite: xor;
@@ -762,21 +806,26 @@ a:hover {
 .bg-image-layer {
   position: fixed;
   inset: 0;
-  z-index: -2;
-  background-image: var(--theme-bg-image);
+  z-index: 0;
+  background-image: var(--theme-bg-image, none), var(--theme-bg);
+  background-color: var(--theme-bg-color);
   background-size: cover;
   background-position: center;
   background-repeat: no-repeat;
   transition: background-image 0.8s ease;
+  transform: translateZ(0);
+  will-change: transform;
 }
 
 .bg-overlay-layer {
   position: fixed;
   inset: 0;
-  z-index: -1;
+  z-index: 1;
   background: rgba(0, 0, 0, 0.4);
   backdrop-filter: blur(2px);
   -webkit-backdrop-filter: blur(2px);
+  transform: translateZ(0);
+  will-change: transform;
 }
 
 /* ── Scroll area ── */

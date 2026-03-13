@@ -129,7 +129,7 @@
 				<input
 					type="email"
 					bind:value={email}
-					placeholder="you@university.edu"
+					placeholder="your email address"
 					required
 					autocomplete="email"
 					class="field-input"

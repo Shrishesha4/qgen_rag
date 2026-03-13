@@ -7,6 +7,21 @@
 
 	onMount(() => {
 		initTheme();
+		const root = document.documentElement;
+		const forceRepaint = () => {
+			root.classList.add('bf-repaint');
+			requestAnimationFrame(() => {
+				requestAnimationFrame(() => {
+					root.classList.remove('bf-repaint');
+				});
+			});
+		};
+		forceRepaint();
+		const onVisibility = () => {
+			if (!document.hidden) forceRepaint();
+		};
+		document.addEventListener('visibilitychange', onVisibility);
+		return () => document.removeEventListener('visibilitychange', onVisibility);
 	});
 </script>
 
@@ -22,6 +37,6 @@
 		min-height: 100vh;
 		color: var(--theme-text);
 		position: relative;
-		z-index: 0;
+		z-index: 2;
 	}
 </style>
