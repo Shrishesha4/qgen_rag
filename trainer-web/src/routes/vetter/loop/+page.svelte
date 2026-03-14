@@ -361,12 +361,6 @@
 
 <div class="loop-page">
 	<div class="loop-hero animate-fade-in">
-		<button class="back-link" onclick={goBack}>
-			<svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
-				<path d="M19 12H5M12 19l-7-7 7-7"/>
-			</svg>
-			<span class="back-link-text">Back to subjects</span>
-		</button>
 		<div class="hero-copy">
 			<h1 class="hero-title font-serif">Question Vetting</h1>
 		</div>
@@ -1231,18 +1225,22 @@
 	}
 
 	.loop-hero {
+		position: relative;
 		display: flex;
+		justify-content: center;
 		align-items: flex-start;
-		justify-content: space-between;
-		gap: 1.5rem;
+		min-height: 5.25rem;
+		padding-top: 0.15rem;
 	}
 
 	.hero-copy {
 		display: flex;
 		flex-direction: column;
 		gap: 0.5rem;
+		align-items: center;
+		width: 100%;
 	}
-
+/* 
 	.back-link {
 		align-self: flex-start;
 		padding: 0;
@@ -1262,17 +1260,21 @@
 
 	.back-link svg {
 		flex-shrink: 0;
-	}
+	} */
 
 	.hero-title {
 		margin: 0;
 		font-size: clamp(2.8rem, 6vw, 4rem);
 		line-height: 0.95;
 		color: var(--theme-text);
+		text-align: center;
 	}
 
 
 	.progress-pill {
+		position: absolute;
+		top: 0;
+		right: 0;
 		min-width: 11rem;
 		padding: 0.95rem 1.1rem;
 		border-radius: 999px;
@@ -1504,12 +1506,10 @@
 		}
 
 		.loop-hero {
-			flex-direction: row;
-			align-items: center;
-			gap: 0.75rem;
-			flex-wrap: nowrap;
+			min-height: 3rem;
+			padding-top: 0;
 		}
-
+/* 
 		.back-link {
 			flex-shrink: 0;
 			width: 2.25rem;
@@ -1523,10 +1523,9 @@
 
 		.back-link-text {
 			display: none;
-		}
+		} */
 
 		.hero-copy {
-			flex: 1;
 			min-width: 0;
 			gap: 0;
 		}
@@ -1537,6 +1536,9 @@
 		}
 
 		.progress-pill {
+			position: absolute;
+			top: 0;
+			right: 0;
 			flex-shrink: 0;
 			min-width: auto;
 			padding: 0.55rem 0.75rem;
@@ -1669,11 +1671,10 @@
 		}
 
 		.loop-hero {
-			gap: 0.5rem;
-			flex-wrap: nowrap;
+			min-height: 2.4rem;
 		}
 
-		.back-link {
+		/* .back-link {
 			width: 2rem;
 			height: 2rem;
 			padding: 0.45rem;
@@ -1683,7 +1684,7 @@
 		.back-link svg {
 			width: 14px;
 			height: 14px;
-		}
+		} */
 
 		.hero-copy {
 			overflow: hidden;
@@ -1692,12 +1693,13 @@
 		.hero-title {
 			font-size: 1.1rem;
 			line-height: 1;
-			white-space: nowrap;
-			overflow: hidden;
-			text-overflow: ellipsis;
+			white-space: normal;
 		}
 
 		.progress-pill {
+			position: absolute;
+			top: 0;
+			right: 0;
 			padding: 0.4rem 0.55rem;
 			gap: 0.4rem;
 			min-width: auto;

@@ -555,9 +555,6 @@
 <div class="loop-page">
 	<div class="loop-hero animate-fade-in">
 		<div class="hero-copy">
-			<button class="back-link" onclick={() => goto('/teacher/train')}>
-				←---
-			</button>
 			<h1 class="hero-title font-serif">Question Vetting</h1>
 		</div>
 		{#if questions.length > 0}
@@ -1731,7 +1728,7 @@
 		gap: 0.5rem;
 	}
 
-	.back-link {
+	/* .back-link {
 		align-self: flex-start;
 		padding: 0;
 		border: none;
@@ -1743,7 +1740,7 @@
 		text-transform: uppercase;
 		color: var(--theme-primary);
 		cursor: pointer;
-	}
+	} */
 
 	.hero-title {
 		margin: 0;
@@ -2080,10 +2077,10 @@
 		.hero-copy {
 			gap: 0.35rem;
 		}
-
+/* 
 		.back-link {
 			font-size: 0.75rem;
-		}
+		} */
 
 		.hero-title {
 			font-size: 1.75rem;

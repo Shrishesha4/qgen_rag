@@ -13,6 +13,26 @@ export interface DocumentResponse {
 	subject_id: string | null;
 }
 
+export interface ReferenceDocumentItem {
+	id: string;
+	filename: string;
+	file_size_bytes: number;
+	mime_type: string | null;
+	index_type: 'reference_book' | 'template_paper' | 'reference_questions' | string;
+	subject_id: string | null;
+	processing_status: string;
+	total_chunks: number | null;
+	upload_timestamp: string | null;
+	processed_at: string | null;
+	parsed_question_count?: number | null;
+}
+
+export interface ReferenceDocumentsResponse {
+	reference_books: ReferenceDocumentItem[];
+	template_papers: ReferenceDocumentItem[];
+	reference_questions: ReferenceDocumentItem[];
+}
+
 export async function uploadDocument(
 	file: File,
 	subjectId?: string,
@@ -47,6 +67,19 @@ export async function listDocuments(
 	const params = new URLSearchParams({ page: String(page), limit: String(limit) });
 	if (subjectId) params.set('subject_id', subjectId);
 	return apiFetch(`/documents?${params}`);
+}
+
+export async function listReferenceDocuments(subjectId?: string): Promise<ReferenceDocumentsResponse> {
+	const params = new URLSearchParams();
+	if (subjectId) params.set('subject_id', subjectId);
+	const suffix = params.toString() ? `?${params.toString()}` : '';
+	return apiFetch<ReferenceDocumentsResponse>(`/documents/reference/list${suffix}`);
+}
+
+export async function deleteDocumentById(documentId: string): Promise<void> {
+	await apiFetch(`/documents/${documentId}`, {
+		method: 'DELETE',
+	});
 }
 
 // ── Question generation (SSE) ──

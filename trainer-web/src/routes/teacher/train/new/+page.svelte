@@ -97,6 +97,7 @@
 		useCustomDiscipline = false;
 		selectedDiscipline = value;
 		syncDisciplineName(value);
+		step = 2;
 	}
 
 	function activateCustomDiscipline() {
@@ -118,6 +119,7 @@
 			selectedDiscipline = '';
 			showCustomDisciplineModal = false;
 			customDisciplineInput = '';
+			step = 2;
 		}
 	}
 
@@ -192,11 +194,6 @@
 
 	function nextStep() {
 		if (step < totalSteps && canProceed) step++;
-	}
-
-	function prevStep() {
-		if (step > 1) step--;
-		else goto('/teacher/train');
 	}
 
 	async function startSetup() {
@@ -293,7 +290,7 @@
 
 <div class="wizard">
 	<div class="wizard-meta animate-fade-in">
-		<p class="wizard-kicker">New Topic Setup</p>
+		<p class="wizard-kicker"></p>
 		<div class="wizard-progress-pill">{step}/{totalSteps}</div>
 	</div>
 	<!-- Step indicator -->
@@ -311,7 +308,10 @@
 	<div class="step-content">
 		<!-- Step 1: Discipline -->
 		{#if step === 1}
-			<p class="step-desc">Pick a discipline card or add your own custom field of study</p>
+			<div class="field-group">
+				<label class="field-label" for="disc-code">Subject Code <span class="hint">(optional)</span></label>
+				<input id="disc-code" class="glass-input" type="text" placeholder="e.g., CS101" bind:value={disciplineCode} />
+			</div>
 			<div class="field-group">
 				<span class="field-label">Discipline Name *</span>
 				<div class="discipline-grid" role="list" aria-label="Choose a discipline">
@@ -343,10 +343,6 @@
 					</button>
 				</div>
 			</div>
-			<div class="field-group">
-				<label class="field-label" for="disc-code">Subject Code <span class="hint">(optional)</span></label>
-				<input id="disc-code" class="glass-input" type="text" placeholder="e.g., CS101" bind:value={disciplineCode} />
-			</div>
 
 		<!-- Step 2: Topics -->
 		{:else if step === 2}
@@ -370,7 +366,7 @@
 						📄 Import from PDF
 					{/if}
 				</button>
-				<span class="import-hint">Looking for chapters in {disciplineName} syllabus...</span>
+				<span class="import-hint">Look for topics in {disciplineName} syllabus.</span>
 			</div>
 			{#if importError}
 				<p class="inline-error">⚠️ {importError}</p>
@@ -381,7 +377,7 @@
 					{#each topics as topic, i}
 						<div class="topic-chip" class:has-syllabus={topic.syllabusContent.trim().length > 0}>
 							<span class="topic-number">{i + 1}</span>
-							<span>{topic.name}</span>
+							<span class="topic-name">{topic.name}</span>
 							{#if topic.syllabusContent.trim()}
 								<span class="syllabus-badge">📄</span>
 							{/if}
@@ -515,6 +511,13 @@
 				{#if setupError}
 					<p class="gen-error">⚠️ {setupError}</p>
 				{/if}
+				{#if !isSettingUp}
+					<div class="step-actions review-actions">
+						<button class="glass-btn step-next-btn step-train-btn" onclick={() => { step = 7; startSetup(); }}>
+							⚡ Start Training
+						</button>
+					</div>
+				{/if}
 			</div>
 
 		<!-- Step 7: Setting up -->
@@ -535,24 +538,19 @@
 		{/if}
 	</div>
 
-	<!-- Navigation -->
-	<div class="nav-bar">
-		{#if step > 1 && step < 7}
-			<button class="glass-btn-secondary nav-btn" onclick={prevStep}>← Back</button>
-		{:else}
-			<div></div>
-		{/if}
-
-		{#if step < 6}
-			<button class="glass-btn nav-btn" onclick={nextStep} disabled={!canProceed}>
-				{step === 5 ? 'Review →' : 'Next Step →'}
-			</button>
-		{:else if step === 6 && !isSettingUp}
-			<button class="glass-btn nav-btn start-btn" onclick={() => { step = 7; startSetup(); }}>
-				⚡ Start Training
-			</button>
-		{/if}
-	</div>
+	{#if step >= 2 && step <= 5}
+		<div class="step-actions">
+			{#if step === 2}
+				<button class="glass-btn step-next-btn" onclick={nextStep} disabled={!canProceed}>Next: Add Content →</button>
+			{:else if step === 3}
+				<button class="glass-btn step-next-btn" onclick={nextStep}>Next: Upload Materials →</button>
+			{:else if step === 4}
+				<button class="glass-btn step-next-btn" onclick={nextStep}>Next: Upload Questions →</button>
+			{:else}
+				<button class="glass-btn step-next-btn" onclick={nextStep}>Next: Review →</button>
+			{/if}
+		</div>
+	{/if}
 </div>
 
 <!-- Custom Discipline Modal -->
@@ -614,7 +612,7 @@
 		flex-direction: column;
 		align-items: center;
 		min-height: 100vh;
-		padding: 2rem 1.5rem 6rem;
+		padding: 2rem 1.5rem;
 		max-width: 600px;
 		margin: 0 auto;
 	}
@@ -1005,6 +1003,11 @@
 		color: var(--theme-text);
 	}
 
+	.topic-name {
+		min-width: 0;
+		max-height: 5px;
+	}
+
 	.topic-chip.has-syllabus {
 		border-color: rgba(var(--theme-primary-rgb), 0.5);
 	}
@@ -1019,6 +1022,7 @@
 
 	.syllabus-badge {
 		font-size: 0.75rem;
+		margin-left: auto;
 	}
 
 	.chip-remove {
@@ -1034,7 +1038,6 @@
 		font-size: 0.8rem;
 		cursor: pointer;
 		padding: 0;
-		line-height: 1;
 	}
 
 	.chip-remove:hover {
@@ -1324,37 +1327,31 @@
 		text-align: center;
 	}
 
-	/* Navigation */
-	.nav-bar {
-		position: fixed;
-		bottom: 0;
-		left: 0;
-		right: 0;
+	.step-actions {
+		width: 100%;
 		display: flex;
-		justify-content: space-between;
-		align-items: center;
-		padding: 1rem 1.5rem;
-		background: rgba(0, 0, 0, 0.2);
-		backdrop-filter: blur(20px) saturate(180%);
-		-webkit-backdrop-filter: blur(20px) saturate(180%);
-		border-top: 0.5px solid rgba(255, 255, 255, 0.08);
-		z-index: 20;
+		justify-content: flex-end;
+		margin-top: 1rem;
 	}
 
-	.nav-btn {
+	.step-next-btn {
 		padding: 0.75rem 1.5rem;
 		font-size: 0.95rem;
 	}
 
-	.nav-btn:disabled {
+	.step-next-btn:disabled {
 		opacity: 0.35;
 		cursor: not-allowed;
 		transform: none;
 		box-shadow: none;
 	}
 
-	.start-btn {
+	.step-train-btn {
 		padding: 0.75rem 2rem;
+	}
+
+	.review-actions {
+		justify-content: center;
 	}
 
 	@media (max-width: 768px) {
@@ -1368,6 +1365,57 @@
 
 		.step-title {
 			font-size: 1.35rem;
+		}
+
+		.topic-list {
+			width: 100%;
+			flex-direction: column;
+			gap: 0.65rem;
+		}
+
+		.topic-chip {
+			width: 100%;
+			align-items: flex-start;
+			padding: 0.7rem 0.85rem;
+			border-radius: 14px;
+			gap: 0.55rem;
+		}
+
+		.topic-number {
+			margin-top: 0.12rem;
+		}
+
+		.topic-name {
+			flex: 1;
+			line-height: 1.35;
+			white-space: normal;
+			word-break: break-word;
+		}
+
+		.syllabus-badge {
+			margin-top: 0.08rem;
+		}
+
+		.chip-remove {
+			width: 28px;
+			height: 28px;
+			font-size: 1rem;
+			flex-shrink: 0;
+			border-radius: 999px;
+			appearance: none;
+			-webkit-appearance: none;
+		}
+
+		.rs-topics {
+			display: grid;
+			grid-template-columns: 1fr;
+			gap: 0.45rem;
+		}
+
+		.rs-topic-chip {
+			display: block;
+			line-height: 1.35;
+			padding: 0.45rem 0.65rem;
 		}
 
 		/* Modal mobile styles */

@@ -86,6 +86,7 @@
 	$effect(() => {
 		if (typeof window === 'undefined') return;
 		setupSpeechRecognition();
+		void startCapture();
 
 		return () => {
 			cleanupResources();
@@ -437,6 +438,12 @@
 			: 'Built-in speech recognition is unavailable. Type feedback manually.';
 	}
 
+	async function rerecordFromTranscript() {
+		if (isRequestingPermission || isStopping) return;
+		await retryRecording();
+		await startCapture();
+	}
+
 	function normalizeTranscript(value: string): string {
 		return value.replace(/\s+/g, ' ').trim();
 	}
@@ -623,6 +630,9 @@
 				<p class="transcript-hint">
 					Review the transcription above before submitting. You can edit it if needed.
 				</p>
+				<button class="retry-btn transcript-retry-btn" style:border-color={accentColors.border} onclick={rerecordFromTranscript} disabled={isRequestingPermission || isStopping}>
+					{isRequestingPermission ? 'Starting...' : 'Re-record audio'}
+				</button>
 			</div>
 
 			<div class="recorder-actions">
