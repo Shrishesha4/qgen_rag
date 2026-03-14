@@ -37,3 +37,6 @@ venv.bak/
 
 *.apk
 *.ipa
+
+*.db-shm 
+*.db-wal

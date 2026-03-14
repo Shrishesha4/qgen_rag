@@ -27,6 +27,7 @@
 	let subjects = $state<SubjectResponse[]>([]);
 	let loading = $state(true);
 	let error = $state('');
+	let searchQuery = $state('');
 
 	let expandedId = $state('');
 	let topicsMap = $state<Record<string, TopicResponse[]>>({});
@@ -50,6 +51,30 @@
 	let referenceBooks = $state<ReferenceDocumentItem[]>([]);
 	let templatePapers = $state<ReferenceDocumentItem[]>([]);
 	let referenceQuestions = $state<ReferenceDocumentItem[]>([]);
+
+	let filteredSubjects = $derived.by(() => {
+		const baseFiltered = subjects.map((subject) => {
+			const subjectMatches =
+				subject.name.toLowerCase().includes(searchQuery.toLowerCase()) ||
+				subject.code.toLowerCase().includes(searchQuery.toLowerCase());
+
+			const topics = topicsMap[subject.id] || [];
+			const filteredTopics = topics.filter(
+				(topic) =>
+					topic.name.toLowerCase().includes(searchQuery.toLowerCase()) ||
+					(topic.syllabus_content &&
+						topic.syllabus_content.toLowerCase().includes(searchQuery.toLowerCase()))
+			);
+
+			return { subject, filteredTopics, subjectMatches };
+		});
+
+		if (!searchQuery.trim()) {
+			return baseFiltered;
+		}
+
+		return baseFiltered.filter((item) => item.subjectMatches || item.filteredTopics.length > 0);
+	});
 
 	async function loadSubjects() {
 		loading = true;
@@ -248,8 +273,27 @@
 			</button>
 		</div>
 	{:else}
-		<div class="subject-list">
-			{#each subjects as s}
+		<div class="search-container">
+			<input
+				type="text"
+				class="search-input"
+				placeholder="Search here..."
+				bind:value={searchQuery}
+			/>
+			{#if searchQuery}
+				<button class="clear-search-btn" onclick={() => (searchQuery = '')}>✕</button>
+			{/if}
+		</div>
+
+		{#if filteredSubjects.length === 0}
+			<div class="center-state" style="padding-top: 2rem;">
+				<span class="empty-icon">🔍</span>
+				<p>No results found for "{searchQuery}"</p>
+				<button class="glass-btn" onclick={() => (searchQuery = '')}>Clear Search</button>
+			</div>
+		{:else}
+			<div class="subject-list">
+				{#each filteredSubjects as { subject: s, filteredTopics, subjectMatches }}
 				<div class="subject-card glass-card" class:expanded={expandedId === s.id}>
 					<button class="sc-header" onclick={() => toggleSubject(s.id)}>
 						<div class="sc-top">
@@ -276,6 +320,20 @@
 									<div class="spinner-sm"></div>
 									<span>Loading topics…</span>
 								</div>
+							{:else if searchQuery && filteredTopics.length > 0}
+								{#each filteredTopics as topic}
+									<button class="topic-row" onclick={() => trainTopic(s.id, topic.id)}>
+										<div class="tr-left">
+											<span class="tr-name">{topic.name}</span>
+										</div>
+										<div class="tr-right">
+											<span class="tr-qs">{topic.total_questions} Qs</span>
+											<span class="tr-arrow">→</span>
+										</div>
+									</button>
+								{/each}
+							{:else if searchQuery && filteredTopics.length === 0}
+								<p class="topics-empty">No matching topics in this subject</p>
 							{:else if topicsMap[s.id]?.length}
 								{#each topicsMap[s.id] as topic}
 									<button class="topic-row" onclick={() => trainTopic(s.id, topic.id)}>
@@ -296,6 +354,7 @@
 				</div>
 			{/each}
 		</div>
+	{/if}
 	{/if}
 
 	{#if showReferenceModal}
@@ -487,7 +546,6 @@
 		display: flex;
 		flex-direction: column;
 		gap: 1rem;
-		padding-top: 50px;
 	}
 
 	.subject-card {
@@ -839,6 +897,56 @@
 		border: 1px solid rgba(233, 69, 96, 0.3);
 		color: #ff9dad;
 		font-size: 0.85rem;
+	}
+
+	.search-container {
+		position: relative;
+		margin-bottom: 1.5rem;
+		display: flex;
+		align-items: center;
+		margin-top: 50px;
+	}
+
+	.search-input {
+		width: 100%;
+		padding: 0.75rem 2.5rem 0.75rem 1rem;
+		border-radius: 12px;
+		border: 1px solid rgba(255, 255, 255, 0.14);
+		background: rgba(255, 255, 255, 0.06);
+		color: var(--theme-text);
+		font: inherit;
+		font-size: 0.95rem;
+		transition: all 0.2s;
+	}
+
+	.search-input:focus {
+		outline: none;
+		border-color: rgba(var(--theme-primary-rgb), 0.5);
+		background: rgba(255, 255, 255, 0.08);
+		box-shadow: 0 0 0 2px rgba(var(--theme-primary-rgb), 0.1);
+	}
+
+	.search-input::placeholder {
+		color: rgba(255, 255, 255, 0.4);
+	}
+
+	.clear-search-btn {
+		position: absolute;
+		right: 0.75rem;
+		background: none;
+		border: none;
+		color: var(--theme-text-muted);
+		cursor: pointer;
+		font-size: 1.1rem;
+		padding: 0.35rem 0.5rem;
+		display: flex;
+		align-items: center;
+		justify-content: center;
+		transition: color 0.15s;
+	}
+
+	.clear-search-btn:hover {
+		color: var(--theme-text);
 	}
 
 	@media (max-width: 768px) {
