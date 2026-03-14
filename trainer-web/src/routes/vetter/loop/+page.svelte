@@ -1225,20 +1225,20 @@
 	}
 
 	.loop-hero {
-		position: relative;
 		display: flex;
 		justify-content: center;
-		align-items: flex-start;
-		min-height: 5.25rem;
+		align-items: center;
+		gap: 1rem;
+		flex-wrap: wrap;
 		padding-top: 0.15rem;
 	}
 
 	.hero-copy {
 		display: flex;
 		flex-direction: column;
-		gap: 0.5rem;
+		gap: 0;
 		align-items: center;
-		width: 100%;
+		width: auto;
 	}
 /* 
 	.back-link {
@@ -1272,9 +1272,7 @@
 
 
 	.progress-pill {
-		position: absolute;
-		top: 0;
-		right: 0;
+		position: static;
 		min-width: 11rem;
 		padding: 0.95rem 1.1rem;
 		border-radius: 999px;
@@ -1506,7 +1504,9 @@
 		}
 
 		.loop-hero {
-			min-height: 3rem;
+			justify-content: center;
+			align-items: center;
+			gap: 0.65rem;
 			padding-top: 0;
 		}
 /* 
@@ -1528,6 +1528,7 @@
 		.hero-copy {
 			min-width: 0;
 			gap: 0;
+			width: auto;
 		}
 
 		.hero-title {
@@ -1536,9 +1537,7 @@
 		}
 
 		.progress-pill {
-			position: absolute;
-			top: 0;
-			right: 0;
+			position: static;
 			flex-shrink: 0;
 			min-width: auto;
 			padding: 0.55rem 0.75rem;
@@ -1671,7 +1670,7 @@
 		}
 
 		.loop-hero {
-			min-height: 2.4rem;
+			gap: 0.5rem;
 		}
 
 		/* .back-link {
@@ -1697,9 +1696,7 @@
 		}
 
 		.progress-pill {
-			position: absolute;
-			top: 0;
-			right: 0;
+			position: static;
 			padding: 0.4rem 0.55rem;
 			gap: 0.4rem;
 			min-width: auto;

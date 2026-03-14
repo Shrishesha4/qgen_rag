@@ -1717,15 +1717,18 @@
 
 	.loop-hero {
 		display: flex;
-		align-items: flex-start;
-		justify-content: space-between;
-		gap: 1.5rem;
+		justify-content: center;
+		align-items: center;
+		gap: 1rem;
+		flex-wrap: wrap;
 	}
 
 	.hero-copy {
 		display: flex;
 		flex-direction: column;
-		gap: 0.5rem;
+		gap: 0;
+		align-items: center;
+		width: auto;
 	}
 
 	/* .back-link {
@@ -2001,17 +2004,19 @@
 		}
 
 		.loop-hero {
-			flex-direction: column;
-			align-items: stretch;
-			gap: 1rem;
+			justify-content: center;
+			align-items: center;
+			gap: 0.65rem;
 		}
 
 		.hero-title {
-			font-size: clamp(2rem, 8vw, 3rem);
+			font-size: clamp(0.85rem, 5vw, 3rem);
+			padding-left: 3%;
 		}
 
 		.progress-pill {
-			align-self: flex-start;
+			position: static;
+			flex-shrink: 0;
 			min-width: auto;
 			padding: 0.7rem 0.9rem;
 		}
@@ -2087,6 +2092,7 @@
 		}
 
 		.progress-pill {
+			position: static;
 			padding: 0.55rem 0.75rem;
 			gap: 0.6rem;
 		}
