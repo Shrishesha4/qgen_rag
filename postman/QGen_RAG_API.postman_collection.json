@@ -1,0 +1,2453 @@
+{
+  "info": {
+    "name": "QGen RAG API (Complete)",
+    "_postman_id": "3d0d4720-5d10-4aa4-bec2-a9ea65cf6d77",
+    "description": "Complete Postman collection generated from FastAPI route decorators in backend/app/api/v1/endpoints and backend/app/main.py.",
+    "schema": "https://schema.getpostman.com/json/collection/v2.1.0/collection.json"
+  },
+  "auth": {
+    "type": "bearer",
+    "bearer": [
+      {
+        "key": "token",
+        "value": "{{accessToken}}",
+        "type": "string"
+      }
+    ]
+  },
+  "variable": [
+    {
+      "key": "baseUrl",
+      "value": "http://localhost:8000"
+    },
+    {
+      "key": "accessToken",
+      "value": ""
+    },
+    {
+      "key": "refreshToken",
+      "value": ""
+    },
+    {
+      "key": "subjectId",
+      "value": ""
+    },
+    {
+      "key": "topicId",
+      "value": ""
+    },
+    {
+      "key": "questionId",
+      "value": ""
+    },
+    {
+      "key": "documentId",
+      "value": ""
+    },
+    {
+      "key": "rubricId",
+      "value": ""
+    },
+    {
+      "key": "sessionId",
+      "value": ""
+    },
+    {
+      "key": "versionId",
+      "value": ""
+    },
+    {
+      "key": "filename",
+      "value": ""
+    }
+  ],
+  "item": [
+    {
+      "name": "Health",
+      "item": [
+        {
+          "name": "GET /",
+          "request": {
+            "method": "GET",
+            "header": [
+              {
+                "key": "Accept",
+                "value": "application/json"
+              }
+            ],
+            "url": "{{baseUrl}}/",
+            "description": "Root health endpoint"
+          },
+          "response": []
+        },
+        {
+          "name": "GET /health",
+          "request": {
+            "method": "GET",
+            "header": [
+              {
+                "key": "Accept",
+                "value": "application/json"
+              }
+            ],
+            "url": "{{baseUrl}}/health",
+            "description": "Detailed health endpoint"
+          },
+          "response": []
+        }
+      ]
+    },
+    {
+      "name": "Authentication",
+      "item": [
+        {
+          "name": "DELETE /api/v1/auth/avatar",
+          "request": {
+            "method": "DELETE",
+            "header": [
+              {
+                "key": "Accept",
+                "value": "application/json"
+              },
+              {
+                "key": "Authorization",
+                "value": "Bearer {{accessToken}}"
+              }
+            ],
+            "url": "{{baseUrl}}/api/v1/auth/avatar",
+            "description": "Auto-generated from backend route: DELETE /api/v1/auth/avatar"
+          },
+          "response": []
+        },
+        {
+          "name": "GET /api/v1/auth/avatars/{filename}",
+          "request": {
+            "method": "GET",
+            "header": [
+              {
+                "key": "Accept",
+                "value": "application/json"
+              }
+            ],
+            "url": "{{baseUrl}}/api/v1/auth/avatars/{filename}",
+            "description": "Auto-generated from backend route: GET /api/v1/auth/avatars/{filename}"
+          },
+          "response": []
+        },
+        {
+          "name": "POST /api/v1/auth/change-password",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Accept",
+                "value": "application/json"
+              },
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              },
+              {
+                "key": "Authorization",
+                "value": "Bearer {{accessToken}}"
+              }
+            ],
+            "url": "{{baseUrl}}/api/v1/auth/change-password",
+            "description": "Auto-generated from backend route: POST /api/v1/auth/change-password",
+            "body": {
+              "mode": "raw",
+              "raw": "{}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            }
+          },
+          "response": []
+        },
+        {
+          "name": "POST /api/v1/auth/login",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Accept",
+                "value": "application/json"
+              },
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "url": "{{baseUrl}}/api/v1/auth/login",
+            "description": "Auto-generated from backend route: POST /api/v1/auth/login",
+            "body": {
+              "mode": "raw",
+              "raw": "{}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            }
+          },
+          "response": []
+        },
+        {
+          "name": "POST /api/v1/auth/logout",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Accept",
+                "value": "application/json"
+              },
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              },
+              {
+                "key": "Authorization",
+                "value": "Bearer {{accessToken}}"
+              }
+            ],
+            "url": "{{baseUrl}}/api/v1/auth/logout",
+            "description": "Auto-generated from backend route: POST /api/v1/auth/logout",
+            "body": {
+              "mode": "raw",
+              "raw": "{}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            }
+          },
+          "response": []
+        },
+        {
+          "name": "POST /api/v1/auth/logout-all",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Accept",
+                "value": "application/json"
+              },
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              },
+              {
+                "key": "Authorization",
+                "value": "Bearer {{accessToken}}"
+              }
+            ],
+            "url": "{{baseUrl}}/api/v1/auth/logout-all",
+            "description": "Auto-generated from backend route: POST /api/v1/auth/logout-all",
+            "body": {
+              "mode": "raw",
+              "raw": "{}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            }
+          },
+          "response": []
+        },
+        {
+          "name": "GET /api/v1/auth/me",
+          "request": {
+            "method": "GET",
+            "header": [
+              {
+                "key": "Accept",
+                "value": "application/json"
+              },
+              {
+                "key": "Authorization",
+                "value": "Bearer {{accessToken}}"
+              }
+            ],
+            "url": "{{baseUrl}}/api/v1/auth/me",
+            "description": "Auto-generated from backend route: GET /api/v1/auth/me"
+          },
+          "response": []
+        },
+        {
+          "name": "POST /api/v1/auth/refresh",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Accept",
+                "value": "application/json"
+              },
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "url": "{{baseUrl}}/api/v1/auth/refresh",
+            "description": "Auto-generated from backend route: POST /api/v1/auth/refresh",
+            "body": {
+              "mode": "raw",
+              "raw": "{}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            }
+          },
+          "response": []
+        },
+        {
+          "name": "POST /api/v1/auth/register",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Accept",
+                "value": "application/json"
+              },
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "url": "{{baseUrl}}/api/v1/auth/register",
+            "description": "Auto-generated from backend route: POST /api/v1/auth/register",
+            "body": {
+              "mode": "raw",
+              "raw": "{}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            }
+          },
+          "response": []
+        },
+        {
+          "name": "GET /api/v1/auth/sessions",
+          "request": {
+            "method": "GET",
+            "header": [
+              {
+                "key": "Accept",
+                "value": "application/json"
+              },
+              {
+                "key": "Authorization",
+                "value": "Bearer {{accessToken}}"
+              }
+            ],
+            "url": "{{baseUrl}}/api/v1/auth/sessions",
+            "description": "Auto-generated from backend route: GET /api/v1/auth/sessions"
+          },
+          "response": []
+        },
+        {
+          "name": "DELETE /api/v1/auth/sessions/{session_id}",
+          "request": {
+            "method": "DELETE",
+            "header": [
+              {
+                "key": "Accept",
+                "value": "application/json"
+              },
+              {
+                "key": "Authorization",
+                "value": "Bearer {{accessToken}}"
+              }
+            ],
+            "url": "{{baseUrl}}/api/v1/auth/sessions/{session_id}",
+            "description": "Auto-generated from backend route: DELETE /api/v1/auth/sessions/{session_id}"
+          },
+          "response": []
+        },
+        {
+          "name": "PUT /api/v1/auth/update-profile",
+          "request": {
+            "method": "PUT",
+            "header": [
+              {
+                "key": "Accept",
+                "value": "application/json"
+              },
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              },
+              {
+                "key": "Authorization",
+                "value": "Bearer {{accessToken}}"
+              }
+            ],
+            "url": "{{baseUrl}}/api/v1/auth/update-profile",
+            "description": "Auto-generated from backend route: PUT /api/v1/auth/update-profile",
+            "body": {
+              "mode": "raw",
+              "raw": "{}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            }
+          },
+          "response": []
+        },
+        {
+          "name": "POST /api/v1/auth/upload-avatar",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Accept",
+                "value": "application/json"
+              },
+              {
+                "key": "Authorization",
+                "value": "Bearer {{accessToken}}"
+              }
+            ],
+            "url": "{{baseUrl}}/api/v1/auth/upload-avatar",
+            "description": "Auto-generated from backend route: POST /api/v1/auth/upload-avatar",
+            "body": {
+              "mode": "formdata",
+              "formdata": [
+                {
+                  "key": "file",
+                  "type": "file",
+                  "src": ""
+                }
+              ]
+            }
+          },
+          "response": []
+        }
+      ]
+    },
+    {
+      "name": "Documents",
+      "item": [
+        {
+          "name": "DELETE /api/v1/documents/{document_id}",
+          "request": {
+            "method": "DELETE",
+            "header": [
+              {
+                "key": "Accept",
+                "value": "application/json"
+              },
+              {
+                "key": "Authorization",
+                "value": "Bearer {{accessToken}}"
+              }
+            ],
+            "url": "{{baseUrl}}/api/v1/documents/{document_id}",
+            "description": "Auto-generated from backend route: DELETE /api/v1/documents/{document_id}"
+          },
+          "response": []
+        },
+        {
+          "name": "GET /api/v1/documents/{document_id}",
+          "request": {
+            "method": "GET",
+            "header": [
+              {
+                "key": "Accept",
+                "value": "application/json"
+              },
+              {
+                "key": "Authorization",
+                "value": "Bearer {{accessToken}}"
+              }
+            ],
+            "url": "{{baseUrl}}/api/v1/documents/{document_id}",
+            "description": "Auto-generated from backend route: GET /api/v1/documents/{document_id}"
+          },
+          "response": []
+        },
+        {
+          "name": "GET /api/v1/documents/{document_id}/chunks",
+          "request": {
+            "method": "GET",
+            "header": [
+              {
+                "key": "Accept",
+                "value": "application/json"
+              },
+              {
+                "key": "Authorization",
+                "value": "Bearer {{accessToken}}"
+              }
+            ],
+            "url": "{{baseUrl}}/api/v1/documents/{document_id}/chunks",
+            "description": "Auto-generated from backend route: GET /api/v1/documents/{document_id}/chunks"
+          },
+          "response": []
+        },
+        {
+          "name": "GET /api/v1/documents/{document_id}/status",
+          "request": {
+            "method": "GET",
+            "header": [
+              {
+                "key": "Accept",
+                "value": "application/json"
+              },
+              {
+                "key": "Authorization",
+                "value": "Bearer {{accessToken}}"
+              }
+            ],
+            "url": "{{baseUrl}}/api/v1/documents/{document_id}/status",
+            "description": "Auto-generated from backend route: GET /api/v1/documents/{document_id}/status"
+          },
+          "response": []
+        },
+        {
+          "name": "GET /api/v1/documents/reference/list",
+          "request": {
+            "method": "GET",
+            "header": [
+              {
+                "key": "Accept",
+                "value": "application/json"
+              },
+              {
+                "key": "Authorization",
+                "value": "Bearer {{accessToken}}"
+              }
+            ],
+            "url": "{{baseUrl}}/api/v1/documents/reference/list",
+            "description": "Auto-generated from backend route: GET /api/v1/documents/reference/list"
+          },
+          "response": []
+        },
+        {
+          "name": "POST /api/v1/documents/reference/upload",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Accept",
+                "value": "application/json"
+              },
+              {
+                "key": "Authorization",
+                "value": "Bearer {{accessToken}}"
+              }
+            ],
+            "url": "{{baseUrl}}/api/v1/documents/reference/upload",
+            "description": "Auto-generated from backend route: POST /api/v1/documents/reference/upload",
+            "body": {
+              "mode": "formdata",
+              "formdata": [
+                {
+                  "key": "file",
+                  "type": "file",
+                  "src": ""
+                }
+              ]
+            }
+          },
+          "response": []
+        },
+        {
+          "name": "POST /api/v1/documents/upload",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Accept",
+                "value": "application/json"
+              },
+              {
+                "key": "Authorization",
+                "value": "Bearer {{accessToken}}"
+              }
+            ],
+            "url": "{{baseUrl}}/api/v1/documents/upload",
+            "description": "Auto-generated from backend route: POST /api/v1/documents/upload",
+            "body": {
+              "mode": "formdata",
+              "formdata": [
+                {
+                  "key": "file",
+                  "type": "file",
+                  "src": ""
+                }
+              ]
+            }
+          },
+          "response": []
+        }
+      ]
+    },
+    {
+      "name": "Questions",
+      "item": [
+        {
+          "name": "DELETE /api/v1/questions/{question_id}",
+          "request": {
+            "method": "DELETE",
+            "header": [
+              {
+                "key": "Accept",
+                "value": "application/json"
+              },
+              {
+                "key": "Authorization",
+                "value": "Bearer {{accessToken}}"
+              }
+            ],
+            "url": "{{baseUrl}}/api/v1/questions/{question_id}",
+            "description": "Auto-generated from backend route: DELETE /api/v1/questions/{question_id}"
+          },
+          "response": []
+        },
+        {
+          "name": "GET /api/v1/questions/{question_id}",
+          "request": {
+            "method": "GET",
+            "header": [
+              {
+                "key": "Accept",
+                "value": "application/json"
+              },
+              {
+                "key": "Authorization",
+                "value": "Bearer {{accessToken}}"
+              }
+            ],
+            "url": "{{baseUrl}}/api/v1/questions/{question_id}",
+            "description": "Auto-generated from backend route: GET /api/v1/questions/{question_id}"
+          },
+          "response": []
+        },
+        {
+          "name": "PUT /api/v1/questions/{question_id}",
+          "request": {
+            "method": "PUT",
+            "header": [
+              {
+                "key": "Accept",
+                "value": "application/json"
+              },
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              },
+              {
+                "key": "Authorization",
+                "value": "Bearer {{accessToken}}"
+              }
+            ],
+            "url": "{{baseUrl}}/api/v1/questions/{question_id}",
+            "description": "Auto-generated from backend route: PUT /api/v1/questions/{question_id}",
+            "body": {
+              "mode": "raw",
+              "raw": "{}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            }
+          },
+          "response": []
+        },
+        {
+          "name": "PUT /api/v1/questions/{question_id}/co-mapping",
+          "request": {
+            "method": "PUT",
+            "header": [
+              {
+                "key": "Accept",
+                "value": "application/json"
+              },
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              },
+              {
+                "key": "Authorization",
+                "value": "Bearer {{accessToken}}"
+              }
+            ],
+            "url": "{{baseUrl}}/api/v1/questions/{question_id}/co-mapping",
+            "description": "Auto-generated from backend route: PUT /api/v1/questions/{question_id}/co-mapping",
+            "body": {
+              "mode": "raw",
+              "raw": "{}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            }
+          },
+          "response": []
+        },
+        {
+          "name": "POST /api/v1/questions/{question_id}/promote-version",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Accept",
+                "value": "application/json"
+              },
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              },
+              {
+                "key": "Authorization",
+                "value": "Bearer {{accessToken}}"
+              }
+            ],
+            "url": "{{baseUrl}}/api/v1/questions/{question_id}/promote-version",
+            "description": "Auto-generated from backend route: POST /api/v1/questions/{question_id}/promote-version",
+            "body": {
+              "mode": "raw",
+              "raw": "{}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            }
+          },
+          "response": []
+        },
+        {
+          "name": "POST /api/v1/questions/{question_id}/rate",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Accept",
+                "value": "application/json"
+              },
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              },
+              {
+                "key": "Authorization",
+                "value": "Bearer {{accessToken}}"
+              }
+            ],
+            "url": "{{baseUrl}}/api/v1/questions/{question_id}/rate",
+            "description": "Auto-generated from backend route: POST /api/v1/questions/{question_id}/rate",
+            "body": {
+              "mode": "raw",
+              "raw": "{}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            }
+          },
+          "response": []
+        },
+        {
+          "name": "POST /api/v1/questions/{question_id}/unarchive",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Accept",
+                "value": "application/json"
+              },
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              },
+              {
+                "key": "Authorization",
+                "value": "Bearer {{accessToken}}"
+              }
+            ],
+            "url": "{{baseUrl}}/api/v1/questions/{question_id}/unarchive",
+            "description": "Auto-generated from backend route: POST /api/v1/questions/{question_id}/unarchive",
+            "body": {
+              "mode": "raw",
+              "raw": "{}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            }
+          },
+          "response": []
+        },
+        {
+          "name": "GET /api/v1/questions/{question_id}/versions",
+          "request": {
+            "method": "GET",
+            "header": [
+              {
+                "key": "Accept",
+                "value": "application/json"
+              },
+              {
+                "key": "Authorization",
+                "value": "Bearer {{accessToken}}"
+              }
+            ],
+            "url": "{{baseUrl}}/api/v1/questions/{question_id}/versions",
+            "description": "Auto-generated from backend route: GET /api/v1/questions/{question_id}/versions"
+          },
+          "response": []
+        },
+        {
+          "name": "POST /api/v1/questions/{question_id}/vet",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Accept",
+                "value": "application/json"
+              },
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              },
+              {
+                "key": "Authorization",
+                "value": "Bearer {{accessToken}}"
+              }
+            ],
+            "url": "{{baseUrl}}/api/v1/questions/{question_id}/vet",
+            "description": "Auto-generated from backend route: POST /api/v1/questions/{question_id}/vet",
+            "body": {
+              "mode": "raw",
+              "raw": "{}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            }
+          },
+          "response": []
+        },
+        {
+          "name": "GET /api/v1/questions/analytics/by-bloom",
+          "request": {
+            "method": "GET",
+            "header": [
+              {
+                "key": "Accept",
+                "value": "application/json"
+              },
+              {
+                "key": "Authorization",
+                "value": "Bearer {{accessToken}}"
+              }
+            ],
+            "url": "{{baseUrl}}/api/v1/questions/analytics/by-bloom",
+            "description": "Auto-generated from backend route: GET /api/v1/questions/analytics/by-bloom"
+          },
+          "response": []
+        },
+        {
+          "name": "GET /api/v1/questions/analytics/by-learning-outcome",
+          "request": {
+            "method": "GET",
+            "header": [
+              {
+                "key": "Accept",
+                "value": "application/json"
+              },
+              {
+                "key": "Authorization",
+                "value": "Bearer {{accessToken}}"
+              }
+            ],
+            "url": "{{baseUrl}}/api/v1/questions/analytics/by-learning-outcome",
+            "description": "Auto-generated from backend route: GET /api/v1/questions/analytics/by-learning-outcome"
+          },
+          "response": []
+        },
+        {
+          "name": "GET /api/v1/questions/analytics/by-subject",
+          "request": {
+            "method": "GET",
+            "header": [
+              {
+                "key": "Accept",
+                "value": "application/json"
+              },
+              {
+                "key": "Authorization",
+                "value": "Bearer {{accessToken}}"
+              }
+            ],
+            "url": "{{baseUrl}}/api/v1/questions/analytics/by-subject",
+            "description": "Auto-generated from backend route: GET /api/v1/questions/analytics/by-subject"
+          },
+          "response": []
+        },
+        {
+          "name": "POST /api/v1/questions/backfill-topic-mapping",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Accept",
+                "value": "application/json"
+              },
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              },
+              {
+                "key": "Authorization",
+                "value": "Bearer {{accessToken}}"
+              }
+            ],
+            "url": "{{baseUrl}}/api/v1/questions/backfill-topic-mapping",
+            "description": "Auto-generated from backend route: POST /api/v1/questions/backfill-topic-mapping",
+            "body": {
+              "mode": "raw",
+              "raw": "{}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            }
+          },
+          "response": []
+        },
+        {
+          "name": "POST /api/v1/questions/cancel-generation",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Accept",
+                "value": "application/json"
+              },
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              },
+              {
+                "key": "Authorization",
+                "value": "Bearer {{accessToken}}"
+              }
+            ],
+            "url": "{{baseUrl}}/api/v1/questions/cancel-generation",
+            "description": "Auto-generated from backend route: POST /api/v1/questions/cancel-generation",
+            "body": {
+              "mode": "raw",
+              "raw": "{}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            }
+          },
+          "response": []
+        },
+        {
+          "name": "POST /api/v1/questions/generate",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Accept",
+                "value": "application/json"
+              },
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              },
+              {
+                "key": "Authorization",
+                "value": "Bearer {{accessToken}}"
+              }
+            ],
+            "url": "{{baseUrl}}/api/v1/questions/generate",
+            "description": "Auto-generated from backend route: POST /api/v1/questions/generate",
+            "body": {
+              "mode": "raw",
+              "raw": "{}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            }
+          },
+          "response": []
+        },
+        {
+          "name": "POST /api/v1/questions/generate-chapter",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Accept",
+                "value": "application/json"
+              },
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              },
+              {
+                "key": "Authorization",
+                "value": "Bearer {{accessToken}}"
+              }
+            ],
+            "url": "{{baseUrl}}/api/v1/questions/generate-chapter",
+            "description": "Auto-generated from backend route: POST /api/v1/questions/generate-chapter",
+            "body": {
+              "mode": "raw",
+              "raw": "{}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            }
+          },
+          "response": []
+        },
+        {
+          "name": "POST /api/v1/questions/generate-from-rubric",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Accept",
+                "value": "application/json"
+              },
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              },
+              {
+                "key": "Authorization",
+                "value": "Bearer {{accessToken}}"
+              }
+            ],
+            "url": "{{baseUrl}}/api/v1/questions/generate-from-rubric",
+            "description": "Auto-generated from backend route: POST /api/v1/questions/generate-from-rubric",
+            "body": {
+              "mode": "raw",
+              "raw": "{}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            }
+          },
+          "response": []
+        },
+        {
+          "name": "POST /api/v1/questions/import",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Accept",
+                "value": "application/json"
+              },
+              {
+                "key": "Authorization",
+                "value": "Bearer {{accessToken}}"
+              }
+            ],
+            "url": "{{baseUrl}}/api/v1/questions/import",
+            "description": "Auto-generated from backend route: POST /api/v1/questions/import",
+            "body": {
+              "mode": "formdata",
+              "formdata": [
+                {
+                  "key": "file",
+                  "type": "file",
+                  "src": ""
+                }
+              ]
+            }
+          },
+          "response": []
+        },
+        {
+          "name": "POST /api/v1/questions/quick-generate",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Accept",
+                "value": "application/json"
+              },
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              },
+              {
+                "key": "Authorization",
+                "value": "Bearer {{accessToken}}"
+              }
+            ],
+            "url": "{{baseUrl}}/api/v1/questions/quick-generate",
+            "description": "Auto-generated from backend route: POST /api/v1/questions/quick-generate",
+            "body": {
+              "mode": "raw",
+              "raw": "{}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            }
+          },
+          "response": []
+        },
+        {
+          "name": "POST /api/v1/questions/quick-generate-from-subject",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Accept",
+                "value": "application/json"
+              },
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              },
+              {
+                "key": "Authorization",
+                "value": "Bearer {{accessToken}}"
+              }
+            ],
+            "url": "{{baseUrl}}/api/v1/questions/quick-generate-from-subject",
+            "description": "Auto-generated from backend route: POST /api/v1/questions/quick-generate-from-subject",
+            "body": {
+              "mode": "raw",
+              "raw": "{}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            }
+          },
+          "response": []
+        },
+        {
+          "name": "DELETE /api/v1/questions/sessions/{session_id}",
+          "request": {
+            "method": "DELETE",
+            "header": [
+              {
+                "key": "Accept",
+                "value": "application/json"
+              },
+              {
+                "key": "Authorization",
+                "value": "Bearer {{accessToken}}"
+              }
+            ],
+            "url": "{{baseUrl}}/api/v1/questions/sessions/{session_id}",
+            "description": "Auto-generated from backend route: DELETE /api/v1/questions/sessions/{session_id}"
+          },
+          "response": []
+        },
+        {
+          "name": "GET /api/v1/questions/sessions/{session_id}",
+          "request": {
+            "method": "GET",
+            "header": [
+              {
+                "key": "Accept",
+                "value": "application/json"
+              },
+              {
+                "key": "Authorization",
+                "value": "Bearer {{accessToken}}"
+              }
+            ],
+            "url": "{{baseUrl}}/api/v1/questions/sessions/{session_id}",
+            "description": "Auto-generated from backend route: GET /api/v1/questions/sessions/{session_id}"
+          },
+          "response": []
+        },
+        {
+          "name": "GET /api/v1/questions/sessions/{session_id}/questions",
+          "request": {
+            "method": "GET",
+            "header": [
+              {
+                "key": "Accept",
+                "value": "application/json"
+              },
+              {
+                "key": "Authorization",
+                "value": "Bearer {{accessToken}}"
+              }
+            ],
+            "url": "{{baseUrl}}/api/v1/questions/sessions/{session_id}/questions",
+            "description": "Auto-generated from backend route: GET /api/v1/questions/sessions/{session_id}/questions"
+          },
+          "response": []
+        },
+        {
+          "name": "GET /api/v1/questions/sessions/list",
+          "request": {
+            "method": "GET",
+            "header": [
+              {
+                "key": "Accept",
+                "value": "application/json"
+              },
+              {
+                "key": "Authorization",
+                "value": "Bearer {{accessToken}}"
+              }
+            ],
+            "url": "{{baseUrl}}/api/v1/questions/sessions/list",
+            "description": "Auto-generated from backend route: GET /api/v1/questions/sessions/list"
+          },
+          "response": []
+        },
+        {
+          "name": "GET /api/v1/questions/stats/summary",
+          "request": {
+            "method": "GET",
+            "header": [
+              {
+                "key": "Accept",
+                "value": "application/json"
+              },
+              {
+                "key": "Authorization",
+                "value": "Bearer {{accessToken}}"
+              }
+            ],
+            "url": "{{baseUrl}}/api/v1/questions/stats/summary",
+            "description": "Auto-generated from backend route: GET /api/v1/questions/stats/summary"
+          },
+          "response": []
+        },
+        {
+          "name": "GET /api/v1/questions/teacher/dashboard",
+          "request": {
+            "method": "GET",
+            "header": [
+              {
+                "key": "Accept",
+                "value": "application/json"
+              },
+              {
+                "key": "Authorization",
+                "value": "Bearer {{accessToken}}"
+              }
+            ],
+            "url": "{{baseUrl}}/api/v1/questions/teacher/dashboard",
+            "description": "Auto-generated from backend route: GET /api/v1/questions/teacher/dashboard"
+          },
+          "response": []
+        },
+        {
+          "name": "GET /api/v1/questions/vetting/pending",
+          "request": {
+            "method": "GET",
+            "header": [
+              {
+                "key": "Accept",
+                "value": "application/json"
+              },
+              {
+                "key": "Authorization",
+                "value": "Bearer {{accessToken}}"
+              }
+            ],
+            "url": "{{baseUrl}}/api/v1/questions/vetting/pending",
+            "description": "Auto-generated from backend route: GET /api/v1/questions/vetting/pending"
+          },
+          "response": []
+        },
+        {
+          "name": "GET /api/v1/questions/vetting/stats",
+          "request": {
+            "method": "GET",
+            "header": [
+              {
+                "key": "Accept",
+                "value": "application/json"
+              },
+              {
+                "key": "Authorization",
+                "value": "Bearer {{accessToken}}"
+              }
+            ],
+            "url": "{{baseUrl}}/api/v1/questions/vetting/stats",
+            "description": "Auto-generated from backend route: GET /api/v1/questions/vetting/stats"
+          },
+          "response": []
+        }
+      ]
+    },
+    {
+      "name": "Subjects",
+      "item": [
+        {
+          "name": "DELETE /api/v1/subjects/{subject_id}",
+          "request": {
+            "method": "DELETE",
+            "header": [
+              {
+                "key": "Accept",
+                "value": "application/json"
+              },
+              {
+                "key": "Authorization",
+                "value": "Bearer {{accessToken}}"
+              }
+            ],
+            "url": "{{baseUrl}}/api/v1/subjects/{subject_id}",
+            "description": "Auto-generated from backend route: DELETE /api/v1/subjects/{subject_id}"
+          },
+          "response": []
+        },
+        {
+          "name": "GET /api/v1/subjects/{subject_id}",
+          "request": {
+            "method": "GET",
+            "header": [
+              {
+                "key": "Accept",
+                "value": "application/json"
+              },
+              {
+                "key": "Authorization",
+                "value": "Bearer {{accessToken}}"
+              }
+            ],
+            "url": "{{baseUrl}}/api/v1/subjects/{subject_id}",
+            "description": "Auto-generated from backend route: GET /api/v1/subjects/{subject_id}"
+          },
+          "response": []
+        },
+        {
+          "name": "PUT /api/v1/subjects/{subject_id}",
+          "request": {
+            "method": "PUT",
+            "header": [
+              {
+                "key": "Accept",
+                "value": "application/json"
+              },
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              },
+              {
+                "key": "Authorization",
+                "value": "Bearer {{accessToken}}"
+              }
+            ],
+            "url": "{{baseUrl}}/api/v1/subjects/{subject_id}",
+            "description": "Auto-generated from backend route: PUT /api/v1/subjects/{subject_id}",
+            "body": {
+              "mode": "raw",
+              "raw": "{}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            }
+          },
+          "response": []
+        },
+        {
+          "name": "POST /api/v1/subjects/{subject_id}/extract-chapters",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Accept",
+                "value": "application/json"
+              },
+              {
+                "key": "Authorization",
+                "value": "Bearer {{accessToken}}"
+              }
+            ],
+            "url": "{{baseUrl}}/api/v1/subjects/{subject_id}/extract-chapters",
+            "description": "Auto-generated from backend route: POST /api/v1/subjects/{subject_id}/extract-chapters",
+            "body": {
+              "mode": "formdata",
+              "formdata": [
+                {
+                  "key": "file",
+                  "type": "file",
+                  "src": ""
+                }
+              ]
+            }
+          },
+          "response": []
+        },
+        {
+          "name": "POST /api/v1/subjects/{subject_id}/generate-learning-outcomes",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Accept",
+                "value": "application/json"
+              },
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              },
+              {
+                "key": "Authorization",
+                "value": "Bearer {{accessToken}}"
+              }
+            ],
+            "url": "{{baseUrl}}/api/v1/subjects/{subject_id}/generate-learning-outcomes",
+            "description": "Auto-generated from backend route: POST /api/v1/subjects/{subject_id}/generate-learning-outcomes",
+            "body": {
+              "mode": "raw",
+              "raw": "{}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            }
+          },
+          "response": []
+        },
+        {
+          "name": "GET /api/v1/subjects/{subject_id}/topics",
+          "request": {
+            "method": "GET",
+            "header": [
+              {
+                "key": "Accept",
+                "value": "application/json"
+              },
+              {
+                "key": "Authorization",
+                "value": "Bearer {{accessToken}}"
+              }
+            ],
+            "url": "{{baseUrl}}/api/v1/subjects/{subject_id}/topics",
+            "description": "Auto-generated from backend route: GET /api/v1/subjects/{subject_id}/topics"
+          },
+          "response": []
+        },
+        {
+          "name": "POST /api/v1/subjects/{subject_id}/topics",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Accept",
+                "value": "application/json"
+              },
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              },
+              {
+                "key": "Authorization",
+                "value": "Bearer {{accessToken}}"
+              }
+            ],
+            "url": "{{baseUrl}}/api/v1/subjects/{subject_id}/topics",
+            "description": "Auto-generated from backend route: POST /api/v1/subjects/{subject_id}/topics",
+            "body": {
+              "mode": "raw",
+              "raw": "{}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            }
+          },
+          "response": []
+        },
+        {
+          "name": "DELETE /api/v1/subjects/{subject_id}/topics/{topic_id}",
+          "request": {
+            "method": "DELETE",
+            "header": [
+              {
+                "key": "Accept",
+                "value": "application/json"
+              },
+              {
+                "key": "Authorization",
+                "value": "Bearer {{accessToken}}"
+              }
+            ],
+            "url": "{{baseUrl}}/api/v1/subjects/{subject_id}/topics/{topic_id}",
+            "description": "Auto-generated from backend route: DELETE /api/v1/subjects/{subject_id}/topics/{topic_id}"
+          },
+          "response": []
+        },
+        {
+          "name": "PUT /api/v1/subjects/{subject_id}/topics/{topic_id}",
+          "request": {
+            "method": "PUT",
+            "header": [
+              {
+                "key": "Accept",
+                "value": "application/json"
+              },
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              },
+              {
+                "key": "Authorization",
+                "value": "Bearer {{accessToken}}"
+              }
+            ],
+            "url": "{{baseUrl}}/api/v1/subjects/{subject_id}/topics/{topic_id}",
+            "description": "Auto-generated from backend route: PUT /api/v1/subjects/{subject_id}/topics/{topic_id}",
+            "body": {
+              "mode": "raw",
+              "raw": "{}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            }
+          },
+          "response": []
+        },
+        {
+          "name": "POST /api/v1/subjects/{subject_id}/topics/{topic_id}/upload-syllabus",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Accept",
+                "value": "application/json"
+              },
+              {
+                "key": "Authorization",
+                "value": "Bearer {{accessToken}}"
+              }
+            ],
+            "url": "{{baseUrl}}/api/v1/subjects/{subject_id}/topics/{topic_id}/upload-syllabus",
+            "description": "Auto-generated from backend route: POST /api/v1/subjects/{subject_id}/topics/{topic_id}/upload-syllabus",
+            "body": {
+              "mode": "formdata",
+              "formdata": [
+                {
+                  "key": "file",
+                  "type": "file",
+                  "src": ""
+                }
+              ]
+            }
+          },
+          "response": []
+        }
+      ]
+    },
+    {
+      "name": "Rubrics",
+      "item": [
+        {
+          "name": "DELETE /api/v1/rubrics/{rubric_id}",
+          "request": {
+            "method": "DELETE",
+            "header": [
+              {
+                "key": "Accept",
+                "value": "application/json"
+              },
+              {
+                "key": "Authorization",
+                "value": "Bearer {{accessToken}}"
+              }
+            ],
+            "url": "{{baseUrl}}/api/v1/rubrics/{rubric_id}",
+            "description": "Auto-generated from backend route: DELETE /api/v1/rubrics/{rubric_id}"
+          },
+          "response": []
+        },
+        {
+          "name": "GET /api/v1/rubrics/{rubric_id}",
+          "request": {
+            "method": "GET",
+            "header": [
+              {
+                "key": "Accept",
+                "value": "application/json"
+              },
+              {
+                "key": "Authorization",
+                "value": "Bearer {{accessToken}}"
+              }
+            ],
+            "url": "{{baseUrl}}/api/v1/rubrics/{rubric_id}",
+            "description": "Auto-generated from backend route: GET /api/v1/rubrics/{rubric_id}"
+          },
+          "response": []
+        },
+        {
+          "name": "PUT /api/v1/rubrics/{rubric_id}",
+          "request": {
+            "method": "PUT",
+            "header": [
+              {
+                "key": "Accept",
+                "value": "application/json"
+              },
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              },
+              {
+                "key": "Authorization",
+                "value": "Bearer {{accessToken}}"
+              }
+            ],
+            "url": "{{baseUrl}}/api/v1/rubrics/{rubric_id}",
+            "description": "Auto-generated from backend route: PUT /api/v1/rubrics/{rubric_id}",
+            "body": {
+              "mode": "raw",
+              "raw": "{}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            }
+          },
+          "response": []
+        }
+      ]
+    },
+    {
+      "name": "Vetter Portal",
+      "item": [
+        {
+          "name": "GET /api/v1/vetter/dashboard",
+          "request": {
+            "method": "GET",
+            "header": [
+              {
+                "key": "Accept",
+                "value": "application/json"
+              },
+              {
+                "key": "Authorization",
+                "value": "Bearer {{accessToken}}"
+              }
+            ],
+            "url": "{{baseUrl}}/api/v1/vetter/dashboard",
+            "description": "Auto-generated from backend route: GET /api/v1/vetter/dashboard"
+          },
+          "response": []
+        },
+        {
+          "name": "GET /api/v1/vetter/questions",
+          "request": {
+            "method": "GET",
+            "header": [
+              {
+                "key": "Accept",
+                "value": "application/json"
+              },
+              {
+                "key": "Authorization",
+                "value": "Bearer {{accessToken}}"
+              }
+            ],
+            "url": "{{baseUrl}}/api/v1/vetter/questions",
+            "description": "Auto-generated from backend route: GET /api/v1/vetter/questions"
+          },
+          "response": []
+        },
+        {
+          "name": "PUT /api/v1/vetter/questions/{question_id}",
+          "request": {
+            "method": "PUT",
+            "header": [
+              {
+                "key": "Accept",
+                "value": "application/json"
+              },
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              },
+              {
+                "key": "Authorization",
+                "value": "Bearer {{accessToken}}"
+              }
+            ],
+            "url": "{{baseUrl}}/api/v1/vetter/questions/{question_id}",
+            "description": "Auto-generated from backend route: PUT /api/v1/vetter/questions/{question_id}",
+            "body": {
+              "mode": "raw",
+              "raw": "{}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            }
+          },
+          "response": []
+        },
+        {
+          "name": "POST /api/v1/vetter/questions/{question_id}/reject-and-regenerate",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Accept",
+                "value": "application/json"
+              },
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              },
+              {
+                "key": "Authorization",
+                "value": "Bearer {{accessToken}}"
+              }
+            ],
+            "url": "{{baseUrl}}/api/v1/vetter/questions/{question_id}/reject-and-regenerate",
+            "description": "Auto-generated from backend route: POST /api/v1/vetter/questions/{question_id}/reject-and-regenerate",
+            "body": {
+              "mode": "raw",
+              "raw": "{}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            }
+          },
+          "response": []
+        },
+        {
+          "name": "POST /api/v1/vetter/questions/{question_id}/reject-with-feedback",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Accept",
+                "value": "application/json"
+              },
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              },
+              {
+                "key": "Authorization",
+                "value": "Bearer {{accessToken}}"
+              }
+            ],
+            "url": "{{baseUrl}}/api/v1/vetter/questions/{question_id}/reject-with-feedback",
+            "description": "Auto-generated from backend route: POST /api/v1/vetter/questions/{question_id}/reject-with-feedback",
+            "body": {
+              "mode": "raw",
+              "raw": "{}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            }
+          },
+          "response": []
+        },
+        {
+          "name": "POST /api/v1/vetter/questions/{question_id}/restore",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Accept",
+                "value": "application/json"
+              },
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              },
+              {
+                "key": "Authorization",
+                "value": "Bearer {{accessToken}}"
+              }
+            ],
+            "url": "{{baseUrl}}/api/v1/vetter/questions/{question_id}/restore",
+            "description": "Auto-generated from backend route: POST /api/v1/vetter/questions/{question_id}/restore",
+            "body": {
+              "mode": "raw",
+              "raw": "{}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            }
+          },
+          "response": []
+        },
+        {
+          "name": "GET /api/v1/vetter/questions/{question_id}/version-history",
+          "request": {
+            "method": "GET",
+            "header": [
+              {
+                "key": "Accept",
+                "value": "application/json"
+              },
+              {
+                "key": "Authorization",
+                "value": "Bearer {{accessToken}}"
+              }
+            ],
+            "url": "{{baseUrl}}/api/v1/vetter/questions/{question_id}/version-history",
+            "description": "Auto-generated from backend route: GET /api/v1/vetter/questions/{question_id}/version-history"
+          },
+          "response": []
+        },
+        {
+          "name": "POST /api/v1/vetter/questions/{question_id}/vet",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Accept",
+                "value": "application/json"
+              },
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              },
+              {
+                "key": "Authorization",
+                "value": "Bearer {{accessToken}}"
+              }
+            ],
+            "url": "{{baseUrl}}/api/v1/vetter/questions/{question_id}/vet",
+            "description": "Auto-generated from backend route: POST /api/v1/vetter/questions/{question_id}/vet",
+            "body": {
+              "mode": "raw",
+              "raw": "{}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            }
+          },
+          "response": []
+        },
+        {
+          "name": "POST /api/v1/vetter/questions/bulk-vet",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Accept",
+                "value": "application/json"
+              },
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              },
+              {
+                "key": "Authorization",
+                "value": "Bearer {{accessToken}}"
+              }
+            ],
+            "url": "{{baseUrl}}/api/v1/vetter/questions/bulk-vet",
+            "description": "Auto-generated from backend route: POST /api/v1/vetter/questions/bulk-vet",
+            "body": {
+              "mode": "raw",
+              "raw": "{}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            }
+          },
+          "response": []
+        },
+        {
+          "name": "GET /api/v1/vetter/reason-codes",
+          "request": {
+            "method": "GET",
+            "header": [
+              {
+                "key": "Accept",
+                "value": "application/json"
+              },
+              {
+                "key": "Authorization",
+                "value": "Bearer {{accessToken}}"
+              }
+            ],
+            "url": "{{baseUrl}}/api/v1/vetter/reason-codes",
+            "description": "Auto-generated from backend route: GET /api/v1/vetter/reason-codes"
+          },
+          "response": []
+        },
+        {
+          "name": "POST /api/v1/vetter/reason-codes",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Accept",
+                "value": "application/json"
+              },
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              },
+              {
+                "key": "Authorization",
+                "value": "Bearer {{accessToken}}"
+              }
+            ],
+            "url": "{{baseUrl}}/api/v1/vetter/reason-codes",
+            "description": "Auto-generated from backend route: POST /api/v1/vetter/reason-codes",
+            "body": {
+              "mode": "raw",
+              "raw": "{}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            }
+          },
+          "response": []
+        },
+        {
+          "name": "GET /api/v1/vetter/subjects",
+          "request": {
+            "method": "GET",
+            "header": [
+              {
+                "key": "Accept",
+                "value": "application/json"
+              },
+              {
+                "key": "Authorization",
+                "value": "Bearer {{accessToken}}"
+              }
+            ],
+            "url": "{{baseUrl}}/api/v1/vetter/subjects",
+            "description": "Auto-generated from backend route: GET /api/v1/vetter/subjects"
+          },
+          "response": []
+        },
+        {
+          "name": "GET /api/v1/vetter/subjects/{subject_id}",
+          "request": {
+            "method": "GET",
+            "header": [
+              {
+                "key": "Accept",
+                "value": "application/json"
+              },
+              {
+                "key": "Authorization",
+                "value": "Bearer {{accessToken}}"
+              }
+            ],
+            "url": "{{baseUrl}}/api/v1/vetter/subjects/{subject_id}",
+            "description": "Auto-generated from backend route: GET /api/v1/vetter/subjects/{subject_id}"
+          },
+          "response": []
+        },
+        {
+          "name": "GET /api/v1/vetter/subjects/{subject_id}/topics",
+          "request": {
+            "method": "GET",
+            "header": [
+              {
+                "key": "Accept",
+                "value": "application/json"
+              },
+              {
+                "key": "Authorization",
+                "value": "Bearer {{accessToken}}"
+              }
+            ],
+            "url": "{{baseUrl}}/api/v1/vetter/subjects/{subject_id}/topics",
+            "description": "Auto-generated from backend route: GET /api/v1/vetter/subjects/{subject_id}/topics"
+          },
+          "response": []
+        },
+        {
+          "name": "POST /api/v1/vetter/submit",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Accept",
+                "value": "application/json"
+              },
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              },
+              {
+                "key": "Authorization",
+                "value": "Bearer {{accessToken}}"
+              }
+            ],
+            "url": "{{baseUrl}}/api/v1/vetter/submit",
+            "description": "Auto-generated from backend route: POST /api/v1/vetter/submit",
+            "body": {
+              "mode": "raw",
+              "raw": "{}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            }
+          },
+          "response": []
+        },
+        {
+          "name": "GET /api/v1/vetter/teachers",
+          "request": {
+            "method": "GET",
+            "header": [
+              {
+                "key": "Accept",
+                "value": "application/json"
+              },
+              {
+                "key": "Authorization",
+                "value": "Bearer {{accessToken}}"
+              }
+            ],
+            "url": "{{baseUrl}}/api/v1/vetter/teachers",
+            "description": "Auto-generated from backend route: GET /api/v1/vetter/teachers"
+          },
+          "response": []
+        }
+      ]
+    },
+    {
+      "name": "Training Pipeline",
+      "item": [
+        {
+          "name": "GET /api/v1/training/datasets",
+          "request": {
+            "method": "GET",
+            "header": [
+              {
+                "key": "Accept",
+                "value": "application/json"
+              },
+              {
+                "key": "Authorization",
+                "value": "Bearer {{accessToken}}"
+              }
+            ],
+            "url": "{{baseUrl}}/api/v1/training/datasets",
+            "description": "Auto-generated from backend route: GET /api/v1/training/datasets"
+          },
+          "response": []
+        },
+        {
+          "name": "GET /api/v1/training/datasets/{dataset_id}",
+          "request": {
+            "method": "GET",
+            "header": [
+              {
+                "key": "Accept",
+                "value": "application/json"
+              },
+              {
+                "key": "Authorization",
+                "value": "Bearer {{accessToken}}"
+              }
+            ],
+            "url": "{{baseUrl}}/api/v1/training/datasets/{dataset_id}",
+            "description": "Auto-generated from backend route: GET /api/v1/training/datasets/{dataset_id}"
+          },
+          "response": []
+        },
+        {
+          "name": "POST /api/v1/training/datasets/build",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Accept",
+                "value": "application/json"
+              },
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              },
+              {
+                "key": "Authorization",
+                "value": "Bearer {{accessToken}}"
+              }
+            ],
+            "url": "{{baseUrl}}/api/v1/training/datasets/build",
+            "description": "Auto-generated from backend route: POST /api/v1/training/datasets/build",
+            "body": {
+              "mode": "raw",
+              "raw": "{}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            }
+          },
+          "response": []
+        },
+        {
+          "name": "POST /api/v1/training/evaluate/{version_id}",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Accept",
+                "value": "application/json"
+              },
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              },
+              {
+                "key": "Authorization",
+                "value": "Bearer {{accessToken}}"
+              }
+            ],
+            "url": "{{baseUrl}}/api/v1/training/evaluate/{version_id}",
+            "description": "Auto-generated from backend route: POST /api/v1/training/evaluate/{version_id}",
+            "body": {
+              "mode": "raw",
+              "raw": "{}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            }
+          },
+          "response": []
+        },
+        {
+          "name": "GET /api/v1/training/jobs",
+          "request": {
+            "method": "GET",
+            "header": [
+              {
+                "key": "Accept",
+                "value": "application/json"
+              },
+              {
+                "key": "Authorization",
+                "value": "Bearer {{accessToken}}"
+              }
+            ],
+            "url": "{{baseUrl}}/api/v1/training/jobs",
+            "description": "Auto-generated from backend route: GET /api/v1/training/jobs"
+          },
+          "response": []
+        },
+        {
+          "name": "GET /api/v1/training/pairs",
+          "request": {
+            "method": "GET",
+            "header": [
+              {
+                "key": "Accept",
+                "value": "application/json"
+              },
+              {
+                "key": "Authorization",
+                "value": "Bearer {{accessToken}}"
+              }
+            ],
+            "url": "{{baseUrl}}/api/v1/training/pairs",
+            "description": "Auto-generated from backend route: GET /api/v1/training/pairs"
+          },
+          "response": []
+        },
+        {
+          "name": "GET /api/v1/training/queue/status",
+          "request": {
+            "method": "GET",
+            "header": [
+              {
+                "key": "Accept",
+                "value": "application/json"
+              },
+              {
+                "key": "Authorization",
+                "value": "Bearer {{accessToken}}"
+              }
+            ],
+            "url": "{{baseUrl}}/api/v1/training/queue/status",
+            "description": "Auto-generated from backend route: GET /api/v1/training/queue/status"
+          },
+          "response": []
+        },
+        {
+          "name": "GET /api/v1/training/status",
+          "request": {
+            "method": "GET",
+            "header": [
+              {
+                "key": "Accept",
+                "value": "application/json"
+              },
+              {
+                "key": "Authorization",
+                "value": "Bearer {{accessToken}}"
+              }
+            ],
+            "url": "{{baseUrl}}/api/v1/training/status",
+            "description": "Auto-generated from backend route: GET /api/v1/training/status"
+          },
+          "response": []
+        },
+        {
+          "name": "POST /api/v1/training/trigger",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Accept",
+                "value": "application/json"
+              },
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              },
+              {
+                "key": "Authorization",
+                "value": "Bearer {{accessToken}}"
+              }
+            ],
+            "url": "{{baseUrl}}/api/v1/training/trigger",
+            "description": "Auto-generated from backend route: POST /api/v1/training/trigger",
+            "body": {
+              "mode": "raw",
+              "raw": "{}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            }
+          },
+          "response": []
+        },
+        {
+          "name": "GET /api/v1/training/versions",
+          "request": {
+            "method": "GET",
+            "header": [
+              {
+                "key": "Accept",
+                "value": "application/json"
+              },
+              {
+                "key": "Authorization",
+                "value": "Bearer {{accessToken}}"
+              }
+            ],
+            "url": "{{baseUrl}}/api/v1/training/versions",
+            "description": "Auto-generated from backend route: GET /api/v1/training/versions"
+          },
+          "response": []
+        },
+        {
+          "name": "POST /api/v1/training/versions/{version_id}/activate",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Accept",
+                "value": "application/json"
+              },
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              },
+              {
+                "key": "Authorization",
+                "value": "Bearer {{accessToken}}"
+              }
+            ],
+            "url": "{{baseUrl}}/api/v1/training/versions/{version_id}/activate",
+            "description": "Auto-generated from backend route: POST /api/v1/training/versions/{version_id}/activate",
+            "body": {
+              "mode": "raw",
+              "raw": "{}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            }
+          },
+          "response": []
+        },
+        {
+          "name": "POST /api/v1/training/versions/{version_id}/canary",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Accept",
+                "value": "application/json"
+              },
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              },
+              {
+                "key": "Authorization",
+                "value": "Bearer {{accessToken}}"
+              }
+            ],
+            "url": "{{baseUrl}}/api/v1/training/versions/{version_id}/canary",
+            "description": "Auto-generated from backend route: POST /api/v1/training/versions/{version_id}/canary",
+            "body": {
+              "mode": "raw",
+              "raw": "{}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            }
+          },
+          "response": []
+        },
+        {
+          "name": "POST /api/v1/training/versions/{version_id}/promote",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Accept",
+                "value": "application/json"
+              },
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              },
+              {
+                "key": "Authorization",
+                "value": "Bearer {{accessToken}}"
+              }
+            ],
+            "url": "{{baseUrl}}/api/v1/training/versions/{version_id}/promote",
+            "description": "Auto-generated from backend route: POST /api/v1/training/versions/{version_id}/promote",
+            "body": {
+              "mode": "raw",
+              "raw": "{}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            }
+          },
+          "response": []
+        },
+        {
+          "name": "POST /api/v1/training/versions/{version_id}/rollback",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Accept",
+                "value": "application/json"
+              },
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              },
+              {
+                "key": "Authorization",
+                "value": "Bearer {{accessToken}}"
+              }
+            ],
+            "url": "{{baseUrl}}/api/v1/training/versions/{version_id}/rollback",
+            "description": "Auto-generated from backend route: POST /api/v1/training/versions/{version_id}/rollback",
+            "body": {
+              "mode": "raw",
+              "raw": "{}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            }
+          },
+          "response": []
+        }
+      ]
+    },
+    {
+      "name": "Model Operations",
+      "item": [
+        {
+          "name": "GET /api/v1/models/live-metrics",
+          "request": {
+            "method": "GET",
+            "header": [
+              {
+                "key": "Accept",
+                "value": "application/json"
+              },
+              {
+                "key": "Authorization",
+                "value": "Bearer {{accessToken}}"
+              }
+            ],
+            "url": "{{baseUrl}}/api/v1/models/live-metrics",
+            "description": "Auto-generated from backend route: GET /api/v1/models/live-metrics"
+          },
+          "response": []
+        }
+      ]
+    }
+  ]
+}
