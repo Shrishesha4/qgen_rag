@@ -487,6 +487,7 @@
 		display: flex;
 		flex-direction: column;
 		gap: 1rem;
+		padding-top: 50px;
 	}
 
 	.subject-card {

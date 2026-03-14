@@ -154,8 +154,13 @@
 			gap: 0.5rem;
 			background: var(--glass-bg);
 			backdrop-filter: var(--glass-blur);
-			border: var(--glass-border);
+			border: 1px solid var(--glass-border);
 			box-shadow: var(--glass-shadow);
+		}
+
+		.theme-selector::before,
+		.theme-selector::after {
+			display: none;
 		}
 
 		.selector-toggle {
@@ -168,7 +173,7 @@
 			order: 2;
 			background: var(--glass-bg);
 			backdrop-filter: var(--glass-blur);
-			border: var(--glass-border);
+			border: 1px solid var(--glass-border);
 			box-shadow: var(--glass-shadow);
 			transition: transform 0.3s ease;
 		}
