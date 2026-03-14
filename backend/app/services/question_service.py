@@ -21,7 +21,7 @@ from sqlalchemy.orm import selectinload
 
 from app.models.document import Document, DocumentChunk
 from app.models.question import Question, GenerationSession
-from app.models.subject import Subject
+from app.models.subject import Subject, Topic
 from app.schemas.question import (
     QuestionGenerationRequest,
     QuestionResponse,
@@ -1478,6 +1478,79 @@ Return JSON only:
         
         return normalized
 
+    async def _build_topic_assignment_profiles(
+        self,
+        subject_id: uuid.UUID,
+    ) -> List[Dict[str, Any]]:
+        """Build topic profiles with embeddings for automatic question->topic mapping."""
+        result = await self.db.execute(
+            select(Topic)
+            .where(Topic.subject_id == subject_id)
+            .order_by(Topic.order_index.asc(), Topic.created_at.asc())
+        )
+        topics = list(result.scalars().all())
+        if not topics:
+            return []
+
+        profiles: List[Dict[str, Any]] = []
+        for topic in topics:
+            syllabus = (topic.syllabus_content or "")[:2000]
+            profile_text = f"{topic.name}\n\n{syllabus}".strip()
+            emb = await self.embedding_service.get_embedding(profile_text)
+            profiles.append(
+                {
+                    "id": topic.id,
+                    "name": topic.name,
+                    "text": profile_text,
+                    "embedding": emb,
+                }
+            )
+        return profiles
+
+    async def _infer_topic_id_for_question(
+        self,
+        question_data: Dict[str, Any],
+        chunks: List[DocumentChunk],
+        topic_profiles: List[Dict[str, Any]],
+    ) -> Optional[uuid.UUID]:
+        """Infer the best matching topic using semantic + lexical scoring."""
+        import re
+
+        if not topic_profiles:
+            return None
+
+        question_text = str(question_data.get("question_text") or "").strip()
+        if not question_text:
+            return None
+
+        context_parts = [question_text]
+        for chunk in chunks[:2]:
+            if chunk.section_heading:
+                context_parts.append(chunk.section_heading)
+            if chunk.chunk_text:
+                context_parts.append(chunk.chunk_text[:300])
+
+        query_text = "\n".join(context_parts)
+        query_embedding = await self.embedding_service.get_embedding(query_text)
+
+        q_terms = set(re.findall(r"[a-zA-Z0-9_]+", question_text.lower()))
+        best_topic_id: Optional[uuid.UUID] = None
+        best_score = -1.0
+
+        for profile in topic_profiles:
+            sem = self.embedding_service.compute_similarity(query_embedding, profile["embedding"])
+            sem_norm = (sem + 1) / 2
+
+            t_terms = set(re.findall(r"[a-zA-Z0-9_]+", str(profile["text"]).lower()))
+            lex = (len(q_terms.intersection(t_terms)) / max(1, len(q_terms))) if q_terms else 0.0
+
+            score = (0.8 * sem_norm) + (0.2 * lex)
+            if score > best_score:
+                best_score = score
+                best_topic_id = profile["id"]
+
+        return best_topic_id
+
     async def _generate_with_novelty_validation(
         self,
         user_id: uuid.UUID,
@@ -2711,43 +2784,65 @@ Output valid JSON only."""
                 r3 = await self.db.execute(q3)
                 return list(r3.scalars().all())
 
-            primary_docs = await _find_completed_docs()
-
-            # If no completed docs, check if any are still processing and wait
-            if not primary_docs:
+            async def _find_processing_primary_docs() -> list:
+                """Find subject primary docs that are still pending/processing."""
                 processing_query = select(Document).where(
                     and_(
                         Document.user_id == user_id,
                         Document.subject_id == subject_id,
+                        Document.index_type == "primary",
                         Document.processing_status.in_(["processing", "pending"]),
                     )
                 )
                 processing_result = await self.db.execute(processing_query)
-                processing_docs = list(processing_result.scalars().all())
+                return list(processing_result.scalars().all())
 
-                if processing_docs:
-                    logger.info(f"quick_generate_from_subject: {len(processing_docs)} docs still processing, waiting...")
+            def _build_processing_progress(docs: list[Document]) -> tuple[int, str | None, str | None, str | None, str]:
+                active_doc = max(
+                    docs,
+                    key=lambda doc: int(((doc.document_metadata or {}).get("processing_progress") or 0)),
+                )
+                metadata = active_doc.document_metadata or {}
+                progress_value = int(metadata.get("processing_progress") or 0)
+                step = metadata.get("processing_step")
+                detail = metadata.get("processing_detail")
+                filename = active_doc.filename
 
-                    def _build_processing_progress(docs: list[Document]) -> tuple[int, str | None, str | None, str | None, str]:
-                        active_doc = max(
-                            docs,
-                            key=lambda doc: int(((doc.document_metadata or {}).get("processing_progress") or 0)),
-                        )
-                        metadata = active_doc.document_metadata or {}
-                        progress_value = int(metadata.get("processing_progress") or 0)
-                        step = metadata.get("processing_step")
-                        detail = metadata.get("processing_detail")
-                        filename = active_doc.filename
+                if detail:
+                    message = f"[{filename}] {step or 'processing'}: {progress_value}% - {detail}"
+                else:
+                    message = f"Waiting for {len(docs)} document(s) to finish processing..."
 
-                        if detail:
-                            message = f"[{filename}] {step or 'processing'}: {progress_value}% - {detail}"
-                        else:
-                            message = f"Waiting for {len(docs)} document(s) to finish processing..."
+                if len(docs) > 1:
+                    message = f"{message} ({len(docs)} docs still processing)"
 
-                        if len(docs) > 1:
-                            message = f"{message} ({len(docs)} docs still processing)"
+                return progress_value, step, detail, filename, message
 
-                        return progress_value, step, detail, filename, message
+            # Always wait if any primary documents for this subject are still processing.
+            processing_docs = await _find_processing_primary_docs()
+            if processing_docs:
+                logger.info(f"quick_generate_from_subject: {len(processing_docs)} primary docs still processing, waiting...")
+
+                progress_value, step, detail, filename, message = _build_processing_progress(processing_docs)
+                yield QuickGenerateProgress(
+                    status="processing",
+                    progress=max(6, progress_value),
+                    message=message,
+                    processing_progress=progress_value,
+                    processing_step=step,
+                    processing_detail=detail,
+                    processing_document=filename,
+                    processing_documents_total=len(processing_docs),
+                )
+
+                # Poll every 3 seconds for up to 5 minutes
+                import asyncio
+                for _ in range(100):
+                    await asyncio.sleep(3)
+                    self.db.expire_all()
+                    processing_docs = await _find_processing_primary_docs()
+                    if not processing_docs:
+                        break
 
                     progress_value, step, detail, filename, message = _build_processing_progress(processing_docs)
                     yield QuickGenerateProgress(
@@ -2761,35 +2856,18 @@ Output valid JSON only."""
                         processing_documents_total=len(processing_docs),
                     )
 
-                    # Poll every 3 seconds for up to 5 minutes
-                    import asyncio
-                    for attempt in range(100):
-                        await asyncio.sleep(3)
-                        # Expire cached state so we get fresh data
-                        self.db.expire_all()
-                        primary_docs = await _find_completed_docs()
-                        if primary_docs:
-                            break
+                # If still processing after timeout, abort instead of generating from stale/old docs.
+                processing_docs = await _find_processing_primary_docs()
+                if processing_docs:
+                    yield QuickGenerateProgress(
+                        status="error",
+                        progress=0,
+                        message="Documents are still processing for this subject. Please wait until processing completes and retry.",
+                        processing_documents_total=len(processing_docs),
+                    )
+                    return
 
-                        # Check if still processing
-                        processing_result = await self.db.execute(processing_query)
-                        still_processing = list(processing_result.scalars().all())
-                        if not still_processing:
-                            # Documents finished but none completed successfully
-                            primary_docs = await _find_completed_docs()
-                            break
-
-                        progress_value, step, detail, filename, message = _build_processing_progress(still_processing)
-                        yield QuickGenerateProgress(
-                            status="processing",
-                            progress=max(6, progress_value),
-                            message=message,
-                            processing_progress=progress_value,
-                            processing_step=step,
-                            processing_detail=detail,
-                            processing_document=filename,
-                            processing_documents_total=len(still_processing),
-                        )
+            primary_docs = await _find_completed_docs()
 
             if not primary_docs:
                 yield QuickGenerateProgress(
@@ -2831,6 +2909,15 @@ Output valid JSON only."""
                 return
 
             logger.info(f"quick_generate_from_subject: {len(all_chunks)} total chunks across {len(primary_doc_ids)} docs")
+
+            # Build chapter/topic profiles for automatic mapping when topic_id is not provided.
+            topic_profiles: List[Dict[str, Any]] = []
+            if topic_id is None:
+                try:
+                    topic_profiles = await self._build_topic_assignment_profiles(subject_id)
+                    logger.info(f"quick_generate_from_subject: prepared {len(topic_profiles)} topic profiles for auto-mapping")
+                except Exception as e:
+                    logger.warning(f"quick_generate_from_subject: could not build topic profiles: {e}")
 
             yield QuickGenerateProgress(
                 status="generating",
@@ -3043,6 +3130,14 @@ Output valid JSON only."""
 
                         try:
                             type_marks = marks_by_type.get(q_type, 1)
+                            assigned_topic_id = topic_id
+                            if assigned_topic_id is None and topic_profiles:
+                                assigned_topic_id = await self._infer_topic_id_for_question(
+                                    question_data=question_data,
+                                    chunks=selected_chunks,
+                                    topic_profiles=topic_profiles,
+                                )
+
                             question, question_response = await self._save_question(
                                 document_id=None,
                                 session_id=session_id,
@@ -3053,7 +3148,7 @@ Output valid JSON only."""
                                 chunk_ids=[c.id for c in selected_chunks],
                                 chunks=selected_chunks,
                                 subject_id=subject_id,
-                                topic_id=topic_id,
+                                topic_id=assigned_topic_id,
                             )
                             questions_generated += 1
                             type_generated += 1
