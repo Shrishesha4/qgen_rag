@@ -13,7 +13,8 @@
 	let showGlobalBack = $derived(
 		pathname !== '/' &&
 		!pathname.includes('/login') &&
-		!pathname.includes('/dashboard')
+		!pathname.includes('/dashboard') &&
+		!pathname.includes('/ops')
 	);
 
 	function goBack() {

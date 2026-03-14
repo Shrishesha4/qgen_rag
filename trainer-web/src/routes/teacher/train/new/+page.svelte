@@ -3,7 +3,7 @@
 	import { goto } from '$app/navigation';
 	import { session } from '$lib/session';
 	import FileUploadZone from '$lib/components/FileUploadZone.svelte';
-	import { createSubject, createTopic, extractChapters, updateTopic, type TopicResponse } from '$lib/api/subjects';
+	import { createSubject, createTopic, deleteSubject, extractChapters, updateTopic, type TopicResponse } from '$lib/api/subjects';
 	import { uploadDocument } from '$lib/api/documents';
 
 	onMount(() => {
@@ -196,11 +196,16 @@
 		if (step < totalSteps && canProceed) step++;
 	}
 
+	function prevStep() {
+		if (step > 1 && !isSettingUp) step--;
+	}
+
 	async function startSetup() {
 		isSettingUp = true;
 		setupProgress = 0;
 		setupError = '';
 		setupStatus = 'Creating discipline...';
+		let subjectIdForCleanup = '';
 
 		try {
 			// 1. Create subject (or reuse tempSubjectId)
@@ -213,6 +218,7 @@
 				});
 				subjectId = subj.id;
 			}
+			subjectIdForCleanup = subjectId;
 			setupProgress = 10;
 
 			// 2. Create topics (or update existing from PDF import)
@@ -275,8 +281,18 @@
 			setupProgress = 100;
 			setupStatus = 'Setup complete! Redirecting...';
 			await new Promise(r => setTimeout(r, 600));
-			goto(`/teacher/train/loop?subject=${subjectId}`);
+			goto(`/teacher/train/loop?subject=${subjectId}&provisional=1`);
 		} catch (e: unknown) {
+			if (subjectIdForCleanup) {
+				try {
+					await deleteSubject(subjectIdForCleanup);
+					if (tempSubjectId === subjectIdForCleanup) {
+						tempSubjectId = '';
+					}
+				} catch {
+					// Ignore cleanup errors and surface original failure
+				}
+			}
 			setupError = e instanceof Error ? e.message : 'Setup failed';
 			setupStatus = '';
 			isSettingUp = false;
@@ -366,7 +382,7 @@
 						📄 Import from PDF
 					{/if}
 				</button>
-				<span class="import-hint">Look for topics in {disciplineName} syllabus.</span>
+				<span class="import-hint">Import topics from {disciplineName} syllabus PDF.</span>
 			</div>
 			{#if importError}
 				<p class="inline-error">⚠️ {importError}</p>
@@ -513,6 +529,9 @@
 				{/if}
 				{#if !isSettingUp}
 					<div class="step-actions review-actions">
+						<button class="glass-btn step-back-btn" onclick={prevStep}>
+							← Back
+						</button>
 						<button class="glass-btn step-next-btn step-train-btn" onclick={() => { step = 7; startSetup(); }}>
 							⚡ Start Training
 						</button>
@@ -540,6 +559,7 @@
 
 	{#if step >= 2 && step <= 5}
 		<div class="step-actions">
+			<button class="glass-btn step-back-btn" onclick={prevStep}>← Back</button>
 			{#if step === 2}
 				<button class="glass-btn step-next-btn" onclick={nextStep} disabled={!canProceed}>Next: Add Content →</button>
 			{:else if step === 3}
@@ -612,7 +632,7 @@
 		flex-direction: column;
 		align-items: center;
 		min-height: 100vh;
-		padding: 2rem 1.5rem;
+		padding: 2rem 1.5rem max(1.25rem, env(safe-area-inset-bottom));
 		max-width: 600px;
 		margin: 0 auto;
 	}
@@ -700,6 +720,7 @@
 
 	.step-content {
 		width: 100%;
+		flex: 1;
 		margin-top: 1rem;
 	}
 
@@ -1330,8 +1351,22 @@
 	.step-actions {
 		width: 100%;
 		display: flex;
-		justify-content: flex-end;
-		margin-top: 1rem;
+		justify-content: space-between;
+		align-items: center;
+		gap: 0.75rem;
+		margin-top: auto;
+		position: sticky;
+		bottom: max(0.5rem, env(safe-area-inset-bottom));
+		padding: 0.5rem;
+		border-radius: 14px;
+		background: rgba(11, 18, 32, 0.5);
+		backdrop-filter: blur(10px);
+		z-index: 15;
+	}
+
+	.step-back-btn {
+		padding: 0.75rem 1.15rem;
+		font-size: 0.95rem;
 	}
 
 	.step-next-btn {
@@ -1351,7 +1386,7 @@
 	}
 
 	.review-actions {
-		justify-content: center;
+		justify-content: space-between;
 	}
 
 	@media (max-width: 768px) {

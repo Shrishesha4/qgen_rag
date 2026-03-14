@@ -10,12 +10,25 @@
 		rejectWithFeedback,
 		type QuestionForVetting,
 	} from '$lib/api/vetting';
-	import { generateFromSubject, generateChapter, cancelGeneration, type GenerationEvent } from '$lib/api/documents';
-	import { getSubject, type SubjectDetailResponse } from '$lib/api/subjects';
+	import {
+		generateFromSubject,
+		generateChapter,
+		cancelGeneration,
+		listReferenceDocuments,
+		type GenerationEvent,
+	} from '$lib/api/documents';
+	import { deleteSubject, getSubject, type SubjectDetailResponse } from '$lib/api/subjects';
+
+	const READY_DOC_STATUSES = new Set(['completed', 'complete', 'processed', 'ready', 'indexed']);
+	const FAILED_DOC_STATUSES = new Set(['failed', 'error']);
+	const WAIT_POLL_MS = 1500;
+	const WAIT_DOCS_TIMEOUT_MS = 3 * 60 * 1000;
 
 	let subjectId = $state('');
 	let topicId = $state('');
 	let mixedTopicsMode = $state(false);
+	let provisionalSubject = $state(false);
+	let firstQuestionGenerated = $state(false);
 
 	// Confirm + cleanup before any SvelteKit navigation
 	beforeNavigate(({ cancel, to }) => {
@@ -41,17 +54,20 @@
 			const nextSubjectId = p.url.searchParams.get('subject') ?? '';
 			const nextTopicId = p.url.searchParams.get('topic') ?? '';
 			const nextMixedTopicsMode = p.url.searchParams.get('mode') === 'mixed-topics';
+			const nextProvisionalSubject = p.url.searchParams.get('provisional') === '1';
 
-			if (nextSubjectId !== subjectId || nextMixedTopicsMode !== mixedTopicsMode) {
+			if (nextSubjectId !== subjectId || nextMixedTopicsMode !== mixedTopicsMode || nextProvisionalSubject !== provisionalSubject) {
 				topicCycleIds = [];
 				topicCycleCursor = 0;
 				subjectDetail = null;
 				genCtx = '';
+				firstQuestionGenerated = false;
 			}
 
 			subjectId = nextSubjectId;
 			topicId = nextTopicId;
 			mixedTopicsMode = nextMixedTopicsMode;
+			provisionalSubject = nextProvisionalSubject;
 		});
 		loadAndStream();
 
@@ -163,6 +179,10 @@
 			currentIndex = 0;
 			approved = new Set();
 			rejected = new Set();
+			if (questions.length > 0) {
+				firstQuestionGenerated = true;
+				provisionalSubject = false;
+			}
 		} catch (e: unknown) {
 			error = e instanceof Error ? e.message : 'Failed to load questions';
 		} finally {
@@ -185,10 +205,12 @@
 		if (generating || batchComplete || !subjectId) return;
 		generating = true;
 		genCount = 0;
-		genMessage = 'Starting generation...';
+		genMessage = 'Checking document readiness...';
 		resetDocumentProcessingState();
 
 		try {
+			await ensureDocumentsReadyForGeneration();
+
 			if (!subjectDetail) {
 				try { subjectDetail = await getSubject(subjectId); } catch { /* ignore */ }
 			}
@@ -205,6 +227,7 @@
 			// Arm threshold: next batch triggers when 70% of current questions are vetted
 			if (!batchComplete) armNextGen();
 		} catch (e: unknown) {
+			await rollbackProvisionalSubjectIfNeeded();
 			if (!batchComplete) {
 				error = e instanceof Error ? e.message : 'Generation failed';
 			}
@@ -246,6 +269,8 @@
 				if (evt.question) {
 					resetDocumentProcessingState();
 					genCount++;
+					firstQuestionGenerated = true;
+					provisionalSubject = false;
 					// genMessage = `Generated ${genCount} question${genCount > 1 ? 's' : ''} in background...`;
 					const q = evt.question as unknown as QuestionForVetting;
 					if (q && q.id) {
@@ -305,9 +330,11 @@
 	async function doNextBatch() {
 		if (generating || batchComplete || !subjectId) return;
 		generating = true;
-		genMessage = 'Generating more questions...';
+		genMessage = 'Checking document readiness...';
 		resetDocumentProcessingState();
 		try {
+			await ensureDocumentsReadyForGeneration();
+
 			if (!genCtx) {
 				if (!subjectDetail) {
 					try { subjectDetail = await getSubject(subjectId); } catch { /* ignore */ }
@@ -323,6 +350,7 @@
 			}
 			if (!batchComplete) armNextGen();
 		} catch (e: unknown) {
+			await rollbackProvisionalSubjectIfNeeded();
 			if (!batchComplete) {
 				error = e instanceof Error ? e.message : 'Generation failed';
 			}
@@ -338,6 +366,67 @@
 		genAbortController = null;
 		resetDocumentProcessingState();
 		if (subjectId) cancelGeneration(subjectId);
+	}
+
+	async function rollbackProvisionalSubjectIfNeeded() {
+		if (!subjectId || !provisionalSubject || firstQuestionGenerated) return;
+		try {
+			await deleteSubject(subjectId);
+		} catch {
+			// Ignore rollback failure and preserve original generation error
+		}
+	}
+
+	function sleep(ms: number) {
+		return new Promise((resolve) => setTimeout(resolve, ms));
+	}
+
+	async function ensureDocumentsReadyForGeneration() {
+		if (!subjectId) return;
+
+		const startedAt = Date.now();
+		while (!batchComplete && Date.now() - startedAt < WAIT_DOCS_TIMEOUT_MS) {
+			const refs = await listReferenceDocuments(subjectId);
+			const docs = [
+				...(refs.reference_books ?? []),
+				...(refs.reference_questions ?? []),
+				...(refs.template_papers ?? []),
+			];
+
+			if (docs.length === 0) {
+				genMessage = 'Waiting for uploaded documents...';
+				docProcessingStep = 'waiting';
+				docProcessingDetail = 'No subject documents found yet.';
+				docProcessingDocument = '';
+				docProcessingDocumentsTotal = 0;
+				docProcessingProgress = 0;
+				await sleep(WAIT_POLL_MS);
+				continue;
+			}
+
+			const processedCount = docs.filter((doc) => READY_DOC_STATUSES.has((doc.processing_status || '').toLowerCase())).length;
+			const failedCount = docs.filter((doc) => FAILED_DOC_STATUSES.has((doc.processing_status || '').toLowerCase())).length;
+
+			if (processedCount > 0) {
+				resetDocumentProcessingState();
+				return;
+			}
+
+			if (failedCount === docs.length) {
+				throw new Error('All uploaded documents failed processing. Please re-upload a PDF and try again.');
+			}
+
+			const elapsed = Date.now() - startedAt;
+			docProcessingDocumentsTotal = docs.length;
+			docProcessingStep = 'processing';
+			docProcessingDetail = `Processing ${docs.length} document(s)...`;
+			docProcessingDocument = docs.length === 1 ? docs[0].filename : '';
+			docProcessingProgress = Math.min(95, Math.max(5, Math.round((elapsed / WAIT_DOCS_TIMEOUT_MS) * 100)));
+			genMessage = 'Waiting for document processing to complete...';
+			await sleep(WAIT_POLL_MS);
+		}
+
+		throw new Error('Documents are still processing. Please wait a moment and retry generation.');
 	}
 
 	function completeBatch() {

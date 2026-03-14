@@ -5,6 +5,7 @@ Subject and Topic API endpoints.
 import os
 import io
 import logging
+import re
 from typing import Optional, List
 import uuid
 
@@ -674,7 +675,7 @@ For each chapter you identify:
 Return your response as a valid JSON array of objects with the following structure:
 [
   {
-    "name": "Chapter 1: Introduction to Subject",
+    "name": "Introduction to Subject",
     "description": "Brief overview of the chapter content",
     "syllabus_content": "Detailed syllabus content for this chapter"
   }
@@ -683,8 +684,11 @@ Return your response as a valid JSON array of objects with the following structu
 Guidelines:
 - Extract ALL chapters/units/modules mentioned in the syllabus
 - Maintain the original order from the syllabus
-- Include chapter numbers if present (e.g., "Chapter 1:", "Unit 1:", "Module 1:")
+- Name field must be ONLY the clean topic title
+- DO NOT include numbering/prefixes like "Chapter 1", "CHAPTER II", "Unit 3", "Module 4" in name
 - Keep the syllabus_content detailed and accurate
+- DO NOT omit chapters even if they seem minor or have sparse content
+- DO NOT leave syllabus_content empty, you must add some relevant info related to the subject
 - If no clear chapter divisions exist, group related topics logically
 - Return ONLY the JSON array, no other text"""
 
@@ -693,7 +697,9 @@ Guidelines:
 SYLLABUS CONTENT:
 {truncated_text}
 
-Extract all chapters with their names, descriptions, and content. Return as a JSON array."""
+Extract all chapters with their names, descriptions, and content.
+Important: for each "name", return only the topic title without chapter/unit/module prefixes or numbering.
+Return as a JSON array."""
 
     try:
         result = await llm_service.generate_json(
@@ -716,19 +722,48 @@ Extract all chapters with their names, descriptions, and content. Return as a JS
             else:
                 chapters = []
         
+        def normalize_topic_name(raw_name: str) -> str:
+            """
+            Normalize extracted chapter/topic names by removing leading
+            chapter/unit numbering prefixes like:
+            - "UNIT 1:"
+            - "Unit II -"
+            - "CHAPTER 3."
+            """
+            name = (raw_name or '').strip()
+
+            # Repeatedly remove leading labels such as
+            # "UNIT II:", "CHAPTER 1 -", "MODULE 3)"
+            prefix_pattern = re.compile(
+                r"^\s*(?:unit|chapter|module)\s*(?:\d+|[ivxlcdm]+)\s*[:.\-)\]]*\s*",
+                flags=re.IGNORECASE,
+            )
+            while True:
+                next_name = prefix_pattern.sub('', name, count=1).strip()
+                if next_name == name:
+                    break
+                name = next_name
+
+            # Remove any leftover leading numeric outline (e.g., "1. ", "2) ")
+            name = re.sub(r"^\s*\d+\s*[:.\-)\]]\s*", '', name).strip()
+            return name
+
         # Validate and clean chapters
         validated_chapters = []
         for chapter in chapters:
             if isinstance(chapter, dict) and 'name' in chapter:
+                cleaned_name = normalize_topic_name(str(chapter.get('name', 'Untitled Chapter')))
+                if not cleaned_name:
+                    continue
                 validated_chapters.append({
-                    'name': str(chapter.get('name', 'Untitled Chapter'))[:255],
+                    'name': cleaned_name[:255],
                     'description': str(chapter.get('description', ''))[:1000] if chapter.get('description') else None,
                     'syllabus_content': str(chapter.get('syllabus_content', '')) if chapter.get('syllabus_content') else None,
                 })
             elif isinstance(chapter, list) and len(chapter) >= 1:
                 # LLM returned positional strings instead of a keyed object.
                 # Positions: 0 = name, 1 = description, 2 = syllabus_content
-                name_val = str(chapter[0]).strip() if chapter[0] else 'Untitled Chapter'
+                name_val = normalize_topic_name(str(chapter[0]).strip() if chapter[0] else 'Untitled Chapter')
                 if not name_val:
                     continue
                 validated_chapters.append({
@@ -738,8 +773,11 @@ Extract all chapters with their names, descriptions, and content. Return as a JS
                 })
             elif isinstance(chapter, str) and chapter.strip():
                 # Bare string — use as name only
+                cleaned_name = normalize_topic_name(chapter.strip())
+                if not cleaned_name:
+                    continue
                 validated_chapters.append({
-                    'name': chapter.strip()[:255],
+                    'name': cleaned_name[:255],
                     'description': None,
                     'syllabus_content': None,
                 })
