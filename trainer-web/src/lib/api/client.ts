@@ -1,5 +1,5 @@
 /** API base URL — configured for local dev, override via env. */
-const API_BASE_FALLBACK = 'http://localhost:8000/api/v1';
+const API_BASE_FALLBACK = 'https://admission.saveetha.com/qg/api';
 
 function normalizeApiBase(url: string): string {
 	return url.replace(/\/+$/, '');
