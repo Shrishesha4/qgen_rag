@@ -911,7 +911,6 @@
 		display: flex;
 		flex-direction: column;
 		gap: 1.5rem;
-		min-height: 100vh;
 		padding-bottom: 12rem;
 	}
 
@@ -1712,7 +1711,7 @@
 	.loop-page {
 		max-width: 1024px;
 		padding-top: 2rem;
-		padding-bottom: 3rem;
+		padding-bottom: 1rem;
 	}
 
 	.loop-hero {
@@ -1988,6 +1987,23 @@
 		background: rgba(233, 69, 96, 0.18);
 	}
 
+	@media (max-width: 1200px) {
+		.floating-stack {
+			margin: 0.5rem auto 2rem;
+			padding: 0 1rem;
+		}
+
+		.grading-grid {
+			grid-template-columns: repeat(2, minmax(0, 1fr));
+			gap: 0.65rem;
+		}
+
+		.grade-card {
+			min-height: 6rem;
+			gap: 0.6rem;
+		}
+	}
+
 	.complete-batch-fab {
 		width: 100%;
 		border-radius: 1rem;
@@ -1999,8 +2015,13 @@
 	@media (max-width: 768px) {
 		.loop-page {
 			padding: 1.25rem 1rem;
-			padding-bottom: 2rem;
+			padding-bottom: 0.5rem;
 			gap: 1rem;
+		}
+
+		.floating-stack {
+			margin: 0.25rem auto 1.5rem;
+			padding: 0;
 		}
 
 		.loop-hero {
@@ -2010,8 +2031,8 @@
 		}
 
 		.hero-title {
-			font-size: clamp(0.85rem, 5vw, 3rem);
-			padding-left: 3%;
+			font-size: clamp(1rem, 2vw, 1.6rem);
+			white-space: nowrap;
 		}
 
 		.progress-pill {
@@ -2049,12 +2070,14 @@
 
 		.grading-grid {
 			grid-template-columns: repeat(2, 1fr);
-			gap: 0.6rem;
+			gap: 0.5rem;
+			margin-top: 0.25rem;
 		}
 
 		.grade-card {
-			min-height: 6rem;
+			min-height: 5.2rem;
 			padding: 0.75rem;
+			gap: 0.45rem;
 		}
 
 		.grade-badge {
@@ -2075,8 +2098,12 @@
 
 	@media (max-width: 480px) {
 		.loop-page {
-			padding: 1rem 0.75rem;
+			padding: 1rem 0.75rem 0.35rem;
 			gap: 0.85rem;
+		}
+
+		.floating-stack {
+			margin: 0.15rem auto 1.25rem;
 		}
 
 		.hero-copy {
@@ -2163,13 +2190,13 @@
 
 		.grading-grid {
 			gap: 0.5rem;
-			margin-top: 0.75rem;
+			margin-top: 0.15rem;
 		}
 
 		.grade-card {
-			min-height: 5rem;
+			min-height: 4.65rem;
 			border-radius: 0.85rem;
-			gap: 0.5rem;
+			gap: 0.35rem;
 		}
 
 		.grade-badge {

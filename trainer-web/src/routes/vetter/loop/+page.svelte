@@ -1532,8 +1532,8 @@
 		}
 
 		.hero-title {
-			font-size: clamp(1.35rem, 5vw, 1.8rem);
-			line-height: 1.1;
+			font-size: clamp(0.75rem, 4vw, 2rem);
+			white-space: nowrap;
 		}
 
 		.progress-pill {
