@@ -106,8 +106,48 @@ async function refreshToken(
 async function parseError(res: Response): Promise<Error> {
 	try {
 		const body = await res.json();
-		return new Error(body.detail || body.message || `Request failed (${res.status})`);
+		const message = extractApiErrorMessage(body);
+		return new Error(message || `Request failed (${res.status})`);
 	} catch {
 		return new Error(`Request failed (${res.status})`);
 	}
+}
+
+function extractApiErrorMessage(payload: unknown): string {
+	if (typeof payload === 'string') return payload;
+	if (payload && typeof payload === 'object') {
+		const record = payload as Record<string, unknown>;
+		const detail = record.detail;
+		const message = record.message;
+
+		if (typeof detail === 'string' && detail.trim()) return detail;
+		if (typeof message === 'string' && message.trim()) return message;
+
+		if (Array.isArray(detail)) {
+			const msgs = detail
+				.map((item) => {
+					if (typeof item === 'string') return item;
+					if (item && typeof item === 'object') {
+						const err = item as Record<string, unknown>;
+						const loc = Array.isArray(err.loc) ? err.loc.join('.') : '';
+						const msg = typeof err.msg === 'string' ? err.msg : '';
+						if (loc && msg) return `${loc}: ${msg}`;
+						if (msg) return msg;
+					}
+					return '';
+				})
+				.filter((v) => v.length > 0);
+			if (msgs.length > 0) return msgs.join('; ');
+		}
+
+		if (detail && typeof detail === 'object') {
+			try {
+				return JSON.stringify(detail);
+			} catch {
+				return String(detail);
+			}
+		}
+	}
+
+	return '';
 }

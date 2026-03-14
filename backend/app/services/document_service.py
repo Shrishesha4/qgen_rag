@@ -108,15 +108,77 @@ class DocumentService:
         file_hash = hashlib.sha256(file_content).hexdigest()
         file_size = len(file_content)
 
-        # Check for duplicate (same user, same file)
-        existing = await self.db.execute(
+        # If this user already linked the same file for this subject+type, return existing link.
+        existing_link = await self.db.execute(
             select(Document).where(
                 Document.user_id == user_id,
+                Document.subject_id == subject_id,
+                Document.index_type == index_type,
                 Document.file_hash == file_hash,
             )
         )
-        if existing.scalar_one_or_none():
-            raise ValueError("Document already uploaded")
+        existing_doc = existing_link.scalar_one_or_none()
+        if existing_doc:
+            return existing_doc
+
+        # Reuse any already-processed matching document from any user by creating a new
+        # subject/user-scoped document record and cloning chunk rows (no re-embedding).
+        reusable = await self.db.execute(
+            select(Document).where(
+                Document.file_hash == file_hash,
+                Document.index_type == index_type,
+                Document.processing_status == "completed",
+            )
+            .order_by(Document.processed_at.desc().nullslast())
+        )
+        source_doc = reusable.scalars().first()
+        if source_doc:
+            metadata = dict(source_doc.document_metadata or {})
+            metadata["linked_from_document_id"] = str(source_doc.id)
+            document = Document(
+                user_id=user_id,
+                filename=filename,
+                file_hash=file_hash,
+                file_size_bytes=file_size,
+                mime_type=mime_type,
+                storage_path=source_doc.storage_path,
+                processing_status="completed",
+                index_type=index_type,
+                subject_id=subject_id,
+                total_chunks=source_doc.total_chunks,
+                total_tokens=source_doc.total_tokens,
+                processed_at=source_doc.processed_at,
+                document_metadata=metadata,
+            )
+            self.db.add(document)
+            await self.db.flush()
+
+            if index_type in ("reference_book", "template_paper"):
+                source_chunks = await self.db.execute(
+                    select(DocumentChunk)
+                    .where(DocumentChunk.document_id == source_doc.id)
+                    .order_by(DocumentChunk.chunk_index)
+                )
+                new_chunks = []
+                for chunk in source_chunks.scalars().all():
+                    new_chunks.append(
+                        DocumentChunk(
+                            document_id=document.id,
+                            chunk_index=chunk.chunk_index,
+                            chunk_text=chunk.chunk_text,
+                            chunk_embedding=chunk.chunk_embedding,
+                            token_count=chunk.token_count,
+                            page_number=chunk.page_number,
+                            section_heading=chunk.section_heading,
+                            chunk_metadata=dict(chunk.chunk_metadata or {}),
+                        )
+                    )
+                if new_chunks:
+                    self.db.add_all(new_chunks)
+
+            await self.db.commit()
+            await self.db.refresh(document)
+            return document
 
         # Create storage path
         storage_dir = Path(settings.UPLOAD_DIR) / str(user_id)
@@ -1163,8 +1225,15 @@ class DocumentService:
         if not document:
             return False
 
-        # Delete file
-        if os.path.exists(document.storage_path):
+        # Delete file only if no other document rows share the same storage path.
+        other_ref_count_result = await self.db.execute(
+            select(func.count()).where(
+                Document.storage_path == document.storage_path,
+                Document.id != document.id,
+            )
+        )
+        other_ref_count = int(other_ref_count_result.scalar_one() or 0)
+        if other_ref_count == 0 and os.path.exists(document.storage_path):
             os.remove(document.storage_path)
 
         # Delete from database (cascades to chunks and questions)

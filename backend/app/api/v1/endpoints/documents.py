@@ -631,6 +631,14 @@ async def upload_reference_document(
             subject_id=parsed_subject_id,
             index_type=index_type,
         )
+        linked_from = (document.document_metadata or {}).get("linked_from_document_id")
+        if linked_from:
+            return DocumentUploadResponse(
+                document_id=document.id,
+                filename=document.filename,
+                status=document.processing_status,
+                message=f"{index_type.replace('_', ' ').title()} linked from existing vector index. Ready to use.",
+            )
         
         # For reference_questions, parse Excel/CSV/PDF and store as structured chunks
         if index_type == "reference_questions":
