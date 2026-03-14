@@ -65,7 +65,7 @@
 			case 1: return disciplineName.trim().length > 0;
 			case 2: return topics.length > 0;
 			case 3: return true; // syllabus is optional per topic
-			case 4: return true; // reference materials optional
+			case 4: return materials.length > 0; // at least one reference material required
 			case 5: return true; // reference questions optional
 			case 6: return true; // review
 			case 7: return true;
@@ -447,7 +447,7 @@
 
 		<!-- Step 4: Reference Materials -->
 		{:else if step === 4}
-			<p class="step-desc">Upload reference books and study materials for this discipline</p>
+			<p class="step-desc">Upload at least one reference PDF/material before continuing</p>
 			<FileUploadZone
 				accept=".pdf,.doc,.docx,.txt,.pptx"
 				label="Upload Reference Materials"
@@ -565,7 +565,7 @@
 			{:else if step === 3}
 				<button class="glass-btn step-next-btn" onclick={nextStep}>Next: Upload Materials →</button>
 			{:else if step === 4}
-				<button class="glass-btn step-next-btn" onclick={nextStep}>Next: Upload Questions →</button>
+				<button class="glass-btn step-next-btn" onclick={nextStep} disabled={!canProceed}>Next: Upload Questions →</button>
 			{:else}
 				<button class="glass-btn step-next-btn" onclick={nextStep}>Next: Review →</button>
 			{/if}

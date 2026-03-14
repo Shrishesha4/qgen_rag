@@ -3087,15 +3087,37 @@ Output valid JSON only."""
             # Preload existing question embeddings for subject-level dedupe
             existing_embeddings = []
             try:
+                current_subject_res = await self.db.execute(
+                    select(Subject).where(Subject.id == subject_id)
+                )
+                current_subject = current_subject_res.scalar_one_or_none()
+
+                related_subject_ids: List[uuid.UUID] = [subject_id]
+                if current_subject:
+                    related_subjects_res = await self.db.execute(
+                        select(Subject.id).where(
+                            or_(
+                                func.lower(Subject.code) == func.lower(current_subject.code),
+                                func.lower(Subject.name) == func.lower(current_subject.name),
+                            )
+                        )
+                    )
+                    related_subject_ids = list(dict.fromkeys(related_subjects_res.scalars().all()))
+                    if not related_subject_ids:
+                        related_subject_ids = [subject_id]
+
                 emb_res = await self.db.execute(
                     select(Question.question_embedding).where(
-                        Question.subject_id == subject_id,
+                        Question.subject_id.in_(related_subject_ids),
                         Question.is_archived == False,
                         Question.question_embedding.isnot(None),
                     ).limit(2000)
                 )
                 existing_embeddings = [r[0] for r in emb_res.all()]
-                logger.info(f"quick_generate_from_subject: Preloaded {len(existing_embeddings)} existing embeddings for dedupe")
+                logger.info(
+                    f"quick_generate_from_subject: Preloaded {len(existing_embeddings)} existing embeddings for dedupe "
+                    f"across {len(related_subject_ids)} subject(s)"
+                )
             except Exception as e:
                 logger.warning(f"quick_generate_from_subject: Could not preload existing embeddings: {e}")
 
