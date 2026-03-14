@@ -1207,6 +1207,34 @@ class DocumentService:
         )
         return result.scalars().all()
 
+    @staticmethod
+    def _tokenize_for_search(text: str) -> List[str]:
+        """Tokenize text for robust keyword/BM25 scoring."""
+        import re
+
+        stopwords = {
+            "the", "a", "an", "and", "or", "but", "if", "then", "else", "when", "while",
+            "for", "to", "of", "in", "on", "at", "by", "from", "with", "as", "is", "are",
+            "was", "were", "be", "been", "being", "this", "that", "these", "those", "it", "its",
+            "which", "what", "who", "whom", "whose", "why", "how", "where", "do", "does", "did",
+            "can", "could", "would", "should", "will", "shall", "about", "into", "through",
+        }
+
+        tokens = re.findall(r"[a-zA-Z0-9_]+", (text or "").lower())
+        filtered = [t for t in tokens if len(t) > 1 and t not in stopwords]
+        return filtered
+
+    @staticmethod
+    def _keyword_overlap_ratio(query_terms: List[str], text_terms: List[str]) -> float:
+        """Compute keyword overlap ratio between query terms and chunk terms."""
+        if not query_terms:
+            return 0.0
+        query_set = set(query_terms)
+        if not query_set:
+            return 0.0
+        text_set = set(text_terms)
+        return len(query_set.intersection(text_set)) / len(query_set)
+
     async def hybrid_search(
         self,
         document_id: uuid.UUID,
@@ -1241,10 +1269,15 @@ class DocumentService:
         if not chunks:
             return []
         
-        # BM25 scoring
-        tokenized_chunks = [c.chunk_text.lower().split() for c in chunks]
+        query_terms = self._tokenize_for_search(query)
+        if not query_terms:
+            query_terms = query.lower().split()
+
+        # BM25 scoring with cleaner tokenization
+        tokenized_chunks = [self._tokenize_for_search(c.chunk_text) for c in chunks]
+        tokenized_chunks = [toks if toks else c.chunk_text.lower().split() for c, toks in zip(chunks, tokenized_chunks)]
         bm25 = BM25Okapi(tokenized_chunks)
-        bm25_scores = bm25.get_scores(query.lower().split())
+        bm25_scores = bm25.get_scores(query_terms)
         
         # Normalize BM25 scores to [0, 1]
         max_bm25 = max(bm25_scores) if max(bm25_scores) > 0 else 1
@@ -1263,11 +1296,27 @@ class DocumentService:
             else:
                 vector_scores.append(0)
         
-        # Combine scores using weighted sum
-        combined_scores = [
-            alpha * vector_scores[i] + (1 - alpha) * bm25_scores_normalized[i]
+        # Keyword overlap score (guards against semantically-close but off-topic chunks)
+        overlap_scores = [
+            self._keyword_overlap_ratio(query_terms, tokenized_chunks[i])
             for i in range(len(chunks))
         ]
+
+        # Combine scores using weighted sum
+        lexical_weight = (1 - alpha)
+        bm25_weight = lexical_weight * 0.7
+        overlap_weight = lexical_weight * 0.3
+        combined_scores = [
+            (alpha * vector_scores[i])
+            + (bm25_weight * bm25_scores_normalized[i])
+            + (overlap_weight * overlap_scores[i])
+            for i in range(len(chunks))
+        ]
+
+        # Penalize low-signal matches to reduce irrelevant retrieval.
+        for i in range(len(chunks)):
+            if vector_scores[i] < 0.35 and overlap_scores[i] < 0.08:
+                combined_scores[i] *= 0.65
         
         # Sort by combined score and return top-k
         ranked = sorted(
@@ -1317,10 +1366,15 @@ class DocumentService:
         if not chunks:
             return []
         
-        # BM25 scoring
-        tokenized_chunks = [c.chunk_text.lower().split() for c in chunks]
+        query_terms = self._tokenize_for_search(query)
+        if not query_terms:
+            query_terms = query.lower().split()
+
+        # BM25 scoring with cleaner tokenization
+        tokenized_chunks = [self._tokenize_for_search(c.chunk_text) for c in chunks]
+        tokenized_chunks = [toks if toks else c.chunk_text.lower().split() for c, toks in zip(chunks, tokenized_chunks)]
         bm25 = BM25Okapi(tokenized_chunks)
-        bm25_scores = bm25.get_scores(query.lower().split())
+        bm25_scores = bm25.get_scores(query_terms)
         
         # Normalize BM25 scores to [0, 1]
         max_bm25 = max(bm25_scores) if max(bm25_scores) > 0 else 1
@@ -1337,20 +1391,69 @@ class DocumentService:
             else:
                 vector_scores.append(0)
         
-        # Combine scores using weighted sum
-        combined_scores = [
-            alpha * vector_scores[i] + (1 - alpha) * bm25_scores_normalized[i]
+        # Keyword overlap score
+        overlap_scores = [
+            self._keyword_overlap_ratio(query_terms, tokenized_chunks[i])
             for i in range(len(chunks))
         ]
+
+        # Combine scores using weighted sum
+        lexical_weight = (1 - alpha)
+        bm25_weight = lexical_weight * 0.7
+        overlap_weight = lexical_weight * 0.3
+        combined_scores = [
+            (alpha * vector_scores[i])
+            + (bm25_weight * bm25_scores_normalized[i])
+            + (overlap_weight * overlap_scores[i])
+            for i in range(len(chunks))
+        ]
+
+        # Penalize low-signal matches and softly prefer primary chunks when present.
+        for i, chunk in enumerate(chunks):
+            if vector_scores[i] < 0.35 and overlap_scores[i] < 0.08:
+                combined_scores[i] *= 0.6
+
+            doc = getattr(chunk, "document", None)
+            if doc and getattr(doc, "index_type", None) == "primary":
+                combined_scores[i] *= 1.06
         
-        # Sort by combined score and return top-k
+        # Sort by combined score
         ranked = sorted(
             zip(chunks, combined_scores),
             key=lambda x: x[1],
             reverse=True
         )
-        
-        return [chunk for chunk, _ in ranked[:top_k]]
+
+        # Balance across documents to avoid one noisy reference doc dominating results.
+        max_per_document = max(2, top_k // 2)
+        selected: List[DocumentChunk] = []
+        doc_counts: Dict[uuid.UUID, int] = {}
+
+        for chunk, _ in ranked:
+            doc_count = doc_counts.get(chunk.document_id, 0)
+            if doc_count >= max_per_document:
+                continue
+            selected.append(chunk)
+            doc_counts[chunk.document_id] = doc_count + 1
+            if len(selected) >= top_k:
+                break
+
+        if len(selected) < top_k:
+            selected_ids = {c.id for c in selected}
+            for chunk, _ in ranked:
+                if chunk.id in selected_ids:
+                    continue
+                selected.append(chunk)
+                if len(selected) >= top_k:
+                    break
+
+        primary_candidates = [c for c, _ in ranked if getattr(getattr(c, "document", None), "index_type", None) == "primary"]
+        if primary_candidates and selected and all(
+            getattr(getattr(c, "document", None), "index_type", None) != "primary" for c in selected
+        ):
+            selected[-1] = primary_candidates[0]
+
+        return selected[:top_k]
 
     async def get_reference_document_ids(
         self,

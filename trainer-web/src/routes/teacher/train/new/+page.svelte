@@ -370,7 +370,7 @@
 						📄 Import from PDF
 					{/if}
 				</button>
-				<span class="import-hint">AI will extract chapters automatically</span>
+				<span class="import-hint">Looking for chapters in {disciplineName} syllabus...</span>
 			</div>
 			{#if importError}
 				<p class="inline-error">⚠️ {importError}</p>

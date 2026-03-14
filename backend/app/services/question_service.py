@@ -49,6 +49,8 @@ CRITICAL RULES:
    - Identifying implications or consequences
 3. The question MUST be directly answerable from the provided content
 4. The correct answer MUST be factually accurate based on the content
+4a. The `correct_answer` label MUST match exactly one option (A/B/C/D...)
+4b. The explanation MUST justify that same option label and MUST NOT justify a different option
 5. All 4 options must be plausible and challenging - avoid obviously wrong distractors
 6. CHALLENGING PATTERNS:
    - "Which statement BEST explains..."
@@ -884,7 +886,6 @@ Output valid JSON only."""
         # MCQ-specific validation
         if question_type == "mcq":
             options = question_data.get("options", [])
-            correct_answer = question_data.get("correct_answer", "")
             
             if not options:
                 return False, "MCQ missing options", 0.0
@@ -892,19 +893,36 @@ Output valid JSON only."""
                 return False, f"MCQ has only {len(options)} options, needs at least 3", 0.3
             if len(options) > 6:
                 return False, "MCQ has too many options", 0.5
+
+            normalized_options = self._normalize_options(options)
+            question_data["options"] = normalized_options
             
             # Check for unique options
-            option_texts = [self._extract_option_text(opt) for opt in options]
+            option_texts = [self._extract_option_text(opt) for opt in normalized_options]
             if len(set(option_texts)) != len(option_texts):
                 return False, "MCQ options are not unique", 0.3
             
-            # Check correct answer is provided
-            if not correct_answer:
-                return False, "MCQ missing correct answer", 0.0
+            normalized_answer = self._normalize_mcq_correct_answer(question_data, normalized_options)
+            if not normalized_answer:
+                return False, "MCQ missing/invalid correct answer", 0.0
+            question_data["correct_answer"] = normalized_answer
+
+            explanation = str(question_data.get("explanation") or "")
+            explanation_label = self._extract_label_from_explanation(explanation, len(normalized_options))
+            if explanation_label and explanation_label != normalized_answer:
+                question_data["correct_answer"] = explanation_label
+                normalized_answer = explanation_label
             
             # Check options are not too similar
-            if await self._check_options_too_similar(options):
+            if await self._check_options_too_similar(normalized_options):
                 return False, "MCQ options are too similar to each other", 0.4
+
+            # Verify answer against explanation + evidence context.
+            verified_label, verify_conf, _ = await self._verify_mcq_answer_with_llm(question_data, chunks)
+            if verified_label and verified_label != normalized_answer and verify_conf >= 0.8:
+                question_data["correct_answer"] = verified_label
+            elif verified_label and verified_label != normalized_answer and verify_conf >= 0.55:
+                return False, "MCQ answer inconsistent with evidence", 0.35
         
         # Short answer validation
         elif question_type == "short_answer":
@@ -962,6 +980,170 @@ Output valid JSON only."""
         
         return False
 
+    def _extract_option_label(self, answer: Any, option_count: int) -> Optional[str]:
+        """Extract normalized option label (A/B/C/...) from varied answer formats."""
+        import re
+
+        if answer is None:
+            return None
+
+        label_space = [chr(ord("A") + i) for i in range(max(0, option_count))]
+        if not label_space:
+            return None
+
+        answer_str = str(answer).strip()
+        if not answer_str:
+            return None
+
+        upper = answer_str.upper().strip()
+
+        match = re.match(r"^\(?\s*([A-Z])\s*\)?(?:[).:\-\s]|$)", upper)
+        if match and match.group(1) in label_space:
+            return match.group(1)
+
+        num_match = re.match(r"^(\d+)(?:[).:\-\s]|$)", answer_str)
+        if num_match:
+            idx = int(num_match.group(1)) - 1
+            if 0 <= idx < len(label_space):
+                return label_space[idx]
+
+        embedded = re.search(r"\b(?:option|answer|correct)\s*[:\-\s]*\(?([A-Z])\)?\b", upper)
+        if embedded and embedded.group(1) in label_space:
+            return embedded.group(1)
+
+        return None
+
+    def _normalize_mcq_correct_answer(self, question_data: Dict[str, Any], options: List[str]) -> Optional[str]:
+        """Normalize MCQ correct answer to an option label and repair text-style answers."""
+        raw_answer = (
+            question_data.get("correct_answer")
+            or question_data.get("expected_answer")
+            or question_data.get("answer")
+        )
+
+        if isinstance(raw_answer, dict):
+            raw_answer = raw_answer.get("option") or raw_answer.get("value") or str(raw_answer)
+
+        label = self._extract_option_label(raw_answer, len(options))
+        if label:
+            return label
+
+        if raw_answer is None:
+            return None
+
+        cleaned_answer = str(raw_answer).strip().lower()
+        if not cleaned_answer:
+            return None
+
+        labels = [chr(ord("A") + i) for i in range(len(options))]
+        best_label = None
+        best_score = 0.0
+
+        for idx, option in enumerate(options):
+            option_text = self._extract_option_text(option)
+            if not option_text:
+                continue
+
+            if cleaned_answer == option_text:
+                return labels[idx]
+
+            answer_tokens = set(cleaned_answer.split())
+            option_tokens = set(option_text.split())
+            overlap = len(answer_tokens.intersection(option_tokens)) / max(1, len(answer_tokens))
+            if cleaned_answer in option_text:
+                overlap = max(overlap, 0.9)
+            if option_text in cleaned_answer:
+                overlap = max(overlap, 0.85)
+
+            if overlap > best_score:
+                best_score = overlap
+                best_label = labels[idx]
+
+        return best_label if best_score >= 0.6 else None
+
+    def _extract_label_from_explanation(self, explanation: str, option_count: int) -> Optional[str]:
+        """Extract option label from explanation text when explicitly stated."""
+        import re
+
+        if not explanation:
+            return None
+
+        label_space = {chr(ord("A") + i) for i in range(max(0, option_count))}
+        if not label_space:
+            return None
+
+        text = str(explanation).upper()
+        patterns = [
+            r"\b(?:CORRECT\s+ANSWER|ANSWER|OPTION)\s*(?:IS|:)?\s*\(?([A-Z])\)?\b",
+            r"\b\(?([A-Z])\)?\s*(?:IS|WILL BE)\s+CORRECT\b",
+        ]
+
+        for pattern in patterns:
+            match = re.search(pattern, text)
+            if match:
+                label = match.group(1)
+                if label in label_space:
+                    return label
+
+        return None
+
+    async def _verify_mcq_answer_with_llm(
+        self,
+        question_data: Dict[str, Any],
+        chunks: List[DocumentChunk],
+    ) -> Tuple[Optional[str], float, str]:
+        """Verify MCQ answer choice against provided evidence and explanation."""
+        options = question_data.get("options") or []
+        if not options:
+            return None, 0.0, "missing options"
+
+        context_blocks = []
+        for chunk in chunks[:3]:
+            snippet = (chunk.chunk_text or "")[:600]
+            if snippet:
+                context_blocks.append(snippet)
+
+        evidence_text = "\n\n---\n\n".join(context_blocks)
+
+        verifier_prompt = f"""Validate the correct option for this MCQ using ONLY the evidence.
+
+Question:
+{question_data.get("question_text", "")}
+
+Options:
+{json.dumps(options, ensure_ascii=False)}
+
+Current answer label:
+{question_data.get("correct_answer", "")}
+
+Explanation:
+{question_data.get("explanation", "")}
+
+Evidence:
+{evidence_text}
+
+Return JSON only:
+{{
+  "verified_answer": "A",
+  "is_consistent": true,
+  "confidence": 0.0,
+  "reason": "short reason"
+}}
+"""
+
+        try:
+            result = await self.llm_service.generate_json(
+                prompt=verifier_prompt,
+                system_prompt="You are a strict examiner. Do not guess. Use only provided evidence.",
+                temperature=0.1,
+            )
+            verified = self._extract_option_label(result.get("verified_answer"), len(options))
+            confidence = float(result.get("confidence", 0.0) or 0.0)
+            reason = str(result.get("reason", ""))
+            return verified, max(0.0, min(confidence, 1.0)), reason
+        except Exception:
+            return None, 0.0, "verifier unavailable"
+
     async def _save_question(
         self,
         document_id: Optional[uuid.UUID],
@@ -1004,11 +1186,15 @@ Output valid JSON only."""
         normalized_options = None
         if raw_options:
             normalized_options = self._normalize_options(raw_options)
+            question_data["options"] = normalized_options
         
         # Normalize correct answer
-        correct_answer = question_data.get("correct_answer") or question_data.get("expected_answer") or question_data.get("answer")
-        if isinstance(correct_answer, dict):
-            correct_answer = correct_answer.get("option") or correct_answer.get("value") or str(correct_answer)
+        if question_type == "mcq" and normalized_options:
+            correct_answer = self._normalize_mcq_correct_answer(question_data, normalized_options)
+        else:
+            correct_answer = question_data.get("correct_answer") or question_data.get("expected_answer") or question_data.get("answer")
+            if isinstance(correct_answer, dict):
+                correct_answer = correct_answer.get("option") or correct_answer.get("value") or str(correct_answer)
 
         # Build source information from chunks
         source_info = self._build_source_info(chunks, question_data)
@@ -1627,11 +1813,15 @@ Output valid JSON only."""
         normalized_options = None
         if raw_options:
             normalized_options = self._normalize_options(raw_options)
+            question_data["options"] = normalized_options
         
         # Normalize correct answer
-        correct_answer = question_data.get("correct_answer") or question_data.get("expected_answer") or question_data.get("answer")
-        if isinstance(correct_answer, dict):
-            correct_answer = correct_answer.get("option") or correct_answer.get("value") or str(correct_answer)
+        if question_type == "mcq" and normalized_options:
+            correct_answer = self._normalize_mcq_correct_answer(question_data, normalized_options)
+        else:
+            correct_answer = question_data.get("correct_answer") or question_data.get("expected_answer") or question_data.get("answer")
+            if isinstance(correct_answer, dict):
+                correct_answer = correct_answer.get("option") or correct_answer.get("value") or str(correct_answer)
         
         question = Question(
             document_id=document_id,
