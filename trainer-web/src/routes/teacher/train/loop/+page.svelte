@@ -2021,7 +2021,8 @@
 
 		.floating-stack {
 			margin: 0.25rem auto 1.5rem;
-			padding: 0;
+			padding: 0 0.4rem;
+			box-sizing: border-box;
 		}
 
 		.loop-hero {
@@ -2104,6 +2105,7 @@
 
 		.floating-stack {
 			margin: 0.15rem auto 1.25rem;
+			padding: 0 0.3rem;
 		}
 
 		.hero-copy {
@@ -2207,6 +2209,12 @@
 
 		.grade-label {
 			font-size: 0.75rem;
+		}
+	}
+
+	@media (max-width: 380px) {
+		.loop-hero {
+			transform: translateX(0.35rem);
 		}
 	}
 </style>

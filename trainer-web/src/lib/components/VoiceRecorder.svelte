@@ -5,6 +5,8 @@
 	 * Matches the next-ui reference design.
 	 */
 
+	import { onMount } from 'svelte';
+
 	import pcmCaptureWorkletUrl from '$lib/worklets/pcm-capture.worklet.ts?url';
 
 	type SpeechRecognitionResultLike = {
@@ -83,7 +85,7 @@
 		};
 	});
 
-	$effect(() => {
+	onMount(() => {
 		if (typeof window === 'undefined') return;
 		setupSpeechRecognition();
 		void startCapture();

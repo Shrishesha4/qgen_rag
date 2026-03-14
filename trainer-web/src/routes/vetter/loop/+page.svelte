@@ -1912,4 +1912,10 @@
 			font-size: 0.88rem;
 		}
 	}
+
+	@media (max-width: 380px) {
+		.loop-hero {
+			transform: translateX(0.35rem);
+		}
+	}
 </style>
