@@ -248,7 +248,7 @@ async def upload_avatar(
         f.write(content)
     
     # Update user avatar_url
-    avatar_url = f"/api/v1/auth/avatars/{filename}"
+    avatar_url = f"{settings.API_PREFIX}/auth/avatars/{filename}"
     user_service = UserService(db)
     update_data = UserUpdate(avatar_url=avatar_url)
     updated_user = await user_service.update_user(current_user.id, update_data)

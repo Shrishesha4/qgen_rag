@@ -10,6 +10,9 @@ from pydantic import Field
 class Settings(BaseSettings):
     """Application settings loaded from environment variables."""
 
+    # API routing prefix
+    API_PREFIX: str = Field(default="/api/v1")
+
     # Database (PostgreSQL + pgvector for vector data)
     DATABASE_URL: str = Field(
         default="postgresql+asyncpg://qgen_user:qgen_password@localhost:5432/qgen_db"

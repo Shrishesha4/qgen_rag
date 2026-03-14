@@ -167,7 +167,7 @@ if settings.ENABLE_METRICS:
 
 
 # Include API routes
-app.include_router(api_router, prefix="/api/v1")
+app.include_router(api_router, prefix=settings.API_PREFIX)
 
 
 @app.get("/", tags=["Health"])

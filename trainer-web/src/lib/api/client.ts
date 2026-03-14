@@ -1,11 +1,16 @@
-/** API base URL — configured for local dev, override via env. */
-const API_BASE_FALLBACK = 'https://admission.saveetha.com/qg/api';
+/** API base URL — must be provided via environment. */
 
 function normalizeApiBase(url: string): string {
 	return url.replace(/\/+$/, '');
 }
 
-export const API_BASE = normalizeApiBase(import.meta.env.VITE_API_BASE || API_BASE_FALLBACK);
+const apiBaseFromEnv = import.meta.env.VITE_API_BASE;
+
+if (!apiBaseFromEnv) {
+	throw new Error('VITE_API_BASE is not configured. Set it in the trainer-web environment file.');
+}
+
+export const API_BASE = normalizeApiBase(apiBaseFromEnv);
 
 /** Build a full API URL. */
 export function apiUrl(path: string): string {
