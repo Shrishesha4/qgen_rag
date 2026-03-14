@@ -15,6 +15,7 @@
 
 	let subjectId = $state('');
 	let topicId = $state('');
+	let mixedTopicsMode = $state(false);
 
 	// Confirm + cleanup before any SvelteKit navigation
 	beforeNavigate(({ cancel, to }) => {
@@ -37,8 +38,20 @@
 			if (!s) goto('/teacher/login');
 		});
 		const unsubPage = page.subscribe((p) => {
-			subjectId = p.url.searchParams.get('subject') ?? '';
-			topicId = p.url.searchParams.get('topic') ?? '';
+			const nextSubjectId = p.url.searchParams.get('subject') ?? '';
+			const nextTopicId = p.url.searchParams.get('topic') ?? '';
+			const nextMixedTopicsMode = p.url.searchParams.get('mode') === 'mixed-topics';
+
+			if (nextSubjectId !== subjectId || nextMixedTopicsMode !== mixedTopicsMode) {
+				topicCycleIds = [];
+				topicCycleCursor = 0;
+				subjectDetail = null;
+				genCtx = '';
+			}
+
+			subjectId = nextSubjectId;
+			topicId = nextTopicId;
+			mixedTopicsMode = nextMixedTopicsMode;
 		});
 		loadAndStream();
 
@@ -85,6 +98,8 @@
 	let subjectDetail = $state<SubjectDetailResponse | null>(null);
 	let genCtx = $state('');
 	let nextGenAt = $state(0); // totalReviewed count that triggers next batch (0 = disarmed)
+	let topicCycleIds = $state<string[]>([]);
+	let topicCycleCursor = $state(0);
 
 	// Trigger next generation when user has vetted ≥70% of current questions
 	$effect(() => {
@@ -181,7 +196,11 @@
 				? `${subjectDetail.name}: ${subjectDetail.topics.map(t => t.name).join(', ')}`
 				: 'General questions';
 
-			await generateBatch(genCtx, BATCH_SIZE, topicId || undefined);
+			if (mixedTopicsMode && !topicId) {
+				await generateMixedTopicBatch(genCtx, BATCH_SIZE);
+			} else {
+				await generateBatch(genCtx, BATCH_SIZE, topicId || undefined);
+			}
 
 			// Arm threshold: next batch triggers when 70% of current questions are vetted
 			if (!batchComplete) armNextGen();
@@ -248,6 +267,37 @@
 		}
 	}
 
+	async function ensureTopicCycleIds(): Promise<string[]> {
+		if (topicCycleIds.length > 0) return topicCycleIds;
+		if (!subjectDetail && subjectId) {
+			try {
+				subjectDetail = await getSubject(subjectId);
+			} catch {
+				return [];
+			}
+		}
+
+		const topicIds = (subjectDetail?.topics ?? []).map((topic) => topic.id);
+		topicCycleIds = topicIds;
+		return topicIds;
+	}
+
+	async function generateMixedTopicBatch(ctx: string, count: number) {
+		const topicIds = await ensureTopicCycleIds();
+		if (topicIds.length === 0) {
+			await generateBatch(ctx, count, undefined);
+			return;
+		}
+
+		let remaining = count;
+		while (remaining > 0 && !batchComplete) {
+			const topicIdForQuestion = topicIds[topicCycleCursor % topicIds.length];
+			topicCycleCursor = (topicCycleCursor + 1) % topicIds.length;
+			await generateBatch(ctx, 1, topicIdForQuestion);
+			remaining -= 1;
+		}
+	}
+
 	function armNextGen() {
 		nextGenAt = Math.max(1, Math.floor(questions.length * 0.7));
 	}
@@ -266,7 +316,11 @@
 					? `${subjectDetail.name}: ${subjectDetail.topics.map(t => t.name).join(', ')}`
 					: 'General questions';
 			}
-			await generateBatch(genCtx, BATCH_SIZE, topicId || undefined);
+			if (mixedTopicsMode && !topicId) {
+				await generateMixedTopicBatch(genCtx, BATCH_SIZE);
+			} else {
+				await generateBatch(genCtx, BATCH_SIZE, topicId || undefined);
+			}
 			if (!batchComplete) armNextGen();
 		} catch (e: unknown) {
 			if (!batchComplete) {
@@ -2020,8 +2074,8 @@
 		}
 
 		.floating-stack {
-			margin: 0.25rem auto 1.5rem;
-			padding: 0 0.4rem;
+			margin: 0.55rem auto 1.9rem;
+			padding: 0 1.35rem;
 			box-sizing: border-box;
 		}
 
@@ -2104,8 +2158,9 @@
 		}
 
 		.floating-stack {
-			margin: 0.15rem auto 1.25rem;
-			padding: 0 0.3rem;
+			margin: 0.45rem auto 1.6rem;
+			padding: 0 0.9rem;
+			box-sizing: border-box;
 		}
 
 		.hero-copy {

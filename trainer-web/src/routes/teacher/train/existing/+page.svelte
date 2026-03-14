@@ -130,6 +130,10 @@
 		goto(`/teacher/train/loop?subject=${subjectId}&topic=${topicId}`);
 	}
 
+	function trainSubjectMixed(subjectId: string) {
+		goto(`/teacher/train/loop?subject=${subjectId}&mode=mixed-topics`);
+	}
+
 	function openAddTopicModal(subject: SubjectResponse) {
 		addTopicSubjectId = subject.id;
 		addTopicSubjectName = subject.name;
@@ -295,18 +299,35 @@
 			<div class="subject-list">
 				{#each filteredSubjects as { subject: s, filteredTopics, subjectMatches }}
 				<div class="subject-card glass-card" class:expanded={expandedId === s.id}>
-					<button class="sc-header" onclick={() => toggleSubject(s.id)}>
-						<div class="sc-top">
-							<span class="sc-code">{s.code}</span>
-							<span class="sc-arrow">{expandedId === s.id ? '▼' : '▶'}</span>
+					<div class="subject-card-row">
+						<button class="sc-header" onclick={() => toggleSubject(s.id)}>
+							<div class="sc-top">
+								<span class="sc-code">{s.code}</span>
+								<span class="sc-arrow">{expandedId === s.id ? '▼' : '▶'}</span>
+							</div>
+							<h2 class="sc-name">{s.name}</h2>
+							<div class="sc-stats">
+								<span class="sc-stat">📝 {s.total_questions} questions</span>
+								<span class="sc-stat">📚 {s.total_topics} topics</span>
+							</div>
+						</button>
+
+						<div class="subject-quick-actions">
+							<button
+								type="button"
+								class="quick-generate-btn"
+								onclick={() => trainSubjectMixed(s.id)}
+								aria-label="Generate mixed questions"
+								title="Generate mixed questions"
+							>
+								<svg width="28" height="28" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+									<path d="m12 3 1.8 4.8L18.5 10l-4.7 2.2L12 17l-1.8-4.8L5.5 10l4.7-2.2L12 3Z"></path>
+									<path d="M19 14v3"></path>
+									<path d="M17.5 15.5h3"></path>
+								</svg>
+							</button>
 						</div>
-						<h2 class="sc-name">{s.name}</h2>
-						<div class="sc-stats">
-							<span class="sc-stat">📝 {s.total_questions} questions</span>
-							<span class="sc-stat">📚 {s.total_topics} topics</span>
-							<span class="sc-stat">📅 {formatDate(s.created_at)}</span>
-						</div>
-					</button>
+					</div>
 
 					{#if expandedId === s.id}
 						<div class="topics-panel">
@@ -559,12 +580,53 @@
 		border-color: rgba(var(--theme-primary-rgb), 0.3);
 	}
 
+	.subject-card-row {
+		display: grid;
+		grid-template-columns: minmax(0, 1fr) auto;
+		gap: 0.75rem;
+		padding: 0.75rem;
+		align-items: stretch;
+	}
+
+	.subject-quick-actions {
+		display: flex;
+		align-items: center;
+		justify-content: center;
+	}
+
+	.quick-generate-btn {
+		width: 3.5rem;
+		height: 3.5rem;
+		border-radius: 999px;
+		border: 1px solid rgba(255, 255, 255, 0.22);
+		background: rgba(255, 255, 255, 0.08);
+		color: rgba(255, 255, 255, 0.92);
+		cursor: pointer;
+		display: flex;
+		align-items: center;
+		justify-content: center;
+		transition: transform 0.15s ease, border-color 0.15s ease, background 0.15s ease;
+	}
+
+	.quick-generate-btn:hover {
+		background: rgba(255, 255, 255, 0.14);
+		border-color: rgba(255, 255, 255, 0.35);
+		transform: translateY(-1px);
+	}
+
+	.quick-generate-btn:focus-visible {
+		outline: 2px solid rgba(255, 255, 255, 0.35);
+		outline-offset: 1px;
+	}
+
 	.sc-header {
 		display: block;
 		text-align: left;
 		cursor: pointer;
-		padding: 1.25rem 1.5rem;
+		padding: 0.9rem 1rem;
+		min-height: 96px;
 		width: 100%;
+		border-radius: 14px;
 		font-family: inherit;
 		background: none;
 		border: none;
@@ -952,6 +1014,21 @@
 	@media (max-width: 768px) {
 		.page {
 			padding-top: 1rem;
+		}
+
+		.subject-card-row {
+			gap: 0.55rem;
+			padding: 0.6rem;
+		}
+
+		.quick-generate-btn {
+			width: 3.25rem;
+			height: 3.25rem;
+		}
+
+		.sc-header {
+			min-height: 84px;
+			padding: 0.75rem 0.85rem;
 		}
 
 		.small-btn {
