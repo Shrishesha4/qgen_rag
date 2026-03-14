@@ -1551,6 +1551,90 @@ Return JSON only:
 
         return best_topic_id
 
+    async def backfill_unmapped_questions_for_subject(
+        self,
+        user_id: uuid.UUID,
+        subject_id: uuid.UUID,
+        limit: int = 500,
+        dry_run: bool = False,
+    ) -> Dict[str, Any]:
+        """
+        Backfill topic mappings for existing subject questions where topic_id is NULL.
+
+        Uses the same semantic + lexical topic inference logic used by
+        subject-wide generation auto-mapping.
+        """
+        # Verify subject ownership
+        subject_res = await self.db.execute(
+            select(Subject).where(
+                Subject.id == subject_id,
+                Subject.user_id == user_id,
+            )
+        )
+        subject = subject_res.scalar_one_or_none()
+        if not subject:
+            raise ValueError("Subject not found or access denied")
+
+        topic_profiles = await self._build_topic_assignment_profiles(subject_id)
+        if not topic_profiles:
+            return {
+                "subject_id": str(subject_id),
+                "dry_run": dry_run,
+                "scanned": 0,
+                "mapped": 0,
+                "unmatched": 0,
+                "message": "No topics found for subject",
+                "by_topic": {},
+            }
+
+        q = select(Question).where(
+            Question.subject_id == subject_id,
+            Question.topic_id.is_(None),
+            Question.is_archived == False,
+            Question.is_latest == True,
+        ).order_by(Question.generated_at.desc())
+
+        if limit and limit > 0:
+            q = q.limit(limit)
+
+        res = await self.db.execute(q)
+        unmapped_questions = list(res.scalars().all())
+
+        mapped_count = 0
+        unmatched_count = 0
+        by_topic: Dict[str, int] = {}
+
+        for question in unmapped_questions:
+            inferred_topic_id = await self._infer_topic_id_for_question(
+                question_data={"question_text": question.question_text},
+                chunks=[],
+                topic_profiles=topic_profiles,
+            )
+
+            if inferred_topic_id is None:
+                unmatched_count += 1
+                continue
+
+            mapped_count += 1
+            topic_key = str(inferred_topic_id)
+            by_topic[topic_key] = by_topic.get(topic_key, 0) + 1
+
+            if not dry_run:
+                question.topic_id = inferred_topic_id
+
+        if not dry_run and mapped_count > 0:
+            await self.db.commit()
+
+        return {
+            "subject_id": str(subject_id),
+            "dry_run": dry_run,
+            "scanned": len(unmapped_questions),
+            "mapped": mapped_count,
+            "unmatched": unmatched_count,
+            "message": "Backfill completed",
+            "by_topic": by_topic,
+        }
+
     async def _generate_with_novelty_validation(
         self,
         user_id: uuid.UUID,

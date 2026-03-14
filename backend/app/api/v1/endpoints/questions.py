@@ -669,6 +669,38 @@ async def cancel_generation(
     return {"message": "Generation cancelled", "subject_id": subject_id}
 
 
+@router.post("/backfill-topic-mapping")
+async def backfill_topic_mapping(
+    subject_id: str = Form(..., description="Subject ID to backfill topic mappings for"),
+    limit: int = Form(default=500, ge=1, le=5000, description="Max unmapped questions to scan"),
+    dry_run: bool = Form(default=False, description="If true, compute mappings without writing to DB"),
+    current_user: User = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+):
+    """One-click backfill: auto-map existing unmapped subject questions to topics."""
+    try:
+        parsed_subject_id = uuid.UUID(subject_id)
+    except ValueError:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Invalid subject_id format")
+
+    service = QuestionGenerationService(db)
+    try:
+        result = await service.backfill_unmapped_questions_for_subject(
+            user_id=current_user.id,
+            subject_id=parsed_subject_id,
+            limit=limit,
+            dry_run=dry_run,
+        )
+        return {"status": "ok", **result}
+    except ValueError as e:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=str(e))
+    except Exception as e:
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail=f"Backfill failed: {str(e)}",
+        )
+
+
 @router.get("", response_model=QuestionListResponse)
 async def list_questions(
     document_id: Optional[uuid.UUID] = Query(None, description="Document ID to get questions for"),
