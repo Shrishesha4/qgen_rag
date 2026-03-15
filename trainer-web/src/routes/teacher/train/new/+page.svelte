@@ -1867,13 +1867,20 @@
 
 	@media (max-width: 768px) {
 		.modal-backdrop {
-			align-items: flex-end;
-			padding-bottom: max(0.75rem, env(safe-area-inset-bottom));
+			align-items: flex-start;
+			padding: max(0.6rem, env(safe-area-inset-top)) 0.6rem
+				max(0.75rem, env(safe-area-inset-bottom));
+			overflow-y: auto;
 		}
 
 		.discipline-modal {
-			max-height: 82dvh;
+			max-height: calc(100dvh - env(safe-area-inset-top) - env(safe-area-inset-bottom) - 1.25rem);
+			margin-top: 0.15rem;
 			overflow: auto;
+		}
+
+		.modal-backdrop:focus-within .discipline-modal {
+			max-height: 56dvh;
 		}
 
 		.wizard {
@@ -1948,7 +1955,8 @@
 
 		/* Modal mobile styles */
 		.modal-backdrop {
-			padding: 0.5rem;
+			padding-left: 0.5rem;
+			padding-right: 0.5rem;
 		}
 
 		.discipline-modal {

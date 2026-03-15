@@ -10,13 +10,21 @@
 	let { children } = $props();
 
 	let pathname = $derived($page.url.pathname);
-	let showGlobalBack = $derived(
-		pathname !== '/' &&
-		!pathname.includes('/login') &&
-		!pathname.includes('/dashboard') &&
-		!pathname.includes('/ops') &&
-		!pathname.includes('/loop')
-	);
+	const hideGlobalBackPrefixes = ['/teacher/train/loop', '/teacher/verify', '/vetter/loop'];
+	let showGlobalBack = $derived.by(() => {
+		if (
+			pathname === '/' ||
+			pathname.includes('/login') ||
+			pathname.includes('/dashboard') ||
+			pathname.includes('/ops')
+		) {
+			return false;
+		}
+		if (pathname.startsWith('/teacher/train/new')) {
+			return true;
+		}
+		return !hideGlobalBackPrefixes.some((prefix) => pathname.startsWith(prefix));
+	});
 
 	function goBack() {
 		if (typeof window !== 'undefined' && window.history.length > 1) {
@@ -77,8 +85,8 @@
 <style>
 	.global-back-btn {
 		position: fixed;
-		top: 1rem;
-		left: 1rem;
+		top: calc(env(safe-area-inset-top) + 0.75rem);
+		left: calc(env(safe-area-inset-left) + 0.75rem);
 		z-index: 70;
 		width: 42px;
 		height: 42px;
@@ -112,16 +120,20 @@
 	}
 
 	.app-shell {
-		min-height: 100vh;
+		min-height: 100dvh;
 		color: var(--theme-text);
 		position: relative;
 		z-index: 2;
+		padding-top: calc(env(safe-area-inset-top) + 0.25rem);
+		padding-right: env(safe-area-inset-right);
+		padding-bottom: env(safe-area-inset-bottom);
+		padding-left: env(safe-area-inset-left);
 	}
 
 	@media (max-width: 640px) {
 		.global-back-btn {
-			top: 0.75rem;
-			left: 0.75rem;
+			top: calc(env(safe-area-inset-top) + 0.5rem);
+			left: calc(env(safe-area-inset-left) + 0.5rem);
 			width: 40px;
 			height: 40px;
 			border-radius: 50%;
