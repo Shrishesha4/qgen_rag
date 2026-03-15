@@ -3144,6 +3144,7 @@ Output valid JSON only."""
             generated_embeddings = []
             generated_questions_text = []
             total_question_index = 0
+            total_attempted = 0
 
             # Preload existing question embeddings for subject-level dedupe
             existing_embeddings = []
@@ -3257,6 +3258,19 @@ Output valid JSON only."""
                 max_attempts = type_count * 4  # allow up to 4x retries per slot
                 while type_generated < type_count and type_attempts < max_attempts:
                     type_attempts += 1
+                    total_attempted += 1
+
+                    # Emit heartbeat progress so UI does not look frozen during retries/slow calls.
+                    attempt_progress = 22 + int((min(total_attempted, count) / max(1, count)) * 68)
+                    yield QuickGenerateProgress(
+                        status="generating",
+                        progress=min(attempt_progress, 95),
+                        current_question=questions_generated,
+                        total_questions=count,
+                        message=f"Generating question {min(total_attempted, count)}/{count}...",
+                        session_id=session_id,
+                    )
+
                     try:
                         # Rotate through pre-fetched chunk pool for variety
                         pool_size = len(subj_chunk_pool)
@@ -3283,6 +3297,10 @@ Output valid JSON only."""
                         total_question_index += 1
 
                         if not question_data:
+                            logger.warning(
+                                f"quick_generate_from_subject: empty question_data for {q_type} "
+                                f"(attempt {type_attempts}/{max_attempts})"
+                            )
                             questions_failed += 1
                             continue
 
@@ -3295,6 +3313,10 @@ Output valid JSON only."""
                                 new_embedding, all_embs
                             )
                             if any(s > 0.85 for s in similarities):
+                                logger.info(
+                                    f"quick_generate_from_subject: duplicate filtered for {q_type} "
+                                    f"(attempt {type_attempts}/{max_attempts})"
+                                )
                                 questions_failed += 1
                                 continue
 

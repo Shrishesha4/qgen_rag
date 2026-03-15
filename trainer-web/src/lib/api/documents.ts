@@ -128,11 +128,27 @@ export interface BackgroundGenerationScheduleResponse {
 	difficulty?: string;
 }
 
+export interface BackgroundGenerationStatusItem {
+	in_progress: boolean;
+	status: string;
+	progress: number;
+	current_question: number;
+	total_questions?: number | null;
+	message?: string;
+	updated_at?: string | null;
+}
+
+export interface BackgroundGenerationStatusesResponse {
+	statuses: Record<string, BackgroundGenerationStatusItem>;
+}
+
 export async function scheduleBackgroundGeneration(opts: {
 	subjectId: string;
 	count: number;
 	types?: string;
 	difficulty?: string;
+	topicId?: string;
+	topicIds?: string[];
 	allowWithoutReference?: boolean;
 }): Promise<BackgroundGenerationScheduleResponse> {
 	const form = new FormData();
@@ -140,6 +156,12 @@ export async function scheduleBackgroundGeneration(opts: {
 	form.append('count', String(opts.count));
 	form.append('types', opts.types ?? 'mcq');
 	form.append('difficulty', opts.difficulty ?? 'medium');
+	if (opts.topicId) {
+		form.append('topic_id', opts.topicId);
+	}
+	if (opts.topicIds && opts.topicIds.length > 0) {
+		form.append('topic_ids', opts.topicIds.join(','));
+	}
 	if (opts.allowWithoutReference) {
 		form.append('allow_without_reference', 'true');
 	}
@@ -148,6 +170,12 @@ export async function scheduleBackgroundGeneration(opts: {
 		method: 'POST',
 		body: form,
 	});
+}
+
+export async function getBackgroundGenerationStatuses(subjectIds: string[]): Promise<BackgroundGenerationStatusesResponse> {
+	if (!subjectIds.length) return { statuses: {} };
+	const params = new URLSearchParams({ subject_ids: subjectIds.join(',') });
+	return apiFetch<BackgroundGenerationStatusesResponse>(`/questions/background-generation-statuses?${params.toString()}`);
 }
 
 /**

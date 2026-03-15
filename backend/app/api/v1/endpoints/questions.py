@@ -47,6 +47,7 @@ MIME_TYPE_MAPPING = {
 
 router = APIRouter()
 _BACKGROUND_GENERATION_TASKS: dict[str, asyncio.Task] = {}
+_BACKGROUND_GENERATION_STATUS: dict[str, dict] = {}
 
 
 def _bg_gen_task_key(user_id: uuid.UUID, subject_id: uuid.UUID) -> str:
@@ -99,6 +100,8 @@ async def _run_background_subject_generation(
     count: int,
     types: list[str],
     difficulty: str,
+    topic_id: Optional[uuid.UUID] = None,
+    topic_ids: Optional[list[uuid.UUID]] = None,
     allow_without_reference: bool = False,
 ) -> None:
     task_key = _bg_gen_task_key(user_id, subject_id)
@@ -113,36 +116,107 @@ async def _run_background_subject_generation(
 
             docs_ready = True
             if not allow_without_reference:
+                _BACKGROUND_GENERATION_STATUS[task_key] = {
+                    "status": "waiting_for_documents",
+                    "progress": 0,
+                    "current_question": 0,
+                    "total_questions": count,
+                    "message": "Waiting for reference documents to finish processing",
+                    "updated_at": datetime.now(timezone.utc).isoformat(),
+                }
                 docs_ready = await _wait_for_subject_docs_ready(task_db, user_id, subject_id)
                 if not docs_ready:
                     return
 
-            topics_res = await task_db.execute(
-                select(Topic.name).where(Topic.subject_id == subject_id).order_by(Topic.order_index.asc())
-            )
-            topic_names = [name for name in topics_res.scalars().all() if name]
-            context = f"{subject.name}: {', '.join(topic_names)}" if topic_names else subject.name
+            selected_topic_ids = [tid for tid in (topic_ids or []) if tid]
+            if topic_id and topic_id not in selected_topic_ids:
+                selected_topic_ids = [topic_id]
+
+            if topic_id and len(selected_topic_ids) <= 1:
+                topic_res = await task_db.execute(
+                    select(Topic).where(Topic.id == topic_id, Topic.subject_id == subject_id)
+                )
+                topic = topic_res.scalar_one_or_none()
+                if not topic:
+                    return
+                context = f"{subject.name}: {topic.name}"
+            else:
+                topics_res = await task_db.execute(
+                    select(Topic.name).where(Topic.subject_id == subject_id).order_by(Topic.order_index.asc())
+                )
+                topic_names = [name for name in topics_res.scalars().all() if name]
+                context = f"{subject.name}: {', '.join(topic_names)}" if topic_names else subject.name
 
             marks_by_type = {"mcq": 1, "short_answer": 2, "long_answer": 5}
             question_service = QuestionGenerationService(task_db)
 
-            generator = question_service.quick_generate_from_subject(
-                user_id=user_id,
-                subject_id=subject_id,
-                context=context,
-                count=count,
-                types=types,
-                difficulty=difficulty,
-                marks_by_type=marks_by_type,
-                topic_id=None,
-                existing_session_id=None,
-                allow_without_reference=allow_without_reference,
-            )
-            async for _ in generator:
-                pass
+            if len(selected_topic_ids) > 1:
+                topic_rows_res = await task_db.execute(
+                    select(Topic).where(Topic.subject_id == subject_id, Topic.id.in_(selected_topic_ids))
+                )
+                topic_rows = topic_rows_res.scalars().all()
+                topic_name_by_id = {topic_row.id: topic_row.name for topic_row in topic_rows}
+                valid_topic_ids = [tid for tid in selected_topic_ids if tid in topic_name_by_id]
+                if not valid_topic_ids:
+                    return
+
+                completed_slots = 0
+                for slot in range(count):
+                    chosen_topic_id = valid_topic_ids[slot % len(valid_topic_ids)]
+                    chosen_topic_name = topic_name_by_id.get(chosen_topic_id, "Selected Topic")
+                    slot_context = f"{subject.name}: {chosen_topic_name}"
+
+                    generator = question_service.quick_generate_from_subject(
+                        user_id=user_id,
+                        subject_id=subject_id,
+                        context=slot_context,
+                        count=1,
+                        types=types,
+                        difficulty=difficulty,
+                        marks_by_type=marks_by_type,
+                        topic_id=chosen_topic_id,
+                        existing_session_id=None,
+                        allow_without_reference=allow_without_reference,
+                    )
+
+                    async for progress_event in generator:
+                        slot_progress = progress_event.progress or 0
+                        overall_progress = min(99, int(((completed_slots + (slot_progress / 100.0)) / max(1, count)) * 100))
+                        _BACKGROUND_GENERATION_STATUS[task_key] = {
+                            "status": progress_event.status,
+                            "progress": overall_progress,
+                            "current_question": min(count, completed_slots + (1 if progress_event.status == "complete" else 0)),
+                            "total_questions": count,
+                            "message": progress_event.message or f"Generating question {completed_slots + 1}/{count}",
+                            "updated_at": datetime.now(timezone.utc).isoformat(),
+                        }
+                    completed_slots += 1
+            else:
+                generator = question_service.quick_generate_from_subject(
+                    user_id=user_id,
+                    subject_id=subject_id,
+                    context=context,
+                    count=count,
+                    types=types,
+                    difficulty=difficulty,
+                    marks_by_type=marks_by_type,
+                    topic_id=topic_id,
+                    existing_session_id=None,
+                    allow_without_reference=allow_without_reference,
+                )
+                async for progress_event in generator:
+                    _BACKGROUND_GENERATION_STATUS[task_key] = {
+                        "status": progress_event.status,
+                        "progress": progress_event.progress,
+                        "current_question": progress_event.current_question or 0,
+                        "total_questions": progress_event.total_questions or count,
+                        "message": progress_event.message or "Generating questions",
+                        "updated_at": datetime.now(timezone.utc).isoformat(),
+                    }
             await task_db.commit()
     finally:
         _BACKGROUND_GENERATION_TASKS.pop(task_key, None)
+        _BACKGROUND_GENERATION_STATUS.pop(task_key, None)
 
 
 async def sse_with_heartbeat(
@@ -776,6 +850,8 @@ async def schedule_background_generation(
     count: int = Form(default=10, ge=1, le=200, description="Target number of questions"),
     types: str = Form(default="mcq", description="Comma-separated question types"),
     difficulty: str = Form(default="medium", description="easy, medium, hard"),
+    topic_id: Optional[str] = Form(default=None, description="Optional topic ID to generate only for a single topic"),
+    topic_ids: Optional[str] = Form(default=None, description="Optional comma-separated topic IDs for multi-topic generation"),
     allow_without_reference: bool = Form(default=False, description="Allow setup completion without reference PDFs"),
     current_user: User = Depends(get_current_user),
     db: AsyncSession = Depends(get_db),
@@ -808,17 +884,62 @@ async def schedule_background_generation(
     if not subject:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Subject not found")
 
+    parsed_topic_id: Optional[uuid.UUID] = None
+    parsed_topic_ids: list[uuid.UUID] = []
+    if topic_id:
+        try:
+            parsed_topic_id = uuid.UUID(topic_id)
+        except ValueError:
+            raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Invalid topic_id format")
+
+        topic_res = await db.execute(
+            select(Topic).where(Topic.id == parsed_topic_id, Topic.subject_id == parsed_subject_id)
+        )
+        if not topic_res.scalar_one_or_none():
+            raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Topic not found for this subject")
+
+    if topic_ids:
+        for raw_id in [item.strip() for item in topic_ids.split(",") if item.strip()]:
+            try:
+                parsed_topic_ids.append(uuid.UUID(raw_id))
+            except ValueError:
+                raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Invalid topic_ids format")
+
+        if parsed_topic_ids:
+            topic_rows_res = await db.execute(
+                select(Topic.id).where(Topic.subject_id == parsed_subject_id, Topic.id.in_(parsed_topic_ids))
+            )
+            valid_topic_ids = set(topic_rows_res.scalars().all())
+            if len(valid_topic_ids) != len(set(parsed_topic_ids)):
+                raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="One or more topic_ids are invalid for this subject")
+
+    if parsed_topic_id and parsed_topic_ids:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Use either topic_id or topic_ids, not both")
+
     no_reference_fallback = allow_without_reference
 
     task_key = _bg_gen_task_key(current_user.id, parsed_subject_id)
     existing_task = _BACKGROUND_GENERATION_TASKS.get(task_key)
     if existing_task and not existing_task.done():
+        existing_status = _BACKGROUND_GENERATION_STATUS.get(task_key, {})
         return {
             "status": "already_running",
             "message": "Background generation is already running for this subject",
             "subject_id": str(parsed_subject_id),
             "count": count,
+            "progress": existing_status.get("progress", 0),
+            "current_question": existing_status.get("current_question", 0),
+            "total_questions": existing_status.get("total_questions", count),
         }
+
+    _BACKGROUND_GENERATION_STATUS[task_key] = {
+        "status": "scheduled",
+        "progress": 0,
+        "current_question": 0,
+        "total_questions": count,
+        "message": "Background generation scheduled",
+        "updated_at": datetime.now(timezone.utc).isoformat(),
+    }
 
     task = asyncio.create_task(
         _run_background_subject_generation(
@@ -827,6 +948,8 @@ async def schedule_background_generation(
             count=count,
             types=type_list,
             difficulty=difficulty,
+            topic_id=parsed_topic_id,
+            topic_ids=parsed_topic_ids or None,
             allow_without_reference=no_reference_fallback,
         )
     )
@@ -843,7 +966,50 @@ async def schedule_background_generation(
         "count": count,
         "types": type_list,
         "difficulty": difficulty,
+        "topic_id": str(parsed_topic_id) if parsed_topic_id else None,
+        "topic_ids": [str(item) for item in parsed_topic_ids] if parsed_topic_ids else None,
     }
+
+
+@router.get("/background-generation-statuses")
+async def get_background_generation_statuses(
+    subject_ids: str = Query(..., description="Comma-separated subject IDs"),
+    current_user: User = Depends(get_current_user),
+):
+    """Get in-progress background generation status for multiple subjects."""
+    raw_ids = [item.strip() for item in subject_ids.split(",") if item.strip()]
+    if not raw_ids:
+        return {"statuses": {}}
+
+    statuses: dict[str, dict] = {}
+    for subject_id_str in raw_ids:
+        try:
+            parsed_subject_id = uuid.UUID(subject_id_str)
+        except ValueError:
+            continue
+
+        task_key = _bg_gen_task_key(current_user.id, parsed_subject_id)
+        task = _BACKGROUND_GENERATION_TASKS.get(task_key)
+        if not task:
+            continue
+
+        if task.done():
+            _BACKGROUND_GENERATION_TASKS.pop(task_key, None)
+            _BACKGROUND_GENERATION_STATUS.pop(task_key, None)
+            continue
+
+        status_payload = _BACKGROUND_GENERATION_STATUS.get(task_key, {})
+        statuses[str(parsed_subject_id)] = {
+            "in_progress": True,
+            "status": status_payload.get("status", "generating"),
+            "progress": status_payload.get("progress", 0),
+            "current_question": status_payload.get("current_question", 0),
+            "total_questions": status_payload.get("total_questions"),
+            "message": status_payload.get("message", "Background generation in progress"),
+            "updated_at": status_payload.get("updated_at"),
+        }
+
+    return {"statuses": statuses}
 
 
 @router.post("/backfill-topic-mapping")

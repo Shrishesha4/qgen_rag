@@ -799,19 +799,33 @@
 	}
 
 	.retry-btn {
-		padding: 0.7rem 1rem;
+		padding: 0.75rem 1rem;
 		border-radius: 999px;
 		border: 1px solid;
-		background: rgba(255, 255, 255, 0.06);
-		color: rgba(255, 255, 255, 0.8);
-		font-size: 0.85rem;
-		font-weight: 600;
+		background: rgba(255, 255, 255, 0.12);
+		color: rgba(255, 255, 255, 0.94);
+		font-size: 0.88rem;
+		font-weight: 700;
+		min-height: 44px;
+		line-height: 1;
 		cursor: pointer;
-		transition: all 0.2s;
+		transition: all 0.2s ease;
 	}
 
 	.retry-btn:hover {
-		background: rgba(255, 255, 255, 0.12);
+		background: rgba(255, 255, 255, 0.2);
+		transform: translateY(-1px);
+	}
+
+	.retry-btn:disabled {
+		opacity: 0.6;
+		cursor: not-allowed;
+		transform: none;
+	}
+
+	.transcript-retry-btn {
+		width: 100%;
+		margin-top: 0.25rem;
 	}
 
 
@@ -1125,8 +1139,9 @@
 		}
 
 		.retry-btn {
-			padding: 0.6rem 0.85rem;
-			font-size: 0.8rem;
+			padding: 0.68rem 0.9rem;
+			font-size: 0.82rem;
+			min-height: 42px;
 		}
 
 		.transcription-status-panel {

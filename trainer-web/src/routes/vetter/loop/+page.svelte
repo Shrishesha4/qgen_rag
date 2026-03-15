@@ -763,6 +763,31 @@
 		justify-content: flex-end;
 	}
 
+	.check-answer-btn {
+		min-height: 44px;
+		padding: 0.72rem 1.15rem;
+		border-radius: 0.9rem;
+		font-weight: 700;
+		font-size: 0.9rem;
+		letter-spacing: 0.01em;
+		border: 1px solid rgba(var(--theme-primary-rgb), 0.38);
+		background: linear-gradient(135deg, rgba(var(--theme-primary-rgb), 0.26), rgba(255, 255, 255, 0.08));
+		box-shadow: 0 8px 18px rgba(0, 0, 0, 0.18);
+	}
+
+	.check-answer-btn:hover {
+		transform: translateY(-1px);
+		border-color: rgba(var(--theme-primary-rgb), 0.52);
+	}
+
+	.center-state .glass-btn,
+	.empty-state .glass-btn {
+		min-height: 44px;
+		padding-inline: 1.2rem;
+		font-weight: 650;
+		border-radius: 0.95rem;
+	}
+
 	.answer-modal-overlay {
 		position: fixed;
 		inset: 0;
@@ -1703,6 +1728,15 @@
 			min-height: auto;
 			padding: 0.9rem 1rem;
 			font-size: 0.95rem;
+		}
+
+		.answer-check-actions {
+			justify-content: stretch;
+		}
+
+		.check-answer-btn {
+			width: 100%;
+			justify-content: center;
 		}
 
 		.opt-marker {

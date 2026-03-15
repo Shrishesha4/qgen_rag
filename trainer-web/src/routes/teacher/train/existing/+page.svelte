@@ -14,6 +14,9 @@
 		getDocumentStatus,
 		uploadDocument,
 		deleteDocumentById,
+		scheduleBackgroundGeneration,
+		getBackgroundGenerationStatuses,
+		type BackgroundGenerationStatusItem,
 		type ReferenceDocumentItem,
 	} from '$lib/api/documents';
 
@@ -55,6 +58,24 @@
 	let referenceProgressByDoc = $state<Record<string, number>>({});
 	let referenceProgressDetailByDoc = $state<Record<string, string>>({});
 	let referencePollTimer: ReturnType<typeof setInterval> | null = null;
+	let bgStatusBySubject = $state<Record<string, BackgroundGenerationStatusItem>>({});
+	let bgStatusPollTimer: ReturnType<typeof setInterval> | null = null;
+
+	let showGenerateModeModal = $state(false);
+	let generateTargetSubject = $state<SubjectResponse | null>(null);
+	let generateTargetTopicId = $state<string | null>(null);
+	let generateTargetMode = $state<'mixed' | 'topic'>('mixed');
+	let generateQuestionCount = $state(10);
+	let generateTopicScope = $state<'all' | 'selected'>('all');
+	let generateSelectedTopicIds = $state<string[]>([]);
+	let generateModalTopics = $state<TopicResponse[]>([]);
+	let loadingGenerateTopics = $state(false);
+	let schedulingBulk = $state(false);
+	let generateModeError = $state('');
+	let generateModeSuccess = $state('');
+
+	const BG_STATUS_CACHE_KEY = 'trainer.bgGenerationStatusCache.v1';
+	const BG_STATUS_CACHE_TTL_MS = 2 * 60 * 60 * 1000;
 
 	const PROCESSING_DOC_STATUSES = new Set(['pending', 'processing']);
 
@@ -65,9 +86,191 @@
 		}
 	}
 
+	function clearBackgroundStatusPolling() {
+		if (bgStatusPollTimer) {
+			clearInterval(bgStatusPollTimer);
+			bgStatusPollTimer = null;
+		}
+	}
+
+	async function openGenerateModeModal(subject: SubjectResponse, mode: 'mixed' | 'topic', topicId: string | null = null) {
+		generateTargetSubject = subject;
+		generateTargetMode = mode;
+		generateQuestionCount = 10;
+		generateTopicScope = mode === 'topic' ? 'selected' : 'all';
+		generateTargetTopicId = topicId;
+		generateModalTopics = topicsMap[subject.id] || [];
+		generateSelectedTopicIds = topicId ? [topicId] : [];
+		generateModeError = '';
+		showGenerateModeModal = true;
+
+		if (generateModalTopics.length === 0) {
+			loadingGenerateTopics = true;
+			try {
+				const detail = await getSubject(subject.id);
+				topicsMap = { ...topicsMap, [subject.id]: detail.topics };
+				generateModalTopics = detail.topics;
+				if (mode === 'mixed' && !topicId) {
+					generateSelectedTopicIds = detail.topics.map((topic) => topic.id);
+				}
+				if (!generateTargetTopicId && detail.topics.length > 0) {
+					generateTargetTopicId = detail.topics[0].id;
+				}
+			} catch {
+				generateModeError = 'Unable to load topics for selection';
+			} finally {
+				loadingGenerateTopics = false;
+			}
+		} else if (!generateTargetTopicId && generateModalTopics.length > 0) {
+			if (mode === 'mixed' && !topicId) {
+				generateSelectedTopicIds = generateModalTopics.map((topic) => topic.id);
+			}
+			generateTargetTopicId = generateModalTopics[0].id;
+		}
+	}
+
+	function closeGenerateModeModal(force = false) {
+		if (schedulingBulk && !force) return;
+		showGenerateModeModal = false;
+		generateTargetSubject = null;
+		generateTargetTopicId = null;
+		generateTargetMode = 'mixed';
+		generateTopicScope = 'all';
+		generateSelectedTopicIds = [];
+		generateQuestionCount = 10;
+		generateModalTopics = [];
+		generateModeError = '';
+	}
+
+	function toggleGenerateTopicSelection(topicId: string) {
+		if (generateSelectedTopicIds.includes(topicId)) {
+			generateSelectedTopicIds = generateSelectedTopicIds.filter((id) => id !== topicId);
+			return;
+		}
+		generateSelectedTopicIds = [...generateSelectedTopicIds, topicId];
+	}
+
+	function selectAllGenerateTopics() {
+		generateSelectedTopicIds = generateModalTopics.map((topic) => topic.id);
+	}
+
+	function clearGenerateTopics() {
+		generateSelectedTopicIds = [];
+	}
+
 	onDestroy(() => {
 		clearReferencePolling();
+		clearBackgroundStatusPolling();
 	});
+
+	function getSubjectBgStatus(subjectId: string): BackgroundGenerationStatusItem | null {
+		return bgStatusBySubject[subjectId] ?? null;
+	}
+
+	function readCachedBgStatuses(): Record<string, BackgroundGenerationStatusItem> {
+		if (typeof window === 'undefined') return {};
+		try {
+			const raw = window.localStorage.getItem(BG_STATUS_CACHE_KEY);
+			if (!raw) return {};
+			const parsed = JSON.parse(raw) as Record<string, BackgroundGenerationStatusItem>;
+			const now = Date.now();
+			const next: Record<string, BackgroundGenerationStatusItem> = {};
+			for (const [subjectId, status] of Object.entries(parsed)) {
+				const ts = status.updated_at ? Date.parse(status.updated_at) : 0;
+				if (!status.in_progress) continue;
+				if (!Number.isFinite(ts) || now - ts > BG_STATUS_CACHE_TTL_MS) continue;
+				next[subjectId] = status;
+			}
+			return next;
+		} catch {
+			return {};
+		}
+	}
+
+	function writeCachedBgStatuses(statuses: Record<string, BackgroundGenerationStatusItem>) {
+		if (typeof window === 'undefined') return;
+		try {
+			window.localStorage.setItem(BG_STATUS_CACHE_KEY, JSON.stringify(statuses));
+		} catch {
+			// ignore storage failures
+		}
+	}
+
+	function getBgCounter(subjectId: string): string {
+		const status = getSubjectBgStatus(subjectId);
+		if (!status || !status.in_progress) return '';
+		const total = status.total_questions ?? null;
+		if (!total || total <= 0) {
+			const current = Math.max(0, status.current_question || 0);
+			return `${current}/n`;
+		}
+		const generatedCurrent = Math.max(0, status.current_question || 0);
+		const progressCurrent = Math.min(total, Math.max(1, Math.round((Math.max(0, Math.min(100, status.progress || 0)) / 100) * total)));
+		const current = Math.max(generatedCurrent, progressCurrent);
+		return `${current}/${total}`;
+	}
+
+	function getBgProgress(subjectId: string): number {
+		const status = getSubjectBgStatus(subjectId);
+		if (!status || !status.in_progress) return 0;
+		const rawProgress = Math.max(0, Math.min(100, status.progress || 0));
+		const total = status.total_questions ?? 0;
+		const current = Math.max(0, status.current_question || 0);
+		if (total > 0) {
+			const ratioProgress = Math.max(0, Math.min(100, Math.round((current / total) * 100)));
+			return Math.max(rawProgress, ratioProgress);
+		}
+		return rawProgress;
+	}
+
+	function getBgStatusLabel(subjectId: string): string {
+		const status = getSubjectBgStatus(subjectId);
+		if (!status || !status.in_progress) return '';
+		const state = (status.status || '').toLowerCase();
+		if (state === 'waiting_for_documents') return 'Waiting for docs';
+		if (state === 'scheduled') return 'Scheduled';
+		if (state === 'error' || state === 'failed') return 'Generation failed';
+		return 'Generating';
+	}
+
+	async function refreshBackgroundStatuses() {
+		const cached = readCachedBgStatuses();
+		if (!subjects.length) {
+			bgStatusBySubject = cached;
+			return;
+		}
+		try {
+			const subjectIds = subjects.map((s) => s.id);
+			const res = await getBackgroundGenerationStatuses(subjectIds);
+			const live = res.statuses || {};
+
+			// If live polling succeeds and a currently visible subject is missing,
+			// treat it as completed and clear stale cached indicator for that subject.
+			const merged = { ...cached };
+			for (const subjectId of subjectIds) {
+				delete merged[subjectId];
+			}
+			for (const [subjectId, status] of Object.entries(live)) {
+				if (status.in_progress) {
+					merged[subjectId] = status;
+				}
+			}
+
+			bgStatusBySubject = merged;
+			writeCachedBgStatuses(merged);
+		} catch {
+			// best-effort polling only
+			bgStatusBySubject = cached;
+		}
+	}
+
+	function ensureBackgroundStatusPolling() {
+		clearBackgroundStatusPolling();
+		if (!subjects.length) return;
+		bgStatusPollTimer = setInterval(() => {
+			void refreshBackgroundStatuses();
+		}, 3500);
+	}
 
 	function allReferenceDocs() {
 		return [...referenceBooks, ...templatePapers, ...referenceQuestions];
@@ -152,6 +355,8 @@
 		try {
 			const res = await listSubjects(1, 100);
 			subjects = res.subjects;
+			await refreshBackgroundStatuses();
+			ensureBackgroundStatusPolling();
 		} catch (e: unknown) {
 			error = e instanceof Error ? e.message : 'Failed to load subjects';
 		} finally {
@@ -219,15 +424,105 @@
 	}
 
 	async function trainTopic(subject: SubjectResponse, topicId: string) {
-		const canGenerate = await ensureReadyToGenerate(subject);
-		if (!canGenerate) return;
-		goto(`/teacher/train/loop?subject=${subject.id}&topic=${topicId}`);
+		await openGenerateModeModal(subject, 'topic', topicId);
 	}
 
 	async function trainSubjectMixed(subject: SubjectResponse) {
-		const canGenerate = await ensureReadyToGenerate(subject);
-		if (!canGenerate) return;
-		goto(`/teacher/train/loop?subject=${subject.id}&mode=mixed-topics`);
+		await openGenerateModeModal(subject, 'mixed');
+	}
+
+	function normalizedGenerateCount() {
+		const safe = Number.isFinite(generateQuestionCount) ? generateQuestionCount : 10;
+		return Math.max(1, Math.min(200, Math.trunc(safe)));
+	}
+
+	async function chooseVetNow() {
+		if (!generateTargetSubject) return;
+		const count = normalizedGenerateCount();
+		const topicScoped = generateTargetMode === 'topic' ? generateTargetTopicId : null;
+		const selectedTopicIds =
+			generateTargetMode === 'mixed' && generateTopicScope === 'selected'
+				? generateSelectedTopicIds
+				: [];
+
+		if (generateTargetMode === 'topic' && !topicScoped) {
+			generateModeError = 'Please select a topic.';
+			return;
+		}
+		if (generateTargetMode === 'mixed' && generateTopicScope === 'selected' && selectedTopicIds.length === 0) {
+			generateModeError = 'Select at least one topic.';
+			return;
+		}
+		const canGenerate = await ensureReadyToGenerate(generateTargetSubject);
+		if (!canGenerate) {
+			showGenerateModeModal = false;
+			generateTargetSubject = null;
+			generateTargetTopicId = null;
+			return;
+		}
+
+		if (topicScoped) {
+			goto(`/teacher/train/loop?subject=${generateTargetSubject.id}&topic=${topicScoped}&count=${count}`);
+		} else {
+			const selectedTopicsParam =
+				generateTargetMode === 'mixed' && generateTopicScope === 'selected' && selectedTopicIds.length > 0
+					? `&topics=${encodeURIComponent(selectedTopicIds.join(','))}`
+					: '';
+			goto(`/teacher/train/loop?subject=${generateTargetSubject.id}&mode=mixed-topics&count=${count}${selectedTopicsParam}`);
+		}
+	}
+
+	async function chooseGenAndVetLater() {
+		if (!generateTargetSubject || schedulingBulk) return;
+		const count = normalizedGenerateCount();
+		const topicScoped = generateTargetMode === 'topic' ? generateTargetTopicId : null;
+		const selectedTopicIds =
+			generateTargetMode === 'mixed' && generateTopicScope === 'selected'
+				? generateSelectedTopicIds
+				: [];
+
+		if (generateTargetMode === 'topic' && !topicScoped) {
+			generateModeError = 'Please select a topic.';
+			return;
+		}
+		if (generateTargetMode === 'mixed' && generateTopicScope === 'selected' && selectedTopicIds.length === 0) {
+			generateModeError = 'Select at least one topic.';
+			return;
+		}
+		schedulingBulk = true;
+		generateModeError = '';
+		generateModeSuccess = '';
+		try {
+			await scheduleBackgroundGeneration({
+				subjectId: generateTargetSubject.id,
+				count,
+				types: 'mcq',
+				difficulty: 'medium',
+				topicId: topicScoped || (selectedTopicIds.length === 1 ? selectedTopicIds[0] : undefined),
+				topicIds: !topicScoped && selectedTopicIds.length > 1 ? selectedTopicIds : undefined,
+			});
+			const optimistic = {
+				...bgStatusBySubject,
+				[generateTargetSubject.id]: {
+					in_progress: true,
+					status: 'scheduled',
+					progress: 1,
+					current_question: 0,
+					total_questions: count,
+					message: 'Background generation scheduled',
+					updated_at: new Date().toISOString(),
+				},
+			};
+			bgStatusBySubject = optimistic;
+			writeCachedBgStatuses(optimistic);
+			generateModeSuccess = `Background generation started for ${generateTargetSubject.name} (${count} questions). You can vet later.`;
+			await refreshBackgroundStatuses();
+			closeGenerateModeModal(true);
+		} catch (e: unknown) {
+			generateModeError = e instanceof Error ? e.message : 'Failed to schedule background generation';
+		} finally {
+			schedulingBulk = false;
+		}
 	}
 
 	function openAddTopicModal(subject: SubjectResponse) {
@@ -287,6 +582,7 @@
 		referenceError = '';
 		showReferenceModal = true;
 		await loadReferenceMaterials(subject.id);
+		await refreshBackgroundStatuses();
 	}
 
 	function closeReferenceModal() {
@@ -330,6 +626,7 @@
 			await uploadDocument(file, referenceSubjectId, indexType);
 			await loadReferenceMaterials(referenceSubjectId);
 			await refreshSubject(referenceSubjectId);
+			await refreshBackgroundStatuses();
 		} catch (e: unknown) {
 			referenceError = e instanceof Error ? e.message : 'Upload failed';
 		} finally {
@@ -345,6 +642,7 @@
 		try {
 			await deleteDocumentById(docId);
 			await loadReferenceMaterials(referenceSubjectId);
+			await refreshBackgroundStatuses();
 		} catch (e: unknown) {
 			referenceError = e instanceof Error ? e.message : 'Delete failed';
 		} finally {
@@ -378,6 +676,12 @@
 			</button>
 		</div>
 	{:else}
+		{#if generateModeSuccess}
+			<p class="success-banner">
+				<span>{generateModeSuccess}</span>
+				<button class="success-dismiss" onclick={() => (generateModeSuccess = '')}>✕</button>
+			</p>
+		{/if}
 		<div class="search-container">
 			<input
 				type="text"
@@ -410,6 +714,14 @@
 							<div class="sc-stats">
 								<span class="sc-stat">📝 {s.total_questions} questions</span>
 								<span class="sc-stat">📚 {s.total_topics} topics</span>
+								{#if getSubjectBgStatus(s.id)?.in_progress}
+										<span class="sc-stat sc-stat-gen" title={getSubjectBgStatus(s.id)?.message || 'Background generation in progress'}>
+											<span class="bg-live-dot"></span>
+											<span class="bg-status-label">{getBgStatusLabel(s.id)}</span>
+										<span class="bg-progress-circle" style="--progress: {getBgProgress(s.id)}%"></span>
+										<span class="bg-progress-count">{getBgCounter(s.id)}</span>
+									</span>
+								{/if}
 							</div>
 						</button>
 
@@ -581,6 +893,109 @@
 		</div>
 	{/if}
 
+	{#if showGenerateModeModal}
+		<div class="modal-backdrop" role="button" tabindex="0" aria-label="Close" onclick={() => closeGenerateModeModal()} onkeydown={(e) => (e.key === 'Enter' || e.key === ' ') && closeGenerateModeModal()}>
+			<div
+				class="modal generate-choice-modal"
+				role="dialog"
+				aria-modal="true"
+				tabindex="0"
+				onclick={(e) => e.stopPropagation()}
+				onkeydown={(e) => e.stopPropagation()}
+			>
+				<div class="modal-header">
+					<h3>How do you want to generate?</h3>
+					<button class="close-btn" onclick={() => closeGenerateModeModal()}>✕</button>
+				</div>
+
+				<div class="generate-choice-body">
+					<p class="generate-choice-copy">
+						{generateTargetSubject?.name}
+						{#if generateTargetMode === 'topic'}
+							• Single Topic
+						{:else}
+							• Mixed Topics
+						{/if}
+					</p>
+
+					<div class="generate-form-grid">
+						<label class="generate-field">
+							<span>Questions to generate</span>
+							<input
+								type="number"
+								min="1"
+								max="200"
+								bind:value={generateQuestionCount}
+								class="search-input"
+							/>
+						</label>
+
+						{#if generateTargetMode === 'mixed'}
+							<label class="generate-field">
+								<span>Topic scope</span>
+								<select class="search-input" bind:value={generateTopicScope} disabled={loadingGenerateTopics}>
+									<option value="all">All topics (mixed)</option>
+									<option value="selected">Selected topics</option>
+								</select>
+							</label>
+						{/if}
+
+						{#if generateTargetMode === 'topic'}
+							<label class="generate-field generate-field-full">
+								<span>Select topic</span>
+								<select class="search-input" bind:value={generateTargetTopicId} disabled={loadingGenerateTopics || generateModalTopics.length === 0}>
+									{#each generateModalTopics as topic}
+										<option value={topic.id}>{topic.name}</option>
+									{/each}
+								</select>
+							</label>
+						{:else if generateTopicScope === 'selected'}
+							<div class="generate-field generate-field-full">
+								<span>Select topics</span>
+								<div class="topic-multi-toolbar">
+									<span class="topic-multi-count">{generateSelectedTopicIds.length} selected</span>
+									<div class="topic-multi-toolbar-actions">
+										<button type="button" class="topic-chip-btn" onclick={selectAllGenerateTopics} disabled={loadingGenerateTopics || generateModalTopics.length === 0}>Select all</button>
+										<button type="button" class="topic-chip-btn" onclick={clearGenerateTopics} disabled={loadingGenerateTopics || generateSelectedTopicIds.length === 0}>Clear</button>
+									</div>
+								</div>
+								<div class="topic-multi-list">
+									{#each generateModalTopics as topic}
+										<label class="topic-multi-item">
+											<input
+												type="checkbox"
+												checked={generateSelectedTopicIds.includes(topic.id)}
+												onchange={() => toggleGenerateTopicSelection(topic.id)}
+												disabled={loadingGenerateTopics}
+											/>
+											<span>{topic.name}</span>
+										</label>
+									{/each}
+								</div>
+							</div>
+						{/if}
+					</div>
+
+					{#if loadingGenerateTopics}
+						<p class="generate-choice-copy">Loading topics...</p>
+					{/if}
+					{#if generateModeError}
+						<p class="modal-error">{generateModeError}</p>
+					{/if}
+
+					<div class="generate-choice-actions">
+						<button class="glass-btn generate-choice-btn" onclick={chooseVetNow} disabled={schedulingBulk}>
+							Vet now
+						</button>
+						<button class="glass-btn generate-choice-btn" onclick={chooseGenAndVetLater} disabled={schedulingBulk}>
+							{schedulingBulk ? 'Scheduling...' : 'Generate and Vet later'}
+						</button>
+					</div>
+				</div>
+			</div>
+		</div>
+	{/if}
+
 	{#if showAddTopicModal}
 		<div class="modal-backdrop" role="button" tabindex="0" aria-label="Close" onclick={closeAddTopicModal} onkeydown={(e) => (e.key === 'Enter' || e.key === ' ') && closeAddTopicModal()}>
 			<div
@@ -652,6 +1067,28 @@
 	.center-state p {
 		color: var(--theme-text-muted);
 		margin: 0;
+	}
+
+	.success-banner {
+		display: flex;
+		justify-content: space-between;
+		align-items: center;
+		gap: 0.75rem;
+		margin: 0 0 1rem;
+		padding: 0.65rem 0.8rem;
+		border-radius: 10px;
+		background: rgba(49, 208, 161, 0.14);
+		border: 1px solid rgba(49, 208, 161, 0.35);
+		color: #bff9df;
+		font-size: 0.85rem;
+	}
+
+	.success-dismiss {
+		background: none;
+		border: none;
+		color: inherit;
+		cursor: pointer;
+		font-size: 1rem;
 	}
 
 	.spinner {
@@ -793,6 +1230,61 @@
 	.sc-stat {
 		font-size: 0.82rem;
 		color: var(--theme-text-muted);
+	}
+
+	.sc-stat-gen {
+		display: inline-flex;
+		align-items: center;
+		gap: 0.42rem;
+		font-weight: 600;
+		color: var(--theme-text);
+		padding: 0.18rem 0.55rem;
+		border-radius: 999px;
+		border: 1px solid rgba(var(--theme-primary-rgb), 0.35);
+		background: rgba(var(--theme-primary-rgb), 0.14);
+	}
+
+	.bg-live-dot {
+		width: 0.45rem;
+		height: 0.45rem;
+		border-radius: 50%;
+		background: var(--theme-primary);
+		box-shadow: 0 0 0 0 rgba(var(--theme-primary-rgb), 0.55);
+		animation: bg-pulse 1.3s ease-out infinite;
+	}
+
+	@keyframes bg-pulse {
+		0% { box-shadow: 0 0 0 0 rgba(var(--theme-primary-rgb), 0.55); }
+		100% { box-shadow: 0 0 0 8px rgba(var(--theme-primary-rgb), 0); }
+	}
+
+	.bg-status-label {
+		font-size: 0.74rem;
+		line-height: 1;
+	}
+
+	.bg-progress-circle {
+		--progress: 0%;
+		width: 1rem;
+		height: 1rem;
+		border-radius: 50%;
+		background: conic-gradient(var(--theme-primary) var(--progress), rgba(255, 255, 255, 0.18) 0);
+		position: relative;
+		flex-shrink: 0;
+	}
+
+	.bg-progress-circle::after {
+		content: '';
+		position: absolute;
+		inset: 2px;
+		border-radius: 50%;
+		background: rgba(8, 16, 30, 0.95);
+	}
+
+	.bg-progress-count {
+		font-size: 0.78rem;
+		line-height: 1;
+		letter-spacing: 0.02em;
 	}
 
 	.topics-panel {
@@ -956,6 +1448,121 @@
 
 	.add-topic-modal {
 		width: min(560px, 94vw);
+	}
+
+	.generate-choice-modal {
+		width: min(520px, 94vw);
+	}
+
+	.generate-choice-body {
+		padding: 1rem;
+		display: flex;
+		flex-direction: column;
+		gap: 0.8rem;
+	}
+
+	.generate-choice-copy {
+		margin: 0;
+		color: var(--theme-text-muted);
+		font-size: 0.9rem;
+	}
+
+	.generate-choice-actions {
+		display: grid;
+		grid-template-columns: 1fr;
+		gap: 0.6rem;
+	}
+
+	.generate-form-grid {
+		display: grid;
+		grid-template-columns: 1fr 1fr;
+		gap: 0.6rem;
+	}
+
+	.generate-field {
+		display: flex;
+		flex-direction: column;
+		gap: 0.35rem;
+	}
+
+	.generate-field span {
+		font-size: 0.78rem;
+		color: var(--theme-text-muted);
+	}
+
+	.generate-field-full {
+		grid-column: 1 / -1;
+	}
+
+	.topic-multi-list {
+		max-height: 220px;
+		overflow: auto;
+		display: grid;
+		grid-template-columns: 1fr;
+		gap: 0.45rem;
+		padding: 0.5rem;
+		border-radius: 10px;
+		border: 1px solid rgba(255, 255, 255, 0.12);
+		background: rgba(255, 255, 255, 0.03);
+	}
+
+	.topic-multi-toolbar {
+		display: flex;
+		align-items: center;
+		justify-content: space-between;
+		gap: 0.5rem;
+	}
+
+	.topic-multi-count {
+		font-size: 0.78rem;
+		color: var(--theme-text-muted);
+	}
+
+	.topic-multi-toolbar-actions {
+		display: flex;
+		gap: 0.4rem;
+	}
+
+	.topic-chip-btn {
+		height: 2rem;
+		padding: 0 0.7rem;
+		border-radius: 999px;
+		border: 1px solid rgba(255, 255, 255, 0.18);
+		background: rgba(255, 255, 255, 0.06);
+		color: var(--theme-text);
+		font-size: 0.76rem;
+		cursor: pointer;
+	}
+
+	.topic-chip-btn:disabled {
+		opacity: 0.45;
+		cursor: not-allowed;
+	}
+
+	.topic-multi-item {
+		display: flex;
+		align-items: center;
+		gap: 0.65rem;
+		font-size: 0.9rem;
+		color: var(--theme-text);
+		padding: 0.55rem 0.6rem;
+		border-radius: 10px;
+		background: rgba(255, 255, 255, 0.05);
+		min-height: 44px;
+		cursor: pointer;
+	}
+
+	.topic-multi-item input[type='checkbox'] {
+		width: 1.1rem;
+		height: 1.1rem;
+		accent-color: var(--theme-primary);
+		flex-shrink: 0;
+	}
+
+	.generate-choice-btn {
+		width: 100%;
+		text-align: center;
+		min-height: 46px;
 	}
 
 	.modal-actions {
@@ -1153,6 +1760,20 @@
 			padding-top: 1rem;
 		}
 
+		.modal-backdrop {
+			padding: 0.35rem;
+		}
+
+		.generate-choice-modal {
+			width: 100%;
+			max-height: 92vh;
+		}
+
+		.generate-choice-body {
+			padding: 0.8rem;
+			gap: 0.7rem;
+		}
+
 		.subject-card-row {
 			gap: 0.55rem;
 			padding: 0.6rem;
@@ -1181,6 +1802,30 @@
 		.upload-row {
 			flex-direction: column;
 			align-items: stretch;
+		}
+
+		.generate-form-grid {
+			grid-template-columns: 1fr;
+		}
+
+		.generate-choice-actions {
+			position: sticky;
+			bottom: -1px;
+			padding-top: 0.55rem;
+			background: linear-gradient(180deg, rgba(8, 16, 30, 0), rgba(8, 16, 30, 0.95) 35%);
+		}
+
+		.topic-multi-toolbar {
+			flex-direction: column;
+			align-items: flex-start;
+		}
+
+		.topic-multi-toolbar-actions {
+			width: 100%;
+		}
+
+		.topic-chip-btn {
+			flex: 1;
 		}
 	}
 </style>

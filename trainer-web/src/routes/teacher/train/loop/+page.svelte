@@ -42,6 +42,7 @@
 	let allowNoPdfGeneration = $state(false);
 	let firstQuestionGenerated = $state(false);
 	let generationBatchSize = $state(DEFAULT_BATCH_SIZE);
+	let selectedMixedTopicIds = $state<string[]>([]);
 
 	// Confirm + cleanup before any SvelteKit navigation
 	beforeNavigate(({ cancel, to }) => {
@@ -67,6 +68,10 @@
 			const nextSubjectId = p.url.searchParams.get('subject') ?? '';
 			const nextTopicId = p.url.searchParams.get('topic') ?? '';
 			const nextMixedTopicsMode = p.url.searchParams.get('mode') === 'mixed-topics';
+			const nextSelectedMixedTopics = (p.url.searchParams.get('topics') ?? '')
+				.split(',')
+				.map((item) => item.trim())
+				.filter(Boolean);
 			const nextProvisionalSubject = p.url.searchParams.get('provisional') === '1';
 			const nextAllowNoPdfGeneration = p.url.searchParams.get('noPdf') === '1';
 			const nextGenerationBatchSize = parseBatchSizeParam(p.url.searchParams.get('count'));
@@ -82,6 +87,7 @@
 			subjectId = nextSubjectId;
 			topicId = nextTopicId;
 			mixedTopicsMode = nextMixedTopicsMode;
+			selectedMixedTopicIds = nextSelectedMixedTopics;
 			provisionalSubject = nextProvisionalSubject;
 			allowNoPdfGeneration = nextAllowNoPdfGeneration;
 			generationBatchSize = nextGenerationBatchSize;
@@ -132,6 +138,9 @@
 	let nextGenAt = $state(0); // totalReviewed count that triggers next batch (0 = disarmed)
 	let topicCycleIds = $state<string[]>([]);
 	let topicCycleCursor = $state(0);
+	const POST_TRIGGER_UNLOCK_COUNT = 3;
+	let postTriggerGenerationActive = $state(false);
+	let postTriggerBaseQuestionCount = $state(0);
 
 	// Trigger next generation when user has vetted ≥70% of current questions
 	$effect(() => {
@@ -159,6 +168,7 @@
 	let selectedOptionIndex = $state<number | null>(null);
 	let showAnswerModal = $state(false);
 	let handingOffGeneration = $state(false);
+	let showGenerateChoiceModal = $state(false);
 
 	let voiceAction = $state<PendingVoiceAction | null>(null);
 
@@ -170,6 +180,12 @@
 	);
 	let showAllCaughtUp = $derived(questions.length > 0 && batchComplete && totalReviewed >= questions.length);
 	let showBatchCompletePanel = $derived(showBatchCompleteNotice || showAllCaughtUp);
+	let postTriggerGeneratedCount = $derived(
+		postTriggerGenerationActive ? Math.max(0, questions.length - postTriggerBaseQuestionCount) : 0
+	);
+	let canMoveToNextAfterPostTrigger = $derived(
+		!postTriggerGenerationActive || postTriggerGeneratedCount >= POST_TRIGGER_UNLOCK_COUNT
+	);
 	let voiceRecorderTitle = $derived.by(() => {
 		if (!voiceAction) return '';
 		if (voiceAction.kind === 'reject') return 'Reject Question';
@@ -222,6 +238,8 @@
 
 	async function startBackgroundGeneration() {
 		if (generating || batchComplete || !subjectId) return;
+		postTriggerGenerationActive = false;
+		postTriggerBaseQuestionCount = 0;
 		generating = true;
 		genCount = 0;
 		genMessage = 'Checking document readiness...';
@@ -246,6 +264,8 @@
 			// Arm threshold: next batch triggers when 70% of current questions are vetted
 			if (!batchComplete) armNextGen();
 		} catch (e: unknown) {
+			postTriggerGenerationActive = false;
+			postTriggerBaseQuestionCount = 0;
 			await rollbackProvisionalSubjectIfNeeded();
 			if (!batchComplete) {
 				error = e instanceof Error ? e.message : 'Generation failed';
@@ -295,10 +315,15 @@
 					const q = evt.question as unknown as QuestionForVetting;
 					if (q && q.id) {
 						questions = [...questions, q];
+						if (postTriggerGenerationActive && postTriggerGeneratedCount >= POST_TRIGGER_UNLOCK_COUNT && isReviewed) {
+							advance();
+						}
 					}
 				}
 				if (evt.status === 'complete') {
 					genCount = evt.questions_generated ?? genCount;
+					postTriggerGenerationActive = false;
+					postTriggerBaseQuestionCount = 0;
 					resetDocumentProcessingState();
 					break;
 				}
@@ -322,7 +347,11 @@
 			}
 		}
 
-		const topicIds = (subjectDetail?.topics ?? []).map((topic) => topic.id);
+		const allTopicIds = (subjectDetail?.topics ?? []).map((topic) => topic.id);
+		const topicIds =
+			selectedMixedTopicIds.length > 0
+				? allTopicIds.filter((id) => selectedMixedTopicIds.includes(id))
+				: allTopicIds;
 		topicCycleIds = topicIds;
 		return topicIds;
 	}
@@ -349,6 +378,8 @@
 
 	async function doNextBatch() {
 		if (generating || batchComplete || !subjectId) return;
+		postTriggerGenerationActive = true;
+		postTriggerBaseQuestionCount = questions.length;
 		generating = true;
 		genMessage = 'Checking document readiness...';
 		resetDocumentProcessingState();
@@ -370,6 +401,8 @@
 			}
 			if (!batchComplete) armNextGen();
 		} catch (e: unknown) {
+			postTriggerGenerationActive = false;
+			postTriggerBaseQuestionCount = 0;
 			await rollbackProvisionalSubjectIfNeeded();
 			if (!batchComplete) {
 				error = e instanceof Error ? e.message : 'Generation failed';
@@ -377,11 +410,16 @@
 		} finally {
 			generating = false;
 			genMessage = '';
+			if (!postTriggerGenerationActive) {
+				postTriggerBaseQuestionCount = 0;
+			}
 		}
 	}
 
 	function stopBackgroundGen() {
 		batchComplete = true;
+		postTriggerGenerationActive = false;
+		postTriggerBaseQuestionCount = 0;
 		genAbortController?.abort();
 		genAbortController = null;
 		resetDocumentProcessingState();
@@ -714,6 +752,25 @@
 		goto('/teacher/dashboard');
 	}
 
+	function openGenerateChoiceModal() {
+		showGenerateChoiceModal = true;
+	}
+
+	function closeGenerateChoiceModal() {
+		if (handingOffGeneration) return;
+		showGenerateChoiceModal = false;
+	}
+
+	async function chooseGenerateVetNow() {
+		closeGenerateChoiceModal();
+		await startBackgroundGeneration();
+	}
+
+	async function chooseGenerateLater() {
+		closeGenerateChoiceModal();
+		await continueGenerationInBackground(true);
+	}
+
 	function isCorrectOption(opt: string, correctAnswer: string | null): boolean {
 		return normalizeCorrectAnswer(correctAnswer, currentQuestion?.options ?? []) === normalizeCorrectAnswer(opt, [opt]);
 	}
@@ -737,8 +794,12 @@
 		return isCorrectOption(selectedOpt, currentQuestion.correct_answer);
 	}
 
-	async function continueGenerationInBackground() {
+	async function continueGenerationInBackground(skipConfirm = false) {
 		if (!subjectId || handingOffGeneration) return;
+		if (!skipConfirm) {
+			const confirmed = confirm('Are you sure? You will be sent to the dashboard and generation will continue in background.');
+			if (!confirmed) return;
+		}
 		handingOffGeneration = true;
 		error = '';
 		try {
@@ -809,7 +870,7 @@
 				</div>
 			{/if}
 			<p class="sub-text">Please Wait...</p>
-			<button class="glass-btn secondary-btn" onclick={continueGenerationInBackground} disabled={handingOffGeneration}>
+			<button class="glass-btn secondary-btn" onclick={() => continueGenerationInBackground()} disabled={handingOffGeneration}>
 				{handingOffGeneration ? 'Switching…' : 'Generate In Background'}
 			</button>
 		</div>
@@ -819,7 +880,7 @@
 			<p>No questions to review</p>
 			{#if subjectId}
 				<p class="sub-text">Generate a new batch of questions from this subject's documents</p>
-				<button class="glass-btn" onclick={startBackgroundGeneration}>🔄 Generate Questions</button>
+				<button class="glass-btn" onclick={openGenerateChoiceModal}>🔄 Generate Questions</button>
 			{:else}
 				<p class="sub-text">Generate questions first using the new topic wizard</p>
 			{/if}
@@ -870,11 +931,6 @@
 					<p class="gen-progress-detail">{docProcessingDetail}</p>
 				{/if}
 			{/if}
-			<div class="gen-background-action">
-				<button class="glass-btn secondary-btn" onclick={continueGenerationInBackground} disabled={handingOffGeneration}>
-					{handingOffGeneration ? 'Switching…' : 'Generate In Background'}
-				</button>
-			</div>
 		</div>
 	{/if}
 
@@ -1057,7 +1113,7 @@
 			<span class="empty-icon">📭</span>
 			<p>No questions to review in this batch</p>
 			{#if subjectId}
-				<button class="glass-btn" onclick={startBackgroundGeneration}>🔄 Generate Questions</button>
+				<button class="glass-btn" onclick={openGenerateChoiceModal}>🔄 Generate Questions</button>
 			{/if}
 			<button class="glass-btn secondary-btn" onclick={() => goto('/teacher/dashboard')}>
 				Back to Home
@@ -1098,6 +1154,28 @@
 	</div>
 {/if}
 
+{#if showGenerateChoiceModal}
+	<!-- svelte-ignore a11y_click_events_have_key_events a11y_no_static_element_interactions -->
+	<div class="answer-modal-overlay" onclick={closeGenerateChoiceModal} role="button" tabindex="0" aria-label="Close generate options">
+		<!-- svelte-ignore a11y_click_events_have_key_events a11y_no_static_element_interactions -->
+		<div class="answer-modal glass-panel" onclick={(e) => e.stopPropagation()} role="dialog" aria-modal="true" tabindex="-1">
+			<div class="answer-modal-head">
+				<h3>Choose Generate Mode</h3>
+				<button class="answer-modal-close" onclick={closeGenerateChoiceModal} aria-label="Close">✕</button>
+			</div>
+			<div class="generate-choice-content">
+				<p class="generate-choice-text">Do you want to vet now or generate in bulk and vet later?</p>
+				<div class="generate-choice-grid">
+					<button class="glass-btn" onclick={chooseGenerateVetNow} disabled={handingOffGeneration}>Vet now</button>
+					<button class="glass-btn secondary-btn" onclick={chooseGenerateLater} disabled={handingOffGeneration}>
+						{handingOffGeneration ? 'Scheduling...' : 'Gen and vet later (bulk generate in background)'}
+					</button>
+				</div>
+			</div>
+		</div>
+	</div>
+{/if}
+
 {#if questions.length > 0 && !showBatchCompletePanel}
 	<div class="floating-stack">
 		{#if !isReviewed && !editing && !regenerating}
@@ -1124,10 +1202,13 @@
 			</div>
 		{:else if isReviewed && currentIndex < questions.length - 1}
 			<div class="actions actions-single">
-				<!-- <button class="glass-btn next-question-btn" onclick={() => { advance(); }}>
-					Next Question →
-				</button> -->
-				<h2>Generating</h2>
+				{#if canMoveToNextAfterPostTrigger}
+					<button class="glass-btn next-question-btn" onclick={() => { advance(); }}>
+						Next Question →
+					</button>
+				{:else}
+					<h2>Generating {Math.min(postTriggerGeneratedCount, POST_TRIGGER_UNLOCK_COUNT)}/{POST_TRIGGER_UNLOCK_COUNT}</h2>
+				{/if}
 			</div>
 		{/if}
 
@@ -1215,6 +1296,23 @@
 		justify-content: flex-end;
 	}
 
+	.check-answer-btn {
+		min-height: 44px;
+		padding: 0.72rem 1.15rem;
+		border-radius: 0.9rem;
+		font-weight: 700;
+		font-size: 0.9rem;
+		letter-spacing: 0.01em;
+		border: 1px solid rgba(var(--theme-primary-rgb), 0.38);
+		background: linear-gradient(135deg, rgba(var(--theme-primary-rgb), 0.26), rgba(255, 255, 255, 0.08));
+		box-shadow: 0 8px 18px rgba(0, 0, 0, 0.18);
+	}
+
+	.check-answer-btn:hover {
+		transform: translateY(-1px);
+		border-color: rgba(var(--theme-primary-rgb), 0.52);
+	}
+
 	.answer-modal-overlay {
 		position: fixed;
 		inset: 0;
@@ -1254,6 +1352,24 @@
 		height: 28px;
 		border-radius: 999px;
 		cursor: pointer;
+	}
+
+	.generate-choice-content {
+		display: flex;
+		flex-direction: column;
+		gap: 0.8rem;
+	}
+
+	.generate-choice-text {
+		margin: 0;
+		color: var(--theme-text-muted);
+		font-size: 0.95rem;
+	}
+
+	.generate-choice-grid {
+		display: grid;
+		grid-template-columns: 1fr;
+		gap: 0.65rem;
 	}
 
 	.answer-result {
@@ -1930,12 +2046,27 @@
 	}
 
 	.secondary-btn {
-		opacity: 0.6;
-		font-size: 0.88rem;
+		min-height: 44px;
+		padding: 0.75rem 1.1rem;
+		font-size: 0.9rem;
+		font-weight: 650;
+		opacity: 1;
+		border: 1px solid rgba(255, 255, 255, 0.22);
+		background: rgba(255, 255, 255, 0.12);
 	}
 
 	.secondary-btn:hover {
-		opacity: 0.85;
+		background: rgba(255, 255, 255, 0.2);
+		border-color: rgba(255, 255, 255, 0.32);
+		transform: translateY(-1px);
+	}
+
+	.center-state .glass-btn,
+	.empty-state .glass-btn {
+		min-height: 44px;
+		padding-inline: 1.2rem;
+		font-weight: 650;
+		border-radius: 0.95rem;
 	}
 
 	.err-icon {
@@ -2401,6 +2532,16 @@
 		.answer-panel-head {
 			flex-direction: column;
 			align-items: flex-start;
+		}
+
+		.answer-check-actions {
+			justify-content: stretch;
+		}
+
+		.check-answer-btn,
+		.secondary-btn {
+			width: 100%;
+			justify-content: center;
 		}
 	}
 
