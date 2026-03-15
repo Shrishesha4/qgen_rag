@@ -62,7 +62,19 @@ async def init_db():
 async def create_indexes():
     """Create database indexes for optimal query performance."""
     async with AsyncSessionLocal() as session:
+        lock_id = 820240115
+        lock_acquired = False
         try:
+            # Ensure only one worker performs index creation during multi-worker startup.
+            lock_result = await session.execute(
+                text("SELECT pg_try_advisory_lock(:lock_id)"),
+                {"lock_id": lock_id},
+            )
+            lock_acquired = bool(lock_result.scalar())
+            if not lock_acquired:
+                logger.info("Skipping index creation in this worker (startup lock held by another worker)")
+                return
+
             # Create B-tree indexes (always safe)
             await session.execute(text("SELECT create_btree_indexes()"))
             logger.info("B-tree indexes created/verified")
@@ -76,6 +88,16 @@ async def create_indexes():
             # Functions may not exist on first run before init_db.sql runs
             logger.warning(f"Could not create indexes (will retry on next startup): {e}")
             await session.rollback()
+        finally:
+            if lock_acquired:
+                try:
+                    await session.execute(
+                        text("SELECT pg_advisory_unlock(:lock_id)"),
+                        {"lock_id": lock_id},
+                    )
+                    await session.commit()
+                except Exception:
+                    await session.rollback()
 
 
 async def ensure_vector_indexes():

@@ -15,7 +15,7 @@ from typing import Optional, List, Any
 from datetime import datetime, timezone
 
 from fastapi import APIRouter, Depends, HTTPException, status, Query
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, ConfigDict
 from sqlalchemy import select, func
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -67,6 +67,8 @@ class ModelVersionResponse(BaseModel):
 
 class TrainingJobResponse(BaseModel):
     """Training job summary."""
+    model_config = ConfigDict(protected_namespaces=())
+
     id: str
     model_version_id: str
     job_type: str

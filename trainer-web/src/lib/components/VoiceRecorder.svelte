@@ -7,8 +7,6 @@
 
 	import { onMount } from 'svelte';
 
-	import pcmCaptureWorkletUrl from '$lib/worklets/pcm-capture.worklet.ts?url';
-
 	type SpeechRecognitionResultLike = {
 		isFinal: boolean;
 		0: { transcript: string };
@@ -66,7 +64,7 @@
 	let speechRecognitionActive = $state(false);
 	let audioContext: AudioContext | null = null;
 	let mediaSourceNode: MediaStreamAudioSourceNode | null = null;
-	let processorNode: AudioWorkletNode | null = null;
+	let scriptProcessorNode: ScriptProcessorNode | null = null;
 	let silenceGainNode: GainNode | null = null;
 	let recordedPcmChunks: Float32Array[] = [];
 	let recordingSampleRate = 16000;
@@ -155,31 +153,26 @@
 		}
 
 		audioContext = new AudioContextCtor();
-		await audioContext.audioWorklet.addModule(pcmCaptureWorkletUrl);
 		recordingSampleRate = audioContext.sampleRate;
 		mediaSourceNode = audioContext.createMediaStreamSource(stream);
-		processorNode = new AudioWorkletNode(audioContext, 'pcm-capture-processor', {
-			numberOfInputs: 1,
-			numberOfOutputs: 1,
-			channelCount: 1
-		});
+		scriptProcessorNode = audioContext.createScriptProcessor(4096, 1, 1);
 		silenceGainNode = audioContext.createGain();
 		silenceGainNode.gain.value = 0;
 		recordedPcmChunks = [];
 
-		processorNode.port.onmessage = (event: MessageEvent<Float32Array>) => {
+		scriptProcessorNode.onaudioprocess = (event: AudioProcessingEvent) => {
 			if (!isCaptureActive) {
 				return;
 			}
 
-			const input = event.data;
+			const input = event.inputBuffer.getChannelData(0);
 			const copy = new Float32Array(input.length);
 			copy.set(input);
 			recordedPcmChunks = [...recordedPcmChunks, copy];
 		};
 
-		mediaSourceNode.connect(processorNode);
-		processorNode.connect(silenceGainNode);
+		mediaSourceNode.connect(scriptProcessorNode);
+		scriptProcessorNode.connect(silenceGainNode);
 		silenceGainNode.connect(audioContext.destination);
 
 		if (audioContext.state === 'suspended') {
@@ -392,10 +385,10 @@
 	}
 
 	async function stopAudioContext() {
-		processorNode?.disconnect();
+		scriptProcessorNode?.disconnect();
 		mediaSourceNode?.disconnect();
 		silenceGainNode?.disconnect();
-		processorNode = null;
+		scriptProcessorNode = null;
 		mediaSourceNode = null;
 		silenceGainNode = null;
 
@@ -410,10 +403,10 @@
 			timer = null;
 		}
 		isCaptureActive = false;
-		processorNode?.disconnect();
+		scriptProcessorNode?.disconnect();
 		mediaSourceNode?.disconnect();
 		silenceGainNode?.disconnect();
-		processorNode = null;
+		scriptProcessorNode = null;
 		mediaSourceNode = null;
 		silenceGainNode = null;
 		if (audioContext) {

@@ -112,7 +112,7 @@
 	}
 
 	.file-chip {
-		display: flex;
+		display: inline-flex;
 		align-items: center;
 		gap: 0.4rem;
 		padding: 0.35rem 0.75rem;
@@ -121,33 +121,47 @@
 		border-radius: 8px;
 		font-size: 0.85rem;
 		color: var(--theme-text);
+		max-width: 100%;
 	}
 
 	.file-name {
-		max-width: 150px;
+		display: block;
+		min-width: 0;
+		max-width: min(320px, 62vw);
 		overflow: hidden;
 		text-overflow: ellipsis;
 		white-space: nowrap;
 	}
 
 	.remove-btn {
-		display: flex;
+		all: unset;
+		display: inline-flex;
 		align-items: center;
 		justify-content: center;
-		width: 18px;
-		height: 18px;
-		border: none;
+		width: 20px;
+		height: 20px;
 		border-radius: 50%;
 		background: rgba(255, 255, 255, 0.15);
 		color: var(--theme-text-muted);
-		font-size: 0.9rem;
+		font-size: 0.95rem;
 		cursor: pointer;
 		line-height: 1;
-		padding: 0;
+		flex-shrink: 0;
 	}
 
 	.remove-btn:hover {
 		background: rgba(233, 69, 96, 0.4);
 		color: #fff;
+	}
+
+	@media (max-width: 640px) {
+		.file-name {
+			max-width: min(250px, 58vw);
+		}
+
+		.remove-btn {
+			width: 22px;
+			height: 22px;
+		}
 	}
 </style>

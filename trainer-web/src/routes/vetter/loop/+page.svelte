@@ -73,6 +73,8 @@
 
 	// Source references
 	let showSources = $state(false);
+	let selectedOptionIndex = $state<number | null>(null);
+	let showAnswerModal = $state(false);
 
 	let voiceAction = $state<PendingVoiceAction | null>(null);
 
@@ -314,12 +316,16 @@
 		questions = questions.map((question, index) => (index === currentIndex ? replacement : question));
 		showSources = false;
 		editing = false;
+		selectedOptionIndex = null;
+		showAnswerModal = false;
 		activeOptionEditIndex = null;
 	}
 
 	function advance() {
 		showSources = false;
 		editing = false;
+		selectedOptionIndex = null;
+		showAnswerModal = false;
 		voiceAction = null;
 		for (let i = currentIndex + 1; i < questions.length; i++) {
 			if (!approved.has(questions[i].id) && !rejected.has(questions[i].id)) {
@@ -353,10 +359,29 @@
 	function isCorrectOption(opt: string, correctAnswer: string | null): boolean {
 		return normalizeCorrectAnswer(correctAnswer, currentQuestion?.options ?? []) === normalizeCorrectAnswer(opt, [opt]);
 	}
+
+	function selectOption(index: number) {
+		selectedOptionIndex = selectedOptionIndex === index ? null : index;
+	}
+
+	function openAnswerModal() {
+		if (selectedOptionIndex === null) return;
+		showAnswerModal = true;
+	}
+
+	function closeAnswerModal() {
+		showAnswerModal = false;
+	}
+
+	function selectedOptionIsCorrect(): boolean {
+		if (!currentQuestion?.options || selectedOptionIndex === null) return false;
+		const selectedOpt = currentQuestion.options[selectedOptionIndex];
+		return isCorrectOption(selectedOpt, currentQuestion.correct_answer);
+	}
 </script>
 
 <svelte:head>
-	<title>Vetting — QGen Vetter</title>
+	<title>Vetting — VQuest Vetter</title>
 </svelte:head>
 
 <div class="loop-page">
@@ -526,24 +551,19 @@
 							</div>
 							<div class="options">
 							{#each currentQuestion.options as opt, idx}
-								<div class="option" class:correct={isCorrectOption(opt, currentQuestion.correct_answer)}>
-									<span class="opt-marker">{isCorrectOption(opt, currentQuestion.correct_answer) ? '✓' : getOptionIdentifier(opt, idx)}</span>
+								<button class="option selectable" class:selected={selectedOptionIndex === idx} onclick={() => selectOption(idx)}>
+									<span class="opt-marker">{getOptionIdentifier(opt, idx)}</span>
 									<span>{opt}</span>
-								</div>
+								</button>
 							{/each}
 							</div>
-						</div>
-					{:else if currentQuestion.correct_answer}
-						<div class="answer-box">
-							<span class="answer-label">Answer:</span>
-							<span class="answer-text">{currentQuestion.correct_answer}</span>
-						</div>
-					{/if}
-
-					{#if currentQuestion.explanation}
-						<div class="explanation">
-							<span class="expl-label">Explanation</span>
-							<p class="expl-text">{currentQuestion.explanation}</p>
+							{#if selectedOptionIndex !== null}
+								<div class="answer-check-actions">
+									<button class="glass-btn check-answer-btn" onclick={openAnswerModal}>
+										Check Answer
+									</button>
+								</div>
+							{/if}
 						</div>
 					{/if}
 
@@ -631,6 +651,37 @@
 	{/if}
 </div>
 
+{#if showAnswerModal && currentQuestion}
+	<!-- svelte-ignore a11y_click_events_have_key_events a11y_no_static_element_interactions -->
+	<div class="answer-modal-overlay" onclick={closeAnswerModal} role="button" tabindex="0" aria-label="Close answer">
+		<!-- svelte-ignore a11y_click_events_have_key_events a11y_no_static_element_interactions -->
+		<div class="answer-modal glass-panel" onclick={(e) => e.stopPropagation()} role="dialog" aria-modal="true" tabindex="-1">
+			<div class="answer-modal-head">
+				<h3>Answer Check</h3>
+				<button class="answer-modal-close" onclick={closeAnswerModal} aria-label="Close">✕</button>
+			</div>
+			{#if currentQuestion.options && selectedOptionIndex !== null}
+				<p class="answer-result" class:correct={selectedOptionIsCorrect()} class:wrong={!selectedOptionIsCorrect()}>
+					{selectedOptionIsCorrect() ? 'Correct selection' : 'Incorrect selection'}
+				</p>
+				<p class="answer-chosen">Your choice: {currentQuestion.options[selectedOptionIndex]}</p>
+			{/if}
+			{#if currentQuestion.correct_answer}
+				<div class="answer-box">
+					<span class="answer-label">Correct Answer</span>
+					<span class="answer-text">{currentQuestion.correct_answer}</span>
+				</div>
+			{/if}
+			{#if currentQuestion.explanation}
+				<div class="explanation">
+					<span class="expl-label">Explanation</span>
+					<p class="expl-text">{currentQuestion.explanation}</p>
+				</div>
+			{/if}
+		</div>
+	</div>
+{/if}
+
 {#if voiceAction}
 	<VoiceRecorder
 		title={voiceRecorderTitle}
@@ -676,12 +727,21 @@
 		font-size: 0.9rem;
 		color: var(--theme-text);
 		transition: background 0.15s;
+		width: 100%;
+		border: none;
+		text-align: left;
+		font-family: inherit;
 	}
 
-	.option.correct {
-		background: rgba(72, 192, 80, 0.15);
-		border: 0.5px solid rgba(72, 192, 80, 0.3);
+	.option.selectable {
+		cursor: pointer;
 	}
+
+	.option.selectable.selected {
+		background: rgba(var(--theme-primary-rgb), 0.2);
+		border: 0.5px solid rgba(var(--theme-primary-rgb), 0.45);
+	}
+
 
 	.opt-marker {
 		width: 20px;
@@ -690,15 +750,76 @@
 		flex-shrink: 0;
 	}
 
-	.option.correct .opt-marker {
-		color: #2cda38;
-	}
-
 	.answer-box {
 		padding: 0.75rem 1rem;
 		background: rgba(72, 192, 80, 0.1);
 		border-radius: 10px;
 		border: 0.5px solid rgba(72, 192, 80, 0.2);
+	}
+
+	.answer-check-actions {
+		margin-top: 0.85rem;
+		display: flex;
+		justify-content: flex-end;
+	}
+
+	.answer-modal-overlay {
+		position: fixed;
+		inset: 0;
+		background: rgba(0, 0, 0, 0.55);
+		display: flex;
+		align-items: center;
+		justify-content: center;
+		padding: 1rem;
+		z-index: 1200;
+	}
+
+	.answer-modal {
+		width: min(520px, 100%);
+		padding: 1rem;
+		border-radius: 14px;
+		display: flex;
+		flex-direction: column;
+		gap: 0.6rem;
+	}
+
+	.answer-modal-head {
+		display: flex;
+		justify-content: space-between;
+		align-items: center;
+	}
+
+	.answer-modal-head h3 {
+		margin: 0;
+		font-size: 1rem;
+	}
+
+	.answer-modal-close {
+		border: none;
+		background: rgba(255, 255, 255, 0.1);
+		color: var(--theme-text);
+		width: 28px;
+		height: 28px;
+		border-radius: 999px;
+		cursor: pointer;
+	}
+
+	.answer-result {
+		margin: 0;
+		font-weight: 700;
+	}
+
+	.answer-result.correct {
+		color: #48c050;
+	}
+
+	.answer-result.wrong {
+		color: #f59aa8;
+	}
+
+	.answer-chosen {
+		margin: 0;
+		font-size: 0.9rem;
 	}
 
 	.answer-label {
@@ -1395,15 +1516,7 @@
 		background: rgba(255, 255, 255, 0.1);
 	}
 
-	.option.correct {
-		background: rgba(62, 153, 117, 0.24);
-		border-color: rgba(49, 208, 161, 0.4);
-	}
 
-	.option.correct .opt-marker {
-		background: rgba(49, 208, 161, 0.22);
-		color: #d3fff1;
-	}
 /* 
 	.edit-inline-row {
 		display: flex;

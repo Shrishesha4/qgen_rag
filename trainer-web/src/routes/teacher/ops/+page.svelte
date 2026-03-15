@@ -294,7 +294,7 @@
 </script>
 
 <svelte:head>
-	<title>Training Ops — QGen Trainer</title>
+	<title>Training Ops — VQuest Trainer</title>
 </svelte:head>
 
 <div class="ops-page">

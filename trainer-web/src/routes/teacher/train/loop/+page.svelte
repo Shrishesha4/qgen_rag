@@ -15,6 +15,7 @@
 		generateChapter,
 		cancelGeneration,
 		listReferenceDocuments,
+		scheduleBackgroundGeneration,
 		type GenerationEvent,
 	} from '$lib/api/documents';
 	import { deleteSubject, getSubject, type SubjectDetailResponse } from '$lib/api/subjects';
@@ -23,12 +24,23 @@
 	const FAILED_DOC_STATUSES = new Set(['failed', 'error']);
 	const WAIT_POLL_MS = 1500;
 	const WAIT_DOCS_TIMEOUT_MS = 3 * 60 * 1000;
+	const DEFAULT_BATCH_SIZE = 10;
+	const MIN_BATCH_SIZE = 5;
+	const MAX_BATCH_SIZE = 100;
+
+	function parseBatchSizeParam(raw: string | null) {
+		if (raw == null || raw.trim() === '') return DEFAULT_BATCH_SIZE;
+		const parsed = Number(raw);
+		if (!Number.isFinite(parsed) || parsed <= 0) return DEFAULT_BATCH_SIZE;
+		return Math.max(MIN_BATCH_SIZE, Math.min(MAX_BATCH_SIZE, Math.trunc(parsed)));
+	}
 
 	let subjectId = $state('');
 	let topicId = $state('');
 	let mixedTopicsMode = $state(false);
 	let provisionalSubject = $state(false);
 	let firstQuestionGenerated = $state(false);
+	let generationBatchSize = $state(DEFAULT_BATCH_SIZE);
 
 	// Confirm + cleanup before any SvelteKit navigation
 	beforeNavigate(({ cancel, to }) => {
@@ -55,6 +67,7 @@
 			const nextTopicId = p.url.searchParams.get('topic') ?? '';
 			const nextMixedTopicsMode = p.url.searchParams.get('mode') === 'mixed-topics';
 			const nextProvisionalSubject = p.url.searchParams.get('provisional') === '1';
+			const nextGenerationBatchSize = parseBatchSizeParam(p.url.searchParams.get('count'));
 
 			if (nextSubjectId !== subjectId || nextMixedTopicsMode !== mixedTopicsMode || nextProvisionalSubject !== provisionalSubject) {
 				topicCycleIds = [];
@@ -68,6 +81,7 @@
 			topicId = nextTopicId;
 			mixedTopicsMode = nextMixedTopicsMode;
 			provisionalSubject = nextProvisionalSubject;
+			generationBatchSize = nextGenerationBatchSize;
 		});
 		loadAndStream();
 
@@ -99,7 +113,6 @@
 	let regenerating = $state(false);
 
 	// Background generation
-	const BATCH_SIZE = 5;
 	let generating = $state(false);
 	let genAbortController = $state<AbortController | null>(null);
 	let genCount = $state(0);
@@ -140,6 +153,9 @@
 
 	// Source references
 	let showSources = $state(false);
+	let selectedOptionIndex = $state<number | null>(null);
+	let showAnswerModal = $state(false);
+	let handingOffGeneration = $state(false);
 
 	let voiceAction = $state<PendingVoiceAction | null>(null);
 
@@ -219,9 +235,9 @@
 				: 'General questions';
 
 			if (mixedTopicsMode && !topicId) {
-				await generateMixedTopicBatch(genCtx, BATCH_SIZE);
+				await generateMixedTopicBatch(genCtx, generationBatchSize);
 			} else {
-				await generateBatch(genCtx, BATCH_SIZE, topicId || undefined);
+				await generateBatch(genCtx, generationBatchSize, topicId || undefined);
 			}
 
 			// Arm threshold: next batch triggers when 70% of current questions are vetted
@@ -344,9 +360,9 @@
 					: 'General questions';
 			}
 			if (mixedTopicsMode && !topicId) {
-				await generateMixedTopicBatch(genCtx, BATCH_SIZE);
+				await generateMixedTopicBatch(genCtx, generationBatchSize);
 			} else {
-				await generateBatch(genCtx, BATCH_SIZE, topicId || undefined);
+				await generateBatch(genCtx, generationBatchSize, topicId || undefined);
 			}
 			if (!batchComplete) armNextGen();
 		} catch (e: unknown) {
@@ -460,6 +476,8 @@
 		questions = questions.map((question, index) => (index === currentIndex ? replacement : question));
 		showSources = false;
 		editing = false;
+		selectedOptionIndex = null;
+		showAnswerModal = false;
 		activeOptionEditIndex = null;
 	}
 
@@ -660,6 +678,8 @@
 	function advance() {
 		showSources = false;
 		editing = false;
+		selectedOptionIndex = null;
+		showAnswerModal = false;
 		voiceAction = null;
 		// Find next unreviewed question
 		for (let i = currentIndex + 1; i < questions.length; i++) {
@@ -689,10 +709,50 @@
 	function isCorrectOption(opt: string, correctAnswer: string | null): boolean {
 		return normalizeCorrectAnswer(correctAnswer, currentQuestion?.options ?? []) === normalizeCorrectAnswer(opt, [opt]);
 	}
+
+	function selectOption(index: number) {
+		selectedOptionIndex = selectedOptionIndex === index ? null : index;
+	}
+
+	function openAnswerModal() {
+		if (selectedOptionIndex === null) return;
+		showAnswerModal = true;
+	}
+
+	function closeAnswerModal() {
+		showAnswerModal = false;
+	}
+
+	function selectedOptionIsCorrect(): boolean {
+		if (!currentQuestion?.options || selectedOptionIndex === null) return false;
+		const selectedOpt = currentQuestion.options[selectedOptionIndex];
+		return isCorrectOption(selectedOpt, currentQuestion.correct_answer);
+	}
+
+	async function continueGenerationInBackground() {
+		if (!subjectId || handingOffGeneration) return;
+		handingOffGeneration = true;
+		error = '';
+		try {
+			stopBackgroundGen();
+			await scheduleBackgroundGeneration({
+				subjectId,
+				count: generationBatchSize,
+				types: 'mcq',
+				difficulty: 'medium',
+			});
+			goto('/teacher/dashboard');
+		} catch (e: unknown) {
+			batchComplete = false;
+			error = e instanceof Error ? e.message : 'Failed to move generation to background';
+		} finally {
+			handingOffGeneration = false;
+		}
+	}
 </script>
 
 <svelte:head>
-	<title>Training Loop — QGen Trainer</title>
+	<title>Training Loop — VQuest Trainer</title>
 </svelte:head>
 
 <div class="loop-page">
@@ -728,7 +788,7 @@
 			{#if docProcessingProgress !== null}
 				<div class="gen-progress-card standalone">
 					<div class="gen-progress-head">
-						<!-- <span class="gen-progress-label">{docProcessingDocument || 'Document processing'}</span> --> -->
+						<!-- <span class="gen-progress-label">{docProcessingDocument || 'Document processing'}</span> -->
 						<!-- <span class="gen-progress-value">{docProcessingProgress}%</span> -->
 					</div>
 					<div class="gen-progress-track">
@@ -740,6 +800,9 @@
 				</div>
 			{/if}
 			<p class="sub-text">Please Wait...</p>
+			<button class="glass-btn secondary-btn" onclick={continueGenerationInBackground} disabled={handingOffGeneration}>
+				{handingOffGeneration ? 'Switching…' : 'Generate In Background'}
+			</button>
 		</div>
 	{:else if questions.length === 0}
 		<div class="empty-state">
@@ -798,6 +861,11 @@
 					<p class="gen-progress-detail">{docProcessingDetail}</p>
 				{/if}
 			{/if}
+			<div class="gen-background-action">
+				<button class="glass-btn secondary-btn" onclick={continueGenerationInBackground} disabled={handingOffGeneration}>
+					{handingOffGeneration ? 'Switching…' : 'Generate In Background'}
+				</button>
+			</div>
 		</div>
 	{/if}
 
@@ -917,24 +985,19 @@
 						</div>
 						<div class="options">
 						{#each currentQuestion.options as opt, idx}
-							<div class="option" class:correct={isCorrectOption(opt, currentQuestion.correct_answer)}>
-								<span class="opt-marker">{isCorrectOption(opt, currentQuestion.correct_answer) ? '✓' : getOptionIdentifier(opt, idx)}</span>
+							<button class="option selectable" class:selected={selectedOptionIndex === idx} onclick={() => selectOption(idx)}>
+								<span class="opt-marker">{getOptionIdentifier(opt, idx)}</span>
 								<span>{opt}</span>
-							</div>
+							</button>
 						{/each}
 						</div>
-					</div>
-				{:else if currentQuestion.correct_answer}
-					<div class="answer-box">
-						<span class="answer-label">Answer:</span>
-						<span class="answer-text">{currentQuestion.correct_answer}</span>
-					</div>
-				{/if}
-
-				{#if currentQuestion.explanation}
-					<div class="explanation">
-						<span class="expl-label">Explanation</span>
-						<p class="expl-text">{currentQuestion.explanation}</p>
+						{#if selectedOptionIndex !== null}
+							<div class="answer-check-actions">
+								<button class="glass-btn check-answer-btn" onclick={openAnswerModal}>
+									Check Answer
+								</button>
+							</div>
+						{/if}
 					</div>
 				{/if}
 
@@ -994,6 +1057,37 @@
 	{/if}
 	{/if}
 </div>
+
+{#if showAnswerModal && currentQuestion}
+	<!-- svelte-ignore a11y_click_events_have_key_events a11y_no_static_element_interactions -->
+	<div class="answer-modal-overlay" onclick={closeAnswerModal} role="button" tabindex="0" aria-label="Close answer">
+		<!-- svelte-ignore a11y_click_events_have_key_events a11y_no_static_element_interactions -->
+		<div class="answer-modal glass-panel" onclick={(e) => e.stopPropagation()} role="dialog" aria-modal="true" tabindex="-1">
+			<div class="answer-modal-head">
+				<h3>Answer Check</h3>
+				<button class="answer-modal-close" onclick={closeAnswerModal} aria-label="Close">✕</button>
+			</div>
+			{#if currentQuestion.options && selectedOptionIndex !== null}
+				<p class="answer-result" class:correct={selectedOptionIsCorrect()} class:wrong={!selectedOptionIsCorrect()}>
+					{selectedOptionIsCorrect() ? 'Correct selection' : 'Incorrect selection'}
+				</p>
+				<p class="answer-chosen">Your choice: {currentQuestion.options[selectedOptionIndex]}</p>
+			{/if}
+			{#if currentQuestion.correct_answer}
+				<div class="answer-box">
+					<span class="answer-label">Correct Answer</span>
+					<span class="answer-text">{currentQuestion.correct_answer}</span>
+				</div>
+			{/if}
+			{#if currentQuestion.explanation}
+				<div class="explanation">
+					<span class="expl-label">Explanation</span>
+					<p class="expl-text">{currentQuestion.explanation}</p>
+				</div>
+			{/if}
+		</div>
+	</div>
+{/if}
 
 {#if questions.length > 0 && !showBatchCompletePanel}
 	<div class="floating-stack">
@@ -1089,9 +1183,14 @@
 		transition: background 0.15s;
 	}
 
-	.option.correct {
-		background: rgba(72, 192, 80, 0.15);
-		border: 0.5px solid rgba(72, 192, 80, 0.3);
+	.option.selectable {
+		cursor: pointer;
+		border: 0.5px solid transparent;
+	}
+
+	.option.selectable.selected {
+		background: rgba(var(--theme-primary-rgb), 0.2);
+		border-color: rgba(var(--theme-primary-rgb), 0.45);
 	}
 
 	.opt-marker {
@@ -1101,8 +1200,69 @@
 		flex-shrink: 0;
 	}
 
-	.option.correct .opt-marker {
-		color: #2cda38;
+	.answer-check-actions {
+		margin-top: 0.85rem;
+		display: flex;
+		justify-content: flex-end;
+	}
+
+	.answer-modal-overlay {
+		position: fixed;
+		inset: 0;
+		background: rgba(0, 0, 0, 0.55);
+		display: flex;
+		align-items: center;
+		justify-content: center;
+		padding: 1rem;
+		z-index: 1200;
+	}
+
+	.answer-modal {
+		width: min(520px, 100%);
+		padding: 1rem;
+		border-radius: 14px;
+		display: flex;
+		flex-direction: column;
+		gap: 0.6rem;
+	}
+
+	.answer-modal-head {
+		display: flex;
+		justify-content: space-between;
+		align-items: center;
+	}
+
+	.answer-modal-head h3 {
+		margin: 0;
+		font-size: 1rem;
+	}
+
+	.answer-modal-close {
+		border: none;
+		background: rgba(255, 255, 255, 0.1);
+		color: var(--theme-text);
+		width: 28px;
+		height: 28px;
+		border-radius: 999px;
+		cursor: pointer;
+	}
+
+	.answer-result {
+		margin: 0;
+		font-weight: 700;
+	}
+
+	.answer-result.correct {
+		color: #48c050;
+	}
+
+	.answer-result.wrong {
+		color: #f59aa8;
+	}
+
+	.answer-chosen {
+		margin: 0;
+		font-size: 0.9rem;
 	}
 
 	/* Answer box */
@@ -2021,14 +2181,9 @@
 		background: rgba(255, 255, 255, 0.406);
 	}
 
-	.option.correct {
-		background: rgba(32, 178, 49, 0.423);
-		border-color: rgba(55, 255, 95, 0.615);
-	}
-
-	.option.correct .opt-marker {
-		background: rgba(32, 255, 103, 0.574);
-		color: #9fff9e;
+	.option.selectable.selected {
+		background: rgba(var(--theme-primary-rgb), 0.2);
+		border-color: rgba(var(--theme-primary-rgb), 0.55);
 	}
 
 	.floating-stack {

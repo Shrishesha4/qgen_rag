@@ -3,7 +3,7 @@
 </script>
 
 <svelte:head>
-	<title>Vetter Sign In — QGen Trainer</title>
+	<title>Vetter Sign In — VQuest Trainer</title>
 </svelte:head>
 
 <AuthForm role="vetter" />

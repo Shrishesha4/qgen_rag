@@ -38,7 +38,7 @@
 </script>
 
 <svelte:head>
-	<title>Select Subject — QGen Vetter</title>
+	<title>Select Subject — VQuest Vetter</title>
 </svelte:head>
 
 <div class="page">

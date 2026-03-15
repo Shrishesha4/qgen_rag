@@ -3,7 +3,7 @@
 </script>
 
 <svelte:head>
-	<title>Teacher Sign In — QGen Trainer</title>
+	<title>Teacher Sign In — VQuest Trainer</title>
 </svelte:head>
 
 <AuthForm role="teacher" />

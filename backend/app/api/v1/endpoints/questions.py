@@ -17,6 +17,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from pydantic import BaseModel
 
 from app.core.database import get_db
+from app.core.database import AsyncSessionLocal
 from app.core.config import settings
 from app.schemas.question import (
     QuestionGenerationRequest,
@@ -33,6 +34,7 @@ from app.api.v1.deps import get_current_user, rate_limit
 from app.models.user import User
 from app.models.question import Question, GenerationSession
 from app.models.document import Document
+from app.models.subject import Subject, Topic
 
 
 # MIME type mapping for allowed extensions
@@ -44,6 +46,99 @@ MIME_TYPE_MAPPING = {
 
 
 router = APIRouter()
+_BACKGROUND_GENERATION_TASKS: dict[str, asyncio.Task] = {}
+
+
+def _bg_gen_task_key(user_id: uuid.UUID, subject_id: uuid.UUID) -> str:
+    return f"{user_id}:{subject_id}"
+
+
+async def _wait_for_subject_docs_ready(
+    db: AsyncSession,
+    user_id: uuid.UUID,
+    subject_id: uuid.UUID,
+    timeout_seconds: int = 30 * 60,
+    poll_interval_seconds: float = 3.0,
+) -> bool:
+    """Wait until subject reference docs are no longer processing and at least one is ready."""
+    ready_statuses = {"completed", "complete", "processed", "ready", "indexed"}
+    failed_statuses = {"failed", "error"}
+    started_at = asyncio.get_event_loop().time()
+
+    while asyncio.get_event_loop().time() - started_at < timeout_seconds:
+        res = await db.execute(
+            select(Document.processing_status).where(
+                Document.user_id == user_id,
+                Document.subject_id == subject_id,
+                Document.index_type.in_(["reference_book", "template_paper"]),
+            )
+        )
+        statuses = [(s or "").lower() for s in res.scalars().all()]
+
+        if not statuses:
+            await asyncio.sleep(poll_interval_seconds)
+            continue
+
+        processing_count = sum(1 for s in statuses if s in {"pending", "processing"})
+        ready_count = sum(1 for s in statuses if s in ready_statuses)
+        failed_count = sum(1 for s in statuses if s in failed_statuses)
+
+        if ready_count > 0 and processing_count == 0:
+            return True
+        if failed_count == len(statuses):
+            return False
+
+        await asyncio.sleep(poll_interval_seconds)
+
+    return False
+
+
+async def _run_background_subject_generation(
+    user_id: uuid.UUID,
+    subject_id: uuid.UUID,
+    count: int,
+    types: list[str],
+    difficulty: str,
+) -> None:
+    task_key = _bg_gen_task_key(user_id, subject_id)
+    try:
+        async with AsyncSessionLocal() as task_db:
+            subject_res = await task_db.execute(
+                select(Subject).where(Subject.id == subject_id, Subject.user_id == user_id)
+            )
+            subject = subject_res.scalar_one_or_none()
+            if not subject:
+                return
+
+            docs_ready = await _wait_for_subject_docs_ready(task_db, user_id, subject_id)
+            if not docs_ready:
+                return
+
+            topics_res = await task_db.execute(
+                select(Topic.name).where(Topic.subject_id == subject_id).order_by(Topic.order_index.asc())
+            )
+            topic_names = [name for name in topics_res.scalars().all() if name]
+            context = f"{subject.name}: {', '.join(topic_names)}" if topic_names else subject.name
+
+            marks_by_type = {"mcq": 1, "short_answer": 2, "long_answer": 5}
+            question_service = QuestionGenerationService(task_db)
+
+            generator = question_service.quick_generate_from_subject(
+                user_id=user_id,
+                subject_id=subject_id,
+                context=context,
+                count=count,
+                types=types,
+                difficulty=difficulty,
+                marks_by_type=marks_by_type,
+                topic_id=None,
+                existing_session_id=None,
+            )
+            async for _ in generator:
+                pass
+            await task_db.commit()
+    finally:
+        _BACKGROUND_GENERATION_TASKS.pop(task_key, None)
 
 
 async def sse_with_heartbeat(
@@ -667,6 +762,74 @@ async def cancel_generation(
     redis = RedisService()
     await redis.release_generation_lock(str(current_user.id), subject_id)
     return {"message": "Generation cancelled", "subject_id": subject_id}
+
+
+@router.post("/schedule-background-generation")
+async def schedule_background_generation(
+    subject_id: str = Form(..., description="Subject ID to generate questions for"),
+    count: int = Form(default=10, ge=1, le=200, description="Target number of questions"),
+    types: str = Form(default="mcq", description="Comma-separated question types"),
+    difficulty: str = Form(default="medium", description="easy, medium, hard"),
+    current_user: User = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+):
+    """Schedule server-side generation that can continue after the teacher leaves the page."""
+    valid_types = {"mcq", "short_answer", "long_answer"}
+    type_list = [t.strip() for t in types.split(",") if t.strip()]
+    if not type_list:
+        type_list = ["mcq"]
+    if any(t not in valid_types for t in type_list):
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail=f"Invalid types. Allowed: {', '.join(sorted(valid_types))}",
+        )
+    if difficulty not in {"easy", "medium", "hard"}:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="Invalid difficulty. Must be easy, medium, or hard",
+        )
+
+    try:
+        parsed_subject_id = uuid.UUID(subject_id)
+    except ValueError:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Invalid subject_id format")
+
+    subject_res = await db.execute(
+        select(Subject).where(Subject.id == parsed_subject_id, Subject.user_id == current_user.id)
+    )
+    subject = subject_res.scalar_one_or_none()
+    if not subject:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Subject not found")
+
+    task_key = _bg_gen_task_key(current_user.id, parsed_subject_id)
+    existing_task = _BACKGROUND_GENERATION_TASKS.get(task_key)
+    if existing_task and not existing_task.done():
+        return {
+            "status": "already_running",
+            "message": "Background generation is already running for this subject",
+            "subject_id": str(parsed_subject_id),
+            "count": count,
+        }
+
+    task = asyncio.create_task(
+        _run_background_subject_generation(
+            user_id=current_user.id,
+            subject_id=parsed_subject_id,
+            count=count,
+            types=type_list,
+            difficulty=difficulty,
+        )
+    )
+    _BACKGROUND_GENERATION_TASKS[task_key] = task
+
+    return {
+        "status": "scheduled",
+        "message": "Background generation scheduled",
+        "subject_id": str(parsed_subject_id),
+        "count": count,
+        "types": type_list,
+        "difficulty": difficulty,
+    }
 
 
 @router.post("/backfill-topic-mapping")

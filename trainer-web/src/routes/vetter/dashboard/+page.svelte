@@ -42,7 +42,7 @@
 </script>
 
 <svelte:head>
-	<title>Vetter Dashboard — QGen Trainer</title>
+	<title>Vetter Dashboard — VQuest Trainer</title>
 </svelte:head>
 
 <div class="vetter-dash">

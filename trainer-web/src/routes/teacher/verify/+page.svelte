@@ -57,7 +57,7 @@
 </script>
 
 <svelte:head>
-	<title>Verifier Mode — QGen Trainer</title>
+	<title>Verifier Mode — VQuest Trainer</title>
 </svelte:head>
 
 <div class="verify-page">

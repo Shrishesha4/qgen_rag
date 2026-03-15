@@ -12,7 +12,7 @@
 </script>
 
 <svelte:head>
-	<title>Train Topic — QGen Trainer</title>
+	<title>Train Topic — VQuest Trainer</title>
 </svelte:head>
 
 <div class="page">

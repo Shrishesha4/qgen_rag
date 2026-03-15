@@ -33,6 +33,22 @@ export interface ReferenceDocumentsResponse {
 	reference_questions: ReferenceDocumentItem[];
 }
 
+export interface DocumentStatusResponse {
+	document_id: string;
+	filename: string;
+	status: string;
+	total_chunks: number | null;
+	total_tokens: number | null;
+	processed_at: string | null;
+	processing_step?: string;
+	processing_progress?: number;
+	processing_detail?: string;
+	total_pages?: number;
+	extraction_method?: string;
+	used_ocr?: boolean;
+	error?: string;
+}
+
 export async function uploadDocument(
 	file: File,
 	subjectId?: string,
@@ -82,6 +98,10 @@ export async function deleteDocumentById(documentId: string): Promise<void> {
 	});
 }
 
+export async function getDocumentStatus(documentId: string): Promise<DocumentStatusResponse> {
+	return apiFetch<DocumentStatusResponse>(`/documents/${documentId}/status`);
+}
+
 // ── Question generation (SSE) ──
 
 export interface GenerationEvent {
@@ -97,6 +117,33 @@ export interface GenerationEvent {
 	processing_detail?: string;
 	processing_document?: string;
 	processing_documents_total?: number;
+}
+
+export interface BackgroundGenerationScheduleResponse {
+	status: 'scheduled' | 'already_running';
+	message: string;
+	subject_id: string;
+	count: number;
+	types?: string[];
+	difficulty?: string;
+}
+
+export async function scheduleBackgroundGeneration(opts: {
+	subjectId: string;
+	count: number;
+	types?: string;
+	difficulty?: string;
+}): Promise<BackgroundGenerationScheduleResponse> {
+	const form = new FormData();
+	form.append('subject_id', opts.subjectId);
+	form.append('count', String(opts.count));
+	form.append('types', opts.types ?? 'mcq');
+	form.append('difficulty', opts.difficulty ?? 'medium');
+
+	return apiFetch<BackgroundGenerationScheduleResponse>('/questions/schedule-background-generation', {
+		method: 'POST',
+		body: form,
+	});
 }
 
 /**

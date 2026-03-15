@@ -1,5 +1,5 @@
 <script lang="ts">
-	import { onMount } from 'svelte';
+	import { onDestroy, onMount } from 'svelte';
 	import { goto } from '$app/navigation';
 	import { session } from '$lib/session';
 	import {
@@ -11,6 +11,7 @@
 	} from '$lib/api/subjects';
 	import {
 		listReferenceDocuments,
+		getDocumentStatus,
 		uploadDocument,
 		deleteDocumentById,
 		type ReferenceDocumentItem,
@@ -51,6 +52,75 @@
 	let referenceBooks = $state<ReferenceDocumentItem[]>([]);
 	let templatePapers = $state<ReferenceDocumentItem[]>([]);
 	let referenceQuestions = $state<ReferenceDocumentItem[]>([]);
+	let referenceProgressByDoc = $state<Record<string, number>>({});
+	let referenceProgressDetailByDoc = $state<Record<string, string>>({});
+	let referencePollTimer: ReturnType<typeof setInterval> | null = null;
+
+	const PROCESSING_DOC_STATUSES = new Set(['pending', 'processing']);
+
+	function clearReferencePolling() {
+		if (referencePollTimer) {
+			clearInterval(referencePollTimer);
+			referencePollTimer = null;
+		}
+	}
+
+	onDestroy(() => {
+		clearReferencePolling();
+	});
+
+	function allReferenceDocs() {
+		return [...referenceBooks, ...templatePapers, ...referenceQuestions];
+	}
+
+	function isDocProcessing(status: string) {
+		return PROCESSING_DOC_STATUSES.has((status || '').toLowerCase());
+	}
+
+	function hasAnyProcessingDocs() {
+		return allReferenceDocs().some((doc) => isDocProcessing(doc.processing_status));
+	}
+
+	async function refreshReferenceProgressForProcessingDocs() {
+		const processingDocs = allReferenceDocs().filter((doc) => isDocProcessing(doc.processing_status));
+		if (processingDocs.length === 0) return;
+
+		const updates = await Promise.all(
+			processingDocs.map(async (doc) => {
+				try {
+					const status = await getDocumentStatus(doc.id);
+					return {
+						id: doc.id,
+						progress: status.processing_progress ?? 0,
+						detail: status.processing_detail ?? status.processing_step ?? '',
+					};
+				} catch {
+					return {
+						id: doc.id,
+						progress: 0,
+						detail: '',
+					};
+				}
+			})
+		);
+
+		const nextProgress = { ...referenceProgressByDoc };
+		const nextDetail = { ...referenceProgressDetailByDoc };
+		for (const update of updates) {
+			nextProgress[update.id] = update.progress;
+			nextDetail[update.id] = update.detail;
+		}
+		referenceProgressByDoc = nextProgress;
+		referenceProgressDetailByDoc = nextDetail;
+	}
+
+	function ensureReferenceProgressPolling() {
+		clearReferencePolling();
+		if (!showReferenceModal || !hasAnyProcessingDocs()) return;
+		referencePollTimer = setInterval(() => {
+			void loadReferenceMaterials(referenceSubjectId, false);
+		}, 3000);
+	}
 
 	let filteredSubjects = $derived.by(() => {
 		const baseFiltered = subjects.map((subject) => {
@@ -126,12 +196,38 @@
 		}
 	}
 
-	function trainTopic(subjectId: string, topicId: string) {
-		goto(`/teacher/train/loop?subject=${subjectId}&topic=${topicId}`);
+	async function ensureReadyToGenerate(subject: SubjectResponse): Promise<boolean> {
+		try {
+			const refs = await listReferenceDocuments(subject.id);
+			referenceBooks = refs.reference_books || [];
+			templatePapers = refs.template_papers || [];
+			referenceQuestions = refs.reference_questions || [];
+			await refreshReferenceProgressForProcessingDocs();
+			if (hasAnyProcessingDocs()) {
+				referenceError = 'Some reference files are still processing. Please wait for completion.';
+				referenceSubjectId = subject.id;
+				referenceSubjectName = subject.name;
+				referenceTab = 'pdfs';
+				showReferenceModal = true;
+				ensureReferenceProgressPolling();
+				return false;
+			}
+			return true;
+		} catch {
+			return true;
+		}
 	}
 
-	function trainSubjectMixed(subjectId: string) {
-		goto(`/teacher/train/loop?subject=${subjectId}&mode=mixed-topics`);
+	async function trainTopic(subject: SubjectResponse, topicId: string) {
+		const canGenerate = await ensureReadyToGenerate(subject);
+		if (!canGenerate) return;
+		goto(`/teacher/train/loop?subject=${subject.id}&topic=${topicId}`);
+	}
+
+	async function trainSubjectMixed(subject: SubjectResponse) {
+		const canGenerate = await ensureReadyToGenerate(subject);
+		if (!canGenerate) return;
+		goto(`/teacher/train/loop?subject=${subject.id}&mode=mixed-topics`);
 	}
 
 	function openAddTopicModal(subject: SubjectResponse) {
@@ -194,6 +290,7 @@
 	}
 
 	function closeReferenceModal() {
+		clearReferencePolling();
 		showReferenceModal = false;
 		referenceSubjectId = '';
 		referenceSubjectName = '';
@@ -201,20 +298,24 @@
 		referenceBooks = [];
 		templatePapers = [];
 		referenceQuestions = [];
+		referenceProgressByDoc = {};
+		referenceProgressDetailByDoc = {};
 	}
 
-	async function loadReferenceMaterials(subjectId: string) {
-		referenceLoading = true;
+	async function loadReferenceMaterials(subjectId: string, withLoader = true) {
+		if (withLoader) referenceLoading = true;
 		referenceError = '';
 		try {
 			const res = await listReferenceDocuments(subjectId);
 			referenceBooks = res.reference_books || [];
 			templatePapers = res.template_papers || [];
 			referenceQuestions = res.reference_questions || [];
+			await refreshReferenceProgressForProcessingDocs();
+			ensureReferenceProgressPolling();
 		} catch (e: unknown) {
 			referenceError = e instanceof Error ? e.message : 'Failed to load reference materials';
 		} finally {
-			referenceLoading = false;
+			if (withLoader) referenceLoading = false;
 		}
 	}
 
@@ -253,7 +354,7 @@
 </script>
 
 <svelte:head>
-	<title>Existing Topics — QGen Trainer</title>
+	<title>Existing Topics — VQuest Trainer</title>
 </svelte:head>
 
 <div class="page">
@@ -316,7 +417,7 @@
 							<button
 								type="button"
 								class="quick-generate-btn"
-								onclick={() => trainSubjectMixed(s.id)}
+								onclick={() => trainSubjectMixed(s)}
 								aria-label="Generate mixed questions"
 								title="Generate mixed questions"
 							>
@@ -343,7 +444,7 @@
 								</div>
 							{:else if searchQuery && filteredTopics.length > 0}
 								{#each filteredTopics as topic}
-									<button class="topic-row" onclick={() => trainTopic(s.id, topic.id)}>
+									<button class="topic-row" onclick={() => trainTopic(s, topic.id)}>
 										<div class="tr-left">
 											<span class="tr-name">{topic.name}</span>
 										</div>
@@ -357,7 +458,7 @@
 								<p class="topics-empty">No matching topics in this subject</p>
 							{:else if topicsMap[s.id]?.length}
 								{#each topicsMap[s.id] as topic}
-									<button class="topic-row" onclick={() => trainTopic(s.id, topic.id)}>
+									<button class="topic-row" onclick={() => trainTopic(s, topic.id)}>
 										<div class="tr-left">
 											<span class="tr-name">{topic.name}</span>
 										</div>
@@ -406,10 +507,10 @@
 					<div class="topics-loading"><div class="spinner-sm"></div><span>Loading materials…</span></div>
 				{:else if referenceTab === 'pdfs'}
 					<div class="upload-row">
-						<select bind:value={pdfUploadType} class="select-input">
+						<!-- <select bind:value={pdfUploadType} class="select-input">
 							<option value="reference_book">Reference Book PDF</option>
 							<option value="template_paper">Template Paper PDF</option>
-						</select>
+						</select> -->
 						<label class="glass-btn small-btn upload-btn">
 							{referenceUploading ? 'Uploading...' : 'Add PDF'}
 							<input type="file" accept=".pdf,.doc,.docx,.txt" oninput={(e) => uploadReferenceFile(e, pdfUploadType)} disabled={referenceUploading} />
@@ -422,6 +523,14 @@
 								<div class="doc-main">
 									<div class="doc-name">{doc.filename}</div>
 									<div class="doc-meta">{doc.index_type.replace('_', ' ')} • {doc.processing_status}</div>
+									{#if isDocProcessing(doc.processing_status)}
+										<div class="doc-progress-track">
+											<div class="doc-progress-fill" style:width="{referenceProgressByDoc[doc.id] ?? 0}%"></div>
+										</div>
+										{#if referenceProgressDetailByDoc[doc.id]}
+											<div class="doc-progress-detail">{referenceProgressDetailByDoc[doc.id]}</div>
+										{/if}
+									{/if}
 								</div>
 								<button class="danger-btn" disabled={deletingRefId === doc.id} onclick={() => deleteReference(doc.id)}>
 									{deletingRefId === doc.id ? 'Deleting...' : 'Delete'}
@@ -450,6 +559,14 @@
 											• {doc.parsed_question_count} parsed
 										{/if}
 									</div>
+									{#if isDocProcessing(doc.processing_status)}
+										<div class="doc-progress-track">
+											<div class="doc-progress-fill" style:width="{referenceProgressByDoc[doc.id] ?? 0}%"></div>
+										</div>
+										{#if referenceProgressDetailByDoc[doc.id]}
+											<div class="doc-progress-detail">{referenceProgressDetailByDoc[doc.id]}</div>
+										{/if}
+									{/if}
 								</div>
 								<button class="danger-btn" disabled={deletingRefId === doc.id} onclick={() => deleteReference(doc.id)}>
 									{deletingRefId === doc.id ? 'Deleting...' : 'Delete'}
@@ -708,7 +825,7 @@
 		padding: 0.9rem 1rem 0.25rem;
 	}
 
-	.topic-input,
+	/* .topic-input,
 	.syllabus-input,
 	.select-input {
 		width: 100%;
@@ -718,7 +835,7 @@
 		background: rgba(255, 255, 255, 0.04);
 		color: var(--theme-text);
 		font: inherit;
-	}
+	} */
 
 	.syllabus-input {
 		resize: vertical;
@@ -938,6 +1055,26 @@
 	.doc-meta {
 		color: var(--theme-text-muted);
 		font-size: 0.82rem;
+	}
+
+	.doc-progress-track {
+		margin-top: 0.45rem;
+		height: 6px;
+		border-radius: 999px;
+		overflow: hidden;
+		background: rgba(255, 255, 255, 0.12);
+	}
+
+	.doc-progress-fill {
+		height: 100%;
+		background: linear-gradient(90deg, var(--theme-primary), var(--theme-primary-hover));
+		transition: width 0.3s ease;
+	}
+
+	.doc-progress-detail {
+		margin-top: 0.35rem;
+		font-size: 0.76rem;
+		color: var(--theme-text-muted);
 	}
 
 	.danger-btn {

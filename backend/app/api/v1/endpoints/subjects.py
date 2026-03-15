@@ -834,7 +834,7 @@ async def extract_chapters_from_syllabus(
     content = await file.read()
     
     # Validate file size (15MB limit for syllabus)
-    max_size_mb = 15
+    max_size_mb = settings.MAX_UPLOAD_SIZE_MB
     if len(content) > max_size_mb * 1024 * 1024:
         raise HTTPException(
             status_code=status.HTTP_413_REQUEST_ENTITY_TOO_LARGE,

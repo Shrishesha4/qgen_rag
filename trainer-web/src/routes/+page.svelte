@@ -21,7 +21,7 @@
 				<path d="M9 22h6"></path>
 			</svg>
 		</div>
-		<h1 class="hero-title font-serif">QGen</h1>
+		<h1 class="hero-title font-serif">VQuest</h1>
 		<p class="hero-sub">
 			Self-correcting AI for educational content — powered by human feedback.
 		</p>

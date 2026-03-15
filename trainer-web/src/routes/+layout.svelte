@@ -14,7 +14,8 @@
 		pathname !== '/' &&
 		!pathname.includes('/login') &&
 		!pathname.includes('/dashboard') &&
-		!pathname.includes('/ops')
+		!pathname.includes('/ops') &&
+		!pathname.includes('/loop')
 	);
 
 	function goBack() {
@@ -54,10 +55,10 @@
 
 <svelte:head>
 	<link rel="manifest" href="/manifest.webmanifest" />
-	<meta name="theme-color" content="#1f4268" />
-	<meta name="application-name" content="QGen Trainer" />
+	<meta name="theme-color" content="transparent" />
+	<meta name="application-name" content="VQuest Trainer" />
 	<meta name="apple-mobile-web-app-capable" content="yes" />
-	<meta name="apple-mobile-web-app-title" content="QGen Trainer" />
+	<meta name="apple-mobile-web-app-title" content="VQuest Trainer" />
 	<meta name="apple-mobile-web-app-status-bar-style" content="black-translucent" />
 	<link rel="apple-touch-icon" sizes="180x180" href="/icons/icon-180.png" />
 </svelte:head>

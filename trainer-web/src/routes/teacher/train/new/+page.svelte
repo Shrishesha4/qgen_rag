@@ -1,15 +1,32 @@
 <script lang="ts">
-	import { onMount } from 'svelte';
+	import { onDestroy, onMount } from 'svelte';
+	import { browser } from '$app/environment';
 	import { goto } from '$app/navigation';
 	import { session } from '$lib/session';
 	import FileUploadZone from '$lib/components/FileUploadZone.svelte';
-	import { createSubject, createTopic, deleteSubject, extractChapters, updateTopic, type TopicResponse } from '$lib/api/subjects';
-	import { uploadDocument } from '$lib/api/documents';
+	import { createSubject, createTopic, extractChapters, getSubject, updateTopic, type TopicResponse } from '$lib/api/subjects';
+	import { getDocumentStatus, listReferenceDocuments, scheduleBackgroundGeneration, uploadDocument } from '$lib/api/documents';
+
+	const DRAFT_STORAGE_KEY = 'qgen:new-topic-wizard:draft:v1';
+	const MIN_QUESTION_COUNT = 1;
+	const MAX_QUESTION_COUNT = 100;
+
+	function clampStep(value: number) {
+		if (!Number.isFinite(value)) return 1;
+		return Math.max(1, Math.min(6, Math.trunc(value)));
+	}
+
+	function clampQuestionCount(value: number) {
+		if (!Number.isFinite(value)) return 10;
+		return Math.max(MIN_QUESTION_COUNT, Math.min(MAX_QUESTION_COUNT, Math.trunc(value)));
+	}
 
 	onMount(() => {
 		const unsub = session.subscribe((s) => {
 			if (!s) goto('/teacher/login');
 		});
+
+		void restoreDraftAndResume();
 		return unsub;
 	});
 
@@ -39,6 +56,7 @@
 	interface TopicItem { name: string; syllabusContent: string; }
 	let topics = $state<TopicItem[]>([]);
 	let topicInput = $state('');
+	let topicError = $state('');
 	let importingPdf = $state(false);
 	let importError = $state('');
 	// We need a temp subject to use extractChapters — we'll create it lazily
@@ -49,6 +67,19 @@
 
 	// Step 4: Reference materials
 	let materials = $state<File[]>([]);
+	let materialDocs = $state<Array<{
+		id: string;
+		filename: string;
+		file_size_bytes: number;
+		processing_status: string;
+		processing_progress: number;
+		processing_step?: string;
+		processing_detail?: string;
+	}>>([]);
+	let uploadingMaterials = $state(false);
+	let materialsStatusError = $state('');
+	let materialsStatusMessage = $state('');
+	let materialPollTimer: ReturnType<typeof setInterval> | null = null;
 
 	// Step 5: Reference questions
 	let refQuestions = $state<File[]>([]);
@@ -58,6 +89,11 @@
 	let setupProgress = $state(0);
 	let setupStatus = $state('');
 	let setupError = $state('');
+	let completeOnlyMode = $state(false);
+	let backgroundGenerationScheduled = $state(false);
+	let backgroundGenerationMessage = $state('');
+	let desiredQuestionCount = $state(10);
+	let draftHydrated = $state(false);
 
 	// ── Derived ──
 	let canProceed = $derived.by(() => {
@@ -65,7 +101,11 @@
 			case 1: return disciplineName.trim().length > 0;
 			case 2: return topics.length > 0;
 			case 3: return true; // syllabus is optional per topic
-			case 4: return materials.length > 0; // at least one reference material required
+			case 4:
+				return materialDocs.length > 0 &&
+					desiredQuestionCount >= MIN_QUESTION_COUNT &&
+					desiredQuestionCount <= MAX_QUESTION_COUNT &&
+					materialsFailedCount === 0;
 			case 5: return true; // reference questions optional
 			case 6: return true; // review
 			case 7: return true;
@@ -87,6 +127,110 @@
 	});
 
 	let topicsWithSyllabus = $derived(topics.filter(t => t.syllabusContent.trim().length > 0).length);
+	let materialsProcessingCount = $derived(
+		materialDocs.filter((doc) => {
+			const status = doc.processing_status.toLowerCase();
+			return status === 'pending' || status === 'processing';
+		}).length
+	);
+	let materialsFailedCount = $derived(
+		materialDocs.filter((doc) => {
+			const status = doc.processing_status.toLowerCase();
+			return status === 'failed' || status === 'error';
+		}).length
+	);
+	let materialsReadyForNext = $derived(
+		materialDocs.length > 0 && materialsProcessingCount === 0 && materialsFailedCount === 0
+	);
+	let materialsAverageProgress = $derived.by(() => {
+		if (materialDocs.length === 0) return 0;
+		const total = materialDocs.reduce((sum, doc) => {
+			const status = doc.processing_status.toLowerCase();
+			if (status === 'completed' || status === 'complete' || status === 'processed') return sum + 100;
+			if (status === 'failed' || status === 'error') return sum + 100;
+			return sum + Math.max(0, Math.min(100, doc.processing_progress || 0));
+		}, 0);
+		return Math.round(total / materialDocs.length);
+	});
+
+	function saveDraft() {
+		if (!browser || !draftHydrated) return;
+		const draft = {
+			step,
+			selectedDiscipline,
+			useCustomDiscipline,
+			disciplineName,
+			disciplineCode,
+			topics,
+			expandedTopic,
+			tempSubjectId,
+			backgroundGenerationScheduled,
+			backgroundGenerationMessage,
+			desiredQuestionCount,
+		};
+		localStorage.setItem(DRAFT_STORAGE_KEY, JSON.stringify(draft));
+	}
+
+	function clearDraft() {
+		if (!browser) return;
+		localStorage.removeItem(DRAFT_STORAGE_KEY);
+	}
+
+	async function restoreDraftAndResume() {
+		if (!browser) return;
+		const raw = localStorage.getItem(DRAFT_STORAGE_KEY);
+		if (!raw) {
+			draftHydrated = true;
+			return;
+		}
+
+		try {
+			const parsed = JSON.parse(raw) as Partial<{
+				step: number;
+				selectedDiscipline: string;
+				useCustomDiscipline: boolean;
+				disciplineName: string;
+				disciplineCode: string;
+				topics: TopicItem[];
+				expandedTopic: number;
+				tempSubjectId: string;
+				backgroundGenerationScheduled: boolean;
+				backgroundGenerationMessage: string;
+				desiredQuestionCount: number;
+			}>;
+
+			step = clampStep(parsed.step ?? 1);
+			selectedDiscipline = parsed.selectedDiscipline ?? '';
+			useCustomDiscipline = parsed.useCustomDiscipline ?? false;
+			disciplineName = parsed.disciplineName ?? '';
+			disciplineCode = parsed.disciplineCode ?? '';
+			topics = Array.isArray(parsed.topics) ? parsed.topics : [];
+			expandedTopic = Math.max(0, Math.min(topics.length - 1, parsed.expandedTopic ?? 0));
+			tempSubjectId = parsed.tempSubjectId ?? '';
+			backgroundGenerationScheduled = parsed.backgroundGenerationScheduled ?? false;
+			backgroundGenerationMessage = parsed.backgroundGenerationMessage ?? '';
+			desiredQuestionCount = clampQuestionCount(parsed.desiredQuestionCount ?? 10);
+
+			if (tempSubjectId) {
+				await refreshMaterialStatuses();
+				const hasPending = materialDocs.some((doc) => {
+					const status = doc.processing_status.toLowerCase();
+					return status === 'pending' || status === 'processing';
+				});
+				if (hasPending) {
+					startMaterialPolling();
+				}
+			}
+		} catch {
+			clearDraft();
+		}
+
+		draftHydrated = true;
+	}
+
+	$effect(() => {
+		saveDraft();
+	});
 
 	// ── Functions ──
 	function syncDisciplineName(value: string) {
@@ -137,12 +281,32 @@
 		element.focus();
 	}
 
+	function normalizeTopicName(value: string) {
+		return value.trim().replace(/\s+/g, ' ');
+	}
+
+	function topicKey(value: string) {
+		return normalizeTopicName(value).toLowerCase();
+	}
+
+	function handleTopicInput(e: Event) {
+		topicInput = (e.currentTarget as HTMLInputElement).value;
+		topicError = '';
+	}
+
 	function addTopic() {
-		const trimmed = topicInput.trim();
-		if (trimmed && !topics.some(t => t.name === trimmed)) {
-			topics = [...topics, { name: trimmed, syllabusContent: '' }];
-			topicInput = '';
+		const normalized = normalizeTopicName(topicInput);
+		if (!normalized) return;
+
+		const exists = topics.some((t) => topicKey(t.name) === topicKey(normalized));
+		if (exists) {
+			topicError = 'This topic is already in the list.';
+			return;
 		}
+
+		topics = [...topics, { name: normalized, syllabusContent: '' }];
+		topicInput = '';
+		topicError = '';
 	}
 
 	function removeTopic(index: number) {
@@ -152,6 +316,140 @@
 
 	function handleTopicKeydown(e: KeyboardEvent) {
 		if (e.key === 'Enter') { e.preventDefault(); addTopic(); }
+	}
+
+	function clearMaterialPolling() {
+		if (materialPollTimer) {
+			clearInterval(materialPollTimer);
+			materialPollTimer = null;
+		}
+	}
+
+	function isSubjectNotFoundError(error: unknown) {
+		if (!(error instanceof Error)) return false;
+		const msg = error.message.toLowerCase();
+		return msg.includes('subject not found') || msg.includes('404') || msg.includes('not found');
+	}
+
+	onDestroy(() => {
+		clearMaterialPolling();
+	});
+
+	async function ensureSubjectId(): Promise<string> {
+		if (tempSubjectId) {
+			try {
+				await getSubject(tempSubjectId);
+				return tempSubjectId;
+			} catch {
+				// Stale/deleted id from draft restore; recreate lazily.
+				tempSubjectId = '';
+				materialDocs = [];
+				materialsStatusMessage = '';
+				materialsStatusError = '';
+				clearMaterialPolling();
+			}
+		}
+
+		const code =
+			disciplineCode.trim() ||
+			disciplineName.trim().slice(0, 6).toUpperCase().replace(/\s+/g, '') + String(Date.now()).slice(-4);
+		const subj = await createSubject({
+			name: disciplineName.trim(),
+			code,
+		});
+		tempSubjectId = subj.id;
+		return subj.id;
+	}
+
+	async function refreshMaterialStatuses() {
+		if (!tempSubjectId) return;
+
+		const res = await listReferenceDocuments(tempSubjectId);
+		const baseDocs = (res.reference_books || []).map((doc) => ({
+			id: doc.id,
+			filename: doc.filename,
+			file_size_bytes: doc.file_size_bytes,
+			processing_status: doc.processing_status,
+			processing_progress: doc.processing_status.toLowerCase() === 'completed' ? 100 : 0,
+			processing_step: '',
+			processing_detail: '',
+		}));
+
+		const withStatus = await Promise.all(
+			baseDocs.map(async (doc) => {
+				const status = doc.processing_status.toLowerCase();
+				if (status === 'completed' || status === 'complete' || status === 'processed') {
+					return { ...doc, processing_progress: 100, processing_step: 'completed', processing_detail: 'Processing complete' };
+				}
+				if (status === 'failed' || status === 'error') {
+					return { ...doc, processing_progress: 100, processing_step: 'failed', processing_detail: 'Processing failed' };
+				}
+				try {
+					const statusRes = await getDocumentStatus(doc.id);
+					return {
+						...doc,
+						processing_progress: statusRes.processing_progress ?? doc.processing_progress,
+						processing_step: statusRes.processing_step ?? '',
+						processing_detail: statusRes.processing_detail ?? '',
+					};
+				} catch {
+					return doc;
+				}
+			})
+		);
+
+		materialDocs = withStatus;
+
+		const processingCount = materialDocs.filter((doc) => {
+			const status = doc.processing_status.toLowerCase();
+			return status === 'pending' || status === 'processing';
+		}).length;
+
+		const failedCount = materialDocs.filter((doc) => {
+			const status = doc.processing_status.toLowerCase();
+			return status === 'failed' || status === 'error';
+		}).length;
+
+		if (materialDocs.length === 0) {
+			materialsStatusMessage = 'Upload at least one reference material.';
+		} else if (processingCount > 0) {
+			materialsStatusMessage = `${processingCount} file${processingCount > 1 ? 's are' : ' is'} still processing in background...`;
+		} else if (failedCount > 0) {
+			materialsStatusMessage = `${failedCount} file${failedCount > 1 ? 's failed' : ' failed'}. Re-upload failed files to continue.`;
+		} else {
+			materialsStatusMessage = 'All reference materials are processed. You can continue.';
+			clearMaterialPolling();
+		}
+	}
+
+	function startMaterialPolling() {
+		clearMaterialPolling();
+		materialPollTimer = setInterval(() => {
+			void refreshMaterialStatuses().catch(() => {
+				materialsStatusError = 'Failed to refresh material processing status';
+			});
+		}, 3000);
+	}
+
+	async function handleMaterialsSelected(files: File[]) {
+		if (!files.length || uploadingMaterials) return;
+
+		uploadingMaterials = true;
+		materialsStatusError = '';
+		materials = [...materials, ...files];
+
+		try {
+			const subjectId = await ensureSubjectId();
+			for (const file of files) {
+				await uploadDocument(file, subjectId, 'reference_book');
+			}
+			await refreshMaterialStatuses();
+			startMaterialPolling();
+		} catch (e: unknown) {
+			materialsStatusError = e instanceof Error ? e.message : 'Failed to upload reference materials';
+		} finally {
+			uploadingMaterials = false;
+		}
 	}
 
 	async function importFromPdf() {
@@ -165,20 +463,23 @@
 			importError = '';
 			try {
 				// Need a subject to extract chapters — create temp one if needed
-				if (!tempSubjectId) {
-					const code = disciplineName.trim().slice(0, 6).toUpperCase().replace(/\s+/g, '') + String(Date.now()).slice(-4);
-					const subj = await createSubject({
-						name: disciplineName.trim(),
-						code: disciplineCode.trim() || code,
-					});
-					tempSubjectId = subj.id;
+				let subjectId = await ensureSubjectId();
+				let result: { message: string; chapters_created: number; topics: TopicResponse[] };
+				try {
+					result = await extractChapters(subjectId, file);
+				} catch (extractError) {
+					if (!isSubjectNotFoundError(extractError)) throw extractError;
+					// Subject can be deleted between restore and upload; recreate and retry once.
+					tempSubjectId = '';
+					subjectId = await ensureSubjectId();
+					result = await extractChapters(subjectId, file);
 				}
-				const result = await extractChapters(tempSubjectId, file);
 				if (result.topics && result.topics.length > 0) {
+					const existingKeys = new Set(topics.map((existing) => topicKey(existing.name)));
 					const newTopics = result.topics
-						.filter(t => !topics.some(existing => existing.name === t.name))
+						.filter((t) => !existingKeys.has(topicKey(t.name)))
 						.map(t => ({
-							name: t.name,
+							name: normalizeTopicName(t.name),
 							syllabusContent: t.syllabus_content || '',
 						}));
 					topics = [...topics, ...newTopics];
@@ -198,27 +499,23 @@
 
 	function prevStep() {
 		if (step > 1 && !isSettingUp) step--;
+		topicError = '';
 	}
 
-	async function startSetup() {
+	async function startSetup(startTraining = true) {
 		isSettingUp = true;
+		completeOnlyMode = !startTraining;
+		backgroundGenerationMessage = '';
 		setupProgress = 0;
 		setupError = '';
-		setupStatus = 'Creating discipline...';
-		let subjectIdForCleanup = '';
+		setupStatus = completeOnlyMode ? 'Completing setup...' : 'Creating discipline...';
 
 		try {
 			// 1. Create subject (or reuse tempSubjectId)
 			let subjectId = tempSubjectId;
 			if (!subjectId) {
-				const code = disciplineCode.trim() || (disciplineName.trim().slice(0, 6).toUpperCase().replace(/\s+/g, '') + String(Date.now()).slice(-4));
-				const subj = await createSubject({
-					name: disciplineName.trim(),
-					code,
-				});
-				subjectId = subj.id;
+				subjectId = await ensureSubjectId();
 			}
-			subjectIdForCleanup = subjectId;
 			setupProgress = 10;
 
 			// 2. Create topics (or update existing from PDF import)
@@ -227,7 +524,6 @@
 			const existingTopicNames = new Set<string>();
 			if (tempSubjectId) {
 				// Topics from extractChapters are already created — just need to update syllabus content
-				const { getSubject } = await import('$lib/api/subjects');
 				try {
 					const detail = await getSubject(subjectId);
 					for (const t of detail.topics) {
@@ -256,16 +552,8 @@
 			}
 			setupProgress = 30;
 
-			// 3. Upload reference materials
-			if (materials.length > 0) {
-				setupStatus = 'Uploading reference materials...';
-				for (let i = 0; i < materials.length; i++) {
-					await uploadDocument(materials[i], subjectId, 'reference_book');
-					setupProgress = 30 + Math.round(((i + 1) / materials.length) * 25);
-				}
-			} else {
-				setupProgress = 55;
-			}
+			// 3. Reference materials are uploaded/processed in Step 4 itself.
+			setupProgress = 55;
 
 			// 4. Upload reference questions
 			if (refQuestions.length > 0) {
@@ -278,30 +566,42 @@
 				setupProgress = 80;
 			}
 
-			setupProgress = 100;
-			setupStatus = 'Setup complete! Redirecting...';
-			await new Promise(r => setTimeout(r, 600));
-			goto(`/teacher/train/loop?subject=${subjectId}&provisional=1`);
-		} catch (e: unknown) {
-			if (subjectIdForCleanup) {
-				try {
-					await deleteSubject(subjectIdForCleanup);
-					if (tempSubjectId === subjectIdForCleanup) {
-						tempSubjectId = '';
-					}
-				} catch {
-					// Ignore cleanup errors and surface original failure
-				}
+			if (completeOnlyMode) {
+				setupStatus = 'Scheduling background generation...';
+				const scheduleRes = await scheduleBackgroundGeneration({
+					subjectId,
+					count: desiredQuestionCount,
+					types: 'mcq',
+					difficulty: 'medium',
+				});
+				backgroundGenerationScheduled = true;
+				backgroundGenerationMessage = scheduleRes.message;
 			}
+
+			setupProgress = 100;
+			setupStatus = completeOnlyMode ? 'Setup completed. Redirecting to dashboard...' : 'Setup complete! Redirecting...';
+			await new Promise(r => setTimeout(r, 600));
+			clearDraft();
+			if (completeOnlyMode || !materialsReadyForNext) {
+				goto('/teacher/dashboard');
+			} else {
+				goto(`/teacher/train/loop?subject=${subjectId}&provisional=1&count=${encodeURIComponent(String(desiredQuestionCount))}`);
+			}
+		} catch (e: unknown) {
 			setupError = e instanceof Error ? e.message : 'Setup failed';
 			setupStatus = '';
 			isSettingUp = false;
 		}
 	}
+
+	function handleQuestionCountInput(e: Event) {
+		const target = e.currentTarget as HTMLInputElement;
+		desiredQuestionCount = clampQuestionCount(Number(target.value));
+	}
 </script>
 
 <svelte:head>
-	<title>{stepTitle} — New Topic — QGen Trainer</title>
+	<title>{stepTitle} — New Topic — VQuest Trainer</title>
 </svelte:head>
 
 <div class="wizard">
@@ -331,6 +631,21 @@
 			<div class="field-group">
 				<span class="field-label">Discipline Name *</span>
 				<div class="discipline-grid" role="list" aria-label="Choose a discipline">
+					<button
+							type="button"
+							class="glass-panel discipline-card discipline-card-custom"
+							class:selected={useCustomDiscipline}
+							onclick={activateCustomDiscipline}
+						>
+						<span class="discipline-icon">＋</span>
+						<span class="discipline-card-name">
+							{#if useCustomDiscipline && disciplineName}
+								{disciplineName}
+							{:else}
+								Add Custom Discipline
+							{/if}
+						</span>
+					</button>
 					{#each presetDisciplines as discipline}
 						<button
 							type="button"
@@ -342,21 +657,6 @@
 							<span class="discipline-card-name">{discipline.name}</span>
 						</button>
 					{/each}
-					<button
-						type="button"
-						class="glass-panel discipline-card discipline-card-custom"
-						class:selected={useCustomDiscipline}
-						onclick={activateCustomDiscipline}
-					>
-						<span class="discipline-icon">＋</span>
-						<span class="discipline-card-name">
-							{#if useCustomDiscipline && disciplineName}
-								{disciplineName}
-							{:else}
-								Add Custom Discipline
-							{/if}
-						</span>
-					</button>
 				</div>
 			</div>
 
@@ -369,17 +669,21 @@
 					type="text"
 					placeholder="e.g., Organic Chemistry"
 					bind:value={topicInput}
+					oninput={handleTopicInput}
 					onkeydown={handleTopicKeydown}
 				/>
 				<button class="glass-btn add-btn" onclick={addTopic} disabled={!topicInput.trim()}>Add</button>
 			</div>
+			{#if topicError}
+				<p class="inline-error">⚠️ {topicError}</p>
+			{/if}
 
 			<div class="import-row">
 				<button class="glass-btn import-btn" onclick={importFromPdf} disabled={importingPdf || !disciplineName.trim()}>
 					{#if importingPdf}
 						<span class="btn-spinner"></span> Extracting…
 					{:else}
-						📄 Import from PDF
+						Import
 					{/if}
 				</button>
 				<span class="import-hint">Import topics from {disciplineName} syllabus PDF.</span>
@@ -447,23 +751,82 @@
 
 		<!-- Step 4: Reference Materials -->
 		{:else if step === 4}
-			<p class="step-desc">Upload at least one reference PDF/material before continuing</p>
+			<p class="step-desc">Upload reference materials now. Processing runs in background, and you can continue only after processing completes.</p>
 			<FileUploadZone
 				accept=".pdf,.doc,.docx,.txt,.pptx"
 				label="Upload Reference Materials"
 				hint="PDF, Word, PowerPoint, or Text — multiple files allowed"
 				files={materials}
-				onfilesSelected={(f) => materials = [...materials, ...f]}
+				onfilesSelected={handleMaterialsSelected}
 			/>
-			{#if materials.length > 0}
+			{#if uploadingMaterials}
+				<p class="step-hint">Uploading files...</p>
+			{/if}
+			{#if materialsStatusMessage}
+				<p class="step-hint">{materialsStatusMessage}</p>
+			{/if}
+
+			<div class="question-count-card">
+				<label class="field-label" for="question-count-input">Questions To Generate</label>
+				<div class="question-count-row">
+					<input
+						id="question-count-input"
+						class="glass-input question-count-input"
+						type="number"
+						min={MIN_QUESTION_COUNT}
+						max={MAX_QUESTION_COUNT}
+						bind:value={desiredQuestionCount}
+						oninput={handleQuestionCountInput}
+					/>
+					<span class="question-count-unit">questions</span>
+				</div>
+				<p class="question-count-hint">Set this now. It will be used when training starts even if processing finishes later.</p>
+			</div>
+
+			{#if tempSubjectId}
+				<p class="step-hint resume-note">This step is saved automatically. You can leave and return later to continue from here.</p>
+			{/if}
+			{#if materialDocs.length > 0 && !materialsReadyForNext}
+				<div class="material-progress-wrap">
+					<div class="material-progress-head">
+						<span>Processing Progress</span>
+						<span>{materialsAverageProgress}%</span>
+					</div>
+					<div class="material-progress-track">
+						<div class="material-progress-fill" style:width="{materialsAverageProgress}%"></div>
+					</div>
+				</div>
+			{:else if materialDocs.length > 0 && materialsReadyForNext}
+				<div class="material-progress-wrap material-progress-complete">
+					<div class="material-progress-head">
+						<span>Processing Completed</span>
+						<span>100%</span>
+					</div>
+				</div>
+			{/if}
+			{#if materialsStatusError}
+				<p class="inline-error">⚠️ {materialsStatusError}</p>
+			{/if}
+			{#if materialDocs.length > 0}
 				<div class="file-list">
-					{#each materials as file, i}
+					{#each materialDocs as doc}
 						<div class="file-item">
 							<span class="file-icon">📁</span>
-							<span class="file-name">{file.name}</span>
-							<span class="file-size">{(file.size / 1024 / 1024).toFixed(1)} MB</span>
-							<button class="file-remove" onclick={() => materials = materials.filter((_, j) => j !== i)}>×</button>
+							<span class="file-name">{doc.filename}</span>
+							<span class="file-size">{(doc.file_size_bytes / 1024 / 1024).toFixed(1)} MB</span>
+							<span class="file-status">
+								{#if ['completed', 'complete', 'processed'].includes(doc.processing_status.toLowerCase())}
+									Completed
+								{:else if ['failed', 'error'].includes(doc.processing_status.toLowerCase())}
+									Failed
+								{:else}
+									{doc.processing_status} ({doc.processing_progress}%)
+								{/if}
+							</span>
 						</div>
+						{#if doc.processing_detail}
+							<p class="file-progress-detail">{doc.processing_detail}</p>
+						{/if}
 					{/each}
 				</div>
 			{/if}
@@ -495,6 +858,15 @@
 		{:else if step === 6}
 			<div class="review-card glass">
 				<h2 class="review-title">Review Setup</h2>
+				{#if completeOnlyMode || !materialsReadyForNext}
+					<p class="step-hint">Reference materials are still processing. You can complete setup now and continue from dashboard later.</p>
+				{/if}
+				{#if !materialsReadyForNext}
+					<p class="step-hint">On Complete, background generation for {desiredQuestionCount} question{desiredQuestionCount !== 1 ? 's' : ''} will run automatically once processing is ready.</p>
+				{/if}
+				{#if backgroundGenerationMessage}
+					<p class="step-hint">{backgroundGenerationMessage}</p>
+				{/if}
 				<div class="review-sections">
 					<div class="review-section">
 						<span class="rs-label">Discipline</span>
@@ -517,11 +889,15 @@
 					</div>
 					<div class="review-section">
 						<span class="rs-label">Reference Materials</span>
-						<span class="rs-value">{materials.length} file{materials.length !== 1 ? 's' : ''}</span>
+						<span class="rs-value">{materialDocs.length} file{materialDocs.length !== 1 ? 's' : ''}</span>
 					</div>
 					<div class="review-section">
 						<span class="rs-label">Reference Questions</span>
 						<span class="rs-value">{refQuestions.length} file{refQuestions.length !== 1 ? 's' : ''}</span>
+					</div>
+					<div class="review-section">
+						<span class="rs-label">Questions To Generate</span>
+						<span class="rs-value">{desiredQuestionCount}</span>
 					</div>
 				</div>
 				{#if setupError}
@@ -532,8 +908,12 @@
 						<button class="glass-btn step-back-btn" onclick={prevStep}>
 							← Back
 						</button>
-						<button class="glass-btn step-next-btn step-train-btn" onclick={() => { step = 7; startSetup(); }}>
-							⚡ Start Training
+						<button class="glass-btn step-next-btn step-train-btn" onclick={() => { step = 7; startSetup(!completeOnlyMode && materialsReadyForNext); }}>
+							{#if !completeOnlyMode && materialsReadyForNext}
+								⚡ Start Training
+							{:else}
+								✓ Complete
+							{/if}
 						</button>
 					</div>
 				{/if}
@@ -543,7 +923,7 @@
 		{:else if step === 7}
 			<div class="progress-section">
 				<div class="progress-icon">⚡</div>
-				<h2 class="progress-title">Setting Up</h2>
+				<h2 class="progress-title">{completeOnlyMode ? 'Completing Setup' : 'Setting Up'}</h2>
 				<p class="progress-status">{setupStatus || 'Initializing...'}</p>
 				<div class="progress-bar-wrap">
 					<div class="progress-bar" style:width="{setupProgress}%"></div>
@@ -724,6 +1104,9 @@
 		margin-top: 1rem;
 	}
 
+	.resume-note {
+		font-size: 0.8rem;
+	}
 	.step-desc {
 		text-align: center;
 		color: var(--theme-text-muted);
@@ -988,13 +1371,16 @@
 	}
 
 	.btn-spinner {
-		display: inline-block;
+		display: inline-flex;
 		width: 14px;
 		height: 14px;
-		border: 2px solid rgba(255,255,255,0.3);
-		border-top-color: var(--theme-primary);
-		border-radius: 50%;
+		aspect-ratio: 1 / 1;
+		border: 2px solid rgba(255, 255, 255, 0.35);
+		border-right-color: transparent;
+		border-radius: 999px;
+		box-sizing: border-box;
 		animation: spin 0.7s linear infinite;
+		vertical-align: middle;
 	}
 
 	@keyframes spin { to { transform: rotate(360deg); } }
@@ -1026,7 +1412,9 @@
 
 	.topic-name {
 		min-width: 0;
-		max-height: 5px;
+		line-height: 1.25;
+		white-space: normal;
+		word-break: break-word;
 	}
 
 	.topic-chip.has-syllabus {
@@ -1047,18 +1435,19 @@
 	}
 
 	.chip-remove {
-		display: flex;
+		all: unset;
+		display: inline-flex;
 		align-items: center;
 		justify-content: center;
-		width: 18px;
-		height: 18px;
-		border: none;
+		width: 20px;
+		height: 20px;
 		border-radius: 50%;
 		background: rgba(255, 255, 255, 0.15);
 		color: var(--theme-text-muted);
-		font-size: 0.8rem;
+		font-size: 0.9rem;
+		line-height: 1;
+		flex-shrink: 0;
 		cursor: pointer;
-		padding: 0;
 	}
 
 	.chip-remove:hover {
@@ -1230,6 +1619,93 @@
 		color: #fff;
 	}
 
+	.file-status {
+		font-size: 0.75rem;
+		color: var(--theme-text-muted);
+		text-transform: capitalize;
+		flex-shrink: 0;
+	}
+
+	.file-progress-detail {
+		margin: -0.2rem 0 0.35rem 2.2rem;
+		font-size: 0.75rem;
+		color: var(--theme-text-muted);
+	}
+
+	.material-progress-wrap {
+		margin-top: 0.85rem;
+		padding: 0.75rem;
+		border: 1px solid rgba(255, 255, 255, 0.12);
+		border-radius: 10px;
+		background: rgba(255, 255, 255, 0.05);
+	}
+
+	.material-progress-head {
+		display: flex;
+		justify-content: space-between;
+		align-items: center;
+		font-size: 0.8rem;
+		color: var(--theme-text-muted);
+		margin-bottom: 0.4rem;
+	}
+
+	.material-progress-track {
+		height: 7px;
+		border-radius: 999px;
+		background: rgba(255, 255, 255, 0.1);
+		overflow: hidden;
+	}
+
+	.material-progress-fill {
+		height: 100%;
+		background: linear-gradient(90deg, var(--theme-primary), var(--theme-primary-hover));
+		transition: width 0.3s ease;
+	}
+
+	.material-progress-complete {
+		border-color: rgba(95, 212, 152, 0.35);
+		background: rgba(95, 212, 152, 0.08);
+	}
+
+	.material-progress-complete .material-progress-head {
+		margin-bottom: 0;
+		color: #9be4b9;
+		font-weight: 600;
+	}
+
+	.question-count-card {
+		margin-top: 0.85rem;
+		padding: 0.8rem;
+		border: 1px solid rgba(var(--theme-primary-rgb), 0.28);
+		border-radius: 10px;
+		background: rgba(var(--theme-primary-rgb), 0.08);
+	}
+
+	.question-count-row {
+		display: flex;
+		align-items: center;
+		gap: 0.6rem;
+	}
+
+	.question-count-input {
+		width: 120px;
+		padding: 0.55rem 0.7rem;
+		font-weight: 700;
+		text-align: center;
+	}
+
+	.question-count-unit {
+		font-size: 0.85rem;
+		font-weight: 600;
+		color: var(--theme-text);
+	}
+
+	.question-count-hint {
+		margin: 0.5rem 0 0;
+		font-size: 0.78rem;
+		color: var(--theme-text-muted);
+	}
+
 	/* Step 6: Review */
 	.review-card {
 		padding: 1.5rem;
@@ -1390,6 +1866,16 @@
 	}
 
 	@media (max-width: 768px) {
+		.modal-backdrop {
+			align-items: flex-end;
+			padding-bottom: max(0.75rem, env(safe-area-inset-bottom));
+		}
+
+		.discipline-modal {
+			max-height: 82dvh;
+			overflow: auto;
+		}
+
 		.wizard {
 			padding-top: 1rem;
 		}
@@ -1432,13 +1918,11 @@
 		}
 
 		.chip-remove {
-			width: 28px;
-			height: 28px;
-			font-size: 1rem;
+			width: 24px;
+			height: 24px;
+			font-size: 0.95rem;
 			flex-shrink: 0;
 			border-radius: 999px;
-			appearance: none;
-			-webkit-appearance: none;
 		}
 
 		.rs-topics {
@@ -1451,6 +1935,15 @@
 			display: block;
 			line-height: 1.35;
 			padding: 0.45rem 0.65rem;
+		}
+
+		.question-count-row {
+			flex-wrap: wrap;
+		}
+
+		.question-count-input {
+			width: 100%;
+			max-width: 160px;
 		}
 
 		/* Modal mobile styles */
@@ -1471,6 +1964,10 @@
 		.modal-footer {
 			flex-direction: column;
 			gap: 0.5rem;
+			position: sticky;
+			bottom: 0;
+			padding-top: 0.5rem;
+			background: linear-gradient(180deg, rgba(8, 16, 30, 0), rgba(8, 16, 30, 0.88) 40%);
 		}
 
 		.modal-footer button {

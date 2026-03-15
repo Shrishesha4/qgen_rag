@@ -1,6 +1,6 @@
 {
-  "name": "QGen Trainer",
-  "short_name": "QGen",
+  "name": "VQuest Trainer",
+  "short_name": "VQuest",
   "description": "AI-powered training and vetting dashboard",
   "start_url": "/",
   "scope": "/",

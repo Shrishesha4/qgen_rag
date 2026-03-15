@@ -34,7 +34,7 @@
 </script>
 
 <svelte:head>
-	<title>Profile — QGen Trainer</title>
+	<title>Profile — VQuest Trainer</title>
 </svelte:head>
 
 <div class="profile-page">
@@ -59,16 +59,12 @@
 
 		<div class="detail-grid">
 			<div class="detail-item">
-				<span class="detail-label">Role</span>
-				<span class="detail-value">Teacher</span>
+				<span class="detail-label">Username</span>
+				<span class="detail-value">{($currentUser?.username) || 'Not set'}</span>
 			</div>
 			<div class="detail-item">
-				<span class="detail-label">Username</span>
-				<span class="detail-value">{$currentUser?.username || 'Not set'}</span>
-			</div>
-			<div class="detail-item full-width">
-				<span class="detail-label">Workspace</span>
-				<span class="detail-value">AI training and verification</span>
+				<span class="detail-label">Role</span>
+				<span class="detail-value">{$currentUser?.role || 'No role available'}</span>
 			</div>
 		</div>
 
@@ -192,10 +188,6 @@
 		align-items: flex-start;
 		gap: 0.3rem;
 		text-align: left;
-	}
-
-	.detail-item.full-width {
-		grid-column: 1 / -1;
 	}
 
 	.detail-label {
