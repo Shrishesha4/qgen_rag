@@ -10,7 +10,7 @@
 	let { children } = $props();
 
 	let pathname = $derived($page.url.pathname);
-	const hideGlobalBackPrefixes = ['/teacher/train/loop', '/teacher/verify', '/vetter/loop'];
+	const hideGlobalBackPrefixes = ['/teacher/train/loop'];
 	let showGlobalBack = $derived.by(() => {
 		if (
 			pathname === '/' ||

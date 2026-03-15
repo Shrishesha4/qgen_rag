@@ -120,7 +120,7 @@ export interface GenerationEvent {
 }
 
 export interface BackgroundGenerationScheduleResponse {
-	status: 'scheduled' | 'already_running';
+	status: 'scheduled' | 'already_running' | 'skipped_no_reference';
 	message: string;
 	subject_id: string;
 	count: number;
@@ -133,12 +133,16 @@ export async function scheduleBackgroundGeneration(opts: {
 	count: number;
 	types?: string;
 	difficulty?: string;
+	allowWithoutReference?: boolean;
 }): Promise<BackgroundGenerationScheduleResponse> {
 	const form = new FormData();
 	form.append('subject_id', opts.subjectId);
 	form.append('count', String(opts.count));
 	form.append('types', opts.types ?? 'mcq');
 	form.append('difficulty', opts.difficulty ?? 'medium');
+	if (opts.allowWithoutReference) {
+		form.append('allow_without_reference', 'true');
+	}
 
 	return apiFetch<BackgroundGenerationScheduleResponse>('/questions/schedule-background-generation', {
 		method: 'POST',
@@ -238,6 +242,7 @@ export async function* generateFromSubject(opts: {
 	types?: string;
 	difficulty?: string;
 	topicId?: string;
+	allowWithoutReference?: boolean;
 	signal?: AbortSignal;
 }): AsyncGenerator<GenerationEvent> {
 	const { getStoredSession } = await import('./client');
@@ -250,6 +255,7 @@ export async function* generateFromSubject(opts: {
 	form.append('types', opts.types ?? 'mcq');
 	form.append('difficulty', opts.difficulty ?? 'medium');
 	if (opts.topicId) form.append('topic_id', opts.topicId);
+	if (opts.allowWithoutReference) form.append('allow_without_reference', 'true');
 
 	const res = await fetch(apiUrl('/questions/quick-generate-from-subject'), {
 		method: 'POST',

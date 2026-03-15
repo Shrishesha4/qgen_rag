@@ -28,6 +28,12 @@
 		stop: () => void;
 	};
 
+	type LegacyGetUserMedia = (
+		constraints: MediaStreamConstraints,
+		onSuccess: (stream: MediaStream) => void,
+		onError: (error: unknown) => void,
+	) => void;
+
 	interface Props {
 		/** Title shown at top of popup, e.g. "Grade: Easy" or "Reject" */
 		title: string;
@@ -62,6 +68,8 @@
 	let mediaStream: MediaStream | null = null;
 	let speechRecognition: SpeechRecognitionLike | null = null;
 	let speechRecognitionActive = $state(false);
+	let speechNetworkRetryCount = 0;
+	let speechRestartTimer: ReturnType<typeof setTimeout> | null = null;
 	let audioContext: AudioContext | null = null;
 	let mediaSourceNode: MediaStreamAudioSourceNode | null = null;
 	let scriptProcessorNode: ScriptProcessorNode | null = null;
@@ -69,6 +77,7 @@
 	let recordedPcmChunks: Float32Array[] = [];
 	let recordingSampleRate = 16000;
 	let isCaptureActive = false;
+	const MAX_SPEECH_NETWORK_RETRIES = 5;
 
 	$effect(() => {
 		if (phase === 'recording' && isRecording) {
@@ -119,13 +128,7 @@
 		recordedPcmChunks = [];
 
 		try {
-			mediaStream = await navigator.mediaDevices.getUserMedia({
-				audio: {
-					echoCancellation: true,
-					noiseSuppression: true,
-					autoGainControl: true
-				}
-			});
+			mediaStream = await requestMicrophoneStream();
 
 			await setupAudioCapture(mediaStream);
 			startSpeechRecognition();
@@ -135,12 +138,50 @@
 			recordingTime = 0;
 			isRequestingPermission = false;
 		} catch (error) {
-			const message = error instanceof Error ? error.message : 'Unable to access the microphone.';
-			recorderError = `Microphone access failed. ${message}`;
+			const baseMessage = error instanceof Error ? error.message : String(error ?? 'Unable to access the microphone.');
+			const secureHint = typeof window !== 'undefined' && !window.isSecureContext
+				? ' Microphone access requires HTTPS or localhost.'
+				: '';
+			recorderError = `Microphone access failed. ${baseMessage}${secureHint}`;
 			isRequestingPermission = false;
 			cleanupResources();
 			phase = 'transcript';
 		}
+	}
+
+	async function requestMicrophoneStream(): Promise<MediaStream> {
+		const constraints: MediaStreamConstraints = {
+			audio: {
+				echoCancellation: true,
+				noiseSuppression: true,
+				autoGainControl: true,
+			},
+		};
+
+		if (navigator.mediaDevices?.getUserMedia) {
+			return navigator.mediaDevices.getUserMedia(constraints);
+		}
+
+		const navWithLegacy = navigator as Navigator & {
+			getUserMedia?: LegacyGetUserMedia;
+			webkitGetUserMedia?: LegacyGetUserMedia;
+			mozGetUserMedia?: LegacyGetUserMedia;
+			msGetUserMedia?: LegacyGetUserMedia;
+		};
+
+		const legacyGetUserMedia =
+			navWithLegacy.getUserMedia ??
+			navWithLegacy.webkitGetUserMedia ??
+			navWithLegacy.mozGetUserMedia ??
+			navWithLegacy.msGetUserMedia;
+
+		if (legacyGetUserMedia) {
+			return new Promise<MediaStream>((resolve, reject) => {
+				legacyGetUserMedia.call(navWithLegacy, constraints, resolve, reject);
+			});
+		}
+
+		throw new Error('This browser does not expose microphone APIs (navigator.mediaDevices/getUserMedia).');
 	}
 
 	async function setupAudioCapture(stream: MediaStream) {
@@ -204,6 +245,7 @@
 		speechRecognition.lang = 'en-US';
 
 		speechRecognition.onresult = (event) => {
+			speechNetworkRetryCount = 0;
 			let nextFinal = finalTranscript;
 			let nextInterim = '';
 			for (let i = event.resultIndex; i < event.results.length; i += 1) {
@@ -224,13 +266,29 @@
 
 		speechRecognition.onerror = (event) => {
 			speechRecognitionActive = false;
-			if (event.error && event.error !== 'no-speech' && event.error !== 'aborted') {
-				recorderError = `Speech recognition issue: ${event.error}. You can still type feedback manually.`;
+			const err = event.error ?? 'unknown';
+			if (err === 'aborted' || err === 'no-speech') return;
+
+			if (err === 'network') {
+				transcriptionStatus = `Speech recognition network issue. Retrying (${Math.min(speechNetworkRetryCount + 1, MAX_SPEECH_NETWORK_RETRIES)}/${MAX_SPEECH_NETWORK_RETRIES})...`;
+				scheduleSpeechRecognitionRestart('network');
+				return;
 			}
+
+			if (err === 'not-allowed' || err === 'service-not-allowed') {
+				transcriptionReady = false;
+				transcriptionStatus = 'Speech recognition permission unavailable in this context. Recording still works; type feedback manually.';
+				return;
+			}
+
+			transcriptionStatus = `Speech recognition issue: ${err}. Recording still works; type feedback manually.`;
 		};
 
 		speechRecognition.onend = () => {
 			speechRecognitionActive = false;
+			if (isRecording && !isStopping && transcriptionReady) {
+				scheduleSpeechRecognitionRestart('ended');
+			}
 		};
 
 		transcriptionReady = true;
@@ -239,21 +297,54 @@
 
 	function startSpeechRecognition() {
 		if (!speechRecognition || speechRecognitionActive) return;
+		clearSpeechRestartTimer();
 		try {
 			speechRecognition.start();
 			speechRecognitionActive = true;
 			transcriptionStatus = 'Listening… speak clearly in English.';
 		} catch {
-			// Some browsers throw if start is called too quickly.
+			scheduleSpeechRecognitionRestart('start-threw');
 		}
 	}
 
 	function stopSpeechRecognition() {
+		clearSpeechRestartTimer();
 		if (!speechRecognition || !speechRecognitionActive) return;
 		try {
 			speechRecognition.stop();
 		} finally {
 			speechRecognitionActive = false;
+		}
+	}
+
+	function clearSpeechRestartTimer() {
+		if (!speechRestartTimer) return;
+		clearTimeout(speechRestartTimer);
+		speechRestartTimer = null;
+	}
+
+	function scheduleSpeechRecognitionRestart(reason: 'network' | 'ended' | 'start-threw') {
+		if (!speechRecognition || !isRecording || isStopping || !transcriptionReady) return;
+
+		speechNetworkRetryCount += 1;
+		if (speechNetworkRetryCount > MAX_SPEECH_NETWORK_RETRIES) {
+			transcriptionReady = false;
+			transcriptionStatus =
+				'Live transcription is unavailable right now. Recording still works; type feedback manually.';
+			clearSpeechRestartTimer();
+			return;
+		}
+
+		clearSpeechRestartTimer();
+		const retryDelay = Math.min(2500, 300 + speechNetworkRetryCount * 350);
+		speechRestartTimer = setTimeout(() => {
+			speechRestartTimer = null;
+			if (!isRecording || isStopping || !transcriptionReady || speechRecognitionActive) return;
+			startSpeechRecognition();
+		}, retryDelay);
+
+		if (reason !== 'network') {
+			transcriptionStatus = 'Speech recognition paused. Restarting...';
 		}
 	}
 
@@ -413,6 +504,8 @@
 			void audioContext.close();
 			audioContext = null;
 		}
+		clearSpeechRestartTimer();
+		speechNetworkRetryCount = 0;
 		stopMediaStream();
 		revokeAudioPreview();
 	}
@@ -428,6 +521,7 @@
 		interimTranscript = '';
 		transcript = '';
 		recorderError = '';
+		speechNetworkRetryCount = 0;
 		transcriptionStatus = transcriptionReady
 			? 'Using built-in browser speech recognition.'
 			: 'Built-in speech recognition is unavailable. Type feedback manually.';

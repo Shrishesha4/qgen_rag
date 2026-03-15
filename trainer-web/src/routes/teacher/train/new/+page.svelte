@@ -79,6 +79,7 @@
 	let uploadingMaterials = $state(false);
 	let materialsStatusError = $state('');
 	let materialsStatusMessage = $state('');
+	let skipReferencePdf = $state(false);
 	let materialPollTimer: ReturnType<typeof setInterval> | null = null;
 
 	// Step 5: Reference questions
@@ -102,10 +103,10 @@
 			case 2: return topics.length > 0;
 			case 3: return true; // syllabus is optional per topic
 			case 4:
-				return materialDocs.length > 0 &&
+				return (skipReferencePdf || materialDocs.length > 0) &&
 					desiredQuestionCount >= MIN_QUESTION_COUNT &&
 					desiredQuestionCount <= MAX_QUESTION_COUNT &&
-					materialsFailedCount === 0;
+					(skipReferencePdf || materialsFailedCount === 0);
 			case 5: return true; // reference questions optional
 			case 6: return true; // review
 			case 7: return true;
@@ -167,6 +168,7 @@
 			backgroundGenerationScheduled,
 			backgroundGenerationMessage,
 			desiredQuestionCount,
+			skipReferencePdf,
 		};
 		localStorage.setItem(DRAFT_STORAGE_KEY, JSON.stringify(draft));
 	}
@@ -197,6 +199,7 @@
 				backgroundGenerationScheduled: boolean;
 				backgroundGenerationMessage: string;
 				desiredQuestionCount: number;
+				skipReferencePdf: boolean;
 			}>;
 
 			step = clampStep(parsed.step ?? 1);
@@ -210,6 +213,7 @@
 			backgroundGenerationScheduled = parsed.backgroundGenerationScheduled ?? false;
 			backgroundGenerationMessage = parsed.backgroundGenerationMessage ?? '';
 			desiredQuestionCount = clampQuestionCount(parsed.desiredQuestionCount ?? 10);
+			skipReferencePdf = parsed.skipReferencePdf ?? false;
 
 			if (tempSubjectId) {
 				await refreshMaterialStatuses();
@@ -436,6 +440,7 @@
 
 		uploadingMaterials = true;
 		materialsStatusError = '';
+		skipReferencePdf = false;
 		materials = [...materials, ...files];
 
 		try {
@@ -449,6 +454,17 @@
 			materialsStatusError = e instanceof Error ? e.message : 'Failed to upload reference materials';
 		} finally {
 			uploadingMaterials = false;
+		}
+	}
+
+	function toggleSkipReferencePdf() {
+		skipReferencePdf = !skipReferencePdf;
+		materialsStatusError = '';
+		if (skipReferencePdf) {
+			clearMaterialPolling();
+			materialsStatusMessage = 'PDF upload skipped for this subject. You can continue to the next step.';
+		} else if (materialDocs.length === 0) {
+			materialsStatusMessage = 'Upload at least one reference material.';
 		}
 	}
 
@@ -573,6 +589,7 @@
 					count: desiredQuestionCount,
 					types: 'mcq',
 					difficulty: 'medium',
+					allowWithoutReference: skipReferencePdf && materialDocs.length === 0,
 				});
 				backgroundGenerationScheduled = true;
 				backgroundGenerationMessage = scheduleRes.message;
@@ -585,7 +602,8 @@
 			if (completeOnlyMode || !materialsReadyForNext) {
 				goto('/teacher/dashboard');
 			} else {
-				goto(`/teacher/train/loop?subject=${subjectId}&provisional=1&count=${encodeURIComponent(String(desiredQuestionCount))}`);
+				const noPdfParam = skipReferencePdf && materialDocs.length === 0 ? '&noPdf=1' : '';
+				goto(`/teacher/train/loop?subject=${subjectId}&provisional=1&count=${encodeURIComponent(String(desiredQuestionCount))}${noPdfParam}`);
 			}
 		} catch (e: unknown) {
 			setupError = e instanceof Error ? e.message : 'Setup failed';
@@ -751,7 +769,7 @@
 
 		<!-- Step 4: Reference Materials -->
 		{:else if step === 4}
-			<p class="step-desc">Upload reference materials now. Processing runs in background, and you can continue only after processing completes.</p>
+			<p class="step-desc">Upload reference materials now, or mark this subject as not requiring PDF and continue.</p>
 			<FileUploadZone
 				accept=".pdf,.doc,.docx,.txt,.pptx"
 				label="Upload Reference Materials"
@@ -759,10 +777,24 @@
 				files={materials}
 				onfilesSelected={handleMaterialsSelected}
 			/>
+			<button
+				type="button"
+				class="glass-btn skip-pdf-btn"
+				class:active={skipReferencePdf}
+				onclick={toggleSkipReferencePdf}
+			>
+				{#if skipReferencePdf}
+					✓ This subject doesn't require PDF
+				{:else}
+					This subject doesn't require PDF
+				{/if}
+			</button>
 			{#if uploadingMaterials}
 				<p class="step-hint">Uploading files...</p>
 			{/if}
-			{#if materialsStatusMessage}
+			{#if skipReferencePdf}
+				<p class="step-hint">PDF upload skipped. You can continue with topic and syllabus-based setup.</p>
+			{:else if materialsStatusMessage}
 				<p class="step-hint">{materialsStatusMessage}</p>
 			{/if}
 
@@ -858,10 +890,12 @@
 		{:else if step === 6}
 			<div class="review-card glass">
 				<h2 class="review-title">Review Setup</h2>
-				{#if completeOnlyMode || !materialsReadyForNext}
+				{#if skipReferencePdf && materialDocs.length === 0}
+					<p class="step-hint">Reference PDF is marked as not required for this subject.</p>
+				{:else if completeOnlyMode || !materialsReadyForNext}
 					<p class="step-hint">Reference materials are still processing. You can complete setup now and continue from dashboard later.</p>
 				{/if}
-				{#if !materialsReadyForNext}
+				{#if !skipReferencePdf && !materialsReadyForNext}
 					<p class="step-hint">On Complete, background generation for {desiredQuestionCount} question{desiredQuestionCount !== 1 ? 's' : ''} will run automatically once processing is ready.</p>
 				{/if}
 				{#if backgroundGenerationMessage}
@@ -889,7 +923,13 @@
 					</div>
 					<div class="review-section">
 						<span class="rs-label">Reference Materials</span>
-						<span class="rs-value">{materialDocs.length} file{materialDocs.length !== 1 ? 's' : ''}</span>
+						<span class="rs-value">
+							{#if skipReferencePdf && materialDocs.length === 0}
+								Not required for this subject
+							{:else}
+								{materialDocs.length} file{materialDocs.length !== 1 ? 's' : ''}
+							{/if}
+						</span>
 					</div>
 					<div class="review-section">
 						<span class="rs-label">Reference Questions</span>
@@ -1679,6 +1719,22 @@
 		border: 1px solid rgba(var(--theme-primary-rgb), 0.28);
 		border-radius: 10px;
 		background: rgba(var(--theme-primary-rgb), 0.08);
+	}
+
+	.skip-pdf-btn {
+		margin-top: 0.85rem;
+		width: 100%;
+		justify-content: center;
+		border-style: dashed;
+		border-width: 1px;
+		border-color: rgba(255, 255, 255, 0.28);
+		background: rgba(255, 255, 255, 0.04);
+	}
+
+	.skip-pdf-btn.active {
+		background: rgba(95, 212, 152, 0.16);
+		border-color: rgba(95, 212, 152, 0.5);
+		color: #d3f9e5;
 	}
 
 	.question-count-row {

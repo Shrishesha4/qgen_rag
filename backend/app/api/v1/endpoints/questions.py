@@ -99,6 +99,7 @@ async def _run_background_subject_generation(
     count: int,
     types: list[str],
     difficulty: str,
+    allow_without_reference: bool = False,
 ) -> None:
     task_key = _bg_gen_task_key(user_id, subject_id)
     try:
@@ -110,9 +111,11 @@ async def _run_background_subject_generation(
             if not subject:
                 return
 
-            docs_ready = await _wait_for_subject_docs_ready(task_db, user_id, subject_id)
-            if not docs_ready:
-                return
+            docs_ready = True
+            if not allow_without_reference:
+                docs_ready = await _wait_for_subject_docs_ready(task_db, user_id, subject_id)
+                if not docs_ready:
+                    return
 
             topics_res = await task_db.execute(
                 select(Topic.name).where(Topic.subject_id == subject_id).order_by(Topic.order_index.asc())
@@ -133,6 +136,7 @@ async def _run_background_subject_generation(
                 marks_by_type=marks_by_type,
                 topic_id=None,
                 existing_session_id=None,
+                allow_without_reference=allow_without_reference,
             )
             async for _ in generator:
                 pass
@@ -653,6 +657,7 @@ async def quick_generate_from_subject(
     marks_long: Optional[int] = Form(default=5, ge=1, le=100),
     topic_id: Optional[str] = Form(default=None, description="Topic/Chapter ID (optional)"),
     existing_session_id: Optional[str] = Form(default=None, description="Existing session ID to attach retry questions to"),
+    allow_without_reference: bool = Form(default=False, description="Allow generating from topic/syllabus context without PDFs"),
     current_user: User = Depends(rate_limit(requests=50, window_seconds=86400)),
     db: AsyncSession = Depends(get_db),
 ):
@@ -719,6 +724,7 @@ async def quick_generate_from_subject(
                 marks_by_type=marks_by_type,
                 topic_id=parsed_topic_id,
                 existing_session_id=parsed_existing_session_id_subj,
+                allow_without_reference=allow_without_reference,
             )
 
             async for progress in generator:
@@ -770,6 +776,7 @@ async def schedule_background_generation(
     count: int = Form(default=10, ge=1, le=200, description="Target number of questions"),
     types: str = Form(default="mcq", description="Comma-separated question types"),
     difficulty: str = Form(default="medium", description="easy, medium, hard"),
+    allow_without_reference: bool = Form(default=False, description="Allow setup completion without reference PDFs"),
     current_user: User = Depends(get_current_user),
     db: AsyncSession = Depends(get_db),
 ):
@@ -801,6 +808,8 @@ async def schedule_background_generation(
     if not subject:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Subject not found")
 
+    no_reference_fallback = allow_without_reference
+
     task_key = _bg_gen_task_key(current_user.id, parsed_subject_id)
     existing_task = _BACKGROUND_GENERATION_TASKS.get(task_key)
     if existing_task and not existing_task.done():
@@ -818,13 +827,18 @@ async def schedule_background_generation(
             count=count,
             types=type_list,
             difficulty=difficulty,
+            allow_without_reference=no_reference_fallback,
         )
     )
     _BACKGROUND_GENERATION_TASKS[task_key] = task
 
     return {
         "status": "scheduled",
-        "message": "Background generation scheduled",
+        "message": (
+            "Background generation scheduled (no PDF fallback enabled)"
+            if no_reference_fallback
+            else "Background generation scheduled"
+        ),
         "subject_id": str(parsed_subject_id),
         "count": count,
         "types": type_list,

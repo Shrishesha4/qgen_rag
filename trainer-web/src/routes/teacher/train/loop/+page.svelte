@@ -39,6 +39,7 @@
 	let topicId = $state('');
 	let mixedTopicsMode = $state(false);
 	let provisionalSubject = $state(false);
+	let allowNoPdfGeneration = $state(false);
 	let firstQuestionGenerated = $state(false);
 	let generationBatchSize = $state(DEFAULT_BATCH_SIZE);
 
@@ -67,9 +68,10 @@
 			const nextTopicId = p.url.searchParams.get('topic') ?? '';
 			const nextMixedTopicsMode = p.url.searchParams.get('mode') === 'mixed-topics';
 			const nextProvisionalSubject = p.url.searchParams.get('provisional') === '1';
+			const nextAllowNoPdfGeneration = p.url.searchParams.get('noPdf') === '1';
 			const nextGenerationBatchSize = parseBatchSizeParam(p.url.searchParams.get('count'));
 
-			if (nextSubjectId !== subjectId || nextMixedTopicsMode !== mixedTopicsMode || nextProvisionalSubject !== provisionalSubject) {
+			if (nextSubjectId !== subjectId || nextMixedTopicsMode !== mixedTopicsMode || nextProvisionalSubject !== provisionalSubject || nextAllowNoPdfGeneration !== allowNoPdfGeneration) {
 				topicCycleIds = [];
 				topicCycleCursor = 0;
 				subjectDetail = null;
@@ -81,6 +83,7 @@
 			topicId = nextTopicId;
 			mixedTopicsMode = nextMixedTopicsMode;
 			provisionalSubject = nextProvisionalSubject;
+			allowNoPdfGeneration = nextAllowNoPdfGeneration;
 			generationBatchSize = nextGenerationBatchSize;
 		});
 		loadAndStream();
@@ -271,6 +274,7 @@
 						count,
 						types: 'mcq',
 						difficulty: 'medium',
+							allowWithoutReference: allowNoPdfGeneration,
 						signal: abort.signal,
 				  });
 			for await (const evt of gen) {
@@ -410,6 +414,10 @@
 			];
 
 			if (docs.length === 0) {
+				if (allowNoPdfGeneration) {
+					resetDocumentProcessingState();
+					return;
+				}
 				genMessage = 'Waiting for uploaded documents...';
 				docProcessingStep = 'waiting';
 				docProcessingDetail = 'No subject documents found yet.';
@@ -740,6 +748,7 @@
 				count: generationBatchSize,
 				types: 'mcq',
 				difficulty: 'medium',
+				allowWithoutReference: allowNoPdfGeneration,
 			});
 			goto('/teacher/dashboard');
 		} catch (e: unknown) {

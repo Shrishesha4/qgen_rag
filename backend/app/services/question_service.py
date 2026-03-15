@@ -2779,6 +2779,7 @@ Output valid JSON only."""
         marks_by_type: Optional[dict] = None,
         topic_id: Optional[uuid.UUID] = None,
         existing_session_id: Optional[uuid.UUID] = None,
+        allow_without_reference: bool = False,
     ) -> AsyncGenerator[QuickGenerateProgress, None]:
         """
         Generate questions from all primary documents in a subject (no file upload needed).
@@ -2881,6 +2882,38 @@ Output valid JSON only."""
                 processing_result = await self.db.execute(processing_query)
                 return list(processing_result.scalars().all())
 
+            async def _build_subject_outline() -> str:
+                """Build a text-only fallback context from subject + topic syllabus."""
+                subject_res = await self.db.execute(
+                    select(Subject).where(Subject.id == subject_id, Subject.user_id == user_id)
+                )
+                current_subject = subject_res.scalar_one_or_none()
+                if not current_subject:
+                    return ""
+
+                topics_res = await self.db.execute(
+                    select(Topic)
+                    .where(Topic.subject_id == subject_id)
+                    .order_by(Topic.order_index.asc(), Topic.created_at.asc())
+                )
+                topic_rows = list(topics_res.scalars().all())
+
+                lines: List[str] = [f"Subject: {current_subject.name}"]
+                if current_subject.description:
+                    lines.append(f"Description: {current_subject.description[:800]}")
+
+                if topic_rows:
+                    lines.append("Topics and syllabus:")
+                    for idx, topic in enumerate(topic_rows, start=1):
+                        topic_name = (topic.name or "").strip() or f"Topic {idx}"
+                        syllabus = (topic.syllabus_content or "").strip()
+                        if syllabus:
+                            lines.append(f"{idx}. {topic_name}: {syllabus[:1400]}")
+                        else:
+                            lines.append(f"{idx}. {topic_name}")
+
+                return "\n".join(lines).strip()
+
             def _build_processing_progress(docs: list[Document]) -> tuple[int, str | None, str | None, str | None, str]:
                 active_doc = max(
                     docs,
@@ -2951,22 +2984,39 @@ Output valid JSON only."""
                     )
                     return
 
+            generation_context = context
+            no_reference_mode = False
+
             primary_docs = await _find_completed_docs()
 
             if not primary_docs:
+                if not allow_without_reference:
+                    yield QuickGenerateProgress(
+                        status="error",
+                        progress=0,
+                        message="No processed documents found for this subject. Please upload a PDF via the PDF tab first and select this subject.",
+                    )
+                    return
+
+                no_reference_mode = True
+                subject_outline = await _build_subject_outline()
+                if subject_outline:
+                    generation_context = f"{context}\n\n{subject_outline}"
                 yield QuickGenerateProgress(
-                    status="error",
-                    progress=0,
-                    message="No processed documents found for this subject. Please upload a PDF via the PDF tab first and select this subject.",
+                    status="processing",
+                    progress=10,
+                    message="No PDFs found. Generating from topic and syllabus context.",
                 )
-                return
 
             primary_doc_ids = [d.id for d in primary_docs]
-            logger.info(f"quick_generate_from_subject: found {len(primary_doc_ids)} primary docs")
+            logger.info(
+                f"quick_generate_from_subject: found {len(primary_doc_ids)} primary docs; "
+                f"no_reference_mode={no_reference_mode}"
+            )
 
             # 2. Get reference document IDs for style/scope context
             reference_doc_ids: List[uuid.UUID] = []
-            if self.document_service:
+            if self.document_service and not no_reference_mode:
                 reference_doc_ids = await self.document_service.get_reference_document_ids(
                     user_id=user_id,
                     subject_id=subject_id,
@@ -2976,15 +3026,17 @@ Output valid JSON only."""
             all_search_doc_ids = primary_doc_ids + reference_doc_ids
 
             # 3. Get all chunks from primary documents
-            chunk_result = await self.db.execute(
-                select(DocumentChunk)
-                .options(selectinload(DocumentChunk.document))
-                .where(DocumentChunk.document_id.in_(primary_doc_ids))
-                .order_by(DocumentChunk.document_id, DocumentChunk.chunk_index)
-            )
-            all_chunks = chunk_result.scalars().all()
+            all_chunks: List[DocumentChunk] = []
+            if primary_doc_ids:
+                chunk_result = await self.db.execute(
+                    select(DocumentChunk)
+                    .options(selectinload(DocumentChunk.document))
+                    .where(DocumentChunk.document_id.in_(primary_doc_ids))
+                    .order_by(DocumentChunk.document_id, DocumentChunk.chunk_index)
+                )
+                all_chunks = chunk_result.scalars().all()
 
-            if not all_chunks:
+            if not all_chunks and not no_reference_mode:
                 yield QuickGenerateProgress(
                     status="error",
                     progress=0,
@@ -2992,7 +3044,10 @@ Output valid JSON only."""
                 )
                 return
 
-            logger.info(f"quick_generate_from_subject: {len(all_chunks)} total chunks across {len(primary_doc_ids)} docs")
+            if no_reference_mode:
+                logger.info("quick_generate_from_subject: using syllabus-only fallback context")
+            else:
+                logger.info(f"quick_generate_from_subject: {len(all_chunks)} total chunks across {len(primary_doc_ids)} docs")
 
             # Build chapter/topic profiles for automatic mapping when topic_id is not provided.
             topic_profiles: List[Dict[str, Any]] = []
@@ -3006,7 +3061,11 @@ Output valid JSON only."""
             yield QuickGenerateProgress(
                 status="generating",
                 progress=15,
-                message=f"Generating {count} questions from {len(all_chunks)} content sections...",
+                message=(
+                    f"Generating {count} questions from topic and syllabus context..."
+                    if no_reference_mode
+                    else f"Generating {count} questions from {len(all_chunks)} content sections..."
+                ),
                 total_questions=count,
             )
 
@@ -3053,11 +3112,13 @@ Output valid JSON only."""
                     requested_count=count,
                     requested_types=types,
                     requested_difficulty=difficulty,
-                    focus_topics=[context],
+                    focus_topics=[generation_context],
                     status="in_progress",
                     generation_config={
                         "mode": "quick_generate_from_subject",
-                        "context": context,
+                        "context": generation_context,
+                        "allow_without_reference": allow_without_reference,
+                        "no_reference_mode": no_reference_mode,
                         "primary_document_ids": [str(d) for d in primary_doc_ids],
                     },
                 )
@@ -3122,14 +3183,14 @@ Output valid JSON only."""
                 logger.warning(f"quick_generate_from_subject: Could not preload existing embeddings: {e}")
 
             query_aspects = [
-                context,
-                f"{context} definition and concepts",
-                f"{context} operations and methods",
-                f"{context} advantages disadvantages",
-                f"{context} implementation details",
-                f"{context} examples and applications",
-                f"{context} comparison differences",
-                f"{context} performance complexity",
+                generation_context,
+                f"{generation_context} definition and concepts",
+                f"{generation_context} operations and methods",
+                f"{generation_context} advantages disadvantages",
+                f"{generation_context} implementation details",
+                f"{generation_context} examples and applications",
+                f"{generation_context} comparison differences",
+                f"{generation_context} performance complexity",
             ]
 
             # ── Pre-fetch chunk pool (once, before the loop) ──────────────
@@ -3150,8 +3211,10 @@ Output valid JSON only."""
                     logger.warning(f"quick_generate_from_subject: pool search failed for '{q_variant[:40]}': {pool_err}")
                     return []
 
-            import asyncio
-            subj_all_candidate_lists = await asyncio.gather(*[_subj_embed_and_search(v) for v in subj_pool_variants])
+            subj_all_candidate_lists = []
+            if all_search_doc_ids:
+                import asyncio
+                subj_all_candidate_lists = await asyncio.gather(*[_subj_embed_and_search(v) for v in subj_pool_variants])
 
             subj_chunk_pool = []
             subj_seen_ids: set = set()
@@ -3163,13 +3226,16 @@ Output valid JSON only."""
 
             if self.reranker_service and len(subj_chunk_pool) > 5:
                 subj_chunk_pool = self.reranker_service.rerank(
-                    query=context,
+                    query=generation_context,
                     chunks=subj_chunk_pool,
                     top_k=min(20, len(subj_chunk_pool)),
                 )
             if not subj_chunk_pool:
-                import random
-                subj_chunk_pool = random.sample(all_chunks, min(15, len(all_chunks)))
+                if all_chunks:
+                    import random
+                    subj_chunk_pool = random.sample(all_chunks, min(15, len(all_chunks)))
+                else:
+                    subj_chunk_pool = []
 
             logger.info(f"quick_generate_from_subject: pre-fetched chunk pool of {len(subj_chunk_pool)} chunks ({len(subj_pool_variants)} parallel queries, deduped+reranked)")
 
@@ -3206,7 +3272,7 @@ Output valid JSON only."""
                             chunks=selected_chunks,
                             question_type=q_type,
                             difficulty=difficulty,
-                            context=context,
+                            context=generation_context,
                             previous_questions=generated_questions_text,
                             question_index=total_question_index,
                             reference_questions=reference_questions,
