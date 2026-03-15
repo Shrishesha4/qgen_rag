@@ -3312,11 +3312,19 @@ Output valid JSON only."""
                             similarities = self.embedding_service.compute_similarity_batch(
                                 new_embedding, all_embs
                             )
-                            if any(s > 0.85 for s in similarities):
+                            max_sim = max(similarities) if similarities else 0.0
+                            if max_sim > 0.85:
+                                # Find which question it matched for logging
+                                max_idx = similarities.index(max_sim)
+                                match_source = "existing DB" if max_idx < len(existing_embeddings) else "this session"
                                 logger.info(
                                     f"quick_generate_from_subject: duplicate filtered for {q_type} "
-                                    f"(attempt {type_attempts}/{max_attempts})"
+                                    f"(attempt {type_attempts}/{max_attempts}) — "
+                                    f"similarity={max_sim:.4f} matched {match_source} question #{max_idx}, "
+                                    f"rejected: \"{q_text[:120]}...\""
                                 )
+                                # Add rejected question to exclusion list so LLM avoids it next time
+                                generated_questions_text.append(q_text)
                                 questions_failed += 1
                                 continue
 
@@ -3480,9 +3488,9 @@ Output valid JSON only."""
         # Build exclusion context if we have previous questions
         exclusion_text = ""
         if previous_questions and len(previous_questions) > 0:
-            exclusion_text = "\n\nIMPORTANT: Generate a DIFFERENT question. Do NOT ask about:\n" + "\n".join(
-                f"- {q[:80]}..." if len(q) > 80 else f"- {q}" 
-                for q in previous_questions[-5:]  # Include last 5 questions max
+            exclusion_text = "\n\nIMPORTANT: Generate a COMPLETELY DIFFERENT question. Do NOT ask about any of these topics or similar variations:\n" + "\n".join(
+                f"- {q[:100]}..." if len(q) > 100 else f"- {q}" 
+                for q in previous_questions[-10:]  # Include last 10 questions for better dedup
             )
         
         # Build reference questions section for style matching

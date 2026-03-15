@@ -62,6 +62,7 @@
 	let bgStatusPollTimer: ReturnType<typeof setInterval> | null = null;
 
 	let showGenerateModeModal = $state(false);
+	let generateModalStep = $state<'choice' | 'config'>('choice');
 	let generateTargetSubject = $state<SubjectResponse | null>(null);
 	let generateTargetTopicId = $state<string | null>(null);
 	let generateTargetMode = $state<'mixed' | 'topic'>('mixed');
@@ -102,6 +103,7 @@
 		generateModalTopics = topicsMap[subject.id] || [];
 		generateSelectedTopicIds = topicId ? [topicId] : [];
 		generateModeError = '';
+		generateModalStep = 'choice';
 		showGenerateModeModal = true;
 
 		if (generateModalTopics.length === 0) {
@@ -135,6 +137,7 @@
 		generateTargetSubject = null;
 		generateTargetTopicId = null;
 		generateTargetMode = 'mixed';
+		generateModalStep = 'choice';
 		generateTopicScope = 'all';
 		generateSelectedTopicIds = [];
 		generateQuestionCount = 10;
@@ -161,6 +164,7 @@
 	onDestroy(() => {
 		clearReferencePolling();
 		clearBackgroundStatusPolling();
+		if (bgSubjectRefreshTimer) { clearInterval(bgSubjectRefreshTimer); bgSubjectRefreshTimer = null; }
 	});
 
 	function getSubjectBgStatus(subjectId: string): BackgroundGenerationStatusItem | null {
@@ -230,46 +234,99 @@
 		if (state === 'waiting_for_documents') return 'Waiting for docs';
 		if (state === 'scheduled') return 'Scheduled';
 		if (state === 'error' || state === 'failed') return 'Generation failed';
+		if (state === 'complete' || state === 'completed') return 'Complete';
 		return 'Generating';
 	}
 
-	async function refreshBackgroundStatuses() {
-		const cached = readCachedBgStatuses();
-		if (!subjects.length) {
-			bgStatusBySubject = cached;
-			return;
-		}
-		try {
-			const subjectIds = subjects.map((s) => s.id);
-			const res = await getBackgroundGenerationStatuses(subjectIds);
-			const live = res.statuses || {};
+	let bgPolling = false;
+	let bgSubjectRefreshTimer: ReturnType<typeof setTimeout> | null = null;
 
-			// If live polling succeeds and a currently visible subject is missing,
-			// treat it as completed and clear stale cached indicator for that subject.
-			const merged = { ...cached };
-			for (const subjectId of subjectIds) {
-				delete merged[subjectId];
+	async function refreshBackgroundStatuses() {
+		// Concurrency guard — skip if a previous poll is still in-flight
+		if (bgPolling) return;
+		bgPolling = true;
+		try {
+			if (!subjects.length) {
+				bgStatusBySubject = readCachedBgStatuses();
+				return;
 			}
-			for (const [subjectId, status] of Object.entries(live)) {
-				if (status.in_progress) {
-					merged[subjectId] = status;
+			const subjectIds = subjects.map((s) => s.id);
+
+			// On first load, seed from localStorage so cached indicators show immediately
+			const hasAnyState = Object.keys(bgStatusBySubject).length > 0;
+			if (!hasAnyState) {
+				const cached = readCachedBgStatuses();
+				if (Object.keys(cached).length > 0) {
+					bgStatusBySubject = cached;
 				}
 			}
 
-			bgStatusBySubject = merged;
-			writeCachedBgStatuses(merged);
+			const res = await getBackgroundGenerationStatuses(subjectIds);
+			const live = res.statuses || {};
+
+			// Snapshot what was previously in-progress (before any state change)
+			const wasInProgress = new Set(
+				subjectIds.filter((id) => bgStatusBySubject[id]?.in_progress)
+			);
+
+			// --- Additive merge: keep current state, update from server ---
+			const updated: Record<string, BackgroundGenerationStatusItem> = { ...bgStatusBySubject };
+
+			for (const subjectId of subjectIds) {
+				const serverStatus = live[subjectId];
+
+				if (serverStatus) {
+					if (serverStatus.in_progress) {
+						// Server says still in-progress — update with latest data
+						updated[subjectId] = serverStatus;
+					} else {
+						// Server explicitly says done — remove indicator
+						delete updated[subjectId];
+					}
+				} else if (wasInProgress.has(subjectId)) {
+					// Server returned nothing for this previously-in-progress subject.
+					// This means the task is gone from the server. Clean up.
+					delete updated[subjectId];
+				}
+				// If server returned nothing AND it wasn't previously in-progress,
+				// don't touch it (could be fresh optimistic entry from scheduling).
+			}
+
+			// Single atomic state update
+			bgStatusBySubject = updated;
+			writeCachedBgStatuses(updated);
+
+			// Defer subject data refreshes for completed generations
+			const completedIds = [...wasInProgress].filter((id) => !updated[id]);
+			if (completedIds.length > 0) {
+				setTimeout(() => {
+					for (const id of completedIds) {
+						void refreshSubject(id);
+					}
+				}, 200);
+			}
 		} catch {
-			// best-effort polling only
-			bgStatusBySubject = cached;
+			// best-effort polling only — keep existing state to avoid flicker
+		} finally {
+			bgPolling = false;
 		}
 	}
 
 	function ensureBackgroundStatusPolling() {
 		clearBackgroundStatusPolling();
+		if (bgSubjectRefreshTimer) { clearInterval(bgSubjectRefreshTimer); bgSubjectRefreshTimer = null; }
 		if (!subjects.length) return;
 		bgStatusPollTimer = setInterval(() => {
 			void refreshBackgroundStatuses();
 		}, 3500);
+		// Separate timer for live question count refresh — every 10s
+		bgSubjectRefreshTimer = setInterval(() => {
+			for (const [subjectId, status] of Object.entries(bgStatusBySubject)) {
+				if (status.in_progress) {
+					void refreshSubject(subjectId);
+				}
+			}
+		}, 10000);
 	}
 
 	function allReferenceDocs() {
@@ -436,40 +493,20 @@
 		return Math.max(1, Math.min(200, Math.trunc(safe)));
 	}
 
-	async function chooseVetNow() {
+	function chooseVetNow() {
 		if (!generateTargetSubject) return;
-		const count = normalizedGenerateCount();
+		// Navigate directly to the vetting loop — no generation API call
 		const topicScoped = generateTargetMode === 'topic' ? generateTargetTopicId : null;
-		const selectedTopicIds =
-			generateTargetMode === 'mixed' && generateTopicScope === 'selected'
-				? generateSelectedTopicIds
-				: [];
-
-		if (generateTargetMode === 'topic' && !topicScoped) {
-			generateModeError = 'Please select a topic.';
-			return;
-		}
-		if (generateTargetMode === 'mixed' && generateTopicScope === 'selected' && selectedTopicIds.length === 0) {
-			generateModeError = 'Select at least one topic.';
-			return;
-		}
-		const canGenerate = await ensureReadyToGenerate(generateTargetSubject);
-		if (!canGenerate) {
-			showGenerateModeModal = false;
-			generateTargetSubject = null;
-			generateTargetTopicId = null;
-			return;
-		}
-
 		if (topicScoped) {
-			goto(`/teacher/train/loop?subject=${generateTargetSubject.id}&topic=${topicScoped}&count=${count}`);
+			goto(`/teacher/train/loop?subject=${generateTargetSubject.id}&topic=${topicScoped}`);
 		} else {
-			const selectedTopicsParam =
-				generateTargetMode === 'mixed' && generateTopicScope === 'selected' && selectedTopicIds.length > 0
-					? `&topics=${encodeURIComponent(selectedTopicIds.join(','))}`
-					: '';
-			goto(`/teacher/train/loop?subject=${generateTargetSubject.id}&mode=mixed-topics&count=${count}${selectedTopicsParam}`);
+			goto(`/teacher/train/loop?subject=${generateTargetSubject.id}`);
 		}
+	}
+
+	function chooseVetLater() {
+		// Transition to step 2 — show the full config form
+		generateModalStep = 'config';
 	}
 
 	async function chooseGenAndVetLater() {
@@ -516,7 +553,6 @@
 			bgStatusBySubject = optimistic;
 			writeCachedBgStatuses(optimistic);
 			generateModeSuccess = `Background generation started for ${generateTargetSubject.name} (${count} questions). You can vet later.`;
-			await refreshBackgroundStatuses();
 			closeGenerateModeModal(true);
 		} catch (e: unknown) {
 			generateModeError = e instanceof Error ? e.message : 'Failed to schedule background generation';
@@ -904,93 +940,111 @@
 				onkeydown={(e) => e.stopPropagation()}
 			>
 				<div class="modal-header">
-					<h3>How do you want to generate?</h3>
+					<h3>{generateModalStep === 'choice' ? generateTargetSubject?.name : 'Schedule Generation'}</h3>
 					<button class="close-btn" onclick={() => closeGenerateModeModal()}>✕</button>
 				</div>
 
 				<div class="generate-choice-body">
-					<p class="generate-choice-copy">
-						{generateTargetSubject?.name}
-						{#if generateTargetMode === 'topic'}
-							• Single Topic
-						{:else}
-							• Mixed Topics
-						{/if}
-					</p>
+					{#if generateModalStep === 'choice'}
+						<!-- Step 1: Simple two-button choice -->
+						<div class="generate-initial-choice">
+							<button class="choice-card" onclick={chooseVetNow}>
+								<span class="choice-icon">⚡</span>
+								<span class="choice-title">Vet Now</span>
+								<span class="choice-desc">Review & approve existing unvetted questions</span>
+							</button>
+							<button class="choice-card" onclick={chooseVetLater}>
+								<span class="choice-icon">🕐</span>
+								<span class="choice-title">Vet Later</span>
+								<span class="choice-desc">Generate questions in the background & vet later</span>
+							</button>
+						</div>
 
-					<div class="generate-form-grid">
-						<label class="generate-field">
-							<span>Questions to generate</span>
-							<input
-								type="number"
-								min="1"
-								max="200"
-								bind:value={generateQuestionCount}
-								class="search-input"
-							/>
-						</label>
+					{:else}
+						<!-- Step 2: Full config for background generation -->
+						<p class="generate-choice-copy">
+							{generateTargetSubject?.name}
+							{#if generateTargetMode === 'topic'}
+								• Single Topic
+							{:else}
+								• Mixed Topics
+							{/if}
+						</p>
 
-						{#if generateTargetMode === 'mixed'}
+						<div class="generate-form-grid">
 							<label class="generate-field">
-								<span>Topic scope</span>
-								<select class="search-input" bind:value={generateTopicScope} disabled={loadingGenerateTopics}>
-									<option value="all">All topics (mixed)</option>
-									<option value="selected">Selected topics</option>
-								</select>
+								<span>Questions to generate</span>
+								<input
+									type="number"
+									min="1"
+									max="200"
+									bind:value={generateQuestionCount}
+									class="search-input"
+								/>
 							</label>
-						{/if}
 
-						{#if generateTargetMode === 'topic'}
-							<label class="generate-field generate-field-full">
-								<span>Select topic</span>
-								<select class="search-input" bind:value={generateTargetTopicId} disabled={loadingGenerateTopics || generateModalTopics.length === 0}>
-									{#each generateModalTopics as topic}
-										<option value={topic.id}>{topic.name}</option>
-									{/each}
-								</select>
-							</label>
-						{:else if generateTopicScope === 'selected'}
-							<div class="generate-field generate-field-full">
-								<span>Select topics</span>
-								<div class="topic-multi-toolbar">
-									<span class="topic-multi-count">{generateSelectedTopicIds.length} selected</span>
-									<div class="topic-multi-toolbar-actions">
-										<button type="button" class="topic-chip-btn" onclick={selectAllGenerateTopics} disabled={loadingGenerateTopics || generateModalTopics.length === 0}>Select all</button>
-										<button type="button" class="topic-chip-btn" onclick={clearGenerateTopics} disabled={loadingGenerateTopics || generateSelectedTopicIds.length === 0}>Clear</button>
+							{#if generateTargetMode === 'mixed'}
+								<label class="generate-field">
+									<span>Topic scope</span>
+									<select class="search-input" bind:value={generateTopicScope} disabled={loadingGenerateTopics}>
+										<option value="all">All topics (mixed)</option>
+										<option value="selected">Selected topics</option>
+									</select>
+								</label>
+							{/if}
+
+							{#if generateTargetMode === 'topic'}
+								<label class="generate-field generate-field-full">
+									<span>Select topic</span>
+									<select class="search-input" bind:value={generateTargetTopicId} disabled={loadingGenerateTopics || generateModalTopics.length === 0}>
+										{#each generateModalTopics as topic}
+											<option value={topic.id}>{topic.name}</option>
+										{/each}
+									</select>
+								</label>
+							{:else if generateTopicScope === 'selected'}
+								<div class="generate-field generate-field-full">
+									<span>Select topics</span>
+									<div class="topic-multi-toolbar">
+										<span class="topic-multi-count">{generateSelectedTopicIds.length} selected</span>
+										<div class="topic-multi-toolbar-actions">
+											<button type="button" class="topic-chip-btn" onclick={selectAllGenerateTopics} disabled={loadingGenerateTopics || generateModalTopics.length === 0}>Select all</button>
+											<button type="button" class="topic-chip-btn" onclick={clearGenerateTopics} disabled={loadingGenerateTopics || generateSelectedTopicIds.length === 0}>Clear</button>
+										</div>
+									</div>
+									<div class="topic-multi-list">
+										{#each generateModalTopics as topic}
+											<label class="topic-multi-item">
+												<input
+													type="checkbox"
+													checked={generateSelectedTopicIds.includes(topic.id)}
+													onchange={() => toggleGenerateTopicSelection(topic.id)}
+													disabled={loadingGenerateTopics}
+												/>
+												<span>{topic.name}</span>
+											</label>
+										{/each}
 									</div>
 								</div>
-								<div class="topic-multi-list">
-									{#each generateModalTopics as topic}
-										<label class="topic-multi-item">
-											<input
-												type="checkbox"
-												checked={generateSelectedTopicIds.includes(topic.id)}
-												onchange={() => toggleGenerateTopicSelection(topic.id)}
-												disabled={loadingGenerateTopics}
-											/>
-											<span>{topic.name}</span>
-										</label>
-									{/each}
-								</div>
-							</div>
+							{/if}
+						</div>
+
+						{#if loadingGenerateTopics}
+							<p class="generate-choice-copy">Loading topics...</p>
 						{/if}
-					</div>
+						{#if generateModeError}
+							<p class="modal-error">{generateModeError}</p>
+						{/if}
 
-					{#if loadingGenerateTopics}
-						<p class="generate-choice-copy">Loading topics...</p>
+						<div class="generate-choice-actions">
+							<button class="glass-btn" onclick={() => (generateModalStep = 'choice')} disabled={schedulingBulk}>
+								← Back
+							</button>
+							<button class="glass-btn generate-choice-btn" onclick={chooseGenAndVetLater} disabled={schedulingBulk}>
+								{schedulingBulk ? 'Scheduling...' : 'Schedule Generation'}
+							</button>
+						</div>
 					{/if}
-					{#if generateModeError}
-						<p class="modal-error">{generateModeError}</p>
-					{/if}
-
-					<div class="generate-choice-actions">
-						<button class="glass-btn generate-choice-btn" onclick={chooseVetNow} disabled={schedulingBulk}>
-							Vet now
-						</button>
-						<button class="glass-btn generate-choice-btn" onclick={chooseGenAndVetLater} disabled={schedulingBulk}>
-							{schedulingBulk ? 'Scheduling...' : 'Generate and Vet later'}
-						</button>
-					</div>
 				</div>
 			</div>
 		</div>
@@ -1467,9 +1521,59 @@
 		font-size: 0.9rem;
 	}
 
+	.generate-initial-choice {
+		display: grid;
+		grid-template-columns: 1fr 1fr;
+		gap: 0.75rem;
+		padding: 0.25rem 0;
+	}
+
+	.choice-card {
+		display: flex;
+		flex-direction: column;
+		align-items: center;
+		gap: 0.5rem;
+		padding: 1.4rem 1rem;
+		border-radius: 14px;
+		border: 1px solid rgba(255, 255, 255, 0.12);
+		background: rgba(255, 255, 255, 0.06);
+		cursor: pointer;
+		transition: all 0.25s ease;
+		text-align: center;
+		color: var(--theme-text);
+	}
+
+	.choice-card:hover {
+		background: rgba(var(--theme-primary-rgb), 0.15);
+		border-color: rgba(var(--theme-primary-rgb), 0.4);
+		transform: translateY(-2px);
+		box-shadow: 0 4px 20px rgba(var(--theme-primary-rgb), 0.15);
+	}
+
+	.choice-card:active {
+		transform: translateY(0);
+	}
+
+	.choice-icon {
+		font-size: 1.6rem;
+		line-height: 1;
+	}
+
+	.choice-title {
+		font-size: 1rem;
+		font-weight: 700;
+		letter-spacing: 0.01em;
+	}
+
+	.choice-desc {
+		font-size: 0.72rem;
+		color: var(--theme-text-muted);
+		line-height: 1.35;
+	}
+
 	.generate-choice-actions {
 		display: grid;
-		grid-template-columns: 1fr;
+		grid-template-columns: auto 1fr;
 		gap: 0.6rem;
 	}
 

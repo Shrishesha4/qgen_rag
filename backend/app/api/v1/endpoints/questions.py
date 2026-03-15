@@ -94,6 +94,12 @@ async def _wait_for_subject_docs_ready(
     return False
 
 
+async def _delayed_status_cleanup(task_key: str, delay_seconds: float = 60.0) -> None:
+    """Remove a terminal status entry after a delay so the frontend has time to poll it."""
+    await asyncio.sleep(delay_seconds)
+    _BACKGROUND_GENERATION_STATUS.pop(task_key, None)
+
+
 async def _run_background_subject_generation(
     user_id: uuid.UUID,
     subject_id: uuid.UUID,
@@ -105,6 +111,9 @@ async def _run_background_subject_generation(
     allow_without_reference: bool = False,
 ) -> None:
     task_key = _bg_gen_task_key(user_id, subject_id)
+    error_occurred = False
+    error_message = ""
+    final_current_question = 0
     try:
         async with AsyncSessionLocal() as task_db:
             subject_res = await task_db.execute(
@@ -191,6 +200,7 @@ async def _run_background_subject_generation(
                             "updated_at": datetime.now(timezone.utc).isoformat(),
                         }
                     completed_slots += 1
+                final_current_question = completed_slots
             else:
                 generator = question_service.quick_generate_from_subject(
                     user_id=user_id,
@@ -205,18 +215,53 @@ async def _run_background_subject_generation(
                     allow_without_reference=allow_without_reference,
                 )
                 async for progress_event in generator:
+                    # Use current_question (saved/validated questions) for progress,
+                    # not progress_event.progress which includes duplicate-filtered attempts
+                    saved_count = progress_event.current_question or 0
+                    total = progress_event.total_questions or count
+                    saved_progress = min(99, int((saved_count / max(1, total)) * 100)) if saved_count > 0 else (progress_event.progress or 0)
+                    # For non-generating statuses (processing, complete, error), use the event's own progress
+                    if progress_event.status not in ("generating",):
+                        saved_progress = progress_event.progress or 0
                     _BACKGROUND_GENERATION_STATUS[task_key] = {
                         "status": progress_event.status,
-                        "progress": progress_event.progress,
-                        "current_question": progress_event.current_question or 0,
-                        "total_questions": progress_event.total_questions or count,
-                        "message": progress_event.message or "Generating questions",
+                        "progress": saved_progress,
+                        "current_question": saved_count,
+                        "total_questions": total,
+                        "message": f"Generated {saved_count}/{total} questions" if saved_count > 0 and progress_event.status == "generating" else (progress_event.message or "Generating questions"),
                         "updated_at": datetime.now(timezone.utc).isoformat(),
                     }
+                final_current_question = _BACKGROUND_GENERATION_STATUS.get(task_key, {}).get("current_question", count)
             await task_db.commit()
+    except Exception as exc:
+        error_occurred = True
+        error_message = str(exc)
     finally:
+        # Remove the task reference immediately
         _BACKGROUND_GENERATION_TASKS.pop(task_key, None)
-        _BACKGROUND_GENERATION_STATUS.pop(task_key, None)
+        # Set a terminal status so the frontend can see completion/error
+        if error_occurred:
+            _BACKGROUND_GENERATION_STATUS[task_key] = {
+                "status": "error",
+                "progress": 0,
+                "current_question": final_current_question,
+                "total_questions": count,
+                "message": f"Generation failed: {error_message}",
+                "updated_at": datetime.now(timezone.utc).isoformat(),
+                "in_progress": False,
+            }
+        else:
+            _BACKGROUND_GENERATION_STATUS[task_key] = {
+                "status": "completed",
+                "progress": 100,
+                "current_question": count,
+                "total_questions": count,
+                "message": "Generation complete",
+                "updated_at": datetime.now(timezone.utc).isoformat(),
+                "in_progress": False,
+            }
+        # Schedule cleanup after 60s so the frontend has time to poll the terminal status
+        asyncio.create_task(_delayed_status_cleanup(task_key, delay_seconds=60.0))
 
 
 async def sse_with_heartbeat(
@@ -989,24 +1034,39 @@ async def get_background_generation_statuses(
             continue
 
         task_key = _bg_gen_task_key(current_user.id, parsed_subject_id)
+        status_payload = _BACKGROUND_GENERATION_STATUS.get(task_key)
         task = _BACKGROUND_GENERATION_TASKS.get(task_key)
+
+        # Check for terminal status first (task finished, status still cached)
+        if status_payload and status_payload.get("in_progress") is False:
+            # Return the terminal status so the frontend can see completion/error
+            statuses[str(parsed_subject_id)] = {
+                "in_progress": False,
+                "status": status_payload.get("status", "completed"),
+                "progress": status_payload.get("progress", 100),
+                "current_question": status_payload.get("current_question", 0),
+                "total_questions": status_payload.get("total_questions"),
+                "message": status_payload.get("message", "Generation complete"),
+                "updated_at": status_payload.get("updated_at"),
+            }
+            continue
+
         if not task:
             continue
 
         if task.done():
             _BACKGROUND_GENERATION_TASKS.pop(task_key, None)
-            _BACKGROUND_GENERATION_STATUS.pop(task_key, None)
+            # Don't pop status here — the finally block in the task sets a terminal status
             continue
 
-        status_payload = _BACKGROUND_GENERATION_STATUS.get(task_key, {})
         statuses[str(parsed_subject_id)] = {
             "in_progress": True,
-            "status": status_payload.get("status", "generating"),
-            "progress": status_payload.get("progress", 0),
-            "current_question": status_payload.get("current_question", 0),
-            "total_questions": status_payload.get("total_questions"),
-            "message": status_payload.get("message", "Background generation in progress"),
-            "updated_at": status_payload.get("updated_at"),
+            "status": (status_payload or {}).get("status", "generating"),
+            "progress": (status_payload or {}).get("progress", 0),
+            "current_question": (status_payload or {}).get("current_question", 0),
+            "total_questions": (status_payload or {}).get("total_questions"),
+            "message": (status_payload or {}).get("message", "Background generation in progress"),
+            "updated_at": (status_payload or {}).get("updated_at"),
         }
 
     return {"statuses": statuses}
