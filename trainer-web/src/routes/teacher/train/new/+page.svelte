@@ -1392,8 +1392,9 @@
 	.modal-backdrop {
 		position: fixed;
 		inset: 0;
-		background: rgba(0, 0, 0, 0.6);
-		backdrop-filter: blur(4px);
+		background: var(--theme-modal-backdrop);
+		backdrop-filter: var(--theme-modal-backdrop-blur);
+		-webkit-backdrop-filter: var(--theme-modal-backdrop-blur);
 		display: flex;
 		align-items: center;
 		justify-content: center;
@@ -1405,6 +1406,9 @@
 		width: 100%;
 		max-width: 420px;
 		border-radius: 1.5rem;
+		border: 1px solid var(--theme-modal-border);
+		background: var(--theme-modal-surface);
+		box-shadow: var(--theme-modal-shadow);
 		padding: 1.5rem;
 		display: flex;
 		flex-direction: column;
@@ -2205,7 +2209,7 @@
 			position: sticky;
 			bottom: 0;
 			padding-top: 0.5rem;
-			background: linear-gradient(180deg, rgba(8, 16, 30, 0), rgba(8, 16, 30, 0.88) 40%);
+			background: linear-gradient(180deg, rgba(10, 18, 32, 0), rgba(10, 18, 32, 0.72) 26%, rgba(var(--theme-primary-rgb), 0.18) 100%);
 		}
 
 		.modal-footer button {

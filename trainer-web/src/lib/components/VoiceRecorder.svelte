@@ -747,9 +747,9 @@
 	.recorder-overlay {
 		position: fixed;
 		inset: 0;
-		background: rgba(0, 0, 0, 0.7);
-		backdrop-filter: blur(8px);
-		-webkit-backdrop-filter: blur(8px);
+		background: var(--theme-modal-backdrop);
+		backdrop-filter: var(--theme-modal-backdrop-blur);
+		-webkit-backdrop-filter: var(--theme-modal-backdrop-blur);
 		display: flex;
 		align-items: center;
 		justify-content: center;
@@ -761,6 +761,9 @@
 		width: 100%;
 		max-width: 400px;
 		border-radius: 1.5rem;
+		border: 1px solid var(--theme-modal-border);
+		background: var(--theme-modal-surface);
+		box-shadow: var(--theme-modal-shadow);
 		padding: 1.5rem;
 		display: flex;
 		flex-direction: column;

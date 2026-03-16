@@ -77,6 +77,7 @@
 
 	const BG_STATUS_CACHE_KEY = 'trainer.bgGenerationStatusCache.v1';
 	const BG_STATUS_CACHE_TTL_MS = 2 * 60 * 60 * 1000;
+	const BG_STATUS_MAX_MISSES = 10;
 
 	const PROCESSING_DOC_STATUSES = new Set(['pending', 'processing']);
 
@@ -203,15 +204,24 @@
 	function getBgCounter(subjectId: string): string {
 		const status = getSubjectBgStatus(subjectId);
 		if (!status || !status.in_progress) return '';
+
+		const startedTotal = status.started_total_questions ?? null;
+		const targetTotal = status.target_total_questions ?? null;
+		if (startedTotal !== null && targetTotal !== null && targetTotal > startedTotal) {
+			const taskTotal = Math.max(1, status.total_questions ?? (targetTotal - startedTotal));
+			const generatedCurrent = Math.max(0, status.current_question || 0);
+			const taskCurrent = Math.min(taskTotal, generatedCurrent);
+			const absoluteCurrent = Math.min(targetTotal, startedTotal + taskCurrent);
+			return `${absoluteCurrent}/${targetTotal}`;
+		}
+
 		const total = status.total_questions ?? null;
 		if (!total || total <= 0) {
 			const current = Math.max(0, status.current_question || 0);
 			return `${current}/n`;
 		}
 		const generatedCurrent = Math.max(0, status.current_question || 0);
-		const progressCurrent = Math.min(total, Math.max(1, Math.round((Math.max(0, Math.min(100, status.progress || 0)) / 100) * total)));
-		const current = Math.max(generatedCurrent, progressCurrent);
-		return `${current}/${total}`;
+		return `${generatedCurrent}/${total}`;
 	}
 
 	function getBgProgress(subjectId: string): number {
@@ -233,6 +243,7 @@
 		const state = (status.status || '').toLowerCase();
 		if (state === 'waiting_for_documents') return 'Waiting for docs';
 		if (state === 'scheduled') return 'Scheduled';
+		if (state === 'processing') return 'Preparing';
 		if (state === 'error' || state === 'failed') return 'Generation failed';
 		if (state === 'complete' || state === 'completed') return 'Complete';
 		return 'Generating';
@@ -240,6 +251,7 @@
 
 	let bgPolling = false;
 	let bgSubjectRefreshTimer: ReturnType<typeof setTimeout> | null = null;
+	let bgMissCountBySubject = $state<Record<string, number>>({});
 
 	async function refreshBackgroundStatuses() {
 		// Concurrency guard — skip if a previous poll is still in-flight
@@ -248,6 +260,7 @@
 		try {
 			if (!subjects.length) {
 				bgStatusBySubject = readCachedBgStatuses();
+				bgMissCountBySubject = {};
 				return;
 			}
 			const subjectIds = subjects.map((s) => s.id);
@@ -263,6 +276,7 @@
 
 			const res = await getBackgroundGenerationStatuses(subjectIds);
 			const live = res.statuses || {};
+			const subjectTotalById = Object.fromEntries(subjects.map((s) => [s.id, s.total_questions]));
 
 			// Snapshot what was previously in-progress (before any state change)
 			const wasInProgress = new Set(
@@ -271,22 +285,117 @@
 
 			// --- Additive merge: keep current state, update from server ---
 			const updated: Record<string, BackgroundGenerationStatusItem> = { ...bgStatusBySubject };
+			const nextMisses: Record<string, number> = { ...bgMissCountBySubject };
+			const nowMs = Date.now();
 
 			for (const subjectId of subjectIds) {
+				// Auto-dismiss completed indicators after 3s of visibility
+				if (updated[subjectId]?._completedAt && nowMs - updated[subjectId]._completedAt > 3000) {
+					delete updated[subjectId];
+					// Don't continue — let this fall through so completedIds picks it up
+				}
+
 				const serverStatus = live[subjectId];
+				const priorStatus = updated[subjectId] || bgStatusBySubject[subjectId];
+				const priorRunId = priorStatus?.run_id || null;
+				const serverRunId = serverStatus?.run_id || null;
 
 				if (serverStatus) {
+					nextMisses[subjectId] = 0;
+
+					if (
+						priorStatus?.in_progress &&
+						priorRunId &&
+						serverRunId &&
+						priorRunId !== serverRunId &&
+						!serverStatus.in_progress
+					) {
+						// Ignore stale terminal payloads from a different run/worker snapshot.
+						continue;
+					}
+
 					if (serverStatus.in_progress) {
-						// Server says still in-progress — update with latest data
-						updated[subjectId] = serverStatus;
+						// Server says still in-progress — merge with prior so partial
+						// payloads don't wipe totals/run_id and cause 0/n flicker.
+						updated[subjectId] = {
+							...(priorStatus || {}),
+							...serverStatus,
+							in_progress: true,
+							run_id: serverStatus.run_id || priorRunId || undefined,
+							total_questions:
+								serverStatus.total_questions ?? priorStatus?.total_questions ?? undefined,
+							started_total_questions:
+								serverStatus.started_total_questions ?? priorStatus?.started_total_questions ?? undefined,
+							target_total_questions:
+								serverStatus.target_total_questions ?? priorStatus?.target_total_questions ?? undefined,
+						};
 					} else {
-						// Server explicitly says done — remove indicator
-						delete updated[subjectId];
+						const targetTotal = (priorStatus?.target_total_questions ?? serverStatus.target_total_questions) ?? null;
+						const currentSubjectTotal = Number(subjectTotalById[subjectId] ?? 0);
+						const terminalReachedTarget = targetTotal !== null && currentSubjectTotal >= targetTotal;
+						const terminalLooksComplete =
+							(serverStatus.status || '').toLowerCase() === 'completed' &&
+							Number(serverStatus.progress || 0) >= 100 &&
+							Number(serverStatus.current_question || 0) >= Number(serverStatus.total_questions || 0);
+
+						const sameRunTerminal =
+							!priorStatus?.in_progress ||
+							!priorRunId ||
+							(serverRunId && priorRunId === serverRunId);
+
+						if ((terminalReachedTarget || terminalLooksComplete) && sameRunTerminal) {
+							// Keep a brief "completed" indicator so the user sees the transition
+							updated[subjectId] = {
+								...(priorStatus || {}),
+								...serverStatus,
+								in_progress: true,
+								status: 'completed',
+								progress: 100,
+								_completedAt: updated[subjectId]?._completedAt || nowMs,
+							};
+						} else if (priorStatus?.in_progress) {
+							// Keep active indicator unless completion is strongly confirmed.
+							// Also guard recent runs (within 2 min) against transient server gaps.
+							const priorUpdatedAtMs = priorStatus?.updated_at ? Date.parse(priorStatus.updated_at) : 0;
+							const elapsedSinceStart = Number.isFinite(priorUpdatedAtMs) ? nowMs - priorUpdatedAtMs : 0;
+							if (elapsedSinceStart < 120_000) {
+								continue;
+							}
+							// If more than 2 minutes and server says done, trust the server
+							delete updated[subjectId];
+						} else {
+							delete updated[subjectId];
+						}
 					}
 				} else if (wasInProgress.has(subjectId)) {
-					// Server returned nothing for this previously-in-progress subject.
-					// This means the task is gone from the server. Clean up.
+					const priorStatus = bgStatusBySubject[subjectId];
+					const updatedAtMs = priorStatus?.updated_at ? Date.parse(priorStatus.updated_at) : 0;
+					const ageMs = Number.isFinite(updatedAtMs) ? nowMs - updatedAtMs : Number.POSITIVE_INFINITY;
+					const missCount = (nextMisses[subjectId] || 0) + 1;
+					nextMisses[subjectId] = missCount;
+
+					const targetTotal = priorStatus?.target_total_questions ?? null;
+					const currentSubjectTotal = Number(subjectTotalById[subjectId] ?? 0);
+					if (targetTotal !== null && currentSubjectTotal >= targetTotal) {
+						delete updated[subjectId];
+						delete nextMisses[subjectId];
+						continue;
+					}
+
+					// Keep active indicator through app close/reopen and transient backend gaps.
+					if (ageMs <= BG_STATUS_CACHE_TTL_MS) {
+						continue;
+					}
+
+					console.warn('[bg-gen] Dropping stale in-progress indicator after repeated missing polls', {
+						subjectId,
+						missCount,
+						ageMs,
+						lastStatus: priorStatus,
+						liveStatusKeys: Object.keys(live),
+					});
 					delete updated[subjectId];
+					delete nextMisses[subjectId];
 				}
 				// If server returned nothing AND it wasn't previously in-progress,
 				// don't touch it (could be fresh optimistic entry from scheduling).
@@ -294,6 +403,7 @@
 
 			// Single atomic state update
 			bgStatusBySubject = updated;
+			bgMissCountBySubject = nextMisses;
 			writeCachedBgStatuses(updated);
 
 			// Defer subject data refreshes for completed generations
@@ -530,7 +640,7 @@
 		generateModeError = '';
 		generateModeSuccess = '';
 		try {
-			await scheduleBackgroundGeneration({
+			const scheduleRes = await scheduleBackgroundGeneration({
 				subjectId: generateTargetSubject.id,
 				count,
 				types: 'mcq',
@@ -542,10 +652,13 @@
 				...bgStatusBySubject,
 				[generateTargetSubject.id]: {
 					in_progress: true,
+					run_id: scheduleRes.run_id || `${Date.now()}-${generateTargetSubject.id}`,
 					status: 'scheduled',
 					progress: 1,
 					current_question: 0,
 					total_questions: count,
+					started_total_questions: generateTargetSubject.total_questions,
+					target_total_questions: generateTargetSubject.total_questions + count,
 					message: 'Background generation scheduled',
 					updated_at: new Date().toISOString(),
 				},
@@ -1482,8 +1595,9 @@
 	.modal-backdrop {
 		position: fixed;
 		inset: 0;
-		background: rgba(2, 8, 20, 0.62);
-		backdrop-filter: blur(4px);
+		background: var(--theme-modal-backdrop);
+		backdrop-filter: var(--theme-modal-backdrop-blur);
+		-webkit-backdrop-filter: var(--theme-modal-backdrop-blur);
 		display: grid;
 		place-items: center;
 		z-index: 80;
@@ -1495,9 +1609,9 @@
 		max-height: 86vh;
 		overflow: auto;
 		border-radius: 16px;
-		border: 1px solid rgba(255, 255, 255, 0.16);
-		background: rgba(8, 16, 30, 0.82);
-		box-shadow: 0 20px 50px rgba(0, 0, 0, 0.34);
+		border: 1px solid var(--theme-modal-border);
+		background: var(--theme-modal-surface);
+		box-shadow: var(--theme-modal-shadow);
 	}
 
 	.add-topic-modal {
@@ -1916,7 +2030,7 @@
 			position: sticky;
 			bottom: -1px;
 			padding-top: 0.55rem;
-			background: linear-gradient(180deg, rgba(8, 16, 30, 0), rgba(8, 16, 30, 0.95) 35%);
+			background: linear-gradient(180deg, rgba(10, 18, 32, 0), rgba(10, 18, 32, 0.75) 24%, rgba(var(--theme-primary-rgb), 0.2) 100%);
 		}
 
 		.topic-multi-toolbar {

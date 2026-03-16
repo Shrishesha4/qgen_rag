@@ -127,6 +127,9 @@ class Settings(BaseSettings):
     # Generation Controls
     ENABLE_TWO_PASS_GENERATION: bool = Field(default=False)
     GENERATION_SCHEMA_ENFORCEMENT: bool = Field(default=True)
+    QUICK_GENERATE_PARALLEL_WORKERS: int = Field(default=1)
+    QUESTION_DEDUPE_SIMILARITY_THRESHOLD: float = Field(default=0.85)
+    QUESTION_OPTION_SIMILARITY_THRESHOLD: float = Field(default=0.96)
 
     # Server
     API_HOST: str = Field(default="0.0.0.0")

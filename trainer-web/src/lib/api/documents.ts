@@ -123,6 +123,7 @@ export interface BackgroundGenerationScheduleResponse {
 	status: 'scheduled' | 'already_running' | 'skipped_no_reference';
 	message: string;
 	subject_id: string;
+	run_id?: string | null;
 	count: number;
 	types?: string[];
 	difficulty?: string;
@@ -130,12 +131,17 @@ export interface BackgroundGenerationScheduleResponse {
 
 export interface BackgroundGenerationStatusItem {
 	in_progress: boolean;
+	run_id?: string | null;
 	status: string;
 	progress: number;
 	current_question: number;
 	total_questions?: number | null;
+	started_total_questions?: number | null;
+	target_total_questions?: number | null;
 	message?: string;
 	updated_at?: string | null;
+	/** Client-only: timestamp (ms) when the completed indicator was first shown. */
+	_completedAt?: number;
 }
 
 export interface BackgroundGenerationStatusesResponse {

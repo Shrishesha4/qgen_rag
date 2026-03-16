@@ -22,7 +22,7 @@
 	</div>
 
 	<div class="cards animate-slide-up">
-		<a href="/teacher/train/new" class="card-link glass-panel">
+		<a href="/teacher/train/new" class="card-link glass-card">
 			<div class="card-row">
 				<div class="card-icon amber">
 					<svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
@@ -40,7 +40,7 @@
 			</div>
 		</a>
 
-		<a href="/teacher/train/existing" class="card-link glass-panel">
+		<a href="/teacher/train/existing" class="card-link glass-card">
 			<div class="card-row">
 				<div class="card-icon blue">
 					<svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">

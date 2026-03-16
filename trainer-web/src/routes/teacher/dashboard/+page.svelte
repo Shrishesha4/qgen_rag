@@ -22,7 +22,7 @@
 
 <div class="home">
 	<div class="dashboard-topbar animate-fade-in">
-		<button class="profile-shortcut glass-panel" onclick={() => goto('/teacher/profile')} aria-label="Open profile">
+		<button class="profile-shortcut glass-card subject-card" onclick={() => goto('/teacher/profile')} aria-label="Open profile">
 			{#if $currentUser}
 				<span class="profile-avatar">{($currentUser.full_name || $currentUser.username || 'T').slice(0, 1).toUpperCase()}</span>
 			{:else}

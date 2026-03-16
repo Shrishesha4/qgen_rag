@@ -620,15 +620,16 @@
 		width: min(720px, calc(100vw - 2rem));
 		max-height: min(80vh, 760px);
 		overflow: auto;
-		border: 1px solid rgba(255, 255, 255, 0.18);
-		background: rgba(8, 16, 25, 0.9);
-		backdrop-filter: blur(8px);
+		border: 1px solid var(--theme-modal-border);
+		background: var(--theme-modal-surface);
+		backdrop-filter: var(--theme-modal-backdrop-blur);
+		-webkit-backdrop-filter: var(--theme-modal-backdrop-blur);
 		border-radius: 0.85rem;
 		padding: 0.95rem 1rem;
 		display: flex;
 		flex-direction: column;
 		gap: 0.62rem;
-		box-shadow: 0 20px 46px rgba(0, 0, 0, 0.5);
+		box-shadow: var(--theme-modal-shadow);
 	}
 
 	.help-modal-head {
@@ -699,8 +700,9 @@
 		border: 0;
 		margin: 0;
 		padding: 0;
-		background: rgba(0, 0, 0, 0.45);
-		backdrop-filter: blur(3px);
+		background: var(--theme-modal-backdrop);
+		backdrop-filter: var(--theme-modal-backdrop-blur);
+		-webkit-backdrop-filter: var(--theme-modal-backdrop-blur);
 		cursor: default;
 	}
 

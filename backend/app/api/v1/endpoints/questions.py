@@ -106,6 +106,7 @@ async def _run_background_subject_generation(
     count: int,
     types: list[str],
     difficulty: str,
+    run_id: Optional[str] = None,
     topic_id: Optional[uuid.UUID] = None,
     topic_ids: Optional[list[uuid.UUID]] = None,
     allow_without_reference: bool = False,
@@ -114,6 +115,9 @@ async def _run_background_subject_generation(
     error_occurred = False
     error_message = ""
     final_current_question = 0
+    started_total_questions = 0
+    target_total_questions = count
+    run_id_value = run_id or str(uuid.uuid4())
     try:
         async with AsyncSessionLocal() as task_db:
             subject_res = await task_db.execute(
@@ -122,14 +126,20 @@ async def _run_background_subject_generation(
             subject = subject_res.scalar_one_or_none()
             if not subject:
                 return
+            started_total_questions = int(subject.total_questions or 0)
+            target_total_questions = started_total_questions + count
 
             docs_ready = True
             if not allow_without_reference:
                 _BACKGROUND_GENERATION_STATUS[task_key] = {
+                    "in_progress": True,
+                    "run_id": run_id_value,
                     "status": "waiting_for_documents",
                     "progress": 0,
                     "current_question": 0,
                     "total_questions": count,
+                    "started_total_questions": started_total_questions,
+                    "target_total_questions": target_total_questions,
                     "message": "Waiting for reference documents to finish processing",
                     "updated_at": datetime.now(timezone.utc).isoformat(),
                 }
@@ -169,38 +179,150 @@ async def _run_background_subject_generation(
                 if not valid_topic_ids:
                     return
 
-                completed_slots = 0
-                for slot in range(count):
-                    chosen_topic_id = valid_topic_ids[slot % len(valid_topic_ids)]
+                parallel_workers = max(
+                    1,
+                    min(
+                        count,
+                        int(settings.QUICK_GENERATE_PARALLEL_WORKERS or 1),
+                    ),
+                )
+                max_attempts_per_slot = 4
+                total_multi_attempts = 0
+                max_multi_attempts = count * max_attempts_per_slot
+
+                # Build initial slot queue: each slot targets one generated question.
+                multi_slot_queue = []
+                for slot_idx in range(count):
+                    chosen_tid = valid_topic_ids[slot_idx % len(valid_topic_ids)]
+                    multi_slot_queue.append({"slot_id": slot_idx, "topic_id": chosen_tid, "attempts": 0})
+
+                async def _run_single_topic_slot(slot: dict) -> dict:
+                    chosen_topic_id = slot["topic_id"]
                     chosen_topic_name = topic_name_by_id.get(chosen_topic_id, "Selected Topic")
                     slot_context = f"{subject.name}: {chosen_topic_name}"
+                    produced_count = 0
+                    last_message = ""
 
-                    generator = question_service.quick_generate_from_subject(
-                        user_id=user_id,
-                        subject_id=subject_id,
-                        context=slot_context,
-                        count=1,
-                        types=types,
-                        difficulty=difficulty,
-                        marks_by_type=marks_by_type,
-                        topic_id=chosen_topic_id,
-                        existing_session_id=None,
-                        allow_without_reference=allow_without_reference,
-                    )
+                    try:
+                        async with AsyncSessionLocal() as worker_db:
+                            worker_question_service = QuestionGenerationService(worker_db)
+                            generator = worker_question_service.quick_generate_from_subject(
+                                user_id=user_id,
+                                subject_id=subject_id,
+                                context=slot_context,
+                                count=1,
+                                types=types,
+                                difficulty=difficulty,
+                                marks_by_type=marks_by_type,
+                                topic_id=chosen_topic_id,
+                                existing_session_id=None,
+                                allow_without_reference=allow_without_reference,
+                                skip_generation_lock=True,
+                            )
 
-                    async for progress_event in generator:
-                        slot_progress = progress_event.progress or 0
-                        overall_progress = min(99, int(((completed_slots + (slot_progress / 100.0)) / max(1, count)) * 100))
-                        _BACKGROUND_GENERATION_STATUS[task_key] = {
-                            "status": progress_event.status,
-                            "progress": overall_progress,
-                            "current_question": min(count, completed_slots + (1 if progress_event.status == "complete" else 0)),
-                            "total_questions": count,
-                            "message": progress_event.message or f"Generating question {completed_slots + 1}/{count}",
-                            "updated_at": datetime.now(timezone.utc).isoformat(),
+                            async for progress_event in generator:
+                                if progress_event.message:
+                                    last_message = progress_event.message
+                                if (progress_event.current_question or 0) >= 1 or progress_event.question is not None:
+                                    produced_count = 1
+
+                            await worker_db.commit()
+
+                        return {
+                            "ok": produced_count >= 1,
+                            "topic_id": chosen_topic_id,
+                            "message": last_message,
                         }
-                    completed_slots += 1
-                final_current_question = completed_slots
+                    except Exception as slot_exc:
+                        return {
+                            "ok": False,
+                            "topic_id": chosen_topic_id,
+                            "message": str(slot_exc),
+                        }
+
+                completed_slots = 0
+                while (
+                    multi_slot_queue
+                    and completed_slots < count
+                    and total_multi_attempts < max_multi_attempts
+                ):
+                    batch_size = min(
+                        parallel_workers,
+                        len(multi_slot_queue),
+                        max(1, count - completed_slots),
+                    )
+                    batch_slots = [multi_slot_queue.pop(0) for _ in range(batch_size)]
+                    total_multi_attempts += len(batch_slots)
+
+                    _BACKGROUND_GENERATION_STATUS[task_key] = {
+                        "in_progress": True,
+                        "run_id": run_id_value,
+                        "status": "generating",
+                        "progress": min(99, int((completed_slots / max(1, count)) * 100)),
+                        "current_question": completed_slots,
+                        "total_questions": count,
+                        "started_total_questions": started_total_questions,
+                        "target_total_questions": target_total_questions,
+                        "message": (
+                            f"Generating questions {completed_slots + 1}-{min(count, completed_slots + batch_size)} "
+                            f"of {count} using {batch_size} workers"
+                        ),
+                        "updated_at": datetime.now(timezone.utc).isoformat(),
+                    }
+
+                    batch_results = await asyncio.gather(*[_run_single_topic_slot(slot) for slot in batch_slots])
+
+                    succeeded_in_batch = 0
+                    for slot, result in zip(batch_slots, batch_results):
+                        if result.get("ok"):
+                            succeeded_in_batch += 1
+                            continue
+
+                        slot["attempts"] += 1
+                        if (
+                            slot["attempts"] < max_attempts_per_slot
+                            and total_multi_attempts < max_multi_attempts
+                        ):
+                            retry_topic = valid_topic_ids[(total_multi_attempts + slot["slot_id"]) % len(valid_topic_ids)]
+                            slot["topic_id"] = retry_topic
+                            multi_slot_queue.append(slot)
+
+                    completed_slots += succeeded_in_batch
+
+                    # Keep status in sync with persisted DB totals to avoid pill lag.
+                    subject_total_res = await task_db.execute(
+                        select(Subject.total_questions).where(
+                            Subject.id == subject_id,
+                            Subject.user_id == user_id,
+                        )
+                    )
+                    current_subject_total = int(subject_total_res.scalar_one_or_none() or started_total_questions)
+                    db_generated = max(0, current_subject_total - started_total_questions)
+                    current_generated = min(count, max(completed_slots, db_generated))
+
+                    _BACKGROUND_GENERATION_STATUS[task_key] = {
+                        "in_progress": True,
+                        "run_id": run_id_value,
+                        "status": "generating",
+                        "progress": min(99, int((current_generated / max(1, count)) * 100)),
+                        "current_question": current_generated,
+                        "total_questions": count,
+                        "started_total_questions": started_total_questions,
+                        "target_total_questions": target_total_questions,
+                        "message": f"Generated {current_generated}/{count} questions",
+                        "updated_at": datetime.now(timezone.utc).isoformat(),
+                    }
+
+                subject_total_res = await task_db.execute(
+                    select(Subject.total_questions).where(
+                        Subject.id == subject_id,
+                        Subject.user_id == user_id,
+                    )
+                )
+                current_subject_total = int(subject_total_res.scalar_one_or_none() or started_total_questions)
+                db_generated = max(0, current_subject_total - started_total_questions)
+                final_current_question = min(count, max(completed_slots, db_generated))
+
             else:
                 generator = question_service.quick_generate_from_subject(
                     user_id=user_id,
@@ -224,10 +346,14 @@ async def _run_background_subject_generation(
                     if progress_event.status not in ("generating",):
                         saved_progress = progress_event.progress or 0
                     _BACKGROUND_GENERATION_STATUS[task_key] = {
+                        "in_progress": True,
+                        "run_id": run_id_value,
                         "status": progress_event.status,
                         "progress": saved_progress,
                         "current_question": saved_count,
                         "total_questions": total,
+                        "started_total_questions": started_total_questions,
+                        "target_total_questions": target_total_questions,
                         "message": f"Generated {saved_count}/{total} questions" if saved_count > 0 and progress_event.status == "generating" else (progress_event.message or "Generating questions"),
                         "updated_at": datetime.now(timezone.utc).isoformat(),
                     }
@@ -242,21 +368,33 @@ async def _run_background_subject_generation(
         # Set a terminal status so the frontend can see completion/error
         if error_occurred:
             _BACKGROUND_GENERATION_STATUS[task_key] = {
+                "run_id": run_id_value,
                 "status": "error",
                 "progress": 0,
                 "current_question": final_current_question,
                 "total_questions": count,
+                "started_total_questions": started_total_questions,
+                "target_total_questions": target_total_questions,
                 "message": f"Generation failed: {error_message}",
                 "updated_at": datetime.now(timezone.utc).isoformat(),
                 "in_progress": False,
             }
         else:
+            final_current_question = max(0, min(count, int(final_current_question or 0)))
+            terminal_progress = 100 if final_current_question >= count else int((final_current_question / max(1, count)) * 100)
             _BACKGROUND_GENERATION_STATUS[task_key] = {
+                "run_id": run_id_value,
                 "status": "completed",
-                "progress": 100,
-                "current_question": count,
+                "progress": terminal_progress,
+                "current_question": final_current_question,
                 "total_questions": count,
-                "message": "Generation complete",
+                "started_total_questions": started_total_questions,
+                "target_total_questions": target_total_questions,
+                "message": (
+                    "Generation complete"
+                    if final_current_question >= count
+                    else f"Generation complete ({final_current_question}/{count})"
+                ),
                 "updated_at": datetime.now(timezone.utc).isoformat(),
                 "in_progress": False,
             }
@@ -351,8 +489,9 @@ def _pick_starter(q_type: str, used_starters: list[str]) -> str:
 import logging as _logging
 
 _dedupe_logger = _logging.getLogger(__name__)
+_bg_status_logger = _logging.getLogger(__name__ + ".bg_status")
 
-DEDUPE_SIMILARITY_THRESHOLD = 0.85
+DEDUPE_SIMILARITY_THRESHOLD = 0.895
 
 
 async def _preload_subject_embeddings(
@@ -971,17 +1110,24 @@ async def schedule_background_generation(
             "status": "already_running",
             "message": "Background generation is already running for this subject",
             "subject_id": str(parsed_subject_id),
+            "run_id": existing_status.get("run_id"),
             "count": count,
             "progress": existing_status.get("progress", 0),
             "current_question": existing_status.get("current_question", 0),
             "total_questions": existing_status.get("total_questions", count),
         }
 
+    run_id = str(uuid.uuid4())
+
     _BACKGROUND_GENERATION_STATUS[task_key] = {
+        "in_progress": True,
+        "run_id": run_id,
         "status": "scheduled",
         "progress": 0,
         "current_question": 0,
         "total_questions": count,
+        "started_total_questions": int(subject.total_questions or 0),
+        "target_total_questions": int(subject.total_questions or 0) + count,
         "message": "Background generation scheduled",
         "updated_at": datetime.now(timezone.utc).isoformat(),
     }
@@ -993,6 +1139,7 @@ async def schedule_background_generation(
             count=count,
             types=type_list,
             difficulty=difficulty,
+            run_id=run_id,
             topic_id=parsed_topic_id,
             topic_ids=parsed_topic_ids or None,
             allow_without_reference=no_reference_fallback,
@@ -1008,6 +1155,7 @@ async def schedule_background_generation(
             else "Background generation scheduled"
         ),
         "subject_id": str(parsed_subject_id),
+        "run_id": run_id,
         "count": count,
         "types": type_list,
         "difficulty": difficulty,
@@ -1042,29 +1190,82 @@ async def get_background_generation_statuses(
             # Return the terminal status so the frontend can see completion/error
             statuses[str(parsed_subject_id)] = {
                 "in_progress": False,
+                "run_id": status_payload.get("run_id"),
                 "status": status_payload.get("status", "completed"),
                 "progress": status_payload.get("progress", 100),
                 "current_question": status_payload.get("current_question", 0),
                 "total_questions": status_payload.get("total_questions"),
+                "started_total_questions": status_payload.get("started_total_questions"),
+                "target_total_questions": status_payload.get("target_total_questions"),
                 "message": status_payload.get("message", "Generation complete"),
                 "updated_at": status_payload.get("updated_at"),
             }
             continue
 
+        if status_payload and status_payload.get("in_progress") is True:
+            statuses[str(parsed_subject_id)] = {
+                "in_progress": True,
+                "run_id": status_payload.get("run_id"),
+                "status": status_payload.get("status", "generating"),
+                "progress": status_payload.get("progress", 0),
+                "current_question": status_payload.get("current_question", 0),
+                "total_questions": status_payload.get("total_questions"),
+                "started_total_questions": status_payload.get("started_total_questions"),
+                "target_total_questions": status_payload.get("target_total_questions"),
+                "message": status_payload.get("message", "Background generation in progress"),
+                "updated_at": status_payload.get("updated_at"),
+            }
+            if not task:
+                _bg_status_logger.warning(
+                    "Returning in-progress payload without task entry",
+                    extra={
+                        "user_id": str(current_user.id),
+                        "subject_id": str(parsed_subject_id),
+                        "task_key": task_key,
+                        "status": status_payload.get("status"),
+                        "progress": status_payload.get("progress"),
+                    },
+                )
+            continue
+
         if not task:
+            if status_payload:
+                _bg_status_logger.warning(
+                    "Skipping payload with missing task and non-in-progress flag",
+                    extra={
+                        "user_id": str(current_user.id),
+                        "subject_id": str(parsed_subject_id),
+                        "task_key": task_key,
+                        "payload_status": status_payload.get("status"),
+                        "payload_in_progress": status_payload.get("in_progress"),
+                    },
+                )
             continue
 
         if task.done():
+            _bg_status_logger.info(
+                "Task finished before status payload switched to terminal",
+                extra={
+                    "user_id": str(current_user.id),
+                    "subject_id": str(parsed_subject_id),
+                    "task_key": task_key,
+                    "has_status_payload": bool(status_payload),
+                    "payload_status": (status_payload or {}).get("status") if status_payload else None,
+                },
+            )
             _BACKGROUND_GENERATION_TASKS.pop(task_key, None)
             # Don't pop status here — the finally block in the task sets a terminal status
             continue
 
         statuses[str(parsed_subject_id)] = {
             "in_progress": True,
+            "run_id": (status_payload or {}).get("run_id"),
             "status": (status_payload or {}).get("status", "generating"),
             "progress": (status_payload or {}).get("progress", 0),
             "current_question": (status_payload or {}).get("current_question", 0),
             "total_questions": (status_payload or {}).get("total_questions"),
+            "started_total_questions": (status_payload or {}).get("started_total_questions"),
+            "target_total_questions": (status_payload or {}).get("target_total_questions"),
             "message": (status_payload or {}).get("message", "Background generation in progress"),
             "updated_at": (status_payload or {}).get("updated_at"),
         }

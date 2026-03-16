@@ -191,6 +191,12 @@ class QuestionGenerationService:
             self.reranker_service = reranker_service or RerankerService()
         else:
             self.reranker_service = None
+        self.question_dedupe_similarity_threshold = float(
+            settings.QUESTION_DEDUPE_SIMILARITY_THRESHOLD
+        )
+        self.question_option_similarity_threshold = float(
+            settings.QUESTION_OPTION_SIMILARITY_THRESHOLD
+        )
 
     async def generate_questions(
         self,
@@ -333,7 +339,7 @@ class QuestionGenerationService:
                         is_duplicate = await self._check_duplicate(
                             question_text=question_data["question_text"],
                             blacklist_embeddings=blacklist.get("embeddings", []),
-                            threshold=0.85,
+                            threshold=self.question_dedupe_similarity_threshold,
                         )
 
                         if is_duplicate:
@@ -823,11 +829,14 @@ Output valid JSON only."""
         self,
         question_text: str,
         blacklist_embeddings: List[List[float]],
-        threshold: float = 0.85,
+        threshold: Optional[float] = None,
     ) -> bool:
         """Check if question is semantically similar to existing questions."""
         if not blacklist_embeddings:
             return False
+
+        if threshold is None:
+            threshold = self.question_dedupe_similarity_threshold
 
         # Get embedding for new question
         new_embedding = await self.embedding_service.get_embedding(question_text)
@@ -960,11 +969,14 @@ Output valid JSON only."""
     async def _check_options_too_similar(
         self,
         options: List[str],
-        similarity_threshold: float = 0.96,
+        similarity_threshold: Optional[float] = None,
     ) -> bool:
         """Check if any options are too similar to each other."""
         if len(options) < 2:
             return False
+
+        if similarity_threshold is None:
+            similarity_threshold = self.question_option_similarity_threshold
         
         option_texts = [self._extract_option_text(opt) for opt in options]
         embeddings = await self.embedding_service.get_embeddings(option_texts)
@@ -1156,6 +1168,8 @@ Return JSON only:
         chunks: Optional[List[DocumentChunk]] = None,
         subject_id: Optional[uuid.UUID] = None,
         topic_id: Optional[uuid.UUID] = None,
+        skip_quality_validation: bool = False,
+        prevalidated_confidence: Optional[float] = None,
     ) -> tuple[Question, QuestionResponse]:
         """
         Save generated question to database after validation.
@@ -1168,7 +1182,9 @@ Return JSON only:
         
         # Validate question quality if chunks provided
         confidence_score = 0.8  # Default confidence
-        if chunks:
+        if skip_quality_validation and prevalidated_confidence is not None:
+            confidence_score = max(0.0, min(1.0, prevalidated_confidence))
+        elif chunks:
             is_valid, reason, confidence_score = await self._validate_question_quality(
                 question_data, question_type, chunks
             )
@@ -1712,7 +1728,7 @@ Return JSON only:
                 similarities = self.embedding_service.compute_similarity_batch(
                     question_embedding, generated_embeddings
                 )
-                if any(s > 0.85 for s in similarities):
+                if any(s > self.question_dedupe_similarity_threshold for s in similarities):
                     logger.info(f"Attempt {attempt}: Within-session duplicate detected")
                     continue
             
@@ -2438,6 +2454,7 @@ Output valid JSON only."""
             generated_embeddings = []  # Track embeddings for deduplication within session
             generated_questions_text = []  # Track question text for diversity hints
             total_question_index = 0  # Global index for diversity hints
+            total_attempted = 0
 
             # Preload existing question embeddings for subject-level dedupe
             existing_embeddings = []
@@ -2525,197 +2542,244 @@ Output valid JSON only."""
             # Distribute question types
             type_distribution = self._distribute_types(count, types)
             logger.info(f"Type distribution: {type_distribution}")
-            
-            for q_type, type_count in type_distribution.items():
-                logger.info(f"Generating {type_count} questions of type {q_type}")
-                for i in range(type_count):
-                    try:
-                        logger.info(f"Starting generation {i+1}/{type_count} for {q_type}")
 
-                        # Rotate through chunk pool for source variety
-                        pool_size = len(chunk_pool)
-                        pool_offset = (total_question_index * 3) % max(1, pool_size - 2)
-                        selected_chunks = chunk_pool[pool_offset:pool_offset + 3]
-                        if len(selected_chunks) < 3 and pool_size >= 3:
-                            selected_chunks = chunk_pool[:3]
-                        if not selected_chunks:
-                            selected_chunks = chunk_pool
-
-                        logger.info(f"Selected {len(selected_chunks)} chunks from pool (offset {pool_offset})")
-
-                        if not selected_chunks:
-                            logger.warning("No chunks available, falling back to random selection")
-                            import random
-                            selected_chunks = random.sample(chunks, min(3, len(chunks)))
-
-                        logger.info(f"Selected {len(selected_chunks)} chunks for generation")
-
-                        # Generate question with context-aware prompt and diversity hints
-                        question_data = await self._generate_quick_question(
-                            chunks=selected_chunks,
-                            question_type=q_type,
-                            difficulty=difficulty,
-                            context=context,
-                            bloom_levels=bloom_levels,
-                            previous_questions=generated_questions_text,
-                            question_index=total_question_index,
-                            reference_questions=reference_questions,
-                        )
-
-                        total_question_index += 1
-
-                        if not question_data:
-                            logger.warning(f"Question generation returned None for {q_type}")
-                            questions_failed += 1
-                            continue
-                        
-                        q_text = question_data.get('question_text', '')
-                        logger.info(f"Question generated: {q_text[:100] if q_text else 'empty'}")
-
-                        # Check for duplicates against existing DB + session-generated questions
-                        if generated_embeddings or existing_embeddings:
-                            new_embedding = await self.embedding_service.get_embedding(
-                                question_data["question_text"]
-                            )
-                            all_embeddings = existing_embeddings + generated_embeddings
-                            similarities = self.embedding_service.compute_similarity_batch(
-                                new_embedding, all_embeddings
-                            )
-                            if any(s > 0.85 for s in similarities):
-                                logger.warning("Question rejected as duplicate")
-                                questions_failed += 1
-                                continue
-
-                        # Track generated question text for diversity
-                        generated_questions_text.append(q_text)
-
-                        # Save question to database (includes validation)
-                        try:
-                            # Get marks for this question type
-                            type_marks = marks_by_type.get(q_type, 1)
-                            
-                            question, question_response = await self._save_question(
-                                document_id=document_id,
-                                session_id=session_id,
-                                question_data=question_data,
-                                question_type=q_type,
-                                marks=type_marks,
-                                difficulty=difficulty,
-                                chunk_ids=[c.id for c in selected_chunks],
-                                chunks=selected_chunks,
-                                subject_id=subject_id,
-                                topic_id=topic_id,
-                            )
-                            
-                            questions_generated += 1
-                            generated_embeddings.append(question.question_embedding)
-                            logger.info(f"Successfully saved question {question.id} with vetting_status: {question.vetting_status}")
-
-                            # Calculate progress
-                            total_attempted = questions_generated + questions_failed
-                            progress = 20 + int((total_attempted / count) * 75)
-
-                            yield QuickGenerateProgress(
-                                status="generating",
-                                progress=min(progress, 95),
-                                current_question=questions_generated,
-                                total_questions=count,
-                                question=question_response,
-                                message=f"Generated question {questions_generated}/{count}",
-                                document_id=document_id,
-                            )
-                        except ValueError as ve:
-                            # Validation failure, just skip and retry
-                            logger.warning(str(ve))
-                            questions_failed += 1
-                            continue
-                        except Exception as save_error:
-                            # Rollback this transaction and continue
-                            await self.db.rollback()
-                            logger.exception(f"Failed to save question: {save_error}")
-                            questions_failed += 1
-                            continue
-
-                    except Exception as e:
-                        logger.exception(f"Exception during question generation: {e}")
-                        questions_failed += 1
-                        # Continue with next question on error
-
-            # 5. Backfill: try to generate more if we didn't reach the target
-            backfill_attempts = 0
-            max_backfill = min(questions_failed, 3)  # Try up to 3 backfill attempts
-            
-            while questions_generated < count and backfill_attempts < max_backfill:
-                backfill_attempts += 1
-                logger.info(f"Backfill attempt {backfill_attempts}: need {count - questions_generated} more questions")
-                
-                # Pick a random type to backfill with
-                import random
-                q_type = random.choice(types)
-                
+            # Prepare rejection guidance once so parallel workers don't hit DB concurrently.
+            rejection_guidance_cache = ""
+            if subject_id or topic_id:
                 try:
-                    # Use a different slice of the pre-fetched pool for variety
-                    offset = (backfill_attempts * 4) % max(1, len(chunk_pool) - 2)
-                    selected_chunks = chunk_pool[offset:offset + 3]
-                    if len(selected_chunks) < 3 and len(chunk_pool) >= 3:
+                    from app.services.training_service import TrainingService
+                    training_svc = TrainingService()
+                    rejection_guidance_cache = await training_svc.build_rejection_avoidance_prompt(
+                        self.db,
+                        subject_id=subject_id,
+                        topic_id=topic_id,
+                    )
+                except Exception as rp_err:
+                    logger.warning(f"quick_generate: Could not load rejection patterns: {rp_err}")
+
+            parallel_workers = max(1, min(count, int(settings.QUICK_GENERATE_PARALLEL_WORKERS or 1)))
+            max_attempts_per_slot = 4
+            slot_queue = []
+            slot_id_seq = 0
+            for q_type, type_count in type_distribution.items():
+                for _ in range(type_count):
+                    slot_queue.append({"id": slot_id_seq, "q_type": q_type, "attempts": 0})
+                    slot_id_seq += 1
+
+            if parallel_workers > 1:
+                yield QuickGenerateProgress(
+                    status="generating",
+                    progress=23,
+                    current_question=questions_generated,
+                    total_questions=count,
+                    message=f"Running parallel generation with {parallel_workers} workers...",
+                    document_id=document_id,
+                    session_id=session_id,
+                )
+
+            async def _build_candidate(slot: dict, attempt_index: int, exclusion_snapshot: List[str]) -> dict:
+                q_type = slot["q_type"]
+                try:
+                    pool_size = len(chunk_pool)
+                    pool_offset = (attempt_index * 3) % max(1, pool_size - 2)
+                    selected_chunks = chunk_pool[pool_offset:pool_offset + 3]
+                    if len(selected_chunks) < 3 and pool_size >= 3:
                         selected_chunks = chunk_pool[:3]
                     if not selected_chunks:
+                        import random
                         selected_chunks = random.sample(chunks, min(3, len(chunks)))
-                    
+
                     question_data = await self._generate_quick_question(
                         chunks=selected_chunks,
                         question_type=q_type,
                         difficulty=difficulty,
                         context=context,
                         bloom_levels=bloom_levels,
-                        previous_questions=generated_questions_text,
-                        question_index=total_question_index + backfill_attempts,
+                        previous_questions=exclusion_snapshot,
+                        question_index=attempt_index,
+                        reference_questions=reference_questions,
+                        subject_id=subject_id,
+                        topic_id=topic_id,
+                        rejection_guidance_override=rejection_guidance_cache,
                     )
-                    
-                    if question_data:
-                        # Check for duplicates
-                        is_duplicate = False
-                        q_text = question_data.get('question_text', '')
-                        if generated_embeddings:
-                            new_embedding = await self.embedding_service.get_embedding(
-                                question_data["question_text"]
-                            )
-                            similarities = self.embedding_service.compute_similarity_batch(
-                                new_embedding, generated_embeddings
-                            )
-                            is_duplicate = any(s > 0.85 for s in similarities)
-                        
-                        if not is_duplicate:
-                            try:
-                                question, question_response = await self._save_question(
-                                    document_id=document_id,
-                                    session_id=session_id,
-                                    question_data=question_data,
-                                    question_type=q_type,
-                                    marks=None,
-                                    difficulty=difficulty,
-                                    chunk_ids=[c.id for c in selected_chunks],
-                                    chunks=selected_chunks,
-                                )
-                                questions_generated += 1
-                                generated_embeddings.append(question.question_embedding)
-                                generated_questions_text.append(q_text)  # Track for diversity
-                                logger.info(f"Backfill successful: {questions_generated}/{count} questions")
-                                
-                                yield QuickGenerateProgress(
-                                    status="generating",
-                                    progress=min(95, 20 + int((questions_generated / count) * 75)),
-                                    current_question=questions_generated,
-                                    total_questions=count,
-                                    question=question_response,
-                                    message=f"Generated question {questions_generated}/{count}",
-                                    document_id=document_id,
-                                )
-                            except Exception as save_error:
-                                await self.db.rollback()
-                                logger.warning(f"Backfill save failed: {save_error}")
-                except Exception as e:
-                    logger.warning(f"Backfill attempt {backfill_attempts} failed: {e}")
+
+                    if not question_data:
+                        return {
+                            "ok": False,
+                            "slot": slot,
+                            "reason": "empty_question_data",
+                        }
+
+                    is_valid, reason, confidence_score = await self._validate_question_quality(
+                        question_data,
+                        q_type,
+                        selected_chunks,
+                    )
+                    if not is_valid:
+                        return {
+                            "ok": False,
+                            "slot": slot,
+                            "reason": f"validation_failed:{reason}",
+                        }
+
+                    return {
+                        "ok": True,
+                        "slot": slot,
+                        "q_type": q_type,
+                        "question_data": question_data,
+                        "selected_chunks": selected_chunks,
+                        "confidence_score": confidence_score,
+                    }
+                except Exception as gen_err:
+                    logger.warning(
+                        f"quick_generate: worker failed for slot={slot.get('id')} "
+                        f"type={q_type}: {gen_err}"
+                    )
+                    return {
+                        "ok": False,
+                        "slot": slot,
+                        "reason": f"worker_exception:{gen_err}",
+                    }
+
+            # Safety cap: total attempts across all rounds to prevent infinite loops
+            max_total_attempts = count * 3
+            shortfall_round = 0
+
+            while slot_queue and questions_generated < count:
+                batch_size = min(parallel_workers, len(slot_queue), max(1, count - questions_generated))
+                batch_slots = [slot_queue.pop(0) for _ in range(batch_size)]
+
+                for _ in batch_slots:
+                    total_attempted += 1
+
+                attempt_progress = 22 + int((min(total_attempted, count) / max(1, count)) * 68)
+                yield QuickGenerateProgress(
+                    status="generating",
+                    progress=min(attempt_progress, 95),
+                    current_question=questions_generated,
+                    total_questions=count,
+                    message=f"Generating question {min(total_attempted, count)}/{count}...",
+                    document_id=document_id,
+                    session_id=session_id,
+                )
+
+                exclusion_snapshot = list(generated_questions_text[-20:])
+                batch_results = await asyncio.gather(
+                    *[
+                        _build_candidate(
+                            slot,
+                            total_question_index + idx,
+                            exclusion_snapshot,
+                        )
+                        for idx, slot in enumerate(batch_slots)
+                    ]
+                )
+                total_question_index += len(batch_slots)
+
+                for result in batch_results:
+                    slot = result["slot"]
+                    if not result.get("ok"):
+                        slot["attempts"] += 1
+                        questions_failed += 1
+                        if slot["attempts"] < max_attempts_per_slot:
+                            slot_queue.append(slot)
+                        continue
+
+                    q_type = result["q_type"]
+                    question_data = result["question_data"]
+                    selected_chunks = result["selected_chunks"]
+                    confidence_score = float(result.get("confidence_score", 0.8) or 0.8)
+                    q_text = question_data.get("question_text", "")
+
+                    if generated_embeddings or existing_embeddings:
+                        new_embedding = await self.embedding_service.get_embedding(q_text)
+                        all_embs = existing_embeddings + generated_embeddings
+                        similarities = self.embedding_service.compute_similarity_batch(new_embedding, all_embs)
+                        max_sim = max(similarities) if similarities else 0.0
+                        if max_sim > self.question_dedupe_similarity_threshold:
+                            logger.warning("Question rejected as duplicate")
+                            generated_questions_text.append(q_text)
+                            slot["attempts"] += 1
+                            questions_failed += 1
+                            if slot["attempts"] < max_attempts_per_slot:
+                                slot_queue.append(slot)
+                            continue
+                    else:
+                        new_embedding = await self.embedding_service.get_embedding(q_text)
+
+                    generated_questions_text.append(q_text)
+
+                    try:
+                        type_marks = marks_by_type.get(q_type, 1)
+
+                        question, question_response = await self._save_question(
+                            document_id=document_id,
+                            session_id=session_id,
+                            question_data=question_data,
+                            question_type=q_type,
+                            marks=type_marks,
+                            difficulty=difficulty,
+                            chunk_ids=[c.id for c in selected_chunks],
+                            chunks=selected_chunks,
+                            subject_id=subject_id,
+                            topic_id=topic_id,
+                            skip_quality_validation=True,
+                            prevalidated_confidence=confidence_score,
+                        )
+
+                        questions_generated += 1
+                        final_embedding = question.question_embedding if question.question_embedding is not None else new_embedding
+                        generated_embeddings.append(final_embedding)
+                        logger.info(f"Successfully saved question {question.id} with vetting_status: {question.vetting_status}")
+
+                        progress = 20 + int(((questions_generated + questions_failed) / count) * 75)
+                        yield QuickGenerateProgress(
+                            status="generating",
+                            progress=min(progress, 95),
+                            current_question=questions_generated,
+                            total_questions=count,
+                            question=question_response,
+                            message=f"Generated question {questions_generated}/{count}",
+                            document_id=document_id,
+                        )
+                    except ValueError as ve:
+                        logger.warning(str(ve))
+                        slot["attempts"] += 1
+                        questions_failed += 1
+                        if slot["attempts"] < max_attempts_per_slot:
+                            slot_queue.append(slot)
+                    except Exception as save_error:
+                        await self.db.rollback()
+                        logger.exception(f"Failed to save question: {save_error}")
+                        slot["attempts"] += 1
+                        questions_failed += 1
+                        if slot["attempts"] < max_attempts_per_slot:
+                            slot_queue.append(slot)
+
+                # ── Shortfall auto-retry: when the slot queue is drained but
+                #    we haven't reached the target, inject fresh slots and keep going.
+                if not slot_queue and questions_generated < count and total_attempted < max_total_attempts:
+                    shortfall = count - questions_generated
+                    shortfall_round += 1
+                    logger.info(
+                        f"quick_generate: shortfall retry round {shortfall_round}, "
+                        f"need {shortfall} more (generated {questions_generated}/{count}, "
+                        f"total attempts so far {total_attempted})"
+                    )
+                    type_list = types or ["mcq"]
+                    for i in range(shortfall):
+                        slot_queue.append({"id": slot_id_seq, "q_type": type_list[i % len(type_list)], "attempts": 0})
+                        slot_id_seq += 1
+
+                    yield QuickGenerateProgress(
+                        status="generating",
+                        progress=min(92 + shortfall_round, 98),
+                        current_question=questions_generated,
+                        total_questions=count,
+                        message=f"Retrying for {shortfall} remaining questions (round {shortfall_round})...",
+                        document_id=document_id,
+                        session_id=session_id,
+                    )
 
             # 6. Complete session - re-fetch to avoid expired state after rollbacks
             logger.info(f"Generation complete: {questions_generated} generated, {questions_failed} failed")
@@ -2780,6 +2844,7 @@ Output valid JSON only."""
         topic_id: Optional[uuid.UUID] = None,
         existing_session_id: Optional[uuid.UUID] = None,
         allow_without_reference: bool = False,
+        skip_generation_lock: bool = False,
     ) -> AsyncGenerator[QuickGenerateProgress, None]:
         """
         Generate questions from all primary documents in a subject (no file upload needed).
@@ -2794,17 +2859,19 @@ Output valid JSON only."""
         if marks_by_type is None:
             marks_by_type = {"mcq": 1, "short_answer": 2, "long_answer": 5}
 
-        # Lock keyed on (user_id, subject_id) to prevent concurrent runs
-        lock_acquired = await self.redis_service.acquire_generation_lock(
-            str(user_id), str(subject_id)
-        )
-        if not lock_acquired:
-            yield QuickGenerateProgress(
-                status="error",
-                progress=0,
-                message="Another generation is already in progress for this subject",
+        lock_acquired = False
+        if not skip_generation_lock:
+            # Lock keyed on (user_id, subject_id) to prevent concurrent runs
+            lock_acquired = await self.redis_service.acquire_generation_lock(
+                str(user_id), str(subject_id)
             )
-            return
+            if not lock_acquired:
+                yield QuickGenerateProgress(
+                    status="error",
+                    progress=0,
+                    message="Another generation is already in progress for this subject",
+                )
+                return
 
         try:
             logger.info(f"quick_generate_from_subject: user={user_id}, subject={subject_id}, count={count}")
@@ -3252,130 +3319,251 @@ Output valid JSON only."""
             type_distribution = self._distribute_types(count, types)
             logger.info(f"quick_generate_from_subject: type distribution={type_distribution}")
 
-            for q_type, type_count in type_distribution.items():
-                type_generated = 0
-                type_attempts = 0
-                max_attempts = type_count * 4  # allow up to 4x retries per slot
-                while type_generated < type_count and type_attempts < max_attempts:
-                    type_attempts += 1
-                    total_attempted += 1
+            # Prepare rejection guidance once so parallel workers don't hit DB concurrently.
+            rejection_guidance_cache = ""
+            if subject_id or topic_id:
+                try:
+                    from app.services.training_service import TrainingService
+                    training_svc = TrainingService()
+                    rejection_guidance_cache = await training_svc.build_rejection_avoidance_prompt(
+                        self.db,
+                        subject_id=subject_id,
+                        topic_id=topic_id,
+                    )
+                except Exception as rp_err:
+                    logger.warning(f"quick_generate_from_subject: Could not load rejection patterns: {rp_err}")
 
-                    # Emit heartbeat progress so UI does not look frozen during retries/slow calls.
-                    attempt_progress = 22 + int((min(total_attempted, count) / max(1, count)) * 68)
-                    yield QuickGenerateProgress(
-                        status="generating",
-                        progress=min(attempt_progress, 95),
-                        current_question=questions_generated,
-                        total_questions=count,
-                        message=f"Generating question {min(total_attempted, count)}/{count}...",
-                        session_id=session_id,
+            parallel_workers = max(1, min(count, int(settings.QUICK_GENERATE_PARALLEL_WORKERS or 1)))
+            max_attempts_per_slot = 4
+            slot_queue = []
+            slot_id_seq = 0
+            for q_type, type_count in type_distribution.items():
+                for _ in range(type_count):
+                    slot_queue.append({"id": slot_id_seq, "q_type": q_type, "attempts": 0})
+                    slot_id_seq += 1
+
+            if parallel_workers > 1:
+                yield QuickGenerateProgress(
+                    status="generating",
+                    progress=23,
+                    current_question=questions_generated,
+                    total_questions=count,
+                    message=f"Running parallel generation with {parallel_workers} workers...",
+                    session_id=session_id,
+                )
+
+            async def _build_candidate(slot: dict, attempt_index: int, exclusion_snapshot: List[str]) -> dict:
+                q_type = slot["q_type"]
+                try:
+                    pool_size = len(subj_chunk_pool)
+                    pool_offset = (attempt_index * 3) % max(1, pool_size - 2)
+                    selected_chunks = subj_chunk_pool[pool_offset:pool_offset + 3]
+                    if len(selected_chunks) < 3 and pool_size >= 3:
+                        selected_chunks = subj_chunk_pool[:3]
+                    if not selected_chunks:
+                        import random
+                        selected_chunks = random.sample(all_chunks, min(3, len(all_chunks)))
+
+                    question_data = await self._generate_quick_question(
+                        chunks=selected_chunks,
+                        question_type=q_type,
+                        difficulty=difficulty,
+                        context=generation_context,
+                        previous_questions=exclusion_snapshot,
+                        question_index=attempt_index,
+                        reference_questions=reference_questions,
+                        subject_id=subject_id,
+                        topic_id=topic_id,
+                        rejection_guidance_override=rejection_guidance_cache,
                     )
 
-                    try:
-                        # Rotate through pre-fetched chunk pool for variety
-                        pool_size = len(subj_chunk_pool)
-                        pool_offset = (total_question_index * 3) % max(1, pool_size - 2)
-                        selected_chunks = subj_chunk_pool[pool_offset:pool_offset + 3]
-                        if len(selected_chunks) < 3 and pool_size >= 3:
-                            selected_chunks = subj_chunk_pool[:3]
-                        if not selected_chunks:
-                            import random
-                            selected_chunks = random.sample(all_chunks, min(3, len(all_chunks)))
+                    if not question_data:
+                        return {
+                            "ok": False,
+                            "slot": slot,
+                            "reason": "empty_question_data",
+                        }
 
-                        question_data = await self._generate_quick_question(
-                            chunks=selected_chunks,
-                            question_type=q_type,
-                            difficulty=difficulty,
-                            context=generation_context,
-                            previous_questions=generated_questions_text,
-                            question_index=total_question_index,
-                            reference_questions=reference_questions,
-                            subject_id=subject_id,
-                            topic_id=topic_id,
+                    is_valid, reason, confidence_score = await self._validate_question_quality(
+                        question_data,
+                        q_type,
+                        selected_chunks,
+                    )
+                    if not is_valid:
+                        return {
+                            "ok": False,
+                            "slot": slot,
+                            "reason": f"validation_failed:{reason}",
+                        }
+
+                    return {
+                        "ok": True,
+                        "slot": slot,
+                        "q_type": q_type,
+                        "question_data": question_data,
+                        "selected_chunks": selected_chunks,
+                        "confidence_score": confidence_score,
+                    }
+                except Exception as gen_err:
+                    logger.warning(
+                        f"quick_generate_from_subject: worker failed for slot={slot.get('id')} "
+                        f"type={q_type}: {gen_err}"
+                    )
+                    return {
+                        "ok": False,
+                        "slot": slot,
+                        "reason": f"worker_exception:{gen_err}",
+                    }
+
+            # Safety cap: total attempts across all rounds to prevent infinite loops
+            max_total_attempts = count * 3
+            shortfall_round = 0
+
+            while slot_queue and questions_generated < count:
+                batch_size = min(parallel_workers, len(slot_queue), max(1, count - questions_generated))
+                batch_slots = [slot_queue.pop(0) for _ in range(batch_size)]
+
+                for _ in batch_slots:
+                    total_attempted += 1
+
+                attempt_progress = 22 + int((min(total_attempted, count) / max(1, count)) * 68)
+                yield QuickGenerateProgress(
+                    status="generating",
+                    progress=min(attempt_progress, 95),
+                    current_question=questions_generated,
+                    total_questions=count,
+                    message=f"Generating question {min(total_attempted, count)}/{count}...",
+                    session_id=session_id,
+                )
+
+                exclusion_snapshot = list(generated_questions_text[-20:])
+                import asyncio
+                batch_results = await asyncio.gather(
+                    *[
+                        _build_candidate(
+                            slot,
+                            total_question_index + idx,
+                            exclusion_snapshot,
                         )
+                        for idx, slot in enumerate(batch_slots)
+                    ]
+                )
+                total_question_index += len(batch_slots)
 
-                        total_question_index += 1
-
-                        if not question_data:
-                            logger.warning(
-                                f"quick_generate_from_subject: empty question_data for {q_type} "
-                                f"(attempt {type_attempts}/{max_attempts})"
-                            )
-                            questions_failed += 1
-                            continue
-
-                        q_text = question_data.get("question_text", "")
-
-                        if generated_embeddings or existing_embeddings:
-                            new_embedding = await self.embedding_service.get_embedding(q_text)
-                            all_embs = existing_embeddings + generated_embeddings
-                            similarities = self.embedding_service.compute_similarity_batch(
-                                new_embedding, all_embs
-                            )
-                            max_sim = max(similarities) if similarities else 0.0
-                            if max_sim > 0.85:
-                                # Find which question it matched for logging
-                                max_idx = similarities.index(max_sim)
-                                match_source = "existing DB" if max_idx < len(existing_embeddings) else "this session"
-                                logger.info(
-                                    f"quick_generate_from_subject: duplicate filtered for {q_type} "
-                                    f"(attempt {type_attempts}/{max_attempts}) — "
-                                    f"similarity={max_sim:.4f} matched {match_source} question #{max_idx}, "
-                                    f"rejected: \"{q_text[:120]}...\""
-                                )
-                                # Add rejected question to exclusion list so LLM avoids it next time
-                                generated_questions_text.append(q_text)
-                                questions_failed += 1
-                                continue
-
-                        generated_questions_text.append(q_text)
-
-                        try:
-                            type_marks = marks_by_type.get(q_type, 1)
-                            assigned_topic_id = topic_id
-                            if assigned_topic_id is None and topic_profiles:
-                                assigned_topic_id = await self._infer_topic_id_for_question(
-                                    question_data=question_data,
-                                    chunks=selected_chunks,
-                                    topic_profiles=topic_profiles,
-                                )
-
-                            question, question_response = await self._save_question(
-                                document_id=None,
-                                session_id=session_id,
-                                question_data=question_data,
-                                question_type=q_type,
-                                marks=type_marks,
-                                difficulty=difficulty,
-                                chunk_ids=[c.id for c in selected_chunks],
-                                chunks=selected_chunks,
-                                subject_id=subject_id,
-                                topic_id=assigned_topic_id,
-                            )
-                            questions_generated += 1
-                            type_generated += 1
-                            generated_embeddings.append(question.question_embedding)
-
-                            progress_val = 15 + int(((questions_generated + questions_failed) / count) * 80)
-                            yield QuickGenerateProgress(
-                                status="generating",
-                                progress=min(progress_val, 95),
-                                current_question=questions_generated,
-                                total_questions=count,
-                                question=question_response,
-                                message=f"Generated question {questions_generated}/{count}",
-                            )
-                        except ValueError as ve:
-                            logger.warning(str(ve))
-                            questions_failed += 1
-                        except Exception as save_error:
-                            await self.db.rollback()
-                            logger.exception(f"Failed to save question: {save_error}")
-                            questions_failed += 1
-
-                    except Exception as e:
-                        logger.exception(f"Exception during generation: {e}")
+                for result in batch_results:
+                    slot = result["slot"]
+                    if not result.get("ok"):
+                        slot["attempts"] += 1
                         questions_failed += 1
+                        if slot["attempts"] < max_attempts_per_slot:
+                            slot_queue.append(slot)
+                        continue
+
+                    q_type = result["q_type"]
+                    question_data = result["question_data"]
+                    selected_chunks = result["selected_chunks"]
+                    confidence_score = float(result.get("confidence_score", 0.8) or 0.8)
+                    q_text = question_data.get("question_text", "")
+
+                    if generated_embeddings or existing_embeddings:
+                        new_embedding = await self.embedding_service.get_embedding(q_text)
+                        all_embs = existing_embeddings + generated_embeddings
+                        similarities = self.embedding_service.compute_similarity_batch(new_embedding, all_embs)
+                        max_sim = max(similarities) if similarities else 0.0
+                        if max_sim > self.question_dedupe_similarity_threshold:
+                            max_idx = similarities.index(max_sim)
+                            match_source = "existing DB" if max_idx < len(existing_embeddings) else "this session"
+                            logger.info(
+                                f"quick_generate_from_subject: duplicate filtered for {q_type} "
+                                f"(slot {slot.get('id')}, attempt {slot['attempts'] + 1}/{max_attempts_per_slot}) — "
+                                f"similarity={max_sim:.4f} matched {match_source} question #{max_idx}, "
+                                f"rejected: \"{q_text[:120]}...\""
+                            )
+                            generated_questions_text.append(q_text)
+                            slot["attempts"] += 1
+                            questions_failed += 1
+                            if slot["attempts"] < max_attempts_per_slot:
+                                slot_queue.append(slot)
+                            continue
+                    else:
+                        new_embedding = await self.embedding_service.get_embedding(q_text)
+
+                    generated_questions_text.append(q_text)
+
+                    try:
+                        type_marks = marks_by_type.get(q_type, 1)
+                        assigned_topic_id = topic_id
+                        if assigned_topic_id is None and topic_profiles:
+                            assigned_topic_id = await self._infer_topic_id_for_question(
+                                question_data=question_data,
+                                chunks=selected_chunks,
+                                topic_profiles=topic_profiles,
+                            )
+
+                        question, question_response = await self._save_question(
+                            document_id=None,
+                            session_id=session_id,
+                            question_data=question_data,
+                            question_type=q_type,
+                            marks=type_marks,
+                            difficulty=difficulty,
+                            chunk_ids=[c.id for c in selected_chunks],
+                            chunks=selected_chunks,
+                            subject_id=subject_id,
+                            topic_id=assigned_topic_id,
+                            skip_quality_validation=True,
+                            prevalidated_confidence=confidence_score,
+                        )
+                        questions_generated += 1
+                        final_embedding = question.question_embedding if question.question_embedding is not None else new_embedding
+                        generated_embeddings.append(final_embedding)
+
+                        progress_val = 15 + int(((questions_generated + questions_failed) / count) * 80)
+                        yield QuickGenerateProgress(
+                            status="generating",
+                            progress=min(progress_val, 95),
+                            current_question=questions_generated,
+                            total_questions=count,
+                            question=question_response,
+                            message=f"Generated question {questions_generated}/{count}",
+                        )
+                    except ValueError as ve:
+                        logger.warning(str(ve))
+                        slot["attempts"] += 1
+                        questions_failed += 1
+                        if slot["attempts"] < max_attempts_per_slot:
+                            slot_queue.append(slot)
+                    except Exception as save_error:
+                        await self.db.rollback()
+                        logger.exception(f"Failed to save question: {save_error}")
+                        slot["attempts"] += 1
+                        questions_failed += 1
+                        if slot["attempts"] < max_attempts_per_slot:
+                            slot_queue.append(slot)
+
+                # ── Shortfall auto-retry: when the slot queue is drained but
+                #    we haven't reached the target, inject fresh slots and keep going.
+                if not slot_queue and questions_generated < count and total_attempted < max_total_attempts:
+                    shortfall = count - questions_generated
+                    shortfall_round += 1
+                    logger.info(
+                        f"quick_generate_from_subject: shortfall retry round {shortfall_round}, "
+                        f"need {shortfall} more (generated {questions_generated}/{count}, "
+                        f"total attempts so far {total_attempted})"
+                    )
+                    type_list = types or ["mcq"]
+                    for i in range(shortfall):
+                        slot_queue.append({"id": slot_id_seq, "q_type": type_list[i % len(type_list)], "attempts": 0})
+                        slot_id_seq += 1
+
+                    yield QuickGenerateProgress(
+                        status="generating",
+                        progress=min(92 + shortfall_round, 98),
+                        current_question=questions_generated,
+                        total_questions=count,
+                        message=f"Retrying for {shortfall} remaining questions (round {shortfall_round})...",
+                        session_id=session_id,
+                    )
 
             # 6. Finalise session
             session_result = await self.db.execute(
@@ -3412,9 +3600,10 @@ Output valid JSON only."""
                 message=f"Generation failed: {str(e)}",
             )
         finally:
-            await self.redis_service.release_generation_lock(
-                str(user_id), str(subject_id)
-            )
+            if lock_acquired:
+                await self.redis_service.release_generation_lock(
+                    str(user_id), str(subject_id)
+                )
 
     async def _generate_quick_question(
         self,
@@ -3429,6 +3618,7 @@ Output valid JSON only."""
         learning_outcome: Optional[str] = None,
         subject_id: Optional[uuid.UUID] = None,
         topic_id: Optional[uuid.UUID] = None,
+        rejection_guidance_override: Optional[str] = None,
     ) -> Optional[Dict[str, Any]]:
         """Generate a single question for quick generation with context awareness.
         
@@ -3524,7 +3714,9 @@ Output valid JSON only."""
         
         # Build rejection avoidance prompt from training patterns
         rejection_guidance = ""
-        if subject_id or topic_id:
+        if rejection_guidance_override is not None:
+            rejection_guidance = rejection_guidance_override
+        elif subject_id or topic_id:
             try:
                 from app.services.training_service import TrainingService
                 training_svc = TrainingService()

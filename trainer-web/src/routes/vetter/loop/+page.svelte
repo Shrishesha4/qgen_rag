@@ -791,7 +791,9 @@
 	.answer-modal-overlay {
 		position: fixed;
 		inset: 0;
-		background: rgba(0, 0, 0, 0.55);
+		background: var(--theme-modal-backdrop);
+		backdrop-filter: var(--theme-modal-backdrop-blur);
+		-webkit-backdrop-filter: var(--theme-modal-backdrop-blur);
 		display: flex;
 		align-items: center;
 		justify-content: center;
@@ -803,6 +805,9 @@
 		width: min(520px, 100%);
 		padding: 1rem;
 		border-radius: 14px;
+		border: 1px solid var(--theme-modal-border);
+		background: var(--theme-modal-surface);
+		box-shadow: var(--theme-modal-shadow);
 		display: flex;
 		flex-direction: column;
 		gap: 0.6rem;
