@@ -29,8 +29,9 @@ env.bak/
 venv.bak/   
 
 
-.env
+# Environment files — .env.local has secrets, never commit
 .env.local
+# .env and .env.production are safe (no secrets) and ARE committed
 
 .DS_Store
 *.log
@@ -40,3 +41,7 @@ venv.bak/
 
 *.db-shm
 *.db-wal
+backend/.env
+trainer-web/.env
+trainer-web/.env.production
+backend/.env.production

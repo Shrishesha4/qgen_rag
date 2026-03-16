@@ -128,8 +128,20 @@ class Settings(BaseSettings):
     ENABLE_TWO_PASS_GENERATION: bool = Field(default=False)
     GENERATION_SCHEMA_ENFORCEMENT: bool = Field(default=True)
 
+    # Server
+    API_HOST: str = Field(default="0.0.0.0")
+    API_PORT: int = Field(default=8000)
+
+    # Training Pipeline (LoRA fine-tuning)
+    TRAINING_DATA_DIR: str = Field(default="./training_data")
+    LORA_ADAPTERS_DIR: str = Field(default="./lora_adapters")
+    TRAINING_BASE_MODEL: str = Field(default="deepseek-ai/DeepSeek-R1-Distill-Llama-1.7B")
+
     class Config:
-        env_file = ".env"
+        # Load .env first (dev defaults), then .env.local overrides (secrets).
+        # Actual environment variables always take highest priority.
+        env_file = (".env", ".env.local")
+        env_file_encoding = "utf-8"
         case_sensitive = True
 
 
