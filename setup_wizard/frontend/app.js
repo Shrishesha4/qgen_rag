@@ -14,6 +14,7 @@ const STATE = {
     envValues: {},
     envSchema: [],
     defaults: {},
+    advancedMode: false,
     dockerConfig: {
         enabled: true,
         mode: 'development',
@@ -450,15 +451,40 @@ function renderSystem(el) {
                 `).join('')}
             </div>
         </div>
+    </div>
     `;
 }
 
 // --- Step 2: Backend config ---
 function renderBackend(el) {
-    // Show groups: Database, Redis, Security, LLM Provider, Embedding & Reranker, Document Processing, Rate Limiting & Logging
-    const backendGroups = ['Database', 'Redis', 'Security', 'LLM Provider', 'Embedding & Reranker', 'Document Processing', 'Rate Limiting & Logging', 'Network & CORS', 'Training Pipeline'];
+    // Show groups: Database, Redis, Security, LLM Provider, Embedding & Reranker, Document Processing, Rate Limiting & Logging, Network & CORS, Training Pipeline, Docker Configuration
+    const backendGroups = ['Database', 'Redis', 'Security', 'LLM Provider', 'Embedding & Reranker', 'Document Processing', 'Rate Limiting & Logging', 'Network & CORS', 'Training Pipeline', 'Docker Configuration'];
 
     el.innerHTML = `
+        <div class="card" style="margin-bottom:24px">
+            <div class="card-header">
+                <div class="card-title">Configuration Mode</div>
+                <div class="card-desc">Choose between Basic (essential settings) or Advanced (all settings)</div>
+            </div>
+            <div class="form-row">
+                <div class="form-group">
+                    <label class="form-label">Mode</label>
+                    <div style="display:flex;gap:8px">
+                        <label class="radio-label">
+                            <input type="radio" name="configMode" value="basic" ${!STATE.advancedMode ? 'checked' : ''} onchange="toggleAdvancedMode(false)">
+                            <span>Basic Mode</span>
+                            <small style="display:block;color:var(--text-muted);margin-top:4px">Essential settings only</small>
+                        </label>
+                        <label class="radio-label">
+                            <input type="radio" name="configMode" value="advanced" ${STATE.advancedMode ? 'checked' : ''} onchange="toggleAdvancedMode(true)">
+                            <span>Advanced Mode</span>
+                            <small style="display:block;color:var(--text-muted);margin-top:4px">All settings with recommendations</small>
+                        </label>
+                    </div>
+                </div>
+            </div>
+        </div>
+
         <h2 class="step-title">Backend Configuration</h2>
         <p class="step-subtitle">Configure your FastAPI backend, database, LLM provider, and more</p>
         ${renderEnvGroups(backendGroups)}
@@ -1016,7 +1042,12 @@ async function renderInstallComplete() {
 function renderEnvGroups(groupNames) {
     const groups = STATE.envSchema.filter(g => groupNames.includes(g.group));
     return groups.map(group => {
-        const vars = group.vars.map(v => renderEnvField(v)).join('');
+        // Filter variables based on advanced mode
+        const filteredVars = STATE.advancedMode 
+            ? group.vars 
+            : group.vars.filter(v => v.advanced !== true);
+        
+        const vars = filteredVars.map(v => renderEnvField(v)).join('');
         return `
             <div class="card">
                 <div class="card-header">
@@ -1051,6 +1082,9 @@ function renderEnvField(v) {
         input = `<input type="${v.type === 'number' ? 'number' : 'text'}" class="form-input" data-env-key="${v.key}" value="${escapeAttr(val)}" placeholder="${v.label}">`;
     }
 
+    // Add recommended indicator
+    const recommended = v.recommended ? `<small class="form-hint">Recommended: ${v.recommended}</small>` : '';
+
     return `
         <div class="form-group" ${showIf} style="${hidden ? 'display:none' : ''}">
             <label class="form-label">
@@ -1058,8 +1092,14 @@ function renderEnvField(v) {
                 ${v.tooltip ? `<span class="tooltip-icon" data-tip="${escapeAttr(v.tooltip)}">?</span>` : ''}
             </label>
             ${input}
+            ${recommended}
         </div>
     `;
+}
+
+function toggleAdvancedMode(advanced) {
+    STATE.advancedMode = advanced;
+    renderCurrentStep();
 }
 
 function shouldHideField(showIf) {
@@ -1232,6 +1272,7 @@ function getIconSvg(name) {
         globe: '<svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="10"/><path d="M2 12h20M12 2a15.3 15.3 0 014 10 15.3 15.3 0 01-4 10 15.3 15.3 0 01-4-10 15.3 15.3 0 014-10z"/></svg>',
         smartphone: '<svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="5" y="2" width="14" height="20" rx="2" ry="2"/><path d="M12 18h.01"/></svg>',
         cpu: '<svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="4" y="4" width="16" height="16" rx="2"/><rect x="9" y="9" width="6" height="6"/><path d="M9 1v3m6-3v3M9 20v3m6-3v3M20 9h3M20 14h3M1 9h3M1 14h3"/></svg>',
+        box: '<svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M21 16V8a2 2 0 00-1-1.73l-7-4a2 2 0 00-2 0l-7 4A2 2 0 003 8v8a2 2 0 001 1.73l7 4a2 2 0 002 0l7-4A2 2 0 0021 16z"/></svg>',
     };
     return icons[name] || icons.cpu;
 }

@@ -53,11 +53,15 @@ DEFAULT_ENV = {
     "RERANKER_ENABLED": "true",
     # Auth DB
     "AUTH_DATABASE_URL": "sqlite+aiosqlite:///./auth.db",
-    # Document processing
+    # Document Processing
     "MAX_UPLOAD_SIZE_MB": "500",
     "CHUNK_SIZE": "1000",
     "CHUNK_OVERLAP": "200",
     "MAX_QUESTIONS_PER_REQUEST": "50",
+    # Generation Controls
+    "QUICK_GENERATE_PARALLEL_WORKERS": "6",
+    "QUESTION_DEDUPE_SIMILARITY_THRESHOLD": "0.987",
+    "QUESTION_OPTION_SIMILARITY_THRESHOLD": "0.877",
     # Rate limiting
     "RATE_LIMIT_REQUESTS": "100",
     "RATE_LIMIT_WINDOW_SECONDS": "3600",
@@ -120,13 +124,13 @@ ENV_SCHEMA = [
         "description": "PostgreSQL with pgvector for vector similarity search",
         "vars": [
             {"key": "POSTGRES_USER", "label": "Database User", "type": "text",
-             "tooltip": "PostgreSQL username for the application database."},
+             "tooltip": "PostgreSQL username for the application database.", "advanced": false, "recommended": "qgen_user"},
             {"key": "POSTGRES_PASSWORD", "label": "Database Password", "type": "password",
-             "tooltip": "PostgreSQL password. Use a strong password in production."},
+             "tooltip": "PostgreSQL password. Use a strong password in production.", "advanced": false, "recommended": "change-in-production"},
             {"key": "POSTGRES_DB", "label": "Database Name", "type": "text",
-             "tooltip": "Name of the PostgreSQL database to create/use."},
+             "tooltip": "Name of the PostgreSQL database to create/use.", "advanced": false, "recommended": "qgen_db"},
             {"key": "POSTGRES_PORT", "label": "PostgreSQL Port", "type": "number",
-             "tooltip": "Port for PostgreSQL. Default 5432."},
+             "tooltip": "Port for PostgreSQL. Default 5432.", "advanced": true, "recommended": "5432"},
         ],
     },
     {
@@ -135,7 +139,7 @@ ENV_SCHEMA = [
         "description": "Redis for caching, sessions, and rate limiting",
         "vars": [
             {"key": "REDIS_PORT", "label": "Redis Port", "type": "number",
-             "tooltip": "Port for Redis server. Default 6379."},
+             "tooltip": "Port for Redis server. Default 6379.", "advanced": true, "recommended": "6379"},
         ],
     },
     {
@@ -222,6 +226,12 @@ ENV_SCHEMA = [
              "tooltip": "Overlap between consecutive chunks for context continuity."},
             {"key": "MAX_QUESTIONS_PER_REQUEST", "label": "Max Questions per Request", "type": "number",
              "tooltip": "Maximum number of questions that can be generated in one request."},
+            {"key": "QUICK_GENERATE_PARALLEL_WORKERS", "label": "Parallel Workers (Quick Gen)", "type": "number",
+             "tooltip": "Number of parallel workers for quick question generation."},
+            {"key": "QUESTION_DEDUPE_SIMILARITY_THRESHOLD", "label": "Question Dedupe Threshold", "type": "number",
+             "tooltip": "Similarity threshold for deduplicating generated questions (0.0-1.0)."},
+            {"key": "QUESTION_OPTION_SIMILARITY_THRESHOLD", "label": "Option Dedupe Threshold", "type": "number",
+             "tooltip": "Similarity threshold for deduplicating question options (0.0-1.0)."},
         ],
     },
     {
@@ -375,13 +385,30 @@ def generate_env_file(env_values: Dict[str, str]) -> str:
         ("Reranker", ["RERANKER_MODEL", "RERANKER_ENABLED"]),
         ("Auth Database", ["AUTH_DATABASE_URL"]),
         ("Document Processing", ["MAX_UPLOAD_SIZE_MB", "CHUNK_SIZE", "CHUNK_OVERLAP",
-                                  "MAX_QUESTIONS_PER_REQUEST"]),
+                                  "MAX_QUESTIONS_PER_REQUEST", "QUICK_GENERATE_PARALLEL_WORKERS",
+                                  "QUESTION_DEDUPE_SIMILARITY_THRESHOLD", "QUESTION_OPTION_SIMILARITY_THRESHOLD"]),
         ("Rate Limiting", ["RATE_LIMIT_REQUESTS", "RATE_LIMIT_WINDOW_SECONDS"]),
         ("Logging & Monitoring", ["LOG_LEVEL", "LOG_JSON", "ENABLE_METRICS"]),
         ("API Port", ["API_PORT"]),
         ("CORS", ["CORS_ORIGINS"]),
         ("Mobile Client", ["DEV_MACHINE_IP", "USE_SIMULATOR", "PRODUCTION_API_URL", "USE_PRODUCTION_API"]),
         ("Training Pipeline", ["TRAINING_DATA_DIR", "LORA_ADAPTERS_DIR", "TRAINING_BASE_MODEL"]),
+        ("Docker Configuration", [
+            "DOCKER_ENABLED", "DOCKER_MODE", "DOCKER_COMPOSE_COMMAND",
+            "DOCKER_NETWORK_NAME",
+            "DOCKER_DB_CONTAINER_NAME", "DOCKER_REDIS_CONTAINER_NAME",
+            "DOCKER_API_CONTAINER_NAME", "DOCKER_TRAINER_WEB_CONTAINER_NAME",
+            "DOCKER_CLIENT_CONTAINER_NAME", "DOCKER_OLLAMA_CONTAINER_NAME",
+            "DOCKER_POSTGRES_VOLUME_NAME", "DOCKER_REDIS_VOLUME_NAME",
+            "DOCKER_UPLOAD_VOLUME_NAME", "DOCKER_MODEL_CACHE_VOLUME_NAME",
+            "DOCKER_OLLAMA_VOLUME_NAME",
+            "DOCKER_DB_PORT", "DOCKER_REDIS_PORT", "DOCKER_API_PORT",
+            "DOCKER_TRAINER_WEB_PORT", "DOCKER_CLIENT_PORT", "DOCKER_OLLAMA_PORT",
+            "DOCKER_ENABLE_DB", "DOCKER_ENABLE_REDIS", "DOCKER_ENABLE_API",
+            "DOCKER_ENABLE_TRAINER_WEB", "DOCKER_ENABLE_CLIENT", "DOCKER_ENABLE_OLLAMA",
+            "DOCKER_DEV_HOT_RELOAD", "DOCKER_DEV_MOUNT_SOURCES", "DOCKER_PROD_WORKERS",
+            "DOCKER_HEALTH_CHECK_ENABLED",
+        ]),
     ]
 
     lines = ["# Generated by QGen RAG Setup Wizard", ""]
@@ -671,7 +698,7 @@ def generate_docker_compose(
             "    container_name: " + trainer_name,
             "    restart: unless-stopped",
             "    environment:",
-            f'      - VITE_API_BASE=http://{api_name}:8000/api/v1',
+            f'      - VITE_API_BASE=http://api:{api_port}/api/v1',
             "    volumes:",
             "      - ./trainer-web:/app",
             "      - /app/node_modules",
@@ -680,7 +707,7 @@ def generate_docker_compose(
             "    networks:",
             f"      - {custom_network}",
             "    depends_on:",
-            f"      - {api_name}",
+            "      - api",
         ])
 
     # ---- Client Service ----
@@ -696,7 +723,7 @@ def generate_docker_compose(
             "    container_name: " + client_name,
             "    restart: unless-stopped",
             "    environment:",
-            f'      - EXPO_PUBLIC_API_BASE=http://{api_name}:8000/api/v1',
+            f'      - EXPO_PUBLIC_API_BASE=http://api:{api_port}/api/v1',
             f'      - EXPO_PUBLIC_DEV_MACHINE_IP={env_values.get("DEV_MACHINE_IP", "localhost")}',
             "    volumes:",
             "      - ./client:/app",
@@ -706,7 +733,7 @@ def generate_docker_compose(
             "    networks:",
             f"      - {custom_network}",
             "    depends_on:",
-            f"      - {api_name}",
+            "      - api",
         ])
 
     # ---- Volumes ----
