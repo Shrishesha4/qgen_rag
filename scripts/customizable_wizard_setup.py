@@ -51,11 +51,18 @@ class SystemDetector:
     
     def detect_all(self):
         """Perform comprehensive system detection."""
+        # Detect each component first
+        os_info = self._detect_os()
+        hardware_info = self._detect_hardware()
+        software_info = self._detect_software()
+        network_info = self._detect_network()
+        
+        # Then compile the complete system info
         self.system_info = {
-            "os": self._detect_os(),
-            "hardware": self._detect_hardware(),
-            "software": self._detect_software(),
-            "network": self._detect_network(),
+            "os": os_info,
+            "hardware": hardware_info,
+            "software": software_info,
+            "network": network_info,
             "recommendations": self._generate_recommendations()
         }
     

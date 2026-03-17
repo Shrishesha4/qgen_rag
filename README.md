@@ -66,25 +66,74 @@ QuestionGeneration AI is an intelligent exam question generation platform that l
 
 ## 🚀 Quick Start
 
-### **One-Command Setup (Recommended)**
+### 🚀 One-Command Setup
+
+### Complete Customizable Setup Wizard
+
+We've created a comprehensive **multi-page setup wizard** that provides complete control over your deployment:
+
 ```bash
-# Run the universal launcher from project root
 python launch_setup.py
 ```
 
-This will automatically:
-- 🔍 **Check system requirements** (Docker, Git, Node.js, Python, hardware, network)
-- � **Install missing dependencies** automatically with user consent
-- 📦 **Set up the complete stack** (Backend + Frontend + Database)
-- 🔧 **Configure everything** (SSL, monitoring, security)
-- 🚀 **Start all services** with health checks
+The wizard guides you through:
+- 🔍 **System Requirements Check** - Comprehensive hardware/software detection
+- 🏗️ **Deployment Mode Selection** - Choose Docker/Baremetal for each service
+- ⚙️ **Full Configuration Customization** - Customize every setting
+- 🐍 **Virtual Environment Setup** - Isolated Python environment
+- 📦 **Dependency Installation** - Automatic system package management
+- � **Source Code Setup** - Repository cloning and configuration
+- 🗄️ **Database Configuration** - PostgreSQL with pgvector + Redis
+- 🎨 **Frontend Setup** - Trainer-web and client applications
+- � **Service Management** - Start and configure all services
+- 🔒 **SSL Configuration** - Self-signed, Let's Encrypt, or custom certificates
+- � **Data Initialization** - Sample data and configuration
+- 🤖 **Training Pipeline Setup** - ML model configuration
+- ✅ **Setup Completion** - Access links and next steps
 
-### **Enhanced Features**
-- ✅ **Comprehensive system analysis** - Detects all required dependencies
-- ✅ **Automatic installation** - Installs Docker, Git, Node.js, Python packages
-- ✅ **Platform-specific optimization** - Windows, macOS, Linux support
-- ✅ **Hardware assessment** - CPU, RAM, storage, GPU detection
-- ✅ **Network verification** - Internet, Docker Hub, GitHub connectivity
+### Deployment Mode Flexibility
+
+Choose how to deploy each service component:
+
+#### Database Deployment
+- **🐳 Docker** (Recommended): Containerized PostgreSQL + pgvector + Redis
+- **🖥️ Baremetal**: Direct system installation for maximum performance
+
+#### Backend Deployment
+- **🐳 Docker** (Recommended): Containerized FastAPI with workers
+- **🖥️ Baremetal**: Systemd service with direct system access
+
+#### Frontend Deployment  
+- **🐳 Docker** (Recommended): Containerized trainer-web application
+- **🌐 Nginx**: Web server with reverse proxy
+- **🟢 Node.js**: Direct Node.js server for development
+
+### Complete Configuration Control
+
+The wizard allows you to customize:
+- **🌐 Basic Settings**: Installation directory, domain, environment
+- **🗄️ Database Settings**: PostgreSQL/Redis configuration, ports, passwords
+- **🔧 Service Ports**: Backend, frontend, nginx ports
+- **🔑 API Keys**: OpenAI, DeepSeek, Anthropic integration
+- **🤖 Model Configuration**: Base models, tokens, temperature
+- **📁 Directory Paths**: Model cache, training data, uploads
+- **🔒 SSL Configuration**: Certificate types and security
+- **📊 Monitoring**: Metrics, logging, error tracking
+
+### Quick Configuration Templates
+
+Use configuration templates for common setups:
+
+```bash
+# Load configuration template
+python config_loader.py --config config_template.json --summary
+
+# Export for wizard
+python config_loader.py --export wizard_config.json
+
+# Validate configuration
+python config_loader.py --validate
+```
 
 ### Platform-Specific Launchers
 ```bash
@@ -289,23 +338,6 @@ curl -X POST http://localhost:8000/api/v1/questions/generate \
 
 ### Quick Generate (Upload + Generate)
 
-```bash
-# Single-step: upload PDF and generate questions
-curl -X POST http://localhost:8000/api/v1/questions/quick-generate \
-  -H "Authorization: Bearer <access_token>" \
-  -H "Accept: text/event-stream" \
-  -F "file=@document.pdf" \
-  -F "context=Biology exam preparation" \
-  -F "count=10" \
-  -F "types=mcq,short_answer" \
-  -F "difficulty=medium"
-```
-
-### Full API Documentation
-
-Interactive API documentation available at:
-- **Swagger UI**: http://localhost:8000/docs
-- **ReDoc**: http://localhost:8000/redoc
 
 Current API modules under `/api/v1` include:
 - `auth` (sessions, profile, avatar, password, token refresh)
@@ -710,7 +742,25 @@ deploy:
 
 ---
 
-## 📄 License
+## � Documentation
+
+### Setup Guides
+- **[CUSTOMIZABLE_WIZARD_GUIDE.md](./CUSTOMIZABLE_WIZARD_GUIDE.md)** - Complete customizable setup wizard documentation
+- **[SYSTEM_REQUIREMENTS.md](./SYSTEM_REQUIREMENTS.md)** - Detailed system requirements and auto-installation
+- **[FULL_STACK_SETUP.md](./FULL_STACK_SETUP.md)** - Full-stack deployment guide
+- **[CROSS_PLATFORM_README.md](./CROSS_PLATFORM_README.md)** - Cross-platform setup instructions
+
+### Configuration
+- **[config_template.json](./config_template.json)** - Complete configuration template
+- **[config_loader.py](./config_loader.py)** - Configuration management utility
+
+### API Documentation
+- **Backend API**: `http://localhost:8000/docs` (after setup)
+- **API Reference**: Interactive Swagger/OpenAPI documentation
+
+---
+
+## �📄 License
 
 This project is licensed under the MIT License - see the [LICENSE](LICENSE) file for details.
 
