@@ -249,9 +249,21 @@ html, body {
 }
 .card-header {
     display: flex;
-    align-items: center;
+    align-items: flex-start;
     gap: 12px;
     margin-bottom: 16px;
+    position: relative;
+}
+.card-toggle {
+    margin-left: auto;
+    flex-shrink: 0;
+}
+.card-toggle .btn {
+    opacity: 0.6;
+    transition: opacity 0.2s ease;
+}
+.card-toggle .btn:hover {
+    opacity: 1;
 }
 .card-icon {
     width: 40px;

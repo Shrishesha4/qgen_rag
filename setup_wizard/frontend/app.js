@@ -457,34 +457,10 @@ function renderSystem(el) {
 
 // --- Step 2: Backend config ---
 function renderBackend(el) {
-    // Show groups: Database, Redis, Security, LLM Provider, Embedding & Reranker, Document Processing, Rate Limiting & Logging, Network & CORS, Training Pipeline, Docker Configuration
-    const backendGroups = ['Database', 'Redis', 'Security', 'LLM Provider', 'Embedding & Reranker', 'Document Processing', 'Rate Limiting & Logging', 'Network & CORS', 'Training Pipeline', 'Docker Configuration'];
+    // Show groups: Database, Redis, Security, LLM Provider, Embedding & Reranker, Document Processing, Rate Limiting & Logging, Network & CORS, Training Pipeline
+    const backendGroups = ['Database', 'Redis', 'Security', 'LLM Provider', 'Embedding & Reranker', 'Document Processing', 'Rate Limiting & Logging', 'Network & CORS', 'Training Pipeline'];
 
     el.innerHTML = `
-        <div class="card" style="margin-bottom:24px">
-            <div class="card-header">
-                <div class="card-title">Configuration Mode</div>
-                <div class="card-desc">Choose between Basic (essential settings) or Advanced (all settings)</div>
-            </div>
-            <div class="form-row">
-                <div class="form-group">
-                    <label class="form-label">Mode</label>
-                    <div style="display:flex;gap:8px">
-                        <label class="radio-label">
-                            <input type="radio" name="configMode" value="basic" ${!STATE.advancedMode ? 'checked' : ''} onchange="toggleAdvancedMode(false)">
-                            <span>Basic Mode</span>
-                            <small style="display:block;color:var(--text-muted);margin-top:4px">Essential settings only</small>
-                        </label>
-                        <label class="radio-label">
-                            <input type="radio" name="configMode" value="advanced" ${STATE.advancedMode ? 'checked' : ''} onchange="toggleAdvancedMode(true)">
-                            <span>Advanced Mode</span>
-                            <small style="display:block;color:var(--text-muted);margin-top:4px">All settings with recommendations</small>
-                        </label>
-                    </div>
-                </div>
-            </div>
-        </div>
-
         <h2 class="step-title">Backend Configuration</h2>
         <p class="step-subtitle">Configure your FastAPI backend, database, LLM provider, and more</p>
         ${renderEnvGroups(backendGroups)}
@@ -767,6 +743,8 @@ function renderDocker(el) {
                 </select>
             </div>
         </div>
+
+        ${renderEnvGroups(['Docker Configuration'])}
     `;
 }
 
@@ -1057,6 +1035,12 @@ function renderEnvGroups(groupNames) {
                     <div>
                         <div class="card-title">${group.group}</div>
                         <div class="card-desc">${group.description}</div>
+                    </div>
+                    <div class="card-toggle">
+                        <button class="btn btn-ghost btn-sm" onclick="toggleAdvancedMode(!STATE.advancedMode)" title="${STATE.advancedMode ? 'Switch to Basic Mode' : 'Switch to Advanced Mode'}">
+                            ${getIconSvg(STATE.advancedMode ? 'cpu' : 'zap')}
+                            <span style="margin-left:4px">${STATE.advancedMode ? 'Advanced' : 'Basic'}</span>
+                        </button>
                     </div>
                 </div>
                 <div class="form-row-wrap">
