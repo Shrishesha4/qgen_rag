@@ -38,6 +38,8 @@ class WizardState:
             "services": {"db": True, "redis": True, "api": True, "ollama": False},
             "ports": {},
             "container_names": {},
+            "volume_names": {},
+            "network_name": "qgen_net",
             "compose_command": "docker compose",
         }
         self.install_options: Dict[str, Any] = {
@@ -230,6 +232,10 @@ class WizardRequestHandler(http.server.BaseHTTPRequestHandler):
             self.state.docker_config["ports"].update(cfg["ports"])
         if "container_names" in cfg:
             self.state.docker_config["container_names"].update(cfg["container_names"])
+        if "volume_names" in cfg:
+            self.state.docker_config["volume_names"].update(cfg["volume_names"])
+        if "network_name" in cfg:
+            self.state.docker_config["network_name"] = cfg["network_name"]
         return self._send_json({"ok": True})
 
     def _api_save_install_options(self, body: Dict):

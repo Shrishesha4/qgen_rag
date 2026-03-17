@@ -20,6 +20,8 @@ const STATE = {
         services: { db: true, redis: true, api: true, ollama: false },
         ports: {},
         container_names: {},
+        volume_names: {},
+        network_name: 'qgen_net',
     },
     installOptions: {
         install_client: true,
@@ -208,6 +210,17 @@ function saveCurrentStepData() {
         const key = el.getAttribute('data-docker-key');
         if (key === 'enabled') STATE.dockerConfig.enabled = el.checked;
         else if (key === 'mode') STATE.dockerConfig.mode = el.value;
+        else if (key === 'network_name') STATE.dockerConfig.network_name = el.value;
+        else if (key.startsWith('container_name_')) {
+            const service = key.replace('container_name_', '');
+            if (!STATE.dockerConfig.container_names) STATE.dockerConfig.container_names = {};
+            STATE.dockerConfig.container_names[service] = el.value;
+        }
+        else if (key.startsWith('volume_')) {
+            const volume = key.replace('volume_', '');
+            if (!STATE.dockerConfig.volume_names) STATE.dockerConfig.volume_names = {};
+            STATE.dockerConfig.volume_names[volume] = el.value;
+        }
     });
 
     // Install options
@@ -610,6 +623,56 @@ function renderDocker(el) {
                     <input type="checkbox" data-docker-service="ollama" ${dc.services.ollama ? 'checked' : ''}>
                     <span class="toggle-slider"></span>
                 </label>
+            </div>
+        </div>
+
+        <div class="card">
+            <div class="card-header">
+                <div class="card-icon green"><svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M12 2L2 7l10 5 10-5-10-5zM2 17l10 5 10-5M2 12l10 5 10-5"/></svg></div>
+                <div>
+                    <div class="card-title">Custom Names</div>
+                    <div class="card-desc">Customize container names, volume names, and network name</div>
+                </div>
+            </div>
+            <div class="form-row">
+                <div class="form-group">
+                    <label class="form-label">Network Name</label>
+                    <input type="text" class="form-input" data-docker-key="network_name" value="${dc.network_name || 'qgen_net'}" placeholder="qgen_net">
+                </div>
+                <div class="form-group">
+                    <label class="form-label">DB Container Name</label>
+                    <input type="text" class="form-input" data-docker-key="container_name_db" value="${dc.container_names?.db || 'qgen_db'}" placeholder="qgen_db">
+                </div>
+            </div>
+            <div class="form-row">
+                <div class="form-group">
+                    <label class="form-label">Redis Container Name</label>
+                    <input type="text" class="form-input" data-docker-key="container_name_redis" value="${dc.container_names?.redis || 'qgen_redis'}" placeholder="qgen_redis">
+                </div>
+                <div class="form-group">
+                    <label class="form-label">API Container Name</label>
+                    <input type="text" class="form-input" data-docker-key="container_name_api" value="${dc.container_names?.api || 'qgen_api'}" placeholder="qgen_api">
+                </div>
+            </div>
+            <div class="form-row">
+                <div class="form-group">
+                    <label class="form-label">PostgreSQL Volume Name</label>
+                    <input type="text" class="form-input" data-docker-key="volume_postgres" value="${dc.volume_names?.postgres_data || 'qgen_postgres_data'}" placeholder="qgen_postgres_data">
+                </div>
+                <div class="form-group">
+                    <label class="form-label">Redis Volume Name</label>
+                    <input type="text" class="form-input" data-docker-key="volume_redis" value="${dc.volume_names?.redis_data || 'qgen_redis_data'}" placeholder="qgen_redis_data">
+                </div>
+            </div>
+            <div class="form-row">
+                <div class="form-group">
+                    <label class="form-label">Upload Volume Name</label>
+                    <input type="text" class="form-input" data-docker-key="volume_upload" value="${dc.volume_names?.upload_data || 'qgen_upload_data'}" placeholder="qgen_upload_data">
+                </div>
+                <div class="form-group">
+                    <label class="form-label">Model Cache Volume Name</label>
+                    <input type="text" class="form-input" data-docker-key="volume_model" value="${dc.volume_names?.model_cache || 'qgen_model_cache'}" placeholder="qgen_model_cache">
+                </div>
             </div>
         </div>
 
