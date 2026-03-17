@@ -233,7 +233,7 @@ After setup completion, you'll have access to:
 ### **Universal Launcher**
 ```bash
 # Works on all platforms
-python3 scripts/launch_setup.py
+python launch_setup.py
 ```
 
 ### **Platform-Specific**
@@ -251,7 +251,7 @@ scripts\setup_windows.bat
 pip install -r scripts/setup_requirements.txt
 
 # Run interactive setup
-python3 scripts/interactive_setup.py
+python scripts/interactive_setup.py
 ```
 
 ## 🎯 Production Deployment
@@ -328,7 +328,7 @@ python3 scripts/interactive_setup.py --verbose
 ## 🚀 One Command to Full-Stack Deployment
 
 ```bash
-python3 scripts/launch_setup.py
+python launch_setup.py
 ```
 
 This single command will:

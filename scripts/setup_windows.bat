@@ -29,7 +29,7 @@ if not exist "scripts\interactive_setup.py" (
 
 REM Run the cross-platform launcher
 echo 🌐 Starting cross-platform setup launcher...
-python scripts\launch_setup.py
+python launch_setup.py
 
 if %errorlevel% neq 0 (
     echo.

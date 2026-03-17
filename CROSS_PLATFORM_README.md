@@ -6,11 +6,11 @@ A truly cross-platform interactive setup system that works seamlessly on **Windo
 
 ### **Method 1: Universal Launcher (Recommended)**
 ```bash
-# Download and run the universal launcher
-curl -fsSL https://raw.githubusercontent.com/your-org/qgen_rag/main/scripts/launch_setup.py | python3
+# Works on all platforms
+python3 launch_setup.py
 
 # Or if you have the repository:
-python3 scripts/launch_setup.py
+python launch_setup.py
 ```
 
 ### **Method 2: Platform-Specific Launchers**
@@ -20,17 +20,17 @@ python3 scripts/launch_setup.py
 # Double-click or run from command prompt
 scripts\setup_windows.bat
 
-# Or from PowerShell
-python scripts\launch_setup.py
+# Or directly with Python
+python launch_setup.py
 ```
 
-#### **macOS & Linux**
+#### **macOS & Linux**  
 ```bash
 # Run the Unix launcher
 ./scripts/setup_unix.sh
 
 # Or directly with Python
-python3 scripts/launch_setup.py
+python3 launch_setup.py
 ```
 
 ## 🖥️ Platform Support

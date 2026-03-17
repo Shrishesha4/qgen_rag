@@ -66,7 +66,36 @@ QuestionGeneration AI is an intelligent exam question generation platform that l
 
 ## 🚀 Quick Start
 
-### Prerequisites
+### **One-Command Setup (Recommended)**
+```bash
+# Run the universal launcher from project root
+python launch_setup.py
+```
+
+This will automatically:
+- 🔍 **Check system requirements** (Docker, Git, Node.js, Python, hardware, network)
+- � **Install missing dependencies** automatically with user consent
+- 📦 **Set up the complete stack** (Backend + Frontend + Database)
+- 🔧 **Configure everything** (SSL, monitoring, security)
+- 🚀 **Start all services** with health checks
+
+### **Enhanced Features**
+- ✅ **Comprehensive system analysis** - Detects all required dependencies
+- ✅ **Automatic installation** - Installs Docker, Git, Node.js, Python packages
+- ✅ **Platform-specific optimization** - Windows, macOS, Linux support
+- ✅ **Hardware assessment** - CPU, RAM, storage, GPU detection
+- ✅ **Network verification** - Internet, Docker Hub, GitHub connectivity
+
+### Platform-Specific Launchers
+```bash
+# Windows
+scripts\setup_windows.bat
+
+# macOS & Linux
+./scripts/setup_unix.sh
+```
+
+### Prerequisites (for manual setup)
 
 - **Docker** & **Docker Compose** (v2.0+)
 - **Node.js** 18+ & **npm** (for mobile app)

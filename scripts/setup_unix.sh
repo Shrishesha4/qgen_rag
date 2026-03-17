@@ -102,7 +102,7 @@ echo ""
 echo -e "${BLUE}🌐 Starting cross-platform setup launcher...${NC}"
 
 # Run the cross-platform launcher
-$PYTHON_CMD scripts/launch_setup.py
+python launch_setup.py
 
 echo ""
 echo -e "${GREEN}✅ Setup completed successfully!${NC}"
