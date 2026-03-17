@@ -1,0 +1,14 @@
+# Requirements for Interactive Setup Script - Cross-Platform
+fastapi>=0.104.1
+uvicorn>=0.24.0
+jinja2>=3.1.2
+aiofiles>=23.2.1
+psutil>=5.9.6
+
+# Platform-specific dependencies
+wmi>=1.5.1; sys_platform == "win32"
+pywin32>=306; sys_platform == "win32"
+
+# Optional dependencies for enhanced functionality
+requests>=2.31.0
+colorama>=0.4.6

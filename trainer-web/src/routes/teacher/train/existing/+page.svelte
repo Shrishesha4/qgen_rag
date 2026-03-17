@@ -249,6 +249,7 @@
 		const rawProgress = Math.max(0, Math.min(100, status.progress || 0));
 		const total = status.total_questions ?? 0;
 		const current = Math.max(0, status.current_question || 0);
+		
 		if (total > 0) {
 			const ratioProgress = Math.max(0, Math.min(100, Math.round((current / total) * 100)));
 			return Math.max(rawProgress, ratioProgress);
