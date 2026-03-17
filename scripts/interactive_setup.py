@@ -589,7 +589,7 @@ class SystemDetector:
         for cmd in nginx_cmds:
             try:
                 result = subprocess.run([cmd, "-v"], 
-                                      capture_output=True, text=True, timeout=10, stderr=subprocess.STDOUT)
+                                      capture_output=True, text=True, timeout=10)
                 if result.returncode == 0 or "nginx version" in result.stdout:
                     return {
                         "installed": True, 

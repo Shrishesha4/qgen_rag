@@ -27,7 +27,11 @@ The QGen RAG setup system now includes **comprehensive system requirements check
 - **CPU**: Core count detection
 - **Memory**: RAM availability (minimum 4GB recommended)
 - **Storage**: Free disk space (minimum 10GB required)
-- **GPU**: NVIDIA GPU detection for acceleration
+- **GPU**: Comprehensive GPU detection:
+  - **NVIDIA GPUs** (Linux/Windows) with CUDA support
+  - **Apple Silicon GPUs** (M1, M2, M3, M4, M5 series) with Neural Engine
+  - **AMD GPUs** (Linux/macOS) with ROCm support
+  - **GPU optimization recommendations** for ML workloads
 
 ### **🌐 Network Connectivity**
 - **Internet**: Basic connectivity check
@@ -221,12 +225,30 @@ Package Manager: homebrew
 ✅ CPU: 8 cores
 ✅ Memory: 16.0GB
 ✅ Disk Space: 45.2GB free
-✅ GPU: Apple M1 Pro
+✅ GPU: Apple M5
+✅ Neural Engine: Available
+   🚀 Apple Silicon GPU optimized for ML workloads
 ✅ Internet connectivity
 ✅ Docker Hub accessible
 ✅ GitHub accessible
 
 ✅ System requirements check passed!
+```
+
+### **Different GPU Types**
+```bash
+# NVIDIA GPU (Linux/Windows)
+✅ GPU: NVIDIA GeForce RTX 4090
+   🎮 CUDA acceleration available
+
+# Apple Silicon (macOS)
+✅ GPU: Apple M4 Pro
+✅ Neural Engine: Available
+   🚀 Apple Silicon GPU optimized for ML workloads
+
+# AMD GPU (Linux/macOS)
+✅ GPU: AMD Radeon RX 7900 XTX
+   🔄 AMD GPU acceleration available
 ```
 
 ### **Issues Detected**

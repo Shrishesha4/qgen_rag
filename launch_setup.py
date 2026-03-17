@@ -330,14 +330,75 @@ def check_hardware_requirements():
         hardware_info["issues"].append("Less than 10GB free disk space - insufficient for installation")
     
     # Check GPU availability
+    system_name = platform.system()
+    
+    # Check for NVIDIA GPUs (Linux/Windows)
     try:
         result = subprocess.run(["nvidia-smi", "--query-gpu=name", "--format=csv,noheader"], 
                               capture_output=True, text=True, timeout=10)
         if result.returncode == 0:
             hardware_info["gpu_available"] = True
             hardware_info["gpu_info"] = result.stdout.strip().split('\n')[0]
+            hardware_info["gpu_type"] = "NVIDIA"
     except (subprocess.TimeoutExpired, subprocess.CalledProcessError, FileNotFoundError):
-        pass  # GPU not available
+        pass  # NVIDIA GPU not available
+    
+    # Check for Apple Silicon GPUs (macOS)
+    if not hardware_info["gpu_available"] and system_name == "Darwin":
+        try:
+            # Check for Apple Silicon GPU using system_profiler
+            result = subprocess.run(["system_profiler", "SPDisplaysDataType"], 
+                                  capture_output=True, text=True, timeout=10)
+            if result.returncode == 0:
+                output = result.stdout
+                # Look for Apple Silicon GPU information
+                if "Apple" in output and any(chip in output for chip in ["M1", "M2", "M3", "M4", "M5"]):
+                    # Extract GPU info
+                    lines = output.split('\n')
+                    gpu_name = "Unknown Apple Silicon"
+                    for line in lines:
+                        if "Chipset Model:" in line:
+                            gpu_name = line.split("Chipset Model:")[1].strip()
+                            break
+                    
+                    hardware_info["gpu_available"] = True
+                    hardware_info["gpu_info"] = gpu_name
+                    hardware_info["gpu_type"] = "Apple Silicon"
+                    
+                    # Check for Neural Engine
+                    if "Neural Engine" in output:
+                        hardware_info["neural_engine"] = True
+                    else:
+                        hardware_info["neural_engine"] = False
+        except (subprocess.TimeoutExpired, subprocess.CalledProcessError, FileNotFoundError):
+            pass  # system_profiler not available
+    
+    # Check for AMD GPUs (Linux/macOS)
+    if not hardware_info["gpu_available"]:
+        try:
+            # Try to detect AMD GPUs
+            if system_name == "Linux":
+                result = subprocess.run(["lspci", "|", "grep", "-i", "amd"], 
+                                      shell=True, capture_output=True, text=True, timeout=10)
+                if result.returncode == 0 and "VGA" in result.stdout:
+                    hardware_info["gpu_available"] = True
+                    hardware_info["gpu_info"] = "AMD GPU detected"
+                    hardware_info["gpu_type"] = "AMD"
+            elif system_name == "Darwin":
+                # Check for AMD GPUs on macOS
+                result = subprocess.run(["system_profiler", "SPDisplaysDataType"], 
+                                      capture_output=True, text=True, timeout=10)
+                if result.returncode == 0 and "AMD" in result.stdout:
+                    lines = result.stdout.split('\n')
+                    for line in lines:
+                        if "Chipset Model:" in line and "AMD" in line:
+                            gpu_name = line.split("Chipset Model:")[1].strip()
+                            hardware_info["gpu_available"] = True
+                            hardware_info["gpu_info"] = gpu_name
+                            hardware_info["gpu_type"] = "AMD"
+                            break
+        except (subprocess.TimeoutExpired, subprocess.CalledProcessError, FileNotFoundError):
+            pass  # AMD GPU detection failed
     
     return hardware_info
 
@@ -862,7 +923,22 @@ def launch_setup():
     print(f"✅ Disk Space: {hardware['disk_space_gb']:.1f}GB free")
     
     if hardware["gpu_available"]:
-        print(f"✅ GPU: {hardware['gpu_info']}")
+        gpu_info = hardware['gpu_info']
+        gpu_type = hardware.get('gpu_type', 'Unknown')
+        
+        if gpu_type == "Apple Silicon":
+            print(f"✅ GPU: {gpu_info}")
+            if hardware.get('neural_engine', False):
+                print(f"✅ Neural Engine: Available")
+            print(f"   🚀 Apple Silicon GPU optimized for ML workloads")
+        elif gpu_type == "NVIDIA":
+            print(f"✅ GPU: {gpu_info}")
+            print(f"   🎮 CUDA acceleration available")
+        elif gpu_type == "AMD":
+            print(f"✅ GPU: {gpu_info}")
+            print(f"   🔄 AMD GPU acceleration available")
+        else:
+            print(f"✅ GPU: {gpu_info}")
     else:
         warnings.append("⚠️  No GPU detected - CPU-only mode")
     
@@ -942,9 +1018,54 @@ def launch_setup():
     # Create virtual environment
     python_executable = create_virtual_environment()
     
+    # Install Python requirements in the virtual environment
+    print("📦 Installing Python requirements in virtual environment...")
+    requirements_file = Path(__file__).parent / "scripts" / "setup_requirements.txt"
+    
+    if requirements_file.exists():
+        try:
+            subprocess.run([python_executable, "-m", "pip", "install", "-r", str(requirements_file)], 
+                         check=True, capture_output=True, timeout=300)
+            print("✅ Python requirements installed in virtual environment")
+        except subprocess.CalledProcessError as e:
+            print(f"❌ Failed to install requirements in virtual environment: {e}")
+            print("Falling back to system Python packages...")
+            # Try to install individual packages
+            required_packages = [
+                "fastapi>=0.104.1",
+                "uvicorn>=0.24.0", 
+                "jinja2>=3.1.2",
+                "aiofiles>=23.2.1",
+                "psutil>=5.9.6"
+            ]
+            for package in required_packages:
+                try:
+                    subprocess.run([python_executable, "-m", "pip", "install", package], 
+                                 check=True, capture_output=True, timeout=120)
+                    print(f"✅ Installed {package}")
+                except subprocess.CalledProcessError:
+                    print(f"⚠️  Could not install {package}")
+    else:
+        # Install individual packages if requirements file doesn't exist
+        required_packages = [
+            "fastapi>=0.104.1",
+            "uvicorn>=0.24.0", 
+            "jinja2>=3.1.2",
+            "aiofiles>=23.2.1",
+            "psutil>=5.9.6"
+        ]
+        print("Installing required packages...")
+        for package in required_packages:
+            try:
+                subprocess.run([python_executable, "-m", "pip", "install", package], 
+                             check=True, capture_output=True, timeout=120)
+                print(f"✅ Installed {package}")
+            except subprocess.CalledProcessError:
+                print(f"⚠️  Could not install {package}")
+    
     # Find the setup script
     script_dir = Path(__file__).parent
-    setup_script = script_dir / "scripts" / "interactive_setup.py"
+    setup_script = script_dir / "scripts" / "customizable_wizard_setup.py"
     
     if not setup_script.exists():
         print("❌ Setup script not found")
