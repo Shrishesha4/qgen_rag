@@ -9,6 +9,8 @@ from typing import Optional, List, AsyncGenerator
 import uuid
 from datetime import datetime, timezone
 import re
+import logging
+from contextlib import asynccontextmanager
 
 from fastapi import APIRouter, Depends, HTTPException, status, Query, UploadFile, File, Form, Request
 from fastapi.responses import StreamingResponse
@@ -49,7 +51,14 @@ router = APIRouter()
 _BACKGROUND_GENERATION_TASKS: dict[str, asyncio.Task] = {}
 _BACKGROUND_GENERATION_STATUS: dict[str, dict] = {}
 _BACKGROUND_GENERATION_QUEUE: list[dict] = []  # Global queue for all users
+_QUEUE_PROCESSING_LOCK = asyncio.Lock()  # Prevent race conditions in queue processing
 _MAX_CONCURRENT_GENERATIONS = 2  # Max concurrent generations across all users
+_TASK_CLEANUP_INTERVAL = 300  # Clean up completed tasks every 5 minutes
+_QUEUE_PROCESSING_INTERVAL = 10  # Process queue every 10 seconds
+_MAX_RETRY_ATTEMPTS = 3  # Max retry attempts for failed queue items
+
+# Configure logging
+logger = logging.getLogger(__name__)
 
 
 def _bg_gen_task_key(user_id: uuid.UUID, subject_id: uuid.UUID) -> str:
@@ -57,15 +66,16 @@ def _bg_gen_task_key(user_id: uuid.UUID, subject_id: uuid.UUID) -> str:
 
 
 def _get_queue_position(user_id: uuid.UUID, subject_id: uuid.UUID) -> int:
-    """Get position in queue for this user/subject combination"""
+    """Get position in queue for this user/subject combination.
+    Returns 0 if not found, 1-based position if found."""
     for i, item in enumerate(_BACKGROUND_GENERATION_QUEUE):
         if item["user_id"] == user_id and item["subject_id"] == subject_id:
             return i + 1
-    return -1
+    return 0
 
 
 def _add_to_queue(user_id: uuid.UUID, subject_id: uuid.UUID, count: int, request_data: dict) -> int:
-    """Add to queue and return position"""
+    """Add to queue and return position (1-based)"""
     queue_item = {
         "user_id": user_id,
         "subject_id": subject_id,
@@ -73,8 +83,10 @@ def _add_to_queue(user_id: uuid.UUID, subject_id: uuid.UUID, count: int, request
         "request_data": request_data,
         "added_at": datetime.now(timezone.utc),
         "run_id": str(uuid.uuid4()),
+        "retry_count": 0,
     }
     _BACKGROUND_GENERATION_QUEUE.append(queue_item)
+    logger.info(f"Added to queue: user_id={user_id}, subject_id={subject_id}, position={len(_BACKGROUND_GENERATION_QUEUE)}")
     return len(_BACKGROUND_GENERATION_QUEUE)
 
 
@@ -86,39 +98,95 @@ def _get_next_from_queue() -> dict | None:
 
 
 def _get_current_running_count() -> int:
-    """Get count of currently running generations"""
+    """Get count of currently running generations and clean up completed tasks"""
     count = 0
-    for task in _BACKGROUND_GENERATION_TASKS.values():
-        if not task.done():
+    completed_tasks = []
+    
+    for key, task in _BACKGROUND_GENERATION_TASKS.items():
+        if task.done():
+            completed_tasks.append(key)
+        else:
             count += 1
+    
+    # Clean up completed tasks to prevent memory leak
+    for key in completed_tasks:
+        del _BACKGROUND_GENERATION_TASKS[key]
+        logger.debug(f"Cleaned up completed task: {key}")
+    
     return count
 
 
+def _cleanup_completed_tasks():
+    """Clean up all completed tasks from the task dictionary"""
+    completed_tasks = []
+    for key, task in _BACKGROUND_GENERATION_TASKS.items():
+        if task.done():
+            completed_tasks.append(key)
+    
+    for key in completed_tasks:
+        del _BACKGROUND_GENERATION_TASKS[key]
+        logger.debug(f"Cleaned up completed task: {key}")
+    
+    if completed_tasks:
+        logger.info(f"Cleaned up {len(completed_tasks)} completed tasks")
+
+
 async def _process_queue():
-    """Process queue when there's capacity"""
-    if _get_current_running_count() >= _MAX_CONCURRENT_GENERATIONS:
-        return
-    
-    next_item = _get_next_from_queue()
-    if not next_item:
-        return
-    
-    # Start the queued generation
-    try:
-        await _run_background_subject_generation(
-            user_id=next_item["user_id"],
-            subject_id=next_item["subject_id"],
-            count=next_item["count"],
-            types=next_item["request_data"]["types"],
-            difficulty=next_item["request_data"]["difficulty"],
-            run_id=next_item["run_id"],
-            topic_id=next_item["request_data"].get("topic_id"),
-            topic_ids=next_item["request_data"].get("topic_ids"),
-            allow_without_reference=next_item["request_data"].get("allow_without_reference", False),
-        )
-    except Exception as e:
-        # Log error and continue processing queue
-        print(f"Error processing queued generation: {e}")
+    """Process queue when there's capacity with proper locking to prevent race conditions"""
+    async with _QUEUE_PROCESSING_LOCK:
+        # Double-check capacity with lock held
+        current_running = _get_current_running_count()
+        if current_running >= _MAX_CONCURRENT_GENERATIONS:
+            logger.debug(f"Queue processing skipped: {current_running}/{_MAX_CONCURRENT_GENERATIONS} tasks running")
+            return
+        
+        next_item = _get_next_from_queue()
+        if not next_item:
+            logger.debug("Queue processing skipped: no items in queue")
+            return
+        
+        logger.info(f"Processing queue item: user_id={next_item['user_id']}, subject_id={next_item['subject_id']}, attempt={next_item.get('retry_count', 0) + 1}")
+        
+        # Start the queued generation
+        try:
+            await _run_background_subject_generation(
+                user_id=next_item["user_id"],
+                subject_id=next_item["subject_id"],
+                count=next_item["count"],
+                types=next_item["request_data"]["types"],
+                difficulty=next_item["request_data"]["difficulty"],
+                run_id=next_item["run_id"],
+                topic_id=next_item["request_data"].get("topic_id"),
+                topic_ids=next_item["request_data"].get("topic_ids"),
+                allow_without_reference=next_item["request_data"].get("allow_without_reference", False),
+            )
+            logger.info(f"Successfully started queued generation for user_id={next_item['user_id']}, subject_id={next_item['subject_id']}")
+        except Exception as e:
+            logger.error(f"Error processing queued generation for user_id={next_item['user_id']}, subject_id={next_item['subject_id']}: {e}")
+            
+            # Retry logic for failed queue items
+            retry_count = next_item.get("retry_count", 0)
+            if retry_count < _MAX_RETRY_ATTEMPTS:
+                next_item["retry_count"] = retry_count + 1
+                _BACKGROUND_GENERATION_QUEUE.insert(0, next_item)  # Put back at front of queue
+                logger.warning(f"Retrying queue item (attempt {retry_count + 1}/{_MAX_RETRY_ATTEMPTS}): user_id={next_item['user_id']}, subject_id={next_item['subject_id']}")
+            else:
+                logger.error(f"Queue item failed after {_MAX_RETRY_ATTEMPTS} attempts: user_id={next_item['user_id']}, subject_id={next_item['subject_id']}")
+                # Update status to show failure
+                task_key = _bg_gen_task_key(next_item["user_id"], next_item["subject_id"])
+                _BACKGROUND_GENERATION_STATUS[task_key] = {
+                    "in_progress": False,
+                    "run_id": next_item["run_id"],
+                    "status": "failed",
+                    "progress": 0,
+                    "current_question": 0,
+                    "total_questions": next_item["count"],
+                    "message": f"Failed after {_MAX_RETRY_ATTEMPTS} retry attempts: {str(e)}",
+                    "updated_at": datetime.now(timezone.utc).isoformat(),
+                }
+            
+            # Continue processing queue if there are more items
+            asyncio.create_task(_process_queue())
 
 
 async def _wait_for_subject_docs_ready(
@@ -461,6 +529,7 @@ async def _run_background_subject_generation(
                 "updated_at": datetime.now(timezone.utc).isoformat(),
                 "in_progress": False,
             }
+            logger.error(f"Background generation failed for task_key={task_key}: {error_message}")
         else:
             final_current_question = max(0, min(count, int(final_current_question or 0)))
             terminal_progress = 100 if final_current_question >= count else int((final_current_question / max(1, count)) * 100)
@@ -480,12 +549,41 @@ async def _run_background_subject_generation(
                 "updated_at": datetime.now(timezone.utc).isoformat(),
                 "in_progress": False,
             }
+            logger.info(f"Background generation completed for task_key={task_key}: {final_current_question}/{count} questions")
         
-        # Process queue after task completes
+        # Process queue after task completes (both success and error cases)
         asyncio.create_task(_process_queue())
         
         # Schedule cleanup after 60s so the frontend has time to poll the terminal status
         asyncio.create_task(_delayed_status_cleanup(task_key, delay_seconds=60.0))
+
+
+async def _periodic_cleanup():
+    """Periodic cleanup of completed tasks and queue processing"""
+    while True:
+        try:
+            # Clean up completed tasks
+            _cleanup_completed_tasks()
+            
+            # Process queue if there's capacity
+            await _process_queue()
+            
+            logger.debug("Periodic cleanup completed")
+        except Exception as e:
+            logger.error(f"Error in periodic cleanup: {e}")
+        
+        await asyncio.sleep(_TASK_CLEANUP_INTERVAL)
+
+
+# Start periodic cleanup when the module is loaded
+_cleanup_task = None
+
+def start_periodic_cleanup():
+    """Start the periodic cleanup task if not already running"""
+    global _cleanup_task
+    if _cleanup_task is None or _cleanup_task.done():
+        _cleanup_task = asyncio.create_task(_periodic_cleanup())
+        logger.info("Started periodic cleanup task")
 
 
 async def sse_with_heartbeat(
@@ -1127,6 +1225,8 @@ async def schedule_background_generation(
     db: AsyncSession = Depends(get_db),
 ):
     """Schedule server-side generation that can continue after the teacher leaves the page."""
+    # Start periodic cleanup if not already running
+    start_periodic_cleanup()
     valid_types = {"mcq", "short_answer", "long_answer"}
     type_list = [t.strip() for t in types.split(",") if t.strip()]
     if not type_list:

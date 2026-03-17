@@ -325,11 +325,21 @@
 
 				if (serverStatus) {
 					// Server has data - use it, but preserve some client-side state
+					const shouldPreserveCompleted = currentStatus?._completedAt && 
+						!serverStatus.in_progress && 
+						serverStatus.status === 'completed';
+					
 					updated[subjectId] = {
 						...serverStatus,
-						// Preserve client-side completed timestamp if it exists
-						_completedAt: currentStatus?._completedAt,
+						// Preserve client-side completed timestamp if server says completed but we had it first
+						_completedAt: shouldPreserveCompleted ? currentStatus._completedAt : undefined,
 					};
+					
+					// If we just preserved a completed state, set a timer to remove it
+					if (shouldPreserveCompleted && !updated[subjectId]._completedAt) {
+						updated[subjectId]._completedAt = nowMs;
+					}
+					
 					// Clear optimistic flag when we get server data
 					if (optimisticUpdates[subjectId]) {
 						delete optimisticUpdates[subjectId];
@@ -618,7 +628,7 @@
 			let optimisticStatus = 'scheduled';
 			
 			if (scheduleRes.status === 'queued') {
-				statusMessage = `Background generation queued for ${generateTargetSubject.name} (${count} questions). Position: ${scheduleRes.queue_position || '?'}.`;
+				statusMessage = `Background generation queued for ${generateTargetSubject.name} (${count} questions). Position: ${scheduleRes.queue_position ?? '?'}.`;
 				optimisticStatus = 'queued';
 			} else if (scheduleRes.status === 'already_running') {
 				statusMessage = `Background generation already running for ${generateTargetSubject.name}.`;
