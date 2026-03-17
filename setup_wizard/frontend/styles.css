@@ -668,6 +668,47 @@ html, body {
 ::-webkit-scrollbar-thumb { background: var(--border); border-radius: 3px; }
 ::-webkit-scrollbar-thumb:hover { background: var(--text-dim); }
 
+/* ---- Log Viewer ---- */
+.log-container {
+    background: var(--bg-code);
+    border: 1px solid var(--border);
+    border-radius: 8px;
+    max-height: 500px;
+    overflow: auto;
+}
+
+.log-output {
+    margin: 0;
+    padding: 16px;
+    font-family: 'SF Mono', Monaco, 'Cascadia Code', 'Roboto Mono', Consolas, 'Courier New', monospace;
+    font-size: 12px;
+    line-height: 1.5;
+    color: var(--text-primary);
+    white-space: pre-wrap;
+    word-wrap: break-word;
+    background: transparent;
+    border: none;
+    outline: none;
+}
+
+.log-output::-webkit-scrollbar {
+    width: 8px;
+    height: 8px;
+}
+
+.log-output::-webkit-scrollbar-track {
+    background: var(--bg-secondary);
+}
+
+.log-output::-webkit-scrollbar-thumb {
+    background: var(--border);
+    border-radius: 4px;
+}
+
+.log-output::-webkit-scrollbar-thumb:hover {
+    background: var(--text-dim);
+}
+
 /* ---- Responsive ---- */
 @media (max-width: 768px) {
     .wizard-header { padding: 0 16px; }

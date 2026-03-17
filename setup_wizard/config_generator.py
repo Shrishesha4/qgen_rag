@@ -78,6 +78,38 @@ DEFAULT_ENV = {
     "TRAINING_DATA_DIR": "./training_data",
     "LORA_ADAPTERS_DIR": "./lora_adapters",
     "TRAINING_BASE_MODEL": "deepseek-ai/DeepSeek-R1-Distill-Llama-1.7B",
+    # Docker Configuration (can be overridden by environment variables)
+    "DOCKER_ENABLED": "true",
+    "DOCKER_MODE": "development",
+    "DOCKER_COMPOSE_COMMAND": "docker compose",
+    "DOCKER_NETWORK_NAME": "qgen_net",
+    "DOCKER_DB_CONTAINER_NAME": "qgen_db",
+    "DOCKER_REDIS_CONTAINER_NAME": "qgen_redis",
+    "DOCKER_API_CONTAINER_NAME": "qgen_api",
+    "DOCKER_TRAINER_WEB_CONTAINER_NAME": "qgen_trainer",
+    "DOCKER_CLIENT_CONTAINER_NAME": "qgen_client",
+    "DOCKER_OLLAMA_CONTAINER_NAME": "qgen_ollama",
+    "DOCKER_POSTGRES_VOLUME_NAME": "qgen_postgres_data",
+    "DOCKER_REDIS_VOLUME_NAME": "qgen_redis_data",
+    "DOCKER_UPLOAD_VOLUME_NAME": "qgen_upload_data",
+    "DOCKER_MODEL_CACHE_VOLUME_NAME": "qgen_model_cache",
+    "DOCKER_OLLAMA_VOLUME_NAME": "qgen_ollama_data",
+    "DOCKER_DB_PORT": "5432",
+    "DOCKER_REDIS_PORT": "6379",
+    "DOCKER_API_PORT": "8000",
+    "DOCKER_TRAINER_WEB_PORT": "5173",
+    "DOCKER_CLIENT_PORT": "8081",
+    "DOCKER_OLLAMA_PORT": "11434",
+    "DOCKER_ENABLE_DB": "true",
+    "DOCKER_ENABLE_REDIS": "true",
+    "DOCKER_ENABLE_API": "true",
+    "DOCKER_ENABLE_TRAINER_WEB": "true",
+    "DOCKER_ENABLE_CLIENT": "true",
+    "DOCKER_ENABLE_OLLAMA": "false",
+    "DOCKER_DEV_HOT_RELOAD": "true",
+    "DOCKER_DEV_MOUNT_SOURCES": "true",
+    "DOCKER_PROD_WORKERS": "4",
+    "DOCKER_HEALTH_CHECK_ENABLED": "true",
 }
 
 # Environment variable metadata for the wizard UI
@@ -253,6 +285,61 @@ ENV_SCHEMA = [
              "tooltip": "HuggingFace model ID for the base model to fine-tune."},
         ],
     },
+    {
+        "group": "Docker Configuration",
+        "icon": "box",
+        "description": "Docker container and service configuration",
+        "vars": [
+            {"key": "DOCKER_ENABLED", "label": "Enable Docker", "type": "select",
+             "options": ["true", "false"], "tooltip": "Enable/disable Docker services"},
+            {"key": "DOCKER_MODE", "label": "Docker Mode", "type": "select",
+             "options": ["development", "production"], "tooltip": "Development (hot-reload) or production mode"},
+            {"key": "DOCKER_NETWORK_NAME", "label": "Docker Network", "type": "text",
+             "tooltip": "Docker network name for services"},
+            {"key": "DOCKER_DB_CONTAINER_NAME", "label": "DB Container Name", "type": "text",
+             "tooltip": "PostgreSQL container name"},
+            {"key": "DOCKER_REDIS_CONTAINER_NAME", "label": "Redis Container Name", "type": "text",
+             "tooltip": "Redis container name"},
+            {"key": "DOCKER_API_CONTAINER_NAME", "label": "API Container Name", "type": "text",
+             "tooltip": "FastAPI container name"},
+            {"key": "DOCKER_TRAINER_WEB_CONTAINER_NAME", "label": "Trainer Web Container Name", "type": "text",
+             "tooltip": "SvelteKit trainer web container name"},
+            {"key": "DOCKER_CLIENT_CONTAINER_NAME", "label": "Client Container Name", "type": "text",
+             "tooltip": "Expo React Native client container name"},
+            {"key": "DOCKER_POSTGRES_VOLUME_NAME", "label": "PostgreSQL Volume", "type": "text",
+             "tooltip": "PostgreSQL data volume name"},
+            {"key": "DOCKER_REDIS_VOLUME_NAME", "label": "Redis Volume", "type": "text",
+             "tooltip": "Redis data volume name"},
+            {"key": "DOCKER_UPLOAD_VOLUME_NAME", "label": "Upload Volume", "type": "text",
+             "tooltip": "File uploads volume name"},
+            {"key": "DOCKER_MODEL_CACHE_VOLUME_NAME", "label": "Model Cache Volume", "type": "text",
+             "tooltip": "ML model cache volume name"},
+            {"key": "DOCKER_DB_PORT", "label": "PostgreSQL Port", "type": "number",
+             "tooltip": "PostgreSQL port number"},
+            {"key": "DOCKER_REDIS_PORT", "label": "Redis Port", "type": "number",
+             "tooltip": "Redis port number"},
+            {"key": "DOCKER_API_PORT", "label": "API Port", "type": "number",
+             "tooltip": "FastAPI port number"},
+            {"key": "DOCKER_TRAINER_WEB_PORT", "label": "Trainer Web Port", "type": "number",
+             "tooltip": "SvelteKit trainer web port number"},
+            {"key": "DOCKER_CLIENT_PORT", "label": "Client Port", "type": "number",
+             "tooltip": "Expo React Native client port number"},
+            {"key": "DOCKER_ENABLE_DB", "label": "Enable PostgreSQL", "type": "select",
+             "options": ["true", "false"], "tooltip": "Enable PostgreSQL service"},
+            {"key": "DOCKER_ENABLE_REDIS", "label": "Enable Redis", "type": "select",
+             "options": ["true", "false"], "tooltip": "Enable Redis service"},
+            {"key": "DOCKER_ENABLE_API", "label": "Enable API", "type": "select",
+             "options": ["true", "false"], "tooltip": "Enable FastAPI service"},
+            {"key": "DOCKER_ENABLE_TRAINER_WEB", "label": "Enable Trainer Web", "type": "select",
+             "options": ["true", "false"], "tooltip": "Enable SvelteKit trainer web service"},
+            {"key": "DOCKER_ENABLE_CLIENT", "label": "Enable Client", "type": "select",
+             "options": ["true", "false"], "tooltip": "Enable Expo React Native client service"},
+            {"key": "DOCKER_DEV_HOT_RELOAD", "label": "Hot Reload (Dev)", "type": "select",
+             "options": ["true", "false"], "tooltip": "Enable hot-reload in development mode"},
+            {"key": "DOCKER_PROD_WORKERS", "label": "Production Workers", "type": "number",
+             "tooltip": "Number of Uvicorn workers in production mode"},
+        ],
+    },
 ]
 
 
@@ -348,22 +435,26 @@ def generate_docker_compose(
     custom_ports = docker_config.get("ports", {})
     custom_names = docker_config.get("container_names", {})
     custom_volumes = docker_config.get("volume_names", {})
-    custom_network = docker_config.get("network_name", "qgen_net")
+    custom_network = docker_config.get("network_name", env_values.get("DOCKER_NETWORK_NAME", "qgen_net"))
 
     pg_port = custom_ports.get("db", env_values.get("POSTGRES_PORT", "5432"))
     redis_port = custom_ports.get("redis", env_values.get("REDIS_PORT", "6379"))
     api_port = custom_ports.get("api", env_values.get("API_PORT", "8000"))
 
-    db_name = custom_names.get("db", "qgen_db")
-    redis_name = custom_names.get("redis", "qgen_redis")
-    api_name = custom_names.get("api", "qgen_api")
-    ollama_name = custom_names.get("ollama", "qgen_ollama")
+    db_name = custom_names.get("db", env_values.get("DOCKER_DB_CONTAINER_NAME", "qgen_db"))
+    redis_name = custom_names.get("redis", env_values.get("DOCKER_REDIS_CONTAINER_NAME", "qgen_redis"))
+    api_name = custom_names.get("api", env_values.get("DOCKER_API_CONTAINER_NAME", "qgen_api"))
+    ollama_name = custom_names.get("ollama", env_values.get("DOCKER_OLLAMA_CONTAINER_NAME", "qgen_ollama"))
+    
+    # Frontend ports (from env values)
+    trainer_port = "5173"  # Default Vite port for trainer-web
+    client_port = "8081"   # Default Expo port for client
 
-    postgres_vol = custom_volumes.get("postgres_data", "qgen_postgres_data")
-    redis_vol = custom_volumes.get("redis_data", "qgen_redis_data")
-    upload_vol = custom_volumes.get("upload_data", "qgen_upload_data")
-    model_vol = custom_volumes.get("model_cache", "qgen_model_cache")
-    ollama_vol = custom_volumes.get("ollama_data", "qgen_ollama_data")
+    postgres_vol = custom_volumes.get("postgres_data", env_values.get("DOCKER_POSTGRES_VOLUME_NAME", "qgen_postgres_data"))
+    redis_vol = custom_volumes.get("redis_data", env_values.get("DOCKER_REDIS_VOLUME_NAME", "qgen_redis_data"))
+    upload_vol = custom_volumes.get("upload_data", env_values.get("DOCKER_UPLOAD_VOLUME_NAME", "qgen_upload_data"))
+    model_vol = custom_volumes.get("model_cache", env_values.get("DOCKER_MODEL_CACHE_VOLUME_NAME", "qgen_model_cache"))
+    ollama_vol = custom_volumes.get("ollama_data", env_values.get("DOCKER_OLLAMA_VOLUME_NAME", "qgen_ollama_data"))
 
     lines = [
         "# Generated by QGen RAG Setup Wizard",
@@ -565,6 +656,57 @@ def generate_docker_compose(
             "        reservations:",
             "          memory: 1G",
             "",
+        ])
+
+    # ---- Trainer Web Service ----
+    if services_enabled.get("trainer_web", True):
+        trainer_name = custom_names.get("trainer_web", env_values.get("DOCKER_TRAINER_WEB_CONTAINER_NAME", "qgen_trainer"))
+        trainer_port = custom_ports.get("trainer_web", env_values.get("DOCKER_TRAINER_WEB_PORT", "5173"))
+        lines.extend([
+            "",
+            "  trainer_web:",
+            "    build:",
+            "      context: ./trainer-web",
+            "      dockerfile: Dockerfile",
+            "    container_name: " + trainer_name,
+            "    restart: unless-stopped",
+            "    environment:",
+            f'      - VITE_API_BASE=http://{api_name}:8000/api/v1',
+            "    volumes:",
+            "      - ./trainer-web:/app",
+            "      - /app/node_modules",
+            "    ports:",
+            f'      - "{trainer_port}:5173"',
+            "    networks:",
+            f"      - {custom_network}",
+            "    depends_on:",
+            f"      - {api_name}",
+        ])
+
+    # ---- Client Service ----
+    if services_enabled.get("client", True):
+        client_name = custom_names.get("client", env_values.get("DOCKER_CLIENT_CONTAINER_NAME", "qgen_client"))
+        client_port = custom_ports.get("client", env_values.get("DOCKER_CLIENT_PORT", "8081"))
+        lines.extend([
+            "",
+            "  client:",
+            "    build:",
+            "      context: ./client",
+            "      dockerfile: Dockerfile",
+            "    container_name: " + client_name,
+            "    restart: unless-stopped",
+            "    environment:",
+            f'      - EXPO_PUBLIC_API_BASE=http://{api_name}:8000/api/v1',
+            f'      - EXPO_PUBLIC_DEV_MACHINE_IP={env_values.get("DEV_MACHINE_IP", "localhost")}',
+            "    volumes:",
+            "      - ./client:/app",
+            "      - /app/node_modules",
+            "    ports:",
+            f'      - "{client_port}:8081"',
+            "    networks:",
+            f"      - {custom_network}",
+            "    depends_on:",
+            f"      - {api_name}",
         ])
 
     # ---- Volumes ----

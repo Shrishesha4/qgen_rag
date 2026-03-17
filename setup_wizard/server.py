@@ -35,7 +35,7 @@ class WizardState:
         self.docker_config: Dict[str, Any] = {
             "enabled": True,
             "mode": "development",
-            "services": {"db": True, "redis": True, "api": True, "ollama": False},
+            "services": {"db": True, "redis": True, "api": True, "trainer_web": True, "client": True, "ollama": False},
             "ports": {},
             "container_names": {},
             "volume_names": {},
@@ -160,6 +160,17 @@ class WizardRequestHandler(http.server.BaseHTTPRequestHandler):
             "/api/preview-env": self._api_preview_env,
             "/api/preview-compose": self._api_preview_compose,
         }
+        
+        # Handle logs endpoint with query parameters
+        if path.startswith("/api/logs"):
+            query_params = {}
+            if parsed.query:
+                for param in parsed.query.split("&"):
+                    if "=" in param:
+                        key, value = param.split("=", 1)
+                        query_params[key] = value
+            return self._api_logs(query_params)
+        
         handler = routes.get(path)
         if handler:
             return handler()
@@ -307,6 +318,48 @@ class WizardRequestHandler(http.server.BaseHTTPRequestHandler):
     def _api_generate_secret(self, body: Dict):
         length = body.get("length", 64)
         return self._send_json({"key": config_generator.generate_secret_key(length)})
+
+    def _api_logs(self, query_params: Dict[str, str]):
+        """Get logs from Docker services."""
+        import subprocess
+        import json
+        
+        service = query_params.get("service", "all")
+        lines = query_params.get("lines", "100")
+        
+        try:
+            # Get docker-compose command from config
+            compose_cmd = self.state.docker_config.get("compose_command", "docker compose")
+            
+            if service == "all":
+                # Get logs from all services
+                cmd = [compose_cmd, "logs", "--tail", lines, "--timestamps"]
+            else:
+                # Get logs from specific service
+                cmd = [compose_cmd, "logs", "--tail", lines, "--timestamps", service]
+            
+            # Change to project directory and run command
+            result = subprocess.run(
+                cmd,
+                cwd=self.state.project_root,
+                capture_output=True,
+                text=True,
+                timeout=30
+            )
+            
+            if result.returncode == 0:
+                logs = result.stdout
+                if not logs.strip():
+                    logs = "No logs available"
+            else:
+                logs = f"Error getting logs: {result.stderr}"
+                
+            return self._send_json({"logs": logs})
+            
+        except subprocess.TimeoutExpired:
+            return self._send_json({"logs": "Timeout while fetching logs"})
+        except Exception as e:
+            return self._send_json({"logs": f"Error: {str(e)}"})
 
     # --- Helpers ---
 

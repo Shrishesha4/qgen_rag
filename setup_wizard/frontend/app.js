@@ -9,7 +9,7 @@
 
 const STATE = {
     currentStep: 0,
-    totalSteps: 7,
+    totalSteps: 8,
     systemInfo: null,
     envValues: {},
     envSchema: [],
@@ -17,7 +17,7 @@ const STATE = {
     dockerConfig: {
         enabled: true,
         mode: 'development',
-        services: { db: true, redis: true, api: true, ollama: false },
+        services: { db: true, redis: true, api: true, trainer_web: true, client: true, ollama: false },
         ports: {},
         container_names: {},
         volume_names: {},
@@ -43,6 +43,7 @@ const STEPS = [
     { id: 'docker',    label: 'Docker',      icon: 'box' },
     { id: 'review',    label: 'Review',      icon: 'check-circle' },
     { id: 'install',   label: 'Install',     icon: 'download' },
+    { id: 'logs',      label: 'Logs',        icon: 'file-text' },
 ];
 
 // ---------------------------------------------------------------------------
@@ -257,6 +258,7 @@ function renderCurrentStep() {
         renderDocker,
         renderReview,
         renderInstall,
+        renderLogs,
     ];
     renderers[STATE.currentStep](container);
 }
@@ -616,6 +618,26 @@ function renderDocker(el) {
             </div>
             <div class="toggle-row">
                 <div class="toggle-info">
+                    <div class="toggle-label">Trainer Web (SvelteKit)</div>
+                    <div class="toggle-desc">Web interface for training pipeline with hot-reload</div>
+                </div>
+                <label class="toggle-switch">
+                    <input type="checkbox" data-docker-service="trainer_web" ${dc.services.trainer_web ? 'checked' : ''}>
+                    <span class="toggle-slider"></span>
+                </label>
+            </div>
+            <div class="toggle-row">
+                <div class="toggle-info">
+                    <div class="toggle-label">Client (Expo React Native)</div>
+                    <div class="toggle-desc">Mobile app development server with hot-reload</div>
+                </div>
+                <label class="toggle-switch">
+                    <input type="checkbox" data-docker-service="client" ${dc.services.client ? 'checked' : ''}>
+                    <span class="toggle-slider"></span>
+                </label>
+            </div>
+            <div class="toggle-row">
+                <div class="toggle-info">
                     <div class="toggle-label">Ollama (Docker)</div>
                     <div class="toggle-desc">Run Ollama in a container (local install recommended for GPU)</div>
                 </div>
@@ -656,6 +678,20 @@ function renderDocker(el) {
                 </div>
             </div>
             <div class="form-row">
+                <div class="form-group">
+                    <label class="form-label">Trainer Web Container Name</label>
+                    <input type="text" class="form-input" data-docker-key="container_name_trainer_web" value="${dc.container_names?.trainer_web || 'qgen_trainer'}" placeholder="qgen_trainer">
+                </div>
+                <div class="form-group">
+                    <label class="form-label">Client Container Name</label>
+                    <input type="text" class="form-input" data-docker-key="container_name_client" value="${dc.container_names?.client || 'qgen_client'}" placeholder="qgen_client">
+                </div>
+            </div>
+            <div class="form-row">
+                <div class="form-group">
+                    <label class="form-label">Ollama Container Name</label>
+                    <input type="text" class="form-input" data-docker-key="container_name_ollama" value="${dc.container_names?.ollama || 'qgen_ollama'}" placeholder="qgen_ollama">
+                </div>
                 <div class="form-group">
                     <label class="form-label">PostgreSQL Volume Name</label>
                     <input type="text" class="form-input" data-docker-key="volume_postgres" value="${dc.volume_names?.postgres_data || 'qgen_postgres_data'}" placeholder="qgen_postgres_data">
@@ -1093,6 +1129,94 @@ async function generateSecret(key) {
         input.value = data.key;
         input.type = 'text';
         STATE.envValues[key] = data.key;
+    }
+}
+
+// ---------------------------------------------------------------------------
+// Step 7: Logs
+// ---------------------------------------------------------------------------
+
+function renderLogs(el) {
+    el.innerHTML = `
+        <div class="card">
+            <div class="card-header">
+                <div class="card-icon blue">${getIconSvg('file-text')}</div>
+                <div>
+                    <div class="card-title">Service Logs</div>
+                    <div class="card-desc">Monitor real-time logs from all running services</div>
+                </div>
+            </div>
+        </div>
+
+        <div class="card">
+            <div class="card-header">
+                <div class="card-title">Log Controls</div>
+            </div>
+            <div class="form-row">
+                <div class="form-group">
+                    <label class="form-label">Service</label>
+                    <select id="logServiceSelect" class="form-select">
+                        <option value="all">All Services (Combined)</option>
+                        <option value="db">PostgreSQL (db)</option>
+                        <option value="redis">Redis (redis)</option>
+                        <option value="api">API Server (api)</option>
+                        <option value="trainer_web">Trainer Web (trainer_web)</option>
+                        <option value="client">Client (client)</option>
+                        <option value="ollama">Ollama (ollama)</option>
+                    </select>
+                </div>
+                <div class="form-group">
+                    <label class="form-label">Lines</label>
+                    <select id="logLinesSelect" class="form-select">
+                        <option value="50">Last 50 lines</option>
+                        <option value="100">Last 100 lines</option>
+                        <option value="200">Last 200 lines</option>
+                        <option value="500">Last 500 lines</option>
+                        <option value="follow">Follow (Live)</option>
+                    </select>
+                </div>
+                <div class="form-group">
+                    <label class="form-label">&nbsp;</label>
+                    <button onclick="refreshLogs()" class="btn btn-primary">
+                        ${getIconSvg('search')} Refresh
+                    </button>
+                </div>
+            </div>
+        </div>
+
+        <div class="card">
+            <div class="card-header">
+                <div class="card-title">Log Output</div>
+                <div id="logStatus" class="card-desc">Select a service and click refresh to view logs</div>
+            </div>
+            <div class="log-container">
+                <pre id="logOutput" class="log-output"></pre>
+            </div>
+        </div>
+    `;
+}
+
+async function refreshLogs() {
+    const service = document.getElementById('logServiceSelect').value;
+    const lines = document.getElementById('logLinesSelect').value;
+    const output = document.getElementById('logOutput');
+    const status = document.getElementById('logStatus');
+    
+    status.textContent = 'Fetching logs...';
+    output.textContent = '';
+    
+    try {
+        const response = await apiGet(`logs?service=${service}&lines=${lines}`);
+        if (response.logs) {
+            output.textContent = response.logs;
+            status.textContent = `Showing logs for ${service === 'all' ? 'all services' : service}`;
+        } else {
+            output.textContent = 'No logs available';
+            status.textContent = 'No logs found';
+        }
+    } catch (error) {
+        output.textContent = `Error fetching logs: ${error.message}`;
+        status.textContent = 'Failed to fetch logs';
     }
 }
 

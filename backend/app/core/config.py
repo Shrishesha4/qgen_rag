@@ -140,6 +140,81 @@ class Settings(BaseSettings):
     LORA_ADAPTERS_DIR: str = Field(default="./lora_adapters")
     TRAINING_BASE_MODEL: str = Field(default="deepseek-ai/DeepSeek-R1-Distill-Llama-1.7B")
 
+    # Docker Configuration
+    DOCKER_ENABLED: bool = Field(default=True)
+    DOCKER_MODE: str = Field(default="development")  # development | production
+    DOCKER_COMPOSE_COMMAND: str = Field(default="docker compose")
+    
+    # Docker Network Configuration
+    DOCKER_NETWORK_NAME: str = Field(default="qgen_net")
+    
+    # Docker Container Names
+    DOCKER_DB_CONTAINER_NAME: str = Field(default="qgen_db")
+    DOCKER_REDIS_CONTAINER_NAME: str = Field(default="qgen_redis")
+    DOCKER_API_CONTAINER_NAME: str = Field(default="qgen_api")
+    DOCKER_TRAINER_WEB_CONTAINER_NAME: str = Field(default="qgen_trainer")
+    DOCKER_CLIENT_CONTAINER_NAME: str = Field(default="qgen_client")
+    DOCKER_OLLAMA_CONTAINER_NAME: str = Field(default="qgen_ollama")
+    
+    # Docker Volume Names
+    DOCKER_POSTGRES_VOLUME_NAME: str = Field(default="qgen_postgres_data")
+    DOCKER_REDIS_VOLUME_NAME: str = Field(default="qgen_redis_data")
+    DOCKER_UPLOAD_VOLUME_NAME: str = Field(default="qgen_upload_data")
+    DOCKER_MODEL_CACHE_VOLUME_NAME: str = Field(default="qgen_model_cache")
+    DOCKER_OLLAMA_VOLUME_NAME: str = Field(default="qgen_ollama_data")
+    
+    # Docker Service Ports
+    DOCKER_DB_PORT: int = Field(default=5432)
+    DOCKER_REDIS_PORT: int = Field(default=6379)
+    DOCKER_API_PORT: int = Field(default=8000)
+    DOCKER_TRAINER_WEB_PORT: int = Field(default=5173)
+    DOCKER_CLIENT_PORT: int = Field(default=8081)
+    DOCKER_OLLAMA_PORT: int = Field(default=11434)
+    
+    # Docker Services Control
+    DOCKER_ENABLE_DB: bool = Field(default=True)
+    DOCKER_ENABLE_REDIS: bool = Field(default=True)
+    DOCKER_ENABLE_API: bool = Field(default=True)
+    DOCKER_ENABLE_TRAINER_WEB: bool = Field(default=True)
+    DOCKER_ENABLE_CLIENT: bool = Field(default=True)
+    DOCKER_ENABLE_OLLAMA: bool = Field(default=False)
+    
+    # Docker Development Settings
+    DOCKER_DEV_HOT_RELOAD: bool = Field(default=True)
+    DOCKER_DEV_MOUNT_SOURCES: bool = Field(default=True)
+    DOCKER_DEV_DEBUG_MODE: bool = Field(default=False)
+    
+    # Docker Production Settings
+    DOCKER_PROD_WORKERS: int = Field(default=4)
+    DOCKER_PROD_MAX_REQUESTS: int = Field(default=1000)
+    DOCKER_PROD_MAX_REQUESTS_JITTER: int = Field(default=100)
+    
+    # Docker Resource Limits
+    DOCKER_DB_MEMORY_LIMIT: str = Field(default="2G")
+    DOCKER_DB_MEMORY_RESERVATION: str = Field(default="512M")
+    DOCKER_REDIS_MEMORY_LIMIT: str = Field(default="512M")
+    DOCKER_REDIS_MEMORY_RESERVATION: str = Field(default="128M")
+    DOCKER_API_MEMORY_LIMIT: str = Field(default="4G")
+    DOCKER_API_MEMORY_RESERVATION: str = Field(default="1G")
+    
+    # Docker Health Check Settings
+    DOCKER_HEALTH_CHECK_ENABLED: bool = Field(default=True)
+    DOCKER_HEALTH_CHECK_INTERVAL: int = Field(default=10)  # seconds
+    DOCKER_HEALTH_CHECK_TIMEOUT: int = Field(default=5)   # seconds
+    DOCKER_HEALTH_CHECK_RETRIES: int = Field(default=5)
+    DOCKER_HEALTH_CHECK_START_PERIOD: int = Field(default=10)  # seconds
+    
+    # Frontend Development Settings
+    FRONTEND_DEV_SERVER_HOST: str = Field(default="0.0.0.0")
+    FRONTEND_DEV_AUTO_OPEN_BROWSER: bool = Field(default=False)
+    FRONTEND_DEV_HMR_OVERLAY: bool = Field(default=True)
+    
+    # Mobile Client Development
+    MOBILE_DEV_USE_SIMULATOR: bool = Field(default=False)
+    MOBILE_DEV_MACHINE_IP: str = Field(default="localhost")
+    MOBILE_DEV_PRODUCTION_API_URL: str = Field(default="")
+    MOBILE_DEV_USE_PRODUCTION_API: bool = Field(default=False)
+
     class Config:
         # Load .env first (dev defaults), then .env.local overrides (secrets).
         # Actual environment variables always take highest priority.
