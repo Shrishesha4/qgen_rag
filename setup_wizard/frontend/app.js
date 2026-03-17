@@ -641,13 +641,14 @@ function renderDocker(el) {
                 </div>
                 <div class="form-group">
                     <label class="form-label">DB Container Name</label>
-                    <input type="text" class="form-input" data-docker-key="container_name_db" value="${dc.container_names?.db || 'qgen_db'}" placeholder="qgen_db">
+                    <input type="text" class="form-input" data-docker-key="container_name_db" value="${dc.container_names?.db || 'qgen_db'}" placeholder="qgen_db" onchange="syncContainerToEnv('db', this.value)">
+                    <div class="form-hint">Changing this will auto-update the database name (POSTGRES_DB)</div>
                 </div>
             </div>
             <div class="form-row">
                 <div class="form-group">
                     <label class="form-label">Redis Container Name</label>
-                    <input type="text" class="form-input" data-docker-key="container_name_redis" value="${dc.container_names?.redis || 'qgen_redis'}" placeholder="qgen_redis">
+                    <input type="text" class="form-input" data-docker-key="container_name_redis" value="${dc.container_names?.redis || 'qgen_redis'}" placeholder="qgen_redis" onchange="syncContainerToEnv('redis', this.value)">
                 </div>
                 <div class="form-group">
                     <label class="form-label">API Container Name</label>
@@ -1054,6 +1055,20 @@ function escapeHtml(str) {
     const div = document.createElement('div');
     div.textContent = str;
     return div.innerHTML;
+}
+
+function syncContainerToEnv(service, containerName) {
+    // Auto-update environment variables when container names change
+    if (service === 'db') {
+        // Update POSTGRES_DB to match container name (optional convention)
+        const dbField = document.querySelector('[data-env-key="POSTGRES_DB"]');
+        if (dbField && !dbField.value.includes('_db')) {
+            // Only update if it's a default value
+            dbField.value = containerName.replace(/_container$/, '').replace(/_db$/, '') + '_db';
+            STATE.envValues['POSTGRES_DB'] = dbField.value;
+        }
+    }
+    // Note: Redis and API don't have corresponding env vars that typically match container names
 }
 
 function escapeAttr(str) {
