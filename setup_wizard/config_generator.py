@@ -124,13 +124,13 @@ ENV_SCHEMA = [
         "description": "PostgreSQL with pgvector for vector similarity search",
         "vars": [
             {"key": "POSTGRES_USER", "label": "Database User", "type": "text",
-             "tooltip": "PostgreSQL username for the application database.", "advanced": false, "recommended": "qgen_user"},
+             "tooltip": "PostgreSQL username for the application database.", "advanced": False, "recommended": "qgen_user"},
             {"key": "POSTGRES_PASSWORD", "label": "Database Password", "type": "password",
-             "tooltip": "PostgreSQL password. Use a strong password in production.", "advanced": false, "recommended": "change-in-production"},
+             "tooltip": "PostgreSQL password. Use a strong password in production.", "advanced": False, "recommended": "change-in-production"},
             {"key": "POSTGRES_DB", "label": "Database Name", "type": "text",
-             "tooltip": "Name of the PostgreSQL database to create/use.", "advanced": false, "recommended": "qgen_db"},
+             "tooltip": "Name of the PostgreSQL database to create/use.", "advanced": False, "recommended": "qgen_db"},
             {"key": "POSTGRES_PORT", "label": "PostgreSQL Port", "type": "number",
-             "tooltip": "Port for PostgreSQL. Default 5432.", "advanced": true, "recommended": "5432"},
+             "tooltip": "Port for PostgreSQL. Default 5432.", "advanced": True, "recommended": "5432"},
         ],
     },
     {
@@ -139,7 +139,7 @@ ENV_SCHEMA = [
         "description": "Redis for caching, sessions, and rate limiting",
         "vars": [
             {"key": "REDIS_PORT", "label": "Redis Port", "type": "number",
-             "tooltip": "Port for Redis server. Default 6379.", "advanced": true, "recommended": "6379"},
+             "tooltip": "Port for Redis server. Default 6379.", "advanced": True, "recommended": "6379"},
         ],
     },
     {
