@@ -168,6 +168,8 @@
 		if (bgSubjectRefreshTimer) { clearInterval(bgSubjectRefreshTimer); bgSubjectRefreshTimer = null; }
 	});
 
+	const optimisticUpdates = $state<Record<string, boolean>>({});
+
 	function getSubjectBgStatus(subjectId: string): BackgroundGenerationStatusItem | null {
 		return bgStatusBySubject[subjectId] ?? null;
 	}
@@ -182,12 +184,24 @@
 			const next: Record<string, BackgroundGenerationStatusItem> = {};
 			for (const [subjectId, status] of Object.entries(parsed)) {
 				const ts = status.updated_at ? Date.parse(status.updated_at) : 0;
-				if (!status.in_progress) continue;
-				if (!Number.isFinite(ts) || now - ts > BG_STATUS_CACHE_TTL_MS) continue;
-				next[subjectId] = status;
+				// Keep in-progress statuses regardless of age (they'll be validated by server)
+				// Also keep completed statuses that were recently completed (within last 5 minutes)
+				const isCompleted = !status.in_progress && status._completedAt;
+				const isRecentCompleted = isCompleted && (now - (status._completedAt || 0)) < 300000; // 5 minutes
+				if (status.in_progress || isRecentCompleted) {
+					if (Number.isFinite(ts)) {
+						next[subjectId] = status;
+					}
+				}
 			}
+			console.log('[bg-gen] Loaded cached statuses', {
+				totalCached: Object.keys(parsed).length,
+				keptInProgress: Object.keys(next).filter(id => next[id].in_progress).length,
+				keptRecentCompleted: Object.keys(next).filter(id => !next[id].in_progress).length,
+			});
 			return next;
-		} catch {
+		} catch (error) {
+			console.warn('[bg-gen] Failed to load cached statuses', error);
 			return {};
 		}
 	}
@@ -207,21 +221,26 @@
 
 		const startedTotal = status.started_total_questions ?? null;
 		const targetTotal = status.target_total_questions ?? null;
+		
+		// For active generation, show task progress (current/total_for_this_task) rather than absolute totals
+		// This is more intuitive when user requests X questions - they want to see X/X, not (existing+X)/(existing+X)
+		const total = status.total_questions ?? null;
+		if (total !== null && total > 0) {
+			const current = Math.max(0, status.current_question || 0);
+			return `${current}/${total}`;
+		}
+		
+		// Fallback: use absolute counting when we have target/started totals but no task total
 		if (startedTotal !== null && targetTotal !== null && targetTotal > startedTotal) {
-			const taskTotal = Math.max(1, status.total_questions ?? (targetTotal - startedTotal));
+			const taskTotal = targetTotal - startedTotal;
 			const generatedCurrent = Math.max(0, status.current_question || 0);
 			const taskCurrent = Math.min(taskTotal, generatedCurrent);
-			const absoluteCurrent = Math.min(targetTotal, startedTotal + taskCurrent);
-			return `${absoluteCurrent}/${targetTotal}`;
+			return `${taskCurrent}/${taskTotal}`;
 		}
-
-		const total = status.total_questions ?? null;
-		if (!total || total <= 0) {
-			const current = Math.max(0, status.current_question || 0);
-			return `${current}/n`;
-		}
-		const generatedCurrent = Math.max(0, status.current_question || 0);
-		return `${generatedCurrent}/${total}`;
+		
+		// Edge case: no total yet, show just current with '?' placeholder
+		const current = Math.max(0, status.current_question || 0);
+		return current > 0 ? `${current}/?` : '0/?';
 	}
 
 	function getBgProgress(subjectId: string): number {
@@ -242,6 +261,7 @@
 		if (!status || !status.in_progress) return '';
 		const state = (status.status || '').toLowerCase();
 		if (state === 'waiting_for_documents') return 'Waiting for docs';
+		if (state === 'queued') return `Queued #${status.message?.match(/position (\d+)/)?.[1] || '?'}`;
 		if (state === 'scheduled') return 'Scheduled';
 		if (state === 'processing') return 'Preparing';
 		if (state === 'error' || state === 'failed') return 'Generation failed';
@@ -271,6 +291,7 @@
 				const cached = readCachedBgStatuses();
 				if (Object.keys(cached).length > 0) {
 					bgStatusBySubject = cached;
+					console.log('[bg-gen] Loaded cached statuses for subjects', Object.keys(cached));
 				}
 			}
 
@@ -278,145 +299,81 @@
 			const live = res.statuses || {};
 			const subjectTotalById = Object.fromEntries(subjects.map((s) => [s.id, s.total_questions]));
 
-			// Snapshot what was previously in-progress (before any state change)
-			const wasInProgress = new Set(
-				subjectIds.filter((id) => bgStatusBySubject[id]?.in_progress)
-			);
+			console.log('[bg-gen] Polling statuses', {
+				subjectCount: subjectIds.length,
+				wasInProgressCount: Object.keys(bgStatusBySubject).filter(id => bgStatusBySubject[id]?.in_progress).length,
+				liveStatusCount: Object.keys(live).length,
+				optimisticCount: Object.keys(optimisticUpdates).length,
+			});
 
-			// --- Additive merge: keep current state, update from server ---
+			// Simple, robust state update strategy
 			const updated: Record<string, BackgroundGenerationStatusItem> = { ...bgStatusBySubject };
-			const nextMisses: Record<string, number> = { ...bgMissCountBySubject };
 			const nowMs = Date.now();
+			
+			// Track state changes before updating
+			const wasInProgressCount = Object.keys(bgStatusBySubject).filter(id => bgStatusBySubject[id]?.in_progress).length;
 
 			for (const subjectId of subjectIds) {
-				// Auto-dismiss completed indicators after 3s of visibility
-				if (updated[subjectId]?._completedAt && nowMs - updated[subjectId]._completedAt > 3000) {
-					delete updated[subjectId];
-					// Don't continue — let this fall through so completedIds picks it up
-				}
-
 				const serverStatus = live[subjectId];
-				const priorStatus = updated[subjectId] || bgStatusBySubject[subjectId];
-				const priorRunId = priorStatus?.run_id || null;
-				const serverRunId = serverStatus?.run_id || null;
+				const currentStatus = updated[subjectId];
+
+				// Handle completed indicators - auto dismiss after 3 seconds
+				if (currentStatus?._completedAt && nowMs - currentStatus._completedAt > 3000) {
+					delete updated[subjectId];
+					continue;
+				}
 
 				if (serverStatus) {
-					nextMisses[subjectId] = 0;
-
-					if (
-						priorStatus?.in_progress &&
-						priorRunId &&
-						serverRunId &&
-						priorRunId !== serverRunId &&
-						!serverStatus.in_progress
-					) {
-						// Ignore stale terminal payloads from a different run/worker snapshot.
-						continue;
+					// Server has data - use it, but preserve some client-side state
+					updated[subjectId] = {
+						...serverStatus,
+						// Preserve client-side completed timestamp if it exists
+						_completedAt: currentStatus?._completedAt,
+					};
+					// Clear optimistic flag when we get server data
+					if (optimisticUpdates[subjectId]) {
+						delete optimisticUpdates[subjectId];
 					}
-
-					if (serverStatus.in_progress) {
-						// Server says still in-progress — merge with prior so partial
-						// payloads don't wipe totals/run_id and cause 0/n flicker.
-						updated[subjectId] = {
-							...(priorStatus || {}),
-							...serverStatus,
-							in_progress: true,
-							run_id: serverStatus.run_id || priorRunId || undefined,
-							total_questions:
-								serverStatus.total_questions ?? priorStatus?.total_questions ?? undefined,
-							started_total_questions:
-								serverStatus.started_total_questions ?? priorStatus?.started_total_questions ?? undefined,
-							target_total_questions:
-								serverStatus.target_total_questions ?? priorStatus?.target_total_questions ?? undefined,
-						};
-					} else {
-						const targetTotal = (priorStatus?.target_total_questions ?? serverStatus.target_total_questions) ?? null;
-						const currentSubjectTotal = Number(subjectTotalById[subjectId] ?? 0);
-						const terminalReachedTarget = targetTotal !== null && currentSubjectTotal >= targetTotal;
-						const terminalLooksComplete =
-							(serverStatus.status || '').toLowerCase() === 'completed' &&
-							Number(serverStatus.progress || 0) >= 100 &&
-							Number(serverStatus.current_question || 0) >= Number(serverStatus.total_questions || 0);
-
-						const sameRunTerminal =
-							!priorStatus?.in_progress ||
-							!priorRunId ||
-							(serverRunId && priorRunId === serverRunId);
-
-						if ((terminalReachedTarget || terminalLooksComplete) && sameRunTerminal) {
-							// Keep a brief "completed" indicator so the user sees the transition
-							updated[subjectId] = {
-								...(priorStatus || {}),
-								...serverStatus,
-								in_progress: true,
-								status: 'completed',
-								progress: 100,
-								_completedAt: updated[subjectId]?._completedAt || nowMs,
-							};
-						} else if (priorStatus?.in_progress) {
-							// Keep active indicator unless completion is strongly confirmed.
-							// Also guard recent runs (within 2 min) against transient server gaps.
-							const priorUpdatedAtMs = priorStatus?.updated_at ? Date.parse(priorStatus.updated_at) : 0;
-							const elapsedSinceStart = Number.isFinite(priorUpdatedAtMs) ? nowMs - priorUpdatedAtMs : 0;
-							if (elapsedSinceStart < 120_000) {
-								continue;
-							}
-							// If more than 2 minutes and server says done, trust the server
-							delete updated[subjectId];
-						} else {
-							delete updated[subjectId];
-						}
-					}
-				} else if (wasInProgress.has(subjectId)) {
-					const priorStatus = bgStatusBySubject[subjectId];
-					const updatedAtMs = priorStatus?.updated_at ? Date.parse(priorStatus.updated_at) : 0;
-					const ageMs = Number.isFinite(updatedAtMs) ? nowMs - updatedAtMs : Number.POSITIVE_INFINITY;
-					const missCount = (nextMisses[subjectId] || 0) + 1;
-					nextMisses[subjectId] = missCount;
-
-					const targetTotal = priorStatus?.target_total_questions ?? null;
-					const currentSubjectTotal = Number(subjectTotalById[subjectId] ?? 0);
-					if (targetTotal !== null && currentSubjectTotal >= targetTotal) {
+				} else if (currentStatus?.in_progress) {
+					// Server has no data but we have an in-progress status
+					// Keep it unless it's very old or completed
+					const ageMs = currentStatus.updated_at ? nowMs - Date.parse(currentStatus.updated_at) : 0;
+					
+					// Remove if it's completed (no longer in_progress on server) and old enough
+					if (!optimisticUpdates[subjectId] && ageMs > 30000) { // 30 seconds for non-optimistic
+						console.log('[bg-gen] Removing old in-progress status', { subjectId, ageMs });
 						delete updated[subjectId];
-						delete nextMisses[subjectId];
-						continue;
 					}
-
-					// Keep active indicator through app close/reopen and transient backend gaps.
-					if (ageMs <= BG_STATUS_CACHE_TTL_MS) {
-						continue;
+					// Keep optimistic updates for longer (5 minutes)
+					else if (optimisticUpdates[subjectId] && ageMs > 300000) { // 5 minutes
+						console.log('[bg-gen] Removing old optimistic status', { subjectId, ageMs });
+						delete updated[subjectId];
+						delete optimisticUpdates[subjectId];
 					}
-
-					console.warn('[bg-gen] Dropping stale in-progress indicator after repeated missing polls', {
-						subjectId,
-						missCount,
-						ageMs,
-						lastStatus: priorStatus,
-						liveStatusKeys: Object.keys(live),
-					});
-					delete updated[subjectId];
-					delete nextMisses[subjectId];
 				}
-				// If server returned nothing AND it wasn't previously in-progress,
-				// don't touch it (could be fresh optimistic entry from scheduling).
+				// If no server status and no current status, do nothing
 			}
 
 			// Single atomic state update
 			bgStatusBySubject = updated;
-			bgMissCountBySubject = nextMisses;
 			writeCachedBgStatuses(updated);
 
-			// Defer subject data refreshes for completed generations
-			const completedIds = [...wasInProgress].filter((id) => !updated[id]);
-			if (completedIds.length > 0) {
-				setTimeout(() => {
-					for (const id of completedIds) {
-						void refreshSubject(id);
-					}
-				}, 200);
+			const nowInProgressCount = Object.keys(updated).filter(id => updated[id]?.in_progress).length;
+			console.log('[bg-gen] Status update complete', {
+				nowInProgressCount,
+				wasInProgressCount,
+				optimisticRemaining: Object.keys(optimisticUpdates).length,
+			});
+
+			// Restart polling if state changed significantly (e.g., new in-progress started)
+			if (nowInProgressCount !== wasInProgressCount) {
+				console.log('[bg-gen] State changed, restarting polling');
+				ensureBackgroundStatusPolling();
 			}
-		} catch {
-			// best-effort polling only — keep existing state to avoid flicker
+
+		} catch (error) {
+			console.error('[bg-gen] Error refreshing statuses', error);
+			// Keep existing state on error to avoid flicker
 		} finally {
 			bgPolling = false;
 		}
@@ -426,9 +383,15 @@
 		clearBackgroundStatusPolling();
 		if (bgSubjectRefreshTimer) { clearInterval(bgSubjectRefreshTimer); bgSubjectRefreshTimer = null; }
 		if (!subjects.length) return;
+		
+		// Poll more frequently when we have in-progress indicators
+		const hasInProgress = Object.keys(bgStatusBySubject).some(id => bgStatusBySubject[id]?.in_progress);
+		const pollInterval = hasInProgress ? 2000 : 3500; // 2 seconds when active, 3.5 seconds when idle
+		
 		bgStatusPollTimer = setInterval(() => {
 			void refreshBackgroundStatuses();
-		}, 3500);
+		}, pollInterval);
+		
 		// Separate timer for live question count refresh — every 10s
 		bgSubjectRefreshTimer = setInterval(() => {
 			for (const [subjectId, status] of Object.entries(bgStatusBySubject)) {
@@ -437,6 +400,8 @@
 				}
 			}
 		}, 10000);
+		
+		console.log('[bg-gen] Started polling', { pollInterval, hasInProgress });
 	}
 
 	function allReferenceDocs() {
@@ -648,24 +613,39 @@
 				topicId: topicScoped || (selectedTopicIds.length === 1 ? selectedTopicIds[0] : undefined),
 				topicIds: !topicScoped && selectedTopicIds.length > 1 ? selectedTopicIds : undefined,
 			});
+			// Handle different response statuses
+			let statusMessage = '';
+			let optimisticStatus = 'scheduled';
+			
+			if (scheduleRes.status === 'queued') {
+				statusMessage = `Background generation queued for ${generateTargetSubject.name} (${count} questions). Position: ${scheduleRes.queue_position || '?'}.`;
+				optimisticStatus = 'queued';
+			} else if (scheduleRes.status === 'already_running') {
+				statusMessage = `Background generation already running for ${generateTargetSubject.name}.`;
+				optimisticStatus = 'generating';
+			} else {
+				statusMessage = `Background generation started for ${generateTargetSubject.name} (${count} questions). You can vet later.`;
+			}
+			
 			const optimistic = {
 				...bgStatusBySubject,
 				[generateTargetSubject.id]: {
 					in_progress: true,
 					run_id: scheduleRes.run_id || `${Date.now()}-${generateTargetSubject.id}`,
-					status: 'scheduled',
-					progress: 1,
+					status: optimisticStatus,
+					progress: optimisticStatus === 'queued' ? 0 : 1,
 					current_question: 0,
 					total_questions: count,
 					started_total_questions: generateTargetSubject.total_questions,
 					target_total_questions: generateTargetSubject.total_questions + count,
-					message: 'Background generation scheduled',
+					message: scheduleRes.message || 'Background generation scheduled',
 					updated_at: new Date().toISOString(),
 				},
 			};
 			bgStatusBySubject = optimistic;
+			optimisticUpdates[generateTargetSubject.id] = true;
 			writeCachedBgStatuses(optimistic);
-			generateModeSuccess = `Background generation started for ${generateTargetSubject.name} (${count} questions). You can vet later.`;
+			generateModeSuccess = statusMessage;
 			closeGenerateModeModal(true);
 		} catch (e: unknown) {
 			generateModeError = e instanceof Error ? e.message : 'Failed to schedule background generation';

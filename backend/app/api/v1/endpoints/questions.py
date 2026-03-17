@@ -48,10 +48,77 @@ MIME_TYPE_MAPPING = {
 router = APIRouter()
 _BACKGROUND_GENERATION_TASKS: dict[str, asyncio.Task] = {}
 _BACKGROUND_GENERATION_STATUS: dict[str, dict] = {}
+_BACKGROUND_GENERATION_QUEUE: list[dict] = []  # Global queue for all users
+_MAX_CONCURRENT_GENERATIONS = 2  # Max concurrent generations across all users
 
 
 def _bg_gen_task_key(user_id: uuid.UUID, subject_id: uuid.UUID) -> str:
     return f"{user_id}:{subject_id}"
+
+
+def _get_queue_position(user_id: uuid.UUID, subject_id: uuid.UUID) -> int:
+    """Get position in queue for this user/subject combination"""
+    for i, item in enumerate(_BACKGROUND_GENERATION_QUEUE):
+        if item["user_id"] == user_id and item["subject_id"] == subject_id:
+            return i + 1
+    return -1
+
+
+def _add_to_queue(user_id: uuid.UUID, subject_id: uuid.UUID, count: int, request_data: dict) -> int:
+    """Add to queue and return position"""
+    queue_item = {
+        "user_id": user_id,
+        "subject_id": subject_id,
+        "count": count,
+        "request_data": request_data,
+        "added_at": datetime.now(timezone.utc),
+        "run_id": str(uuid.uuid4()),
+    }
+    _BACKGROUND_GENERATION_QUEUE.append(queue_item)
+    return len(_BACKGROUND_GENERATION_QUEUE)
+
+
+def _get_next_from_queue() -> dict | None:
+    """Get next item from queue"""
+    if not _BACKGROUND_GENERATION_QUEUE:
+        return None
+    return _BACKGROUND_GENERATION_QUEUE.pop(0)
+
+
+def _get_current_running_count() -> int:
+    """Get count of currently running generations"""
+    count = 0
+    for task in _BACKGROUND_GENERATION_TASKS.values():
+        if not task.done():
+            count += 1
+    return count
+
+
+async def _process_queue():
+    """Process queue when there's capacity"""
+    if _get_current_running_count() >= _MAX_CONCURRENT_GENERATIONS:
+        return
+    
+    next_item = _get_next_from_queue()
+    if not next_item:
+        return
+    
+    # Start the queued generation
+    try:
+        await _run_background_subject_generation(
+            user_id=next_item["user_id"],
+            subject_id=next_item["subject_id"],
+            count=next_item["count"],
+            types=next_item["request_data"]["types"],
+            difficulty=next_item["request_data"]["difficulty"],
+            run_id=next_item["run_id"],
+            topic_id=next_item["request_data"].get("topic_id"),
+            topic_ids=next_item["request_data"].get("topic_ids"),
+            allow_without_reference=next_item["request_data"].get("allow_without_reference", False),
+        )
+    except Exception as e:
+        # Log error and continue processing queue
+        print(f"Error processing queued generation: {e}")
 
 
 async def _wait_for_subject_docs_ready(
@@ -190,10 +257,25 @@ async def _run_background_subject_generation(
                 total_multi_attempts = 0
                 max_multi_attempts = count * max_attempts_per_slot
 
-                # Build initial slot queue: each slot targets one generated question.
+                # Build initial slot queue with even distribution across topics
                 multi_slot_queue = []
-                for slot_idx in range(count):
-                    chosen_tid = valid_topic_ids[slot_idx % len(valid_topic_ids)]
+                questions_per_topic = count // len(valid_topic_ids)
+                remaining_questions = count % len(valid_topic_ids)
+                
+                # Create an even distribution list
+                topic_distribution = []
+                for i, topic_id in enumerate(valid_topic_ids):
+                    # Add base questions per topic
+                    base_questions = questions_per_topic + (1 if i < remaining_questions else 0)
+                    for _ in range(base_questions):
+                        topic_distribution.append(topic_id)
+                
+                # Shuffle to avoid predictable patterns
+                import random
+                random.shuffle(topic_distribution)
+                
+                # Create slots from the shuffled distribution
+                for slot_idx, chosen_tid in enumerate(topic_distribution):
                     multi_slot_queue.append({"slot_id": slot_idx, "topic_id": chosen_tid, "attempts": 0})
 
                 async def _run_single_topic_slot(slot: dict) -> dict:
@@ -398,6 +480,10 @@ async def _run_background_subject_generation(
                 "updated_at": datetime.now(timezone.utc).isoformat(),
                 "in_progress": False,
             }
+        
+        # Process queue after task completes
+        asyncio.create_task(_process_queue())
+        
         # Schedule cleanup after 60s so the frontend has time to poll the terminal status
         asyncio.create_task(_delayed_status_cleanup(task_key, delay_seconds=60.0))
 
@@ -1117,6 +1203,58 @@ async def schedule_background_generation(
             "total_questions": existing_status.get("total_questions", count),
         }
 
+    # Check if already queued
+    queue_position = _get_queue_position(current_user.id, parsed_subject_id)
+    if queue_position > 0:
+        return {
+            "status": "queued",
+            "message": f"Background generation is queued for this subject (position {queue_position})",
+            "subject_id": str(parsed_subject_id),
+            "queue_position": queue_position,
+            "count": count,
+        }
+
+    # Check if we have capacity to run immediately or need to queue
+    current_running = _get_current_running_count()
+    request_data = {
+        "types": type_list,
+        "difficulty": difficulty,
+        "topic_id": parsed_topic_id,
+        "topic_ids": parsed_topic_ids or None,
+        "allow_without_reference": no_reference_fallback,
+    }
+
+    if current_running >= _MAX_CONCURRENT_GENERATIONS:
+        # Queue the request
+        queue_position = _add_to_queue(current_user.id, parsed_subject_id, count, request_data)
+        run_id = str(uuid.uuid4())
+        
+        # Set queued status
+        _BACKGROUND_GENERATION_STATUS[task_key] = {
+            "in_progress": True,
+            "run_id": run_id,
+            "status": "queued",
+            "progress": 0,
+            "current_question": 0,
+            "total_questions": count,
+            "started_total_questions": int(subject.total_questions or 0),
+            "target_total_questions": int(subject.total_questions or 0) + count,
+            "message": f"Queued for background generation (position {queue_position})",
+            "updated_at": datetime.now(timezone.utc).isoformat(),
+        }
+        
+        return {
+            "status": "queued",
+            "message": f"Background generation queued (position {queue_position}) due to high demand",
+            "subject_id": str(parsed_subject_id),
+            "run_id": run_id,
+            "queue_position": queue_position,
+            "count": count,
+            "types": type_list,
+            "difficulty": difficulty,
+        }
+
+    # Run immediately
     run_id = str(uuid.uuid4())
 
     _BACKGROUND_GENERATION_STATUS[task_key] = {
@@ -1146,6 +1284,8 @@ async def schedule_background_generation(
         )
     )
     _BACKGROUND_GENERATION_TASKS[task_key] = task
+    
+    # Process queue after task completes (this will be handled in the finally block of _run_background_subject_generation)
 
     return {
         "status": "scheduled",

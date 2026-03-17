@@ -2,11 +2,62 @@
 <html lang="en">
 	<head>
 		<meta charset="utf-8" />
-		<meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no, viewport-fit=cover" />
+		<meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no, viewport-fit=cover, interactive-widget=resizes-content" />
 		<meta name="mobile-web-app-capable" content="yes" />
 		<meta name="apple-mobile-web-app-capable" content="yes" />
 		<meta name="apple-mobile-web-app-status-bar-style" content="black-translucent" />
 		<meta name="theme-color" content="transparent" />
+		<!-- Prevent zoom on input focus -->
+		<meta name="format-detection" content="telephone=no" />
+		<meta name="msapplication-tap-highlight" content="no" />
+		<style>
+			/* Prevent zoom on iOS Safari */
+			@supports (-webkit-touch-callout: none) {
+				input, textarea, select {
+					font-size: 16px !important;
+				}
+			}
+			
+			/* Prevent text selection and zoom on tap */
+			* {
+				-webkit-touch-callout: none;
+				-webkit-user-select: none;
+				-khtml-user-select: none;
+				-moz-user-select: none;
+				-ms-user-select: none;
+				user-select: none;
+			}
+			
+			/* Allow text selection for inputs and text areas */
+			input, textarea, [contenteditable] {
+				-webkit-user-select: text;
+				-moz-user-select: text;
+				-ms-user-select: text;
+				user-select: text;
+			}
+			
+			/* Prevent double-tap zoom */
+			* {
+				touch-action: manipulation;
+			}
+			
+			/* Prevent zoom on focus for all inputs */
+			input:focus, textarea:focus, select:focus {
+				font-size: 16px !important;
+				transform: scale(1) !important;
+			}
+			
+			/* Prevent scroll bounce */
+			body {
+				overscroll-behavior: none;
+				-webkit-overflow-scrolling: touch;
+			}
+			
+			/* Prevent zoom on Android */
+			@viewport {
+				zoom: 1.0;
+			}
+		</style>
 		%sveltekit.head%
 	</head>
 	<body data-sveltekit-preload-data="hover">

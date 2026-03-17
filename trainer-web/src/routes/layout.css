@@ -85,6 +85,9 @@
 *::before,
 *::after {
   box-sizing: border-box;
+  /* Prevent zoom on touch devices */
+  touch-action: manipulation;
+  -webkit-tap-highlight-color: transparent;
 }
 
 html,
@@ -922,6 +925,10 @@ a:hover {
 
   body {
     font-size: 14px;
+    /* Prevent zoom on orientation change */
+    -webkit-text-size-adjust: 100%;
+    -ms-text-size-adjust: 100%;
+    text-size-adjust: 100%;
   }
 
   .glass-btn {
@@ -942,6 +949,8 @@ a:hover {
   .glass-input {
     padding: 0.65rem 0.9rem;
     font-size: 0.9rem;
+    /* Force 16px font size to prevent zoom on iOS */
+    font-size: 16px !important;
   }
 
   .font-serif {
@@ -954,6 +963,20 @@ a:hover {
     --chromatic-r: rgba(255, 100, 100, 0.1);
     --chromatic-g: rgba(100, 255, 100, 0.05);
     --chromatic-b: rgba(100, 100, 255, 0.1);
+  }
+  
+  /* Prevent zoom on all input elements */
+  input, textarea, select {
+    font-size: 16px !important;
+    transform: scale(1) !important;
+    -webkit-transform: scale(1) !important;
+  }
+  
+  /* Prevent zoom on focus */
+  input:focus, textarea:focus, select:focus {
+    transform: scale(1) !important;
+    -webkit-transform: scale(1) !important;
+    font-size: 16px !important;
   }
 }
 
@@ -969,6 +992,10 @@ a:hover {
 @media (hover: none) and (pointer: coarse) {
   button, a, [role="button"] {
     min-height: 44px;
+    min-width: 44px;
+    /* Prevent zoom on tap */
+    touch-action: manipulation;
+    -webkit-tap-highlight-color: transparent;
   }
   
   /* Reduce hover effects on touch */
@@ -976,6 +1003,17 @@ a:hover {
   .glass-btn:hover,
   .glass-btn-secondary:hover {
     transform: none;
+  }
+  
+  /* Prevent zoom on all interactive elements */
+  input, textarea, select, button, a {
+    touch-action: manipulation;
+    -webkit-tap-highlight-color: transparent;
+  }
+  
+  /* Prevent double-tap zoom */
+  * {
+    touch-action: manipulation;
   }
 }
 

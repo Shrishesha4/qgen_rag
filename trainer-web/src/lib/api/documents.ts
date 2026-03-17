@@ -120,13 +120,14 @@ export interface GenerationEvent {
 }
 
 export interface BackgroundGenerationScheduleResponse {
-	status: 'scheduled' | 'already_running' | 'skipped_no_reference';
+	status: 'scheduled' | 'already_running' | 'skipped_no_reference' | 'queued';
 	message: string;
 	subject_id: string;
 	run_id?: string | null;
 	count: number;
 	types?: string[];
 	difficulty?: string;
+	queue_position?: number;
 }
 
 export interface BackgroundGenerationStatusItem {
