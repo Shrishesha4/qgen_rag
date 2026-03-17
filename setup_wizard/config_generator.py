@@ -570,16 +570,16 @@ def generate_docker_compose(
     # ---- Volumes ----
     lines.extend(["", "volumes:"])
     if services_enabled.get("db", True):
-        lines.extend([f"  postgres_data:", f"    name: {postgres_vol}", ""])
+        lines.extend([f"  {postgres_vol}:", ""])
     if services_enabled.get("redis", True):
-        lines.extend([f"  redis_data:", f"    name: {redis_vol}", ""])
+        lines.extend([f"  {redis_vol}:", ""])
     if services_enabled.get("api", True):
         lines.extend([
-            f"  upload_data:", f"    name: {upload_vol}", "",
-            f"  model_cache:", f"    name: {model_vol}", "",
+            f"  {upload_vol}:", "",
+            f"  {model_vol}:", "",
         ])
     if services_enabled.get("ollama", False):
-        lines.extend([f"  ollama_data:", f"    name: {ollama_vol}", ""])
+        lines.extend([f"  {ollama_vol}:", ""])
 
     # ---- Networks ----
     lines.extend([
