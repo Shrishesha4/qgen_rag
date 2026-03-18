@@ -78,7 +78,7 @@ def print_banner(port: int):
     print("  │                                              │")
     print("  │       QGen RAG — Setup Wizard                │")
     print("  │                                              │")
-    print(f"  │   http://localhost:{port:<5}                    │")
+    print(f" │   http://localhost:{port:<5}                    │")
     print("  │                                              │")
     print("  │   Press Ctrl+C to stop the wizard            │")
     print("  │                                              │")
