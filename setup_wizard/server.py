@@ -35,7 +35,7 @@ class WizardState:
         self.docker_config: Dict[str, Any] = {
             "enabled": True,
             "mode": "development",
-            "services": {"db": True, "redis": True, "api": True, "trainer_web": True, "client": True, "ollama": False},
+            "services": {"db": True, "redis": True, "api": True, "trainer_web": True, "ollama": False},
             "ports": {},
             "container_names": {},
             "volume_names": {},
@@ -43,7 +43,6 @@ class WizardState:
             "compose_command": "docker compose",
         }
         self.install_options: Dict[str, Any] = {
-            "install_client": True,
             "install_trainer": True,
             "setup_ollama": False,
             "ollama_model": "llama3.1:8b",
@@ -278,7 +277,7 @@ class WizardRequestHandler(http.server.BaseHTTPRequestHandler):
             try:
                 self.state.install_results = runner.run_full_install(
                     docker_config=self.state.docker_config,
-                    install_client=self.state.install_options.get("install_client", True),
+                    install_client=False,
                     install_trainer=self.state.install_options.get("install_trainer", True),
                     setup_ollama_model=(
                         self.state.install_options.get("ollama_model")

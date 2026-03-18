@@ -15,17 +15,17 @@ const STATE = {
     envSchema: [],
     defaults: {},
     advancedMode: false,
+    useCase: 'development',  // 'development' or 'production'
     dockerConfig: {
         enabled: true,
         mode: 'development',
-        services: { db: true, redis: true, api: true, trainer_web: true, client: true, ollama: false },
+        services: { db: true, redis: true, api: true, trainer_web: true, ollama: false },
         ports: {},
         container_names: {},
         volume_names: {},
         network_name: 'qgen_net',
     },
     installOptions: {
-        install_client: true,
         install_trainer: true,
         setup_ollama: false,
         ollama_model: 'llama3.1:8b',
@@ -326,8 +326,36 @@ function renderWelcome(el) {
             </div>
         </div>
 
+        <div class="card" style="margin-top:24px">
+            <div class="card-header">
+                <div class="card-icon green">
+                    <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M12 2L2 7l10 5 10-5-10-5zM2 17l10 5 10-5M2 12l10 5 10-5"/></svg>
+                </div>
+                <div>
+                    <div class="card-title">How will you use this?</div>
+                    <div class="card-desc">This determines default settings for the entire setup</div>
+                </div>
+            </div>
+            <div style="display:flex;gap:12px">
+                <label class="radio-label" style="flex:1">
+                    <input type="radio" name="useCase" value="development" ${STATE.useCase === 'development' ? 'checked' : ''} onchange="setUseCase('development')">
+                    <div>
+                        <strong>Development</strong>
+                        <small style="display:block;color:var(--text-muted);margin-top:4px">Hot reload, source mounts, debug logging, single worker</small>
+                    </div>
+                </label>
+                <label class="radio-label" style="flex:1">
+                    <input type="radio" name="useCase" value="production" ${STATE.useCase === 'production' ? 'checked' : ''} onchange="setUseCase('production')">
+                    <div>
+                        <strong>Production</strong>
+                        <small style="display:block;color:var(--text-muted);margin-top:4px">Multi-worker, optimized builds, JSON logs, restricted CORS</small>
+                    </div>
+                </label>
+            </div>
+        </div>
+
         ${!docker.docker_installed ? `
-        <div class="alert alert-warning">
+        <div class="alert alert-warning" style="margin-top:12px">
             <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M12 9v4m0 4h.01M21 12a9 9 0 11-18 0 9 9 0 0118 0z"/></svg>
             <div>Docker is not installed. You'll need Docker for the recommended containerized deployment. <a href="https://docs.docker.com/get-docker/" target="_blank" style="color:inherit;text-decoration:underline">Install Docker</a></div>
         </div>` : ''}
@@ -472,11 +500,11 @@ function renderBackend(el) {
 
 // --- Step 3: Frontend config ---
 function renderFrontend(el) {
-    const frontendGroups = ['Mobile Client'];
+    const frontendGroups = ['Frontend'];
 
     el.innerHTML = `
         <h2 class="step-title">Frontend Configuration</h2>
-        <p class="step-subtitle">Configure the Expo mobile client and trainer web app</p>
+        <p class="step-subtitle">Configure the trainer web application ports and settings</p>
 
         ${renderEnvGroups(frontendGroups)}
 
@@ -507,16 +535,6 @@ function renderFrontend(el) {
                     <div class="card-title">Install Options</div>
                     <div class="card-desc">Choose which frontend apps to set up</div>
                 </div>
-            </div>
-            <div class="toggle-row">
-                <div class="toggle-info">
-                    <div class="toggle-label">Install Mobile Client Dependencies</div>
-                    <div class="toggle-desc">Run npm install in the client/ directory</div>
-                </div>
-                <label class="toggle-switch">
-                    <input type="checkbox" data-install-key="install_client" ${STATE.installOptions.install_client ? 'checked' : ''}>
-                    <span class="toggle-slider"></span>
-                </label>
             </div>
             <div class="toggle-row">
                 <div class="toggle-info">
@@ -630,16 +648,6 @@ function renderDocker(el) {
             </div>
             <div class="toggle-row">
                 <div class="toggle-info">
-                    <div class="toggle-label">Client (Expo React Native)</div>
-                    <div class="toggle-desc">Mobile app development server with hot-reload</div>
-                </div>
-                <label class="toggle-switch">
-                    <input type="checkbox" data-docker-service="client" ${dc.services.client ? 'checked' : ''}>
-                    <span class="toggle-slider"></span>
-                </label>
-            </div>
-            <div class="toggle-row">
-                <div class="toggle-info">
                     <div class="toggle-label">Ollama (Docker)</div>
                     <div class="toggle-desc">Run Ollama in a container (local install recommended for GPU)</div>
                 </div>
@@ -684,12 +692,6 @@ function renderDocker(el) {
                     <label class="form-label">Trainer Web Container Name</label>
                     <input type="text" class="form-input" data-docker-key="container_name_trainer_web" value="${dc.container_names?.trainer_web || 'qgen_trainer'}" placeholder="qgen_trainer">
                 </div>
-                <div class="form-group">
-                    <label class="form-label">Client Container Name</label>
-                    <input type="text" class="form-input" data-docker-key="container_name_client" value="${dc.container_names?.client || 'qgen_client'}" placeholder="qgen_client">
-                </div>
-            </div>
-            <div class="form-row">
                 <div class="form-group">
                     <label class="form-label">Ollama Container Name</label>
                     <input type="text" class="form-input" data-docker-key="container_name_ollama" value="${dc.container_names?.ollama || 'qgen_ollama'}" placeholder="qgen_ollama">
@@ -744,7 +746,6 @@ function renderDocker(el) {
             </div>
         </div>
 
-        ${renderEnvGroups(['Docker Configuration'])}
     `;
 }
 
@@ -822,8 +823,8 @@ async function switchReviewTab(tab, btnEl) {
                     <div class="info-value">${vals.RERANKER_ENABLED === 'true' ? vals.RERANKER_MODEL || 'Enabled' : 'Disabled'}</div>
                 </div>
                 <div class="info-item">
-                    <div class="info-label">Install Client</div>
-                    <div class="info-value">${STATE.installOptions.install_client ? 'Yes' : 'No'}</div>
+                    <div class="info-label">Use Case</div>
+                    <div class="info-value">${STATE.useCase === 'production' ? 'Production' : 'Development'}</div>
                 </div>
                 <div class="info-item">
                     <div class="info-label">Install Trainer Web</div>
@@ -1000,7 +1001,6 @@ async function renderInstallComplete() {
             <ol style="padding-left:20px;color:var(--text-muted);font-size:14px;line-height:2">
                 <li>Check service health: <code style="background:var(--bg-input);padding:2px 6px;border-radius:4px;font-size:12px">curl http://localhost:${STATE.envValues.API_PORT || '8000'}/health</code></li>
                 <li>Open Swagger docs: <a href="http://localhost:${STATE.envValues.API_PORT || '8000'}/docs" target="_blank" style="color:var(--primary)">API Documentation</a></li>
-                <li>Start the mobile client: <code style="background:var(--bg-input);padding:2px 6px;border-radius:4px;font-size:12px">cd client && npx expo start</code></li>
                 <li>Start the trainer web: <code style="background:var(--bg-input);padding:2px 6px;border-radius:4px;font-size:12px">cd trainer-web && npm run dev</code></li>
                 <li>View logs: <code style="background:var(--bg-input);padding:2px 6px;border-radius:4px;font-size:12px">docker compose logs -f api</code></li>
             </ol>
@@ -1084,6 +1084,31 @@ function renderEnvField(v) {
 function toggleAdvancedMode(advanced) {
     STATE.advancedMode = advanced;
     renderCurrentStep();
+}
+
+function setUseCase(mode) {
+    STATE.useCase = mode;
+    STATE.dockerConfig.mode = mode;
+
+    if (mode === 'production') {
+        // Production defaults
+        STATE.envValues['LOG_LEVEL'] = 'warning';
+        STATE.envValues['LOG_JSON'] = 'true';
+        STATE.envValues['CORS_ORIGINS'] = 'https://yourdomain.com';
+        STATE.envValues['QUICK_GENERATE_PARALLEL_WORKERS'] = '4';
+        STATE.envValues['RATE_LIMIT_REQUESTS'] = '60';
+        STATE.envValues['ACCESS_TOKEN_EXPIRE_MINUTES'] = '30';
+        STATE.envValues['REFRESH_TOKEN_EXPIRE_DAYS'] = '7';
+    } else {
+        // Development defaults
+        STATE.envValues['LOG_LEVEL'] = 'info';
+        STATE.envValues['LOG_JSON'] = 'false';
+        STATE.envValues['CORS_ORIGINS'] = '*';
+        STATE.envValues['QUICK_GENERATE_PARALLEL_WORKERS'] = '6';
+        STATE.envValues['RATE_LIMIT_REQUESTS'] = '100';
+        STATE.envValues['ACCESS_TOKEN_EXPIRE_MINUTES'] = '60';
+        STATE.envValues['REFRESH_TOKEN_EXPIRE_DAYS'] = '30';
+    }
 }
 
 function shouldHideField(showIf) {

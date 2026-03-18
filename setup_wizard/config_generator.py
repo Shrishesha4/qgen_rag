@@ -20,7 +20,7 @@ logger = logging.getLogger(__name__)
 # ---------------------------------------------------------------------------
 
 DEFAULT_ENV = {
-    # Database
+    # Database (Docker Compose vars)
     "POSTGRES_USER": "qgen_user",
     "POSTGRES_PASSWORD": "qgen_password",
     "POSTGRES_DB": "qgen_db",
@@ -71,49 +71,13 @@ DEFAULT_ENV = {
     "ENABLE_METRICS": "true",
     # Ports
     "API_PORT": "8000",
+    "TRAINER_WEB_PORT": "5173",
     # CORS
     "CORS_ORIGINS": "*",
-    # Client
-    "DEV_MACHINE_IP": "10.0.0.4",
-    "USE_SIMULATOR": "false",
-    "PRODUCTION_API_URL": "http://10.0.0.4:8000/api/v1",
-    "USE_PRODUCTION_API": "false",
     # Training
     "TRAINING_DATA_DIR": "./training_data",
     "LORA_ADAPTERS_DIR": "./lora_adapters",
     "TRAINING_BASE_MODEL": "deepseek-ai/DeepSeek-R1-Distill-Llama-1.7B",
-    # Docker Configuration (can be overridden by environment variables)
-    "DOCKER_ENABLED": "true",
-    "DOCKER_MODE": "development",
-    "DOCKER_COMPOSE_COMMAND": "docker compose",
-    "DOCKER_NETWORK_NAME": "qgen_net",
-    "DOCKER_DB_CONTAINER_NAME": "qgen_db",
-    "DOCKER_REDIS_CONTAINER_NAME": "qgen_redis",
-    "DOCKER_API_CONTAINER_NAME": "qgen_api",
-    "DOCKER_TRAINER_WEB_CONTAINER_NAME": "qgen_trainer",
-    "DOCKER_CLIENT_CONTAINER_NAME": "qgen_client",
-    "DOCKER_OLLAMA_CONTAINER_NAME": "qgen_ollama",
-    "DOCKER_POSTGRES_VOLUME_NAME": "qgen_postgres_data",
-    "DOCKER_REDIS_VOLUME_NAME": "qgen_redis_data",
-    "DOCKER_UPLOAD_VOLUME_NAME": "qgen_upload_data",
-    "DOCKER_MODEL_CACHE_VOLUME_NAME": "qgen_model_cache",
-    "DOCKER_OLLAMA_VOLUME_NAME": "qgen_ollama_data",
-    "DOCKER_DB_PORT": "5432",
-    "DOCKER_REDIS_PORT": "6379",
-    "DOCKER_API_PORT": "8000",
-    "DOCKER_TRAINER_WEB_PORT": "5173",
-    "DOCKER_CLIENT_PORT": "8081",
-    "DOCKER_OLLAMA_PORT": "11434",
-    "DOCKER_ENABLE_DB": "true",
-    "DOCKER_ENABLE_REDIS": "true",
-    "DOCKER_ENABLE_API": "true",
-    "DOCKER_ENABLE_TRAINER_WEB": "true",
-    "DOCKER_ENABLE_CLIENT": "true",
-    "DOCKER_ENABLE_OLLAMA": "false",
-    "DOCKER_DEV_HOT_RELOAD": "true",
-    "DOCKER_DEV_MOUNT_SOURCES": "true",
-    "DOCKER_PROD_WORKERS": "4",
-    "DOCKER_HEALTH_CHECK_ENABLED": "true",
 }
 
 # Environment variable metadata for the wizard UI
@@ -124,13 +88,13 @@ ENV_SCHEMA = [
         "description": "PostgreSQL with pgvector for vector similarity search",
         "vars": [
             {"key": "POSTGRES_USER", "label": "Database User", "type": "text",
-             "tooltip": "PostgreSQL username for the application database.", "advanced": False, "recommended": "qgen_user"},
+             "tooltip": "PostgreSQL username.", "recommended": "qgen_user"},
             {"key": "POSTGRES_PASSWORD", "label": "Database Password", "type": "password",
-             "tooltip": "PostgreSQL password. Use a strong password in production.", "advanced": False, "recommended": "change-in-production"},
+             "tooltip": "PostgreSQL password. Use a strong password in production.", "recommended": "change-in-production"},
             {"key": "POSTGRES_DB", "label": "Database Name", "type": "text",
-             "tooltip": "Name of the PostgreSQL database to create/use.", "advanced": False, "recommended": "qgen_db"},
+             "tooltip": "Name of the PostgreSQL database.", "recommended": "qgen_db"},
             {"key": "POSTGRES_PORT", "label": "PostgreSQL Port", "type": "number",
-             "tooltip": "Port for PostgreSQL. Default 5432.", "advanced": True, "recommended": "5432"},
+             "tooltip": "Port for PostgreSQL.", "advanced": True, "recommended": "5432"},
         ],
     },
     {
@@ -139,7 +103,7 @@ ENV_SCHEMA = [
         "description": "Redis for caching, sessions, and rate limiting",
         "vars": [
             {"key": "REDIS_PORT", "label": "Redis Port", "type": "number",
-             "tooltip": "Port for Redis server. Default 6379.", "advanced": True, "recommended": "6379"},
+             "tooltip": "Port for Redis server.", "advanced": True, "recommended": "6379"},
         ],
     },
     {
@@ -148,11 +112,11 @@ ENV_SCHEMA = [
         "description": "Authentication and security settings",
         "vars": [
             {"key": "SECRET_KEY", "label": "Secret Key", "type": "password",
-             "tooltip": "JWT signing key. Must be at least 32 characters. Auto-generated if left empty."},
+             "tooltip": "JWT signing key. Auto-generated if left empty."},
             {"key": "ACCESS_TOKEN_EXPIRE_MINUTES", "label": "Access Token Expiry (min)", "type": "number",
-             "tooltip": "How long access tokens remain valid, in minutes."},
+             "tooltip": "How long access tokens remain valid.", "advanced": True, "recommended": "60"},
             {"key": "REFRESH_TOKEN_EXPIRE_DAYS", "label": "Refresh Token Expiry (days)", "type": "number",
-             "tooltip": "How long refresh tokens remain valid, in days."},
+             "tooltip": "How long refresh tokens remain valid.", "advanced": True, "recommended": "30"},
         ],
     },
     {
@@ -162,25 +126,25 @@ ENV_SCHEMA = [
         "vars": [
             {"key": "LLM_PROVIDER", "label": "Provider", "type": "select",
              "options": ["ollama", "gemini", "deepseek"],
-             "tooltip": "Select the LLM provider. Ollama runs locally; Gemini and DeepSeek are cloud APIs."},
+             "tooltip": "Select the LLM provider."},
             {"key": "OLLAMA_BASE_URL", "label": "Ollama Base URL", "type": "text",
-             "tooltip": "URL for your Ollama instance. Use host.docker.internal for Docker access to local Ollama.",
-             "show_if": {"LLM_PROVIDER": "ollama"}},
+             "tooltip": "URL for your Ollama instance.",
+             "show_if": {"LLM_PROVIDER": "ollama"}, "recommended": "http://host.docker.internal:11434"},
             {"key": "OLLAMA_MODEL", "label": "Ollama Model", "type": "text",
-             "tooltip": "Which Ollama model to use for question generation.",
-             "show_if": {"LLM_PROVIDER": "ollama"}},
+             "tooltip": "Which Ollama model to use.",
+             "show_if": {"LLM_PROVIDER": "ollama"}, "recommended": "llama3.1:8b"},
             {"key": "GEMINI_API_KEY", "label": "Gemini API Key", "type": "password",
-             "tooltip": "Your Google Gemini API key from aistudio.google.com/apikey",
+             "tooltip": "Google Gemini API key from aistudio.google.com/apikey",
              "show_if": {"LLM_PROVIDER": "gemini"}},
             {"key": "GEMINI_MODEL", "label": "Gemini Model", "type": "select",
              "options": ["gemini-2.0-flash", "gemini-1.5-flash", "gemini-1.5-pro"],
              "tooltip": "Which Gemini model to use.",
              "show_if": {"LLM_PROVIDER": "gemini"}},
             {"key": "GEMINI_MAX_OUTPUT_TOKENS", "label": "Gemini Max Tokens", "type": "number",
-             "tooltip": "Maximum output tokens per Gemini response.",
-             "show_if": {"LLM_PROVIDER": "gemini"}},
+             "tooltip": "Max output tokens per Gemini response.",
+             "show_if": {"LLM_PROVIDER": "gemini"}, "advanced": True, "recommended": "2048"},
             {"key": "DEEPSEEK_API_KEY", "label": "DeepSeek API Key", "type": "password",
-             "tooltip": "Your DeepSeek API key from platform.deepseek.com",
+             "tooltip": "DeepSeek API key from platform.deepseek.com",
              "show_if": {"LLM_PROVIDER": "deepseek"}},
             {"key": "DEEPSEEK_MODEL", "label": "DeepSeek Model", "type": "select",
              "options": ["deepseek-chat", "deepseek-reasoner"],
@@ -188,7 +152,7 @@ ENV_SCHEMA = [
              "show_if": {"LLM_PROVIDER": "deepseek"}},
             {"key": "DEEPSEEK_BASE_URL", "label": "DeepSeek Base URL", "type": "text",
              "tooltip": "DeepSeek API endpoint URL.",
-             "show_if": {"LLM_PROVIDER": "deepseek"}},
+             "show_if": {"LLM_PROVIDER": "deepseek"}, "advanced": True, "recommended": "https://api.deepseek.com/v1"},
         ],
     },
     {
@@ -197,61 +161,61 @@ ENV_SCHEMA = [
         "description": "Models for document embedding and search reranking",
         "vars": [
             {"key": "EMBEDDING_MODEL", "label": "Embedding Model", "type": "text",
-             "tooltip": "Sentence-transformer or Ollama embedding model name."},
+             "tooltip": "Embedding model name.", "recommended": "nomic-embed-text"},
             {"key": "EMBEDDING_DIMENSION", "label": "Embedding Dimension", "type": "number",
-             "tooltip": "Vector dimension of the embedding model. Must match the model's output."},
+             "tooltip": "Vector dimension. Must match model output.", "advanced": True, "recommended": "768"},
             {"key": "EMBEDDING_USE_INSTRUCTION", "label": "Use Instruction Prefix", "type": "select",
              "options": ["false", "true"],
-             "tooltip": "Enable for BGE-style models that need instruction prefixes."},
+             "tooltip": "Enable for BGE-style models.", "advanced": True},
             {"key": "EMBEDDING_REDIS_CACHE", "label": "Redis Embedding Cache", "type": "select",
              "options": ["true", "false"],
-             "tooltip": "Cache embeddings in Redis for faster subsequent lookups."},
+             "tooltip": "Cache embeddings in Redis.", "advanced": True},
             {"key": "RERANKER_MODEL", "label": "Reranker Model", "type": "text",
-             "tooltip": "Cross-encoder model for search result reranking."},
+             "tooltip": "Cross-encoder model for reranking.", "advanced": True, "recommended": "mixedbread-ai/mxbai-rerank-large-v1"},
             {"key": "RERANKER_ENABLED", "label": "Enable Reranker", "type": "select",
              "options": ["true", "false"],
-             "tooltip": "Toggle cross-encoder reranking. Improves retrieval quality but adds latency."},
+             "tooltip": "Toggle cross-encoder reranking."},
         ],
     },
     {
         "group": "Document Processing",
         "icon": "file-text",
-        "description": "File upload and text chunking settings",
+        "description": "File upload, chunking, and generation settings",
         "vars": [
             {"key": "MAX_UPLOAD_SIZE_MB", "label": "Max Upload Size (MB)", "type": "number",
-             "tooltip": "Maximum file upload size in megabytes."},
+             "tooltip": "Maximum file upload size.", "recommended": "500"},
             {"key": "CHUNK_SIZE", "label": "Chunk Size (tokens)", "type": "number",
-             "tooltip": "Size of text chunks for the RAG pipeline."},
+             "tooltip": "Size of text chunks for RAG.", "advanced": True, "recommended": "1000"},
             {"key": "CHUNK_OVERLAP", "label": "Chunk Overlap (tokens)", "type": "number",
-             "tooltip": "Overlap between consecutive chunks for context continuity."},
+             "tooltip": "Overlap between consecutive chunks.", "advanced": True, "recommended": "200"},
             {"key": "MAX_QUESTIONS_PER_REQUEST", "label": "Max Questions per Request", "type": "number",
-             "tooltip": "Maximum number of questions that can be generated in one request."},
-            {"key": "QUICK_GENERATE_PARALLEL_WORKERS", "label": "Parallel Workers (Quick Gen)", "type": "number",
-             "tooltip": "Number of parallel workers for quick question generation."},
-            {"key": "QUESTION_DEDUPE_SIMILARITY_THRESHOLD", "label": "Question Dedupe Threshold", "type": "number",
-             "tooltip": "Similarity threshold for deduplicating generated questions (0.0-1.0)."},
+             "tooltip": "Max questions generated in one request.", "recommended": "50"},
+            {"key": "QUICK_GENERATE_PARALLEL_WORKERS", "label": "Parallel Workers", "type": "number",
+             "tooltip": "Parallel workers for quick generation.", "advanced": True, "recommended": "6"},
+            {"key": "QUESTION_DEDUPE_SIMILARITY_THRESHOLD", "label": "Dedupe Threshold", "type": "number",
+             "tooltip": "Similarity threshold for deduplicating questions (0.0-1.0).", "advanced": True, "recommended": "0.987"},
             {"key": "QUESTION_OPTION_SIMILARITY_THRESHOLD", "label": "Option Dedupe Threshold", "type": "number",
-             "tooltip": "Similarity threshold for deduplicating question options (0.0-1.0)."},
+             "tooltip": "Similarity threshold for deduplicating options (0.0-1.0).", "advanced": True, "recommended": "0.877"},
         ],
     },
     {
         "group": "Rate Limiting & Logging",
         "icon": "activity",
-        "description": "API rate limiting and monitoring configuration",
+        "description": "API rate limiting and monitoring",
         "vars": [
             {"key": "RATE_LIMIT_REQUESTS", "label": "Rate Limit (requests)", "type": "number",
-             "tooltip": "Maximum requests per window per user."},
+             "tooltip": "Max requests per window per user.", "advanced": True, "recommended": "100"},
             {"key": "RATE_LIMIT_WINDOW_SECONDS", "label": "Rate Limit Window (sec)", "type": "number",
-             "tooltip": "Duration of the rate limit window in seconds."},
+             "tooltip": "Duration of the rate limit window.", "advanced": True, "recommended": "3600"},
             {"key": "LOG_LEVEL", "label": "Log Level", "type": "select",
              "options": ["debug", "info", "warning", "error", "critical"],
-             "tooltip": "Application logging verbosity. Use lowercase for uvicorn compatibility."},
+             "tooltip": "Logging verbosity. Use lowercase for uvicorn."},
             {"key": "LOG_JSON", "label": "JSON Logs", "type": "select",
              "options": ["false", "true"],
-             "tooltip": "Use structured JSON logs (recommended for production)."},
+             "tooltip": "Structured JSON logs (recommended for production).", "advanced": True},
             {"key": "ENABLE_METRICS", "label": "Prometheus Metrics", "type": "select",
              "options": ["true", "false"],
-             "tooltip": "Enable /metrics endpoint for Prometheus scraping."},
+             "tooltip": "Enable /metrics endpoint.", "advanced": True},
         ],
     },
     {
@@ -260,26 +224,18 @@ ENV_SCHEMA = [
         "description": "API port and cross-origin resource sharing",
         "vars": [
             {"key": "API_PORT", "label": "API Port", "type": "number",
-             "tooltip": "Port for the FastAPI backend server."},
+             "tooltip": "Port for the FastAPI backend.", "recommended": "8000"},
             {"key": "CORS_ORIGINS", "label": "CORS Origins", "type": "text",
-             "tooltip": "Allowed CORS origins. Use * for development, restrict in production."},
+             "tooltip": "Allowed origins. Use * for dev, restrict in production.", "advanced": True, "recommended": "*"},
         ],
     },
     {
-        "group": "Mobile Client",
+        "group": "Frontend",
         "icon": "smartphone",
-        "description": "Expo React Native client configuration",
+        "description": "Trainer web (SvelteKit) port and frontend settings",
         "vars": [
-            {"key": "DEV_MACHINE_IP", "label": "Dev Machine IP", "type": "text",
-             "tooltip": "Your machine's local IP address for mobile dev (used by Expo)."},
-            {"key": "USE_SIMULATOR", "label": "Use Simulator", "type": "select",
-             "options": ["false", "true"],
-             "tooltip": "Set to true if testing on iOS Simulator / Android Emulator."},
-            {"key": "PRODUCTION_API_URL", "label": "Production API URL", "type": "text",
-             "tooltip": "Full URL to the production API endpoint."},
-            {"key": "USE_PRODUCTION_API", "label": "Use Production API", "type": "select",
-             "options": ["false", "true"],
-             "tooltip": "Toggle between local and production API for the mobile client."},
+            {"key": "TRAINER_WEB_PORT", "label": "Trainer Web Port", "type": "number",
+             "tooltip": "Port for the SvelteKit trainer web application.", "recommended": "5173"},
         ],
     },
     {
@@ -288,66 +244,11 @@ ENV_SCHEMA = [
         "description": "LoRA fine-tuning configuration (requires GPU)",
         "vars": [
             {"key": "TRAINING_DATA_DIR", "label": "Training Data Directory", "type": "text",
-             "tooltip": "Path to store exported SFT/DPO training JSONL files."},
+             "tooltip": "Path for exported SFT/DPO JSONL files.", "advanced": True, "recommended": "./training_data"},
             {"key": "LORA_ADAPTERS_DIR", "label": "LoRA Adapters Directory", "type": "text",
-             "tooltip": "Path to store LoRA adapter checkpoints."},
+             "tooltip": "Path for LoRA adapter checkpoints.", "advanced": True, "recommended": "./lora_adapters"},
             {"key": "TRAINING_BASE_MODEL", "label": "Base Model (HuggingFace)", "type": "text",
-             "tooltip": "HuggingFace model ID for the base model to fine-tune."},
-        ],
-    },
-    {
-        "group": "Docker Configuration",
-        "icon": "box",
-        "description": "Docker container and service configuration",
-        "vars": [
-            {"key": "DOCKER_ENABLED", "label": "Enable Docker", "type": "select",
-             "options": ["true", "false"], "tooltip": "Enable/disable Docker services"},
-            {"key": "DOCKER_MODE", "label": "Docker Mode", "type": "select",
-             "options": ["development", "production"], "tooltip": "Development (hot-reload) or production mode"},
-            {"key": "DOCKER_NETWORK_NAME", "label": "Docker Network", "type": "text",
-             "tooltip": "Docker network name for services"},
-            {"key": "DOCKER_DB_CONTAINER_NAME", "label": "DB Container Name", "type": "text",
-             "tooltip": "PostgreSQL container name"},
-            {"key": "DOCKER_REDIS_CONTAINER_NAME", "label": "Redis Container Name", "type": "text",
-             "tooltip": "Redis container name"},
-            {"key": "DOCKER_API_CONTAINER_NAME", "label": "API Container Name", "type": "text",
-             "tooltip": "FastAPI container name"},
-            {"key": "DOCKER_TRAINER_WEB_CONTAINER_NAME", "label": "Trainer Web Container Name", "type": "text",
-             "tooltip": "SvelteKit trainer web container name"},
-            {"key": "DOCKER_CLIENT_CONTAINER_NAME", "label": "Client Container Name", "type": "text",
-             "tooltip": "Expo React Native client container name"},
-            {"key": "DOCKER_POSTGRES_VOLUME_NAME", "label": "PostgreSQL Volume", "type": "text",
-             "tooltip": "PostgreSQL data volume name"},
-            {"key": "DOCKER_REDIS_VOLUME_NAME", "label": "Redis Volume", "type": "text",
-             "tooltip": "Redis data volume name"},
-            {"key": "DOCKER_UPLOAD_VOLUME_NAME", "label": "Upload Volume", "type": "text",
-             "tooltip": "File uploads volume name"},
-            {"key": "DOCKER_MODEL_CACHE_VOLUME_NAME", "label": "Model Cache Volume", "type": "text",
-             "tooltip": "ML model cache volume name"},
-            {"key": "DOCKER_DB_PORT", "label": "PostgreSQL Port", "type": "number",
-             "tooltip": "PostgreSQL port number"},
-            {"key": "DOCKER_REDIS_PORT", "label": "Redis Port", "type": "number",
-             "tooltip": "Redis port number"},
-            {"key": "DOCKER_API_PORT", "label": "API Port", "type": "number",
-             "tooltip": "FastAPI port number"},
-            {"key": "DOCKER_TRAINER_WEB_PORT", "label": "Trainer Web Port", "type": "number",
-             "tooltip": "SvelteKit trainer web port number"},
-            {"key": "DOCKER_CLIENT_PORT", "label": "Client Port", "type": "number",
-             "tooltip": "Expo React Native client port number"},
-            {"key": "DOCKER_ENABLE_DB", "label": "Enable PostgreSQL", "type": "select",
-             "options": ["true", "false"], "tooltip": "Enable PostgreSQL service"},
-            {"key": "DOCKER_ENABLE_REDIS", "label": "Enable Redis", "type": "select",
-             "options": ["true", "false"], "tooltip": "Enable Redis service"},
-            {"key": "DOCKER_ENABLE_API", "label": "Enable API", "type": "select",
-             "options": ["true", "false"], "tooltip": "Enable FastAPI service"},
-            {"key": "DOCKER_ENABLE_TRAINER_WEB", "label": "Enable Trainer Web", "type": "select",
-             "options": ["true", "false"], "tooltip": "Enable SvelteKit trainer web service"},
-            {"key": "DOCKER_ENABLE_CLIENT", "label": "Enable Client", "type": "select",
-             "options": ["true", "false"], "tooltip": "Enable Expo React Native client service"},
-            {"key": "DOCKER_DEV_HOT_RELOAD", "label": "Hot Reload (Dev)", "type": "select",
-             "options": ["true", "false"], "tooltip": "Enable hot-reload in development mode"},
-            {"key": "DOCKER_PROD_WORKERS", "label": "Production Workers", "type": "number",
-             "tooltip": "Number of Uvicorn workers in production mode"},
+             "tooltip": "HuggingFace model ID for fine-tuning.", "advanced": True},
         ],
     },
 ]
@@ -389,26 +290,8 @@ def generate_env_file(env_values: Dict[str, str]) -> str:
                                   "QUESTION_DEDUPE_SIMILARITY_THRESHOLD", "QUESTION_OPTION_SIMILARITY_THRESHOLD"]),
         ("Rate Limiting", ["RATE_LIMIT_REQUESTS", "RATE_LIMIT_WINDOW_SECONDS"]),
         ("Logging & Monitoring", ["LOG_LEVEL", "LOG_JSON", "ENABLE_METRICS"]),
-        ("API Port", ["API_PORT"]),
-        ("CORS", ["CORS_ORIGINS"]),
-        ("Mobile Client", ["DEV_MACHINE_IP", "USE_SIMULATOR", "PRODUCTION_API_URL", "USE_PRODUCTION_API"]),
+        ("Network", ["API_PORT", "CORS_ORIGINS", "TRAINER_WEB_PORT"]),
         ("Training Pipeline", ["TRAINING_DATA_DIR", "LORA_ADAPTERS_DIR", "TRAINING_BASE_MODEL"]),
-        ("Docker Configuration", [
-            "DOCKER_ENABLED", "DOCKER_MODE", "DOCKER_COMPOSE_COMMAND",
-            "DOCKER_NETWORK_NAME",
-            "DOCKER_DB_CONTAINER_NAME", "DOCKER_REDIS_CONTAINER_NAME",
-            "DOCKER_API_CONTAINER_NAME", "DOCKER_TRAINER_WEB_CONTAINER_NAME",
-            "DOCKER_CLIENT_CONTAINER_NAME", "DOCKER_OLLAMA_CONTAINER_NAME",
-            "DOCKER_POSTGRES_VOLUME_NAME", "DOCKER_REDIS_VOLUME_NAME",
-            "DOCKER_UPLOAD_VOLUME_NAME", "DOCKER_MODEL_CACHE_VOLUME_NAME",
-            "DOCKER_OLLAMA_VOLUME_NAME",
-            "DOCKER_DB_PORT", "DOCKER_REDIS_PORT", "DOCKER_API_PORT",
-            "DOCKER_TRAINER_WEB_PORT", "DOCKER_CLIENT_PORT", "DOCKER_OLLAMA_PORT",
-            "DOCKER_ENABLE_DB", "DOCKER_ENABLE_REDIS", "DOCKER_ENABLE_API",
-            "DOCKER_ENABLE_TRAINER_WEB", "DOCKER_ENABLE_CLIENT", "DOCKER_ENABLE_OLLAMA",
-            "DOCKER_DEV_HOT_RELOAD", "DOCKER_DEV_MOUNT_SOURCES", "DOCKER_PROD_WORKERS",
-            "DOCKER_HEALTH_CHECK_ENABLED",
-        ]),
     ]
 
     lines = ["# Generated by QGen RAG Setup Wizard", ""]
@@ -423,23 +306,6 @@ def generate_env_file(env_values: Dict[str, str]) -> str:
         lines.append("")
 
     return "\n".join(lines)
-
-
-def generate_client_env(env_values: Dict[str, str]) -> str:
-    """Generate client/.env.local for Expo."""
-    ip = env_values.get("DEV_MACHINE_IP", "10.0.0.4")
-    sim = env_values.get("USE_SIMULATOR", "false")
-    prod_url = env_values.get("PRODUCTION_API_URL", f"http://{ip}:8000/api/v1")
-    use_prod = env_values.get("USE_PRODUCTION_API", "false")
-
-    return (
-        "# Auto-generated by QGen RAG Setup Wizard\n"
-        "# DO NOT commit this file\n\n"
-        f"EXPO_PUBLIC_DEV_MACHINE_IP={ip}\n"
-        f"EXPO_PUBLIC_USE_SIMULATOR={sim}\n"
-        f"EXPO_PUBLIC_PRODUCTION_API_URL={prod_url}\n"
-        f"EXPO_PUBLIC_USE_PRODUCTION_API={use_prod}\n"
-    )
 
 
 def generate_trainer_web_env(env_values: Dict[str, str]) -> str:
@@ -474,8 +340,7 @@ def generate_docker_compose(
     ollama_name = custom_names.get("ollama", env_values.get("DOCKER_OLLAMA_CONTAINER_NAME", "qgen_ollama"))
     
     # Frontend ports (from env values)
-    trainer_port = "5173"  # Default Vite port for trainer-web
-    client_port = "8081"   # Default Expo port for client
+    trainer_port = env_values.get("TRAINER_WEB_PORT", "5173")
 
     postgres_vol = custom_volumes.get("postgres_data", env_values.get("DOCKER_POSTGRES_VOLUME_NAME", "qgen_postgres_data"))
     redis_vol = custom_volumes.get("redis_data", env_values.get("DOCKER_REDIS_VOLUME_NAME", "qgen_redis_data"))
@@ -688,7 +553,7 @@ def generate_docker_compose(
     # ---- Trainer Web Service ----
     if services_enabled.get("trainer_web", True):
         trainer_name = custom_names.get("trainer_web", env_values.get("DOCKER_TRAINER_WEB_CONTAINER_NAME", "qgen_trainer"))
-        trainer_port = custom_ports.get("trainer_web", env_values.get("DOCKER_TRAINER_WEB_PORT", "5173"))
+        trainer_port = custom_ports.get("trainer_web", env_values.get("TRAINER_WEB_PORT", "5173"))
         lines.extend([
             "",
             "  trainer_web:",
@@ -704,32 +569,6 @@ def generate_docker_compose(
             "      - /app/node_modules",
             "    ports:",
             f'      - "{trainer_port}:5173"',
-            "    networks:",
-            f"      - {custom_network}",
-            "    depends_on:",
-            "      - api",
-        ])
-
-    # ---- Client Service ----
-    if services_enabled.get("client", True):
-        client_name = custom_names.get("client", env_values.get("DOCKER_CLIENT_CONTAINER_NAME", "qgen_client"))
-        client_port = custom_ports.get("client", env_values.get("DOCKER_CLIENT_PORT", "8081"))
-        lines.extend([
-            "",
-            "  client:",
-            "    build:",
-            "      context: ./client",
-            "      dockerfile: Dockerfile",
-            "    container_name: " + client_name,
-            "    restart: unless-stopped",
-            "    environment:",
-            f'      - EXPO_PUBLIC_API_BASE=http://api:{api_port}/api/v1',
-            f'      - EXPO_PUBLIC_DEV_MACHINE_IP={env_values.get("DEV_MACHINE_IP", "localhost")}',
-            "    volumes:",
-            "      - ./client:/app",
-            "      - /app/node_modules",
-            "    ports:",
-            f'      - "{client_port}:8081"',
             "    networks:",
             f"      - {custom_network}",
             "    depends_on:",
@@ -778,14 +617,6 @@ def write_configs(
     env_path.write_text(env_content)
     results[".env.local"] = "written"
     logger.info("Wrote %s", env_path)
-
-    # client/.env.local
-    client_env = generate_client_env(env_values)
-    client_env_path = root / "client" / ".env.local"
-    client_env_path.parent.mkdir(parents=True, exist_ok=True)
-    client_env_path.write_text(client_env)
-    results["client/.env.local"] = "written"
-    logger.info("Wrote %s", client_env_path)
 
     # trainer-web/.env.local
     trainer_env = generate_trainer_web_env(env_values)
