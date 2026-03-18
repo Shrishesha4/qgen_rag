@@ -28,6 +28,12 @@ self.addEventListener('fetch', (event: FetchEvent) => {
 	if (url.origin !== self.location.origin) return;
 	const pathname = url.pathname;
 
+	// Only exclude layout.css from caching to prevent blur issues
+	if (pathname.includes('layout.css')) {
+		event.respondWith(fetch(event.request));
+		return;
+	}
+
 	if (ASSETS.includes(pathname)) {
 		event.respondWith(
 			caches.open(CACHE).then(async (cache) => {

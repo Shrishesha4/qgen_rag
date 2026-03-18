@@ -1212,6 +1212,67 @@ async def cancel_generation(
     return {"message": "Generation cancelled", "subject_id": subject_id}
 
 
+@router.get("/estimate-capacity/{subject_id}")
+async def estimate_question_capacity(
+    subject_id: str,
+    current_user: User = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+):
+    """
+    Estimate the maximum number of questions that can be generated from a subject's content.
+    This helps determine the optimal question count for training.
+    """
+    try:
+        parsed_subject_id = uuid.UUID(subject_id)
+    except ValueError:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Invalid subject_id format")
+
+    # Get subject with primary documents
+    subject_res = await db.execute(
+        select(Subject)
+        .options(selectinload(Subject.documents))
+        .where(Subject.id == parsed_subject_id, Subject.user_id == current_user.id)
+    )
+    subject = subject_res.scalar_one_or_none()
+    if not subject:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Subject not found")
+
+    # Count primary documents and their chunks
+    primary_docs = [doc for doc in subject.documents if doc.document_type == "primary"]
+    total_chunks = sum(doc.total_chunks or 0 for doc in primary_docs)
+    
+    # Estimate capacity based on content
+    # Rough estimate: 1 question per 10 chunks, adjusted by document type
+    estimated_capacity = 0
+    if total_chunks > 0:
+        # Base capacity: 1 question per 8-12 chunks depending on content richness
+        base_questions_per_chunk = 0.1  # 1 question per 10 chunks
+        estimated_capacity = int(total_chunks * base_questions_per_chunk)
+        
+        # Adjust for document types
+        has_reference_books = any(doc.index_type == "reference_book" for doc in primary_docs)
+        has_template_papers = any(doc.index_type == "template_paper" for doc in primary_docs)
+        
+        if has_reference_books:
+            estimated_capacity = int(estimated_capacity * 1.5)  # More content available
+        if has_template_papers:
+            estimated_capacity = int(estimated_capacity * 1.2)  # Structured content
+        
+        # Ensure reasonable bounds
+        estimated_capacity = max(5, min(estimated_capacity, 500))  # Between 5 and 500 questions
+
+    return {
+        "subject_id": str(subject_id),
+        "primary_documents": len(primary_docs),
+        "total_chunks": total_chunks,
+        "estimated_capacity": estimated_capacity,
+        "recommendation": {
+            "suggested_count": min(estimated_capacity, 200),  # API limit
+            "reasoning": f"Based on {len(primary_docs)} primary documents with {total_chunks} total chunks"
+        }
+    }
+
+
 @router.post("/schedule-background-generation")
 async def schedule_background_generation(
     subject_id: str = Form(..., description="Subject ID to generate questions for"),

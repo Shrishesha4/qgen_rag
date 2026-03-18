@@ -104,10 +104,9 @@
 		display: flex;
 		flex-direction: column;
 		align-items: center;
-		justify-content: center;
-		min-height: 100vh;
-		padding: 2rem 1.5rem;
+		padding: 5rem 1.5rem 2rem;
 		gap: 2rem;
+		min-height: 100vh;
 	}
 
 	.hero {
@@ -184,15 +183,44 @@
 		width: 100%;
 		padding: 1.5rem;
 		border-radius: 1rem;
-		cursor: pointer;
-		font-family: inherit;
+		background: transparent;
+		border: none;
 		color: inherit;
+		cursor: pointer;
 		text-align: left;
 		transition: transform 0.2s, box-shadow 0.2s;
+		/* Enhanced blur effect - force override */
+		backdrop-filter: blur(50px) saturate(200%) brightness(1.05) !important;
+		-webkit-backdrop-filter: blur(50px) saturate(200%) brightness(1.05) !important;
+		background: linear-gradient(
+			145deg,
+			rgba(255,255,255,0.03) 0%,
+			rgba(255,255,255,0.02) 50%,
+			rgba(255,255,255,0.025) 100%
+		) !important;
+		box-shadow:
+			0 8px 40px rgba(0, 0, 0, 0.25),
+			inset 0 1px 1px rgba(255, 255, 255, 0.25),
+			inset 0 -1px 1px rgba(255, 255, 255, 0.08),
+			0 0 0 1px rgba(255, 255, 255, 0.12) !important;
 	}
+
 	.action-card:hover {
 		transform: translateY(-2px);
-		box-shadow: 0 8px 32px rgba(0, 0, 0, 0.2);
+		background: linear-gradient(
+			145deg,
+			rgba(255,255,255,0.05) 0%,
+			rgba(255,255,255,0.04) 50%,
+			rgba(255,255,255,0.045) 100%
+		) !important;
+		box-shadow: 
+			0 12px 40px rgba(0, 0, 0, 0.3),
+			inset 0 1px 1px rgba(255, 255, 255, 0.3),
+			inset 0 -1px 1px rgba(255, 255, 255, 0.12),
+			0 0 0 1px rgba(255, 255, 255, 0.18) !important;
+		/* Maintain blur on hover - force override */
+		backdrop-filter: blur(50px) saturate(200%) brightness(1.05) !important;
+		-webkit-backdrop-filter: blur(50px) saturate(200%) brightness(1.05) !important;
 	}
 
 	.action-row {
@@ -253,7 +281,7 @@
 
 	@media (max-width: 768px) {
 		.vetter-dash {
-			padding: 1.5rem 1rem;
+			padding: 4rem 1rem 1.5rem;
 			gap: 1.5rem;
 		}
 
@@ -316,7 +344,7 @@
 
 	@media (max-width: 480px) {
 		.vetter-dash {
-			padding: 1.25rem 0.75rem;
+			padding: 3.5rem 0.75rem 1.25rem;
 			gap: 1.25rem;
 		}
 

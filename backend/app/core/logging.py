@@ -16,6 +16,7 @@ from datetime import datetime
 from functools import wraps
 import time
 
+from fastapi import Request
 from loguru import logger
 
 from app.core.config import settings
@@ -51,70 +52,9 @@ class InterceptHandler(logging.Handler):
         )
 
 
-def format_record(record: Dict[str, Any]) -> str:
+def setup_logging(log_level: str = "INFO", json_logs: bool = False):
     """
-    Custom format function for console output.
-    Includes request_id if available.
-    """
-    request_id = request_id_ctx.get()
-    request_id_str = f"[{request_id}] " if request_id else ""
-    
-    # Color-coded log format
-    return (
-        "<green>{time:YYYY-MM-DD HH:mm:ss.SSS}</green> | "
-        "<level>{level: <8}</level> | "
-        f"<cyan>{request_id_str}</cyan>"
-        "<cyan>{name}</cyan>:<cyan>{function}</cyan>:<cyan>{line}</cyan> - "
-        "<level>{message}</level>\n"
-        "{exception}"
-    )
-
-
-def json_format(record: Dict[str, Any]) -> str:
-    """
-    JSON format for production logging (structured logs).
-    Easy to parse by log aggregation tools (ELK, Datadog, etc.)
-    """
-    import json
-    
-    request_id = request_id_ctx.get()
-    
-    log_record = {
-        "timestamp": datetime.utcnow().isoformat(),
-        "level": record["level"].name,
-        "logger": record["name"],
-        "message": record["message"],
-        "module": record["module"],
-        "function": record["function"],
-        "line": record["line"],
-    }
-    
-    if request_id:
-        log_record["request_id"] = request_id
-    
-    # Include extra data if present
-    if record.get("extra"):
-        for key, value in record["extra"].items():
-            if key not in ("request_id",):
-                log_record[key] = value
-    
-    # Include exception info if present
-    if record["exception"]:
-        log_record["exception"] = {
-            "type": record["exception"].type.__name__ if record["exception"].type else None,
-            "value": str(record["exception"].value) if record["exception"].value else None,
-            "traceback": record["exception"].traceback if record["exception"].traceback else None,
-        }
-    
-    return json.dumps(log_record) + "\n"
-
-
-def setup_logging(
-    log_level: str = "INFO",
-    json_logs: bool = False,
-) -> None:
-    """
-    Configure application logging.
+    Configure loguru logging for the application.
     
     Args:
         log_level: Minimum log level (DEBUG, INFO, WARNING, ERROR, CRITICAL)
@@ -129,17 +69,19 @@ def setup_logging(
     
     # Add handler with appropriate format
     if use_json:
+        # Simple JSON format with basic fields
         logger.add(
             sys.stdout,
-            format=json_format,
+            format="{time:YYYY-MM-DD HH:mm:ss.SSS} | {level: <8} | {name}:{function}:{line} | {message}",
             level=level,
             colorize=False,
-            serialize=False,
+            serialize=True,  # Let loguru handle JSON serialization
         )
     else:
+        # Simple console format
         logger.add(
             sys.stdout,
-            format=format_record,
+            format="<green>{time:YYYY-MM-DD HH:mm:ss.SSS}</green> | <level>{level: <8}</level> | <cyan>{name}</cyan>:<cyan>{function}</cyan>:<cyan>{line}</cyan> - <level>{message}</level>",
             level=level,
             colorize=True,
         )
@@ -150,81 +92,38 @@ def setup_logging(
     # Set levels for noisy third-party loggers
     for logger_name in (
         "uvicorn",
-        "uvicorn.error",
         "uvicorn.access",
+        "uvicorn.error",
         "sqlalchemy.engine",
+        "sqlalchemy.pool",
         "httpx",
-        "httpcore",
+        "asyncpg",
     ):
         logging.getLogger(logger_name).setLevel(logging.WARNING)
-    
-    logger.info(f"Logging configured: level={level}, json={use_json}")
 
 
-def log_performance(operation_name: str):
+def log_execution_time(func):
     """
-    Decorator to log performance timing for critical operations.
+    Decorator to log function execution time.
     
     Usage:
-        @log_performance("generate_questions")
-        async def generate_questions(...):
-            ...
+        @log_execution_time
+        def my_function():
+            pass
     """
-    def decorator(func):
-        @wraps(func)
-        async def async_wrapper(*args, **kwargs):
-            start_time = time.perf_counter()
-            try:
-                result = await func(*args, **kwargs)
-                duration = time.perf_counter() - start_time
-                logger.info(
-                    f"{operation_name} completed",
-                    operation=operation_name,
-                    duration_ms=round(duration * 1000, 2),
-                    status="success",
-                )
-                return result
-            except Exception as e:
-                duration = time.perf_counter() - start_time
-                logger.error(
-                    f"{operation_name} failed",
-                    operation=operation_name,
-                    duration_ms=round(duration * 1000, 2),
-                    status="error",
-                    error=str(e),
-                )
-                raise
-        
-        @wraps(func)
-        def sync_wrapper(*args, **kwargs):
-            start_time = time.perf_counter()
-            try:
-                result = func(*args, **kwargs)
-                duration = time.perf_counter() - start_time
-                logger.info(
-                    f"{operation_name} completed",
-                    operation=operation_name,
-                    duration_ms=round(duration * 1000, 2),
-                    status="success",
-                )
-                return result
-            except Exception as e:
-                duration = time.perf_counter() - start_time
-                logger.error(
-                    f"{operation_name} failed",
-                    operation=operation_name,
-                    duration_ms=round(duration * 1000, 2),
-                    status="error",
-                    error=str(e),
-                )
-                raise
-        
-        import asyncio
-        if asyncio.iscoroutinefunction(func):
-            return async_wrapper
-        return sync_wrapper
-    
-    return decorator
+    @wraps(func)
+    def wrapper(*args, **kwargs):
+        start_time = time.time()
+        try:
+            result = func(*args, **kwargs)
+            execution_time = time.time() - start_time
+            logger.info(f"⏱️ {func.__name__} completed in {execution_time:.2f}s")
+            return result
+        except Exception as e:
+            execution_time = time.time() - start_time
+            logger.error(f"❌ {func.__name__} failed after {execution_time:.2f}s: {e}")
+            raise
+    return wrapper
 
 
 class LogContext:
@@ -233,28 +132,43 @@ class LogContext:
     
     Usage:
         with LogContext(user_id="123", document_id="456"):
-            logger.info("Processing document")  # Will include user_id and document_id
+            logger.info("Processing document")
     """
     
-    def __init__(self, **kwargs):
-        self.extra = kwargs
-        self.token = None
+    def __init__(self, **context):
+        self.context = context
+        self.bound_logger = None
     
     def __enter__(self):
-        self.token = logger.contextualize(**self.extra)
-        return self
+        self.bound_logger = logger.bind(**self.context)
+        return self.bound_logger
     
     def __exit__(self, exc_type, exc_val, exc_tb):
-        if self.token:
-            self.token.__exit__(exc_type, exc_val, exc_tb)
-        return False
+        pass
 
 
-# Export the configured logger for use throughout the application
+# Create a request ID middleware for FastAPI
+def add_request_id(request: Request, call_next):
+    """
+    Middleware to add request ID to all logs for a request.
+    """
+    import uuid
+    
+    request_id = str(uuid.uuid4())
+    request_id_ctx.set(request_id)
+    
+    # Add request ID to response headers
+    response = call_next(request)
+    response.headers["X-Request-ID"] = request_id
+    return response
+
+
+# Export the configured logger
 __all__ = [
     "logger",
-    "setup_logging",
-    "log_performance",
+    "setup_logging", 
+    "log_execution_time",
     "LogContext",
+    "add_request_id",
     "request_id_ctx",
 ]

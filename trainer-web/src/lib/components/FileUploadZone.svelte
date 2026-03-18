@@ -80,11 +80,39 @@
 		transition: all 0.2s ease;
 		outline: none;
 		gap: 0.5rem;
+		/* Enhanced blur effect - force override */
+		backdrop-filter: blur(50px) saturate(200%) brightness(1.05) !important;
+		-webkit-backdrop-filter: blur(50px) saturate(200%) brightness(1.05) !important;
+		background: linear-gradient(
+			145deg,
+			rgba(255,255,255,0.03) 0%,
+			rgba(255,255,255,0.02) 50%,
+			rgba(255,255,255,0.025) 100%
+		) !important;
+		box-shadow:
+			0 8px 40px rgba(0, 0, 0, 0.25),
+			inset 0 1px 1px rgba(255, 255, 255, 0.25),
+			inset 0 -1px 1px rgba(255, 255, 255, 0.08),
+			0 0 0 1px rgba(255, 255, 255, 0.12) !important;
+		/* Force hardware acceleration for Chromium */
+		transform: translateZ(0) scale(1);
+		backface-visibility: hidden;
+		perspective: 1000px;
+		-webkit-font-smoothing: subpixel-antialiased;
 	}
 
 	.upload-zone:hover, .drag-over {
-		background: rgba(255, 255, 255, 0.08);
+		background: linear-gradient(
+			145deg,
+			rgba(255,255,255,0.05) 0%,
+			rgba(255,255,255,0.04) 50%,
+			rgba(255,255,255,0.045) 100%
+		) !important;
 		border-color: rgba(var(--theme-primary-rgb), 0.5);
+		transform: translateZ(0) scale(1.02);
+		/* Maintain blur on hover - force override */
+		backdrop-filter: blur(50px) saturate(200%) brightness(1.05) !important;
+		-webkit-backdrop-filter: blur(50px) saturate(200%) brightness(1.05) !important;
 	}
 
 	.upload-icon {

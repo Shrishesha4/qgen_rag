@@ -113,12 +113,10 @@ body {
   background-size: cover;
   background-position: center;
   background-repeat: no-repeat;
-  isolation: isolate;
 }
 
 .app-shell {
   position: relative;
-  isolation: isolate;
 }
 
 html.bf-repaint .glass,
@@ -478,8 +476,8 @@ a:hover {
     rgba(255,255,255,0.04) 70%,
     rgba(255,255,255,0.08) 100%
   );
-  backdrop-filter: var(--glass-blur-heavy);
-  -webkit-backdrop-filter: var(--glass-blur-heavy);
+  backdrop-filter: blur(50px) saturate(200%) brightness(1.05);
+  -webkit-backdrop-filter: blur(50px) saturate(200%) brightness(1.05);
   box-shadow:
     inset 1px 0 1px rgba(255, 255, 255, 0.15),
     inset -1px 0 1px rgba(255, 255, 255, 0.05),
@@ -746,12 +744,12 @@ a:hover {
   position: relative;
   background: linear-gradient(
     145deg,
-    rgba(255,255,255,0.1) 0%,
-    rgba(255,255,255,0.05) 50%,
-    rgba(255,255,255,0.08) 100%
+    rgba(255,255,255,0.03) 0%,
+    rgba(255,255,255,0.02) 50%,
+    rgba(255,255,255,0.025) 100%
   );
-  backdrop-filter: blur(50px) saturate(200%) brightness(1.05);
-  -webkit-backdrop-filter: blur(50px) saturate(200%) brightness(1.05);
+  backdrop-filter: blur(50px) saturate(200%) brightness(1.05) !important;
+  -webkit-backdrop-filter: blur(50px) saturate(200%) brightness(1.05) !important;
   will-change: backdrop-filter;
   transform: translateZ(0);
   border-radius: var(--glass-radius);
@@ -761,6 +759,92 @@ a:hover {
     inset 0 -1px 1px rgba(255, 255, 255, 0.08),
     0 0 0 1px rgba(255, 255, 255, 0.12);
   overflow: hidden;
+  z-index: 10; /* Force stacking context */
+}
+
+/* Force background visibility for Chromium */
+.glass-panel::before {
+  content: '';
+  position: fixed;
+  top: 0;
+  left: 0;
+  right: 0;
+  bottom: 0;
+  background-image: var(--theme-bg-image, none), var(--theme-bg);
+  background-size: cover;
+  background-position: center;
+  background-attachment: fixed;
+  filter: blur(50px) saturate(200%) brightness(1.05);
+  z-index: -1;
+  pointer-events: none;
+}
+
+.glass-panel::after {
+  content: '';
+  position: absolute;
+  inset: 0;
+  background: linear-gradient(
+    145deg,
+    rgba(255,255,255,0.03) 0%,
+    rgba(255,255,255,0.02) 50%,
+    rgba(255,255,255,0.025) 100%
+  );
+  border-radius: inherit;
+  z-index: 0;
+  pointer-events: none;
+}
+
+/* glass-card — same appearance as glass-panel, used on teacher pages */
+.glass-card {
+  position: relative;
+  backdrop-filter: blur(50px) saturate(200%) brightness(1.05) !important;
+  -webkit-backdrop-filter: blur(50px) saturate(200%) brightness(1.05) !important;
+  background: linear-gradient(
+    145deg,
+    rgba(255,255,255,0.03) 0%,
+    rgba(255,255,255,0.02) 50%,
+    rgba(255,255,255,0.025) 100%
+  );
+  box-shadow:
+    0 8px 40px rgba(0, 0, 0, 0.25),
+    inset 0 1px 1px rgba(255, 255, 255, 0.25),
+    inset 0 -1px 1px rgba(255, 255, 255, 0.08),
+    0 0 0 1px rgba(255, 255, 255, 0.12);
+  border-radius: var(--glass-radius);
+  overflow: hidden;
+  z-index: 10; /* Force stacking context */
+}
+
+/* Force background visibility for Chromium */
+.glass-card::before {
+  content: '';
+  position: fixed;
+  top: 0;
+  left: 0;
+  right: 0;
+  bottom: 0;
+  background-image: var(--theme-bg-image, none), var(--theme-bg);
+  background-size: cover;
+  background-position: center;
+  background-attachment: fixed;
+  filter: blur(50px) saturate(200%) brightness(1.05);
+  z-index: -1;
+  pointer-events: none;
+}
+
+.glass-card::after {
+  content: '';
+  position: absolute;
+  inset: 0;
+  background: linear-gradient(
+    145deg,
+    rgba(255,255,255,0.03) 0%,
+    rgba(255,255,255,0.02) 50%,
+    rgba(255,255,255,0.025) 100%
+  );
+  border-radius: inherit;
+  z-index: 0;
+  pointer-events: none;
 }
 
 .glass-panel::before {
@@ -944,6 +1028,9 @@ a:hover {
 
   .glass-panel {
     border-radius: var(--glass-radius);
+    /* Ensure blur works on mobile */
+    backdrop-filter: blur(50px) saturate(200%) brightness(1.05) !important;
+    -webkit-backdrop-filter: blur(50px) saturate(200%) brightness(1.05) !important;
   }
 
   .glass-input {
@@ -1042,5 +1129,8 @@ a:hover {
     box-shadow:
       0 0 0 2px rgba(255, 255, 255, 0.5),
       0 8px 32px rgba(0, 0, 0, 0.2);
+    /* Ensure blur works on all screen sizes */
+    backdrop-filter: blur(50px) saturate(200%) brightness(1.05) !important;
+    -webkit-backdrop-filter: blur(50px) saturate(200%) brightness(1.05) !important;
   }
 }

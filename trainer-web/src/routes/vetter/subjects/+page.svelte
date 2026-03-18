@@ -105,11 +105,10 @@
 	.page {
 		max-width: 600px;
 		margin: 0 auto;
-		padding: 2rem 1.5rem;
-		min-height: 100vh;
+		padding: 5rem 1.5rem 2rem;
+		gap: 1.5rem;
 		display: flex;
 		flex-direction: column;
-		gap: 1rem;
 	}
 
 	.center-state {
@@ -150,11 +149,38 @@
 		color: inherit;
 		text-align: left;
 		transition: all 0.2s;
+		/* Enhanced blur effect - force override */
+		backdrop-filter: blur(50px) saturate(200%) brightness(1.05) !important;
+		-webkit-backdrop-filter: blur(50px) saturate(200%) brightness(1.05) !important;
+		background: linear-gradient(
+			145deg,
+			rgba(255,255,255,0.03) 0%,
+			rgba(255,255,255,0.02) 50%,
+			rgba(255,255,255,0.025) 100%
+		) !important;
+		box-shadow:
+			0 8px 40px rgba(0, 0, 0, 0.25),
+			inset 0 1px 1px rgba(255, 255, 255, 0.25),
+			inset 0 -1px 1px rgba(255, 255, 255, 0.08),
+			0 0 0 1px rgba(255, 255, 255, 0.12) !important;
 	}
 	.vet-all-btn:hover {
 		transform: translateY(-2px);
 		border-color: rgba(var(--theme-primary-rgb), 0.5);
-		background: rgba(var(--theme-primary-rgb), 0.12);
+		background: linear-gradient(
+			145deg,
+			rgba(255,255,255,0.05) 0%,
+			rgba(255,255,255,0.04) 50%,
+			rgba(255,255,255,0.045) 100%
+		) !important;
+		box-shadow: 
+			0 12px 40px rgba(0, 0, 0, 0.3),
+			inset 0 1px 1px rgba(255, 255, 255, 0.3),
+			inset 0 -1px 1px rgba(255, 255, 255, 0.12),
+			0 0 0 1px rgba(255, 255, 255, 0.18) !important;
+		/* Maintain blur on hover - force override */
+		backdrop-filter: blur(50px) saturate(200%) brightness(1.05) !important;
+		-webkit-backdrop-filter: blur(50px) saturate(200%) brightness(1.05) !important;
 	}
 	.vet-all-icon { font-size: 1.5rem; }
 	.vet-all-info { flex: 1; display: flex; flex-direction: column; gap: 0.15rem; }
@@ -194,14 +220,44 @@
 		text-align: left;
 		cursor: pointer;
 		padding: 1.25rem 1.5rem;
-		width: 100%;
-		font-family: inherit;
+		border-radius: 1rem;
+		background: transparent;
+		border: 1px solid rgba(255, 255, 255, 0.1);
 		color: inherit;
 		transition: all 0.2s;
+		/* Enhanced blur effect - force override */
+		backdrop-filter: blur(50px) saturate(200%) brightness(1.05) !important;
+		-webkit-backdrop-filter: blur(50px) saturate(200%) brightness(1.05) !important;
+		background: linear-gradient(
+			145deg,
+			rgba(255,255,255,0.03) 0%,
+			rgba(255,255,255,0.02) 50%,
+			rgba(255,255,255,0.025) 100%
+		) !important;
+		box-shadow:
+			0 8px 40px rgba(0, 0, 0, 0.25),
+			inset 0 1px 1px rgba(255, 255, 255, 0.25),
+			inset 0 -1px 1px rgba(255, 255, 255, 0.08),
+			0 0 0 1px rgba(255, 255, 255, 0.12) !important;
 	}
+
 	.subject-card:hover {
 		transform: translateY(-2px);
 		border-color: rgba(var(--theme-primary-rgb), 0.4);
+		background: linear-gradient(
+			145deg,
+			rgba(255,255,255,0.05) 0%,
+			rgba(255,255,255,0.04) 50%,
+			rgba(255,255,255,0.045) 100%
+		) !important;
+		box-shadow: 
+			0 12px 40px rgba(0, 0, 0, 0.3),
+			inset 0 1px 1px rgba(255, 255, 255, 0.3),
+			inset 0 -1px 1px rgba(255, 255, 255, 0.12),
+			0 0 0 1px rgba(255, 255, 255, 0.18) !important;
+		/* Maintain blur on hover - force override */
+		backdrop-filter: blur(50px) saturate(200%) brightness(1.05) !important;
+		-webkit-backdrop-filter: blur(50px) saturate(200%) brightness(1.05) !important;
 	}
 
 	.sc-top {
@@ -265,7 +321,7 @@
 
 	@media (max-width: 768px) {
 		.page {
-			padding: 1.5rem 1rem;
+			padding: 4rem 1rem 1.5rem;
 			gap: 0.85rem;
 		}
 
@@ -319,7 +375,7 @@
 
 	@media (max-width: 480px) {
 		.page {
-			padding: 1.25rem 0.75rem;
+			padding: 3.5rem 0.75rem 1.25rem;
 			gap: 0.75rem;
 		}
 

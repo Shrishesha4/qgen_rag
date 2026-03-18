@@ -43,12 +43,11 @@ async def lifespan(app: FastAPI):
     except Exception as e:
         logger.warning(f"⚠️ Embedding model warmup failed: {e}")
     
-    # Load reranker at startup (synchronous, run in thread to not block event loop)
-    try:
-        import asyncio
-        await asyncio.get_event_loop().run_in_executor(None, warmup_reranker_service)
-    except Exception as e:
-        logger.warning(f"⚠️ Reranker model warmup failed: {e}")
+    # Note: Reranker will load lazily on first use to avoid blocking startup
+    if settings.RERANKER_ENABLED:
+        logger.info(f"⏳ Reranker will load on first use: {settings.RERANKER_MODEL}")
+    else:
+        logger.info("🔧 Reranker disabled")
     
     # Clean up stale generation locks from previous crashes
     try:

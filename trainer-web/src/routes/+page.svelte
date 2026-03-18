@@ -133,12 +133,38 @@
 		border-radius: 1.5rem;
 		transition: all 0.3s ease;
 		cursor: pointer;
+		/* Enhanced blur effect */
+		backdrop-filter: blur(50px) saturate(200%) brightness(1.05);
+		-webkit-backdrop-filter: blur(50px) saturate(200%) brightness(1.05);
+		background: linear-gradient(
+			145deg,
+			rgba(255,255,255,0.1) 0%,
+			rgba(255,255,255,0.05) 50%,
+			rgba(255,255,255,0.08) 100%
+		);
+		box-shadow:
+			0 8px 40px rgba(0, 0, 0, 0.25),
+			inset 0 1px 1px rgba(255, 255, 255, 0.25),
+			inset 0 -1px 1px rgba(255, 255, 255, 0.08),
+			0 0 0 1px rgba(255, 255, 255, 0.12);
 	}
 
 	.role-card:hover {
 		transform: translateY(-4px);
-		background: rgba(255, 255, 255, 0.15);
-		box-shadow: 0 8px 32px rgba(0, 0, 0, 0.2);
+		background: linear-gradient(
+			145deg,
+			rgba(255,255,255,0.18) 0%,
+			rgba(255,255,255,0.12) 50%,
+			rgba(255,255,255,0.15) 100%
+		);
+		box-shadow: 
+			0 12px 40px rgba(0, 0, 0, 0.3),
+			inset 0 1px 1px rgba(255, 255, 255, 0.3),
+			inset 0 -1px 1px rgba(255, 255, 255, 0.12),
+			0 0 0 1px rgba(255, 255, 255, 0.18);
+		/* Maintain blur on hover */
+		backdrop-filter: blur(50px) saturate(200%) brightness(1.05);
+		-webkit-backdrop-filter: blur(50px) saturate(200%) brightness(1.05);
 	}
 
 	.role-icon {

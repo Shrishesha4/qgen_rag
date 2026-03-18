@@ -9,6 +9,22 @@
 
 	let { children } = $props();
 
+	// Cache-busting for CSS - force reload on every page load
+	onMount(() => {
+		if (typeof window !== 'undefined') {
+			// Force CSS reload by updating link tags
+			const links = document.querySelectorAll('link[rel="stylesheet"]');
+			links.forEach(link => {
+				const href = link.getAttribute('href');
+				if (href && href.includes('layout.css')) {
+					const timestamp = Date.now();
+					const newHref = href.split('?')[0] + '?t=' + timestamp;
+					link.setAttribute('href', newHref);
+				}
+			});
+		}
+	});
+
 	let pathname = $derived($page.url.pathname);
 	const hideGlobalBackPrefixes = ['/teacher/train/loop'];
 	let showGlobalBack = $derived.by(() => {
@@ -16,7 +32,8 @@
 			pathname === '/' ||
 			pathname.includes('/login') ||
 			pathname.includes('/dashboard') ||
-			pathname.includes('/ops')
+			pathname.includes('/ops') ||
+			pathname.includes('/profile') 
 		) {
 			return false;
 		}
@@ -40,7 +57,7 @@
 			// Non-blocking; adapter will retry on demand.
 		});
 		initAiOps();
-		if (import.meta.env.PROD && 'serviceWorker' in navigator) {
+		if (import.meta.env.PROD && 'serviceWorker' in navigator && window.location.pathname === '/') {
 			navigator.serviceWorker.register('/service-worker.js', { type: 'module' });
 		}
 		const root = document.documentElement;

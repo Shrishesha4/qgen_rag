@@ -893,16 +893,6 @@
 			<span class="caught-up-kicker">Batch complete</span>
 			<h2 class="caught-up-title font-serif">All Caught Up</h2>
 			<p class="caught-up-copy">You finished reviewing this batch and paused generation for now.</p>
-			<div class="caught-up-stats">
-				<div class="caught-up-stat">
-					<span class="caught-up-value">{approved.size}</span>
-					<span class="caught-up-label">Approved</span>
-				</div>
-				<div class="caught-up-stat">
-					<span class="caught-up-value">{rejected.size}</span>
-					<span class="caught-up-label">Rejected</span>
-				</div>
-			</div>
 			<div class="caught-up-actions">
 				<button class="glass-btn finish-btn" onclick={finish}>Back to dashboard</button>
 			</div>
@@ -1244,6 +1234,20 @@
 	/* Question card */
 	.question-card {
 		padding: 1.5rem;
+		/* Enhanced blur effect - force override */
+		backdrop-filter: blur(50px) saturate(200%) brightness(1.05) !important;
+		-webkit-backdrop-filter: blur(50px) saturate(200%) brightness(1.05) !important;
+		background: linear-gradient(
+			145deg,
+			rgba(255,255,255,0.03) 0%,
+			rgba(255,255,255,0.02) 50%,
+			rgba(255,255,255,0.025) 100%
+		) !important;
+		box-shadow:
+			0 8px 40px rgba(0, 0, 0, 0.25),
+			inset 0 1px 1px rgba(255, 255, 255, 0.25),
+			inset 0 -1px 1px rgba(255, 255, 255, 0.08),
+			0 0 0 1px rgba(255, 255, 255, 0.12) !important;
 	}
 
 	.q-text {

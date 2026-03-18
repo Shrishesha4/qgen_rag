@@ -1345,26 +1345,56 @@
 		display: flex;
 		align-items: center;
 		gap: 0.75rem;
-		padding: 1rem;
-		border-radius: 16px;
-		border: 1px solid rgba(255, 255, 255, 0.12);
-		background: rgba(255, 255, 255, 0.05);
-		color: var(--theme-text);
-		cursor: pointer;
-		font-family: inherit;
+		padding: 0.75rem;
+		border-radius: var(--glass-radius);
+		border: 1px solid rgba(255, 255, 255, 0.1);
+		background: rgba(255, 255, 255, 0.04);
+		color: inherit;
 		text-align: left;
+		text-decoration: none;
 		transition: all 0.2s ease;
+		/* Enhanced blur effect - force override */
+		backdrop-filter: blur(50px) saturate(200%) brightness(1.05) !important;
+		-webkit-backdrop-filter: blur(50px) saturate(200%) brightness(1.05) !important;
+		background: linear-gradient(
+			145deg,
+			rgba(255,255,255,0.03) 0%,
+			rgba(255,255,255,0.02) 50%,
+			rgba(255,255,255,0.025) 100%
+		) !important;
+		box-shadow:
+			0 8px 40px rgba(0, 0, 0, 0.25),
+			inset 0 1px 1px rgba(255, 255, 255, 0.25),
+			inset 0 -1px 1px rgba(255, 255, 255, 0.08),
+			0 0 0 1px rgba(255, 255, 255, 0.12) !important;
 	}
 
 	.discipline-card:hover {
-		background: rgba(255, 255, 255, 0.08);
+		background: linear-gradient(
+			145deg,
+			rgba(255,255,255,0.05) 0%,
+			rgba(255,255,255,0.04) 50%,
+			rgba(255,255,255,0.045) 100%
+		) !important;
 		border-color: rgba(var(--theme-primary-rgb), 0.28);
+		transform: translateY(-1px);
+		box-shadow: 
+			0 12px 40px rgba(0, 0, 0, 0.3),
+			inset 0 1px 1px rgba(255, 255, 255, 0.3),
+			inset 0 -1px 1px rgba(255, 255, 255, 0.12),
+			0 0 0 1px rgba(255, 255, 255, 0.18) !important;
+		/* Maintain blur on hover - force override */
+		backdrop-filter: blur(50px) saturate(200%) brightness(1.05) !important;
+		-webkit-backdrop-filter: blur(50px) saturate(200%) brightness(1.05) !important;
 	}
 
 	.discipline-card.selected {
 		background: rgba(var(--theme-primary-rgb), 0.46);
 		border-color: rgba(var(--theme-primary-rgb), 0.45);
 		box-shadow: 0 0 0 1px rgba(var(--theme-primary-rgb), 0.2);
+		/* Maintain blur on selected - force override */
+		backdrop-filter: blur(50px) saturate(200%) brightness(1.05) !important;
+		-webkit-backdrop-filter: blur(50px) saturate(200%) brightness(1.05) !important;
 	}
 
 	.discipline-icon {
@@ -1607,6 +1637,20 @@
 		border-radius: 20px;
 		font-size: 0.85rem;
 		color: var(--theme-text);
+		/* Enhanced blur effect - force override */
+		backdrop-filter: blur(50px) saturate(200%) brightness(1.05) !important;
+		-webkit-backdrop-filter: blur(50px) saturate(200%) brightness(1.05) !important;
+		background: linear-gradient(
+			145deg,
+			rgba(255,255,255,0.03) 0%,
+			rgba(255,255,255,0.02) 50%,
+			rgba(255,255,255,0.025) 100%
+		) !important;
+		box-shadow:
+			0 8px 40px rgba(0, 0, 0, 0.25),
+			inset 0 1px 1px rgba(255, 255, 255, 0.25),
+			inset 0 -1px 1px rgba(255, 255, 255, 0.08),
+			0 0 0 1px rgba(255, 255, 255, 0.12) !important;
 	}
 
 	.topic-name {
@@ -1677,6 +1721,20 @@
 		border-radius: var(--glass-radius-sm, 12px);
 		overflow: hidden;
 		transition: border-color 0.2s;
+		/* Enhanced blur effect - force override */
+		backdrop-filter: blur(50px) saturate(200%) brightness(1.05) !important;
+		-webkit-backdrop-filter: blur(50px) saturate(200%) brightness(1.05) !important;
+		background: linear-gradient(
+			145deg,
+			rgba(255,255,255,0.03) 0%,
+			rgba(255,255,255,0.02) 50%,
+			rgba(255,255,255,0.025) 100%
+		) !important;
+		box-shadow:
+			0 8px 40px rgba(0, 0, 0, 0.25),
+			inset 0 1px 1px rgba(255, 255, 255, 0.25),
+			inset 0 -1px 1px rgba(255, 255, 255, 0.08),
+			0 0 0 1px rgba(255, 255, 255, 0.12) !important;
 	}
 
 	.syllabus-item.expanded {
@@ -1773,10 +1831,24 @@
 		align-items: center;
 		gap: 0.5rem;
 		padding: 0.5rem 0.75rem;
+		border-radius: var(--glass-radius-sm, 8px);
 		background: rgba(255, 255, 255, 0.04);
 		border: 0.5px solid rgba(255, 255, 255, 0.08);
-		border-radius: 8px;
 		font-size: 0.85rem;
+		/* Enhanced blur effect - force override */
+		backdrop-filter: blur(50px) saturate(200%) brightness(1.05) !important;
+		-webkit-backdrop-filter: blur(50px) saturate(200%) brightness(1.05) !important;
+		background: linear-gradient(
+			145deg,
+			rgba(255,255,255,0.03) 0%,
+			rgba(255,255,255,0.02) 50%,
+			rgba(255,255,255,0.025) 100%
+		) !important;
+		box-shadow:
+			0 8px 40px rgba(0, 0, 0, 0.25),
+			inset 0 1px 1px rgba(255, 255, 255, 0.25),
+			inset 0 -1px 1px rgba(255, 255, 255, 0.08),
+			0 0 0 1px rgba(255, 255, 255, 0.12) !important;
 	}
 
 	.file-icon {
@@ -1876,8 +1948,22 @@
 		margin-top: 0.85rem;
 		padding: 0.8rem;
 		border: 1px solid rgba(var(--theme-primary-rgb), 0.28);
-		border-radius: 10px;
+		border-radius: var(--glass-radius);
 		background: rgba(var(--theme-primary-rgb), 0.08);
+		/* Enhanced blur effect - force override */
+		backdrop-filter: blur(50px) saturate(200%) brightness(1.05) !important;
+		-webkit-backdrop-filter: blur(50px) saturate(200%) brightness(1.05) !important;
+		background: linear-gradient(
+			145deg,
+			rgba(255,255,255,0.03) 0%,
+			rgba(255,255,255,0.02) 50%,
+			rgba(255,255,255,0.025) 100%
+		) !important;
+		box-shadow:
+			0 8px 40px rgba(0, 0, 0, 0.25),
+			inset 0 1px 1px rgba(255, 255, 255, 0.25),
+			inset 0 -1px 1px rgba(255, 255, 255, 0.08),
+			0 0 0 1px rgba(255, 255, 255, 0.12) !important;
 	}
 
 	.ref-questions-desc {
@@ -1943,6 +2029,21 @@
 	/* Step 6: Review */
 	.review-card {
 		padding: 1.5rem;
+		/* Enhanced blur effect - force override */
+		backdrop-filter: blur(50px) saturate(200%) brightness(1.05) !important;
+		-webkit-backdrop-filter: blur(50px) saturate(200%) brightness(1.05) !important;
+		background: linear-gradient(
+			145deg,
+			rgba(255,255,255,0.03) 0%,
+			rgba(255,255,255,0.02) 50%,
+			rgba(255,255,255,0.025) 100%
+		) !important;
+		box-shadow:
+			0 8px 40px rgba(0, 0, 0, 0.25),
+			inset 0 1px 1px rgba(255, 255, 255, 0.25),
+			inset 0 -1px 1px rgba(255, 255, 255, 0.08),
+			0 0 0 1px rgba(255, 255, 255, 0.12) !important;
+		border-radius: var(--glass-radius);
 	}
 
 	.review-title {

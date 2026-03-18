@@ -19,6 +19,7 @@
 		type BackgroundGenerationStatusItem,
 		type ReferenceDocumentItem,
 	} from '$lib/api/documents';
+	import { estimateQuestionCapacity } from '$lib/api/question-capacity';
 
 	onMount(() => {
 		const unsub = session.subscribe((s) => {
@@ -74,6 +75,8 @@
 	let schedulingBulk = $state(false);
 	let generateModeError = $state('');
 	let generateModeSuccess = $state('');
+	let capacityEstimate = $state<{suggested_count: number, reasoning: string} | null>(null);
+	let loadingCapacity = $state(false);
 
 	const BG_STATUS_CACHE_KEY = 'trainer.bgGenerationStatusCache.v1';
 	const BG_STATUS_CACHE_TTL_MS = 2 * 60 * 60 * 1000;
@@ -102,9 +105,22 @@
 		generateTopicScope = mode === 'topic' ? 'selected' : 'all';
 		generateTargetTopicId = topicId;
 		generateModalTopics = topicsMap[subject.id] || [];
-		generateSelectedTopicIds = topicId ? [topicId] : [];
-		generateModeError = '';
+		capacityEstimate = null;
+		
+		// Load capacity estimation for better default
+		loadingCapacity = true;
+		try {
+			const capacity = await estimateQuestionCapacity(subject.id);
+			capacityEstimate = capacity.recommendation;
+			generateQuestionCount = capacity.recommendation.suggested_count;
+		} catch (e) {
+			console.error('Failed to load capacity estimate:', e);
+		} finally {
+			loadingCapacity = false;
+		}
+		
 		generateModalStep = 'choice';
+		generateSelectedTopicIds = topicId ? [topicId] : [];
 		showGenerateModeModal = true;
 
 		if (generateModalTopics.length === 0) {
@@ -1085,6 +1101,13 @@
 									bind:value={generateQuestionCount}
 									class="search-input"
 								/>
+								{#if loadingCapacity}
+									<small class="capacity-loading">Loading capacity estimate...</small>
+								{:else if capacityEstimate}
+									<small class="capacity-info">
+										📊 Suggested: {capacityEstimate.suggested_count} ({capacityEstimate.reasoning})
+									</small>
+								{/if}
 							</label>
 
 							{#if generateTargetMode === 'mixed'}
@@ -1286,10 +1309,27 @@
 		width: 100%;
 		overflow: hidden;
 		transition: all 0.2s;
+		/* Enhanced blur effect - force override */
+		backdrop-filter: blur(50px) saturate(200%) brightness(1.05) !important;
+		-webkit-backdrop-filter: blur(50px) saturate(200%) brightness(1.05) !important;
+		background: linear-gradient(
+			145deg,
+			rgba(255,255,255,0.1) 0%,
+			rgba(255,255,255,0.05) 50%,
+			rgba(255,255,255,0.08) 100%
+		) !important;
+		box-shadow:
+			0 8px 40px rgba(0, 0, 0, 0.25),
+			inset 0 1px 1px rgba(255, 255, 255, 0.25),
+			inset 0 -1px 1px rgba(255, 255, 255, 0.08),
+			0 0 0 1px rgba(255, 255, 255, 0.12) !important;
 	}
 
 	.subject-card.expanded {
 		border-color: rgba(var(--theme-primary-rgb), 0.3);
+		/* Maintain blur on expanded - force override */
+		backdrop-filter: blur(50px) saturate(200%) brightness(1.05) !important;
+		-webkit-backdrop-filter: blur(50px) saturate(200%) brightness(1.05) !important;
 	}
 
 	.subject-card-row {
@@ -1487,25 +1527,23 @@
 		font: inherit;
 	} */
 
-	.syllabus-input {
-		resize: vertical;
-		min-height: 56px;
-	}
+.topic-chip-btn {
+	padding: 0.4rem 0.8rem;
+	font-size: 0.85rem;
+}
 
-	.small-btn {
-		padding: 0.5rem 0.85rem;
-		font-size: 0.82rem;
-		align-self: flex-start;
-	}
+.capacity-loading {
+	color: var(--theme-text-muted);
+	font-size: 0.8rem;
+	margin-top: 0.25rem;
+}
 
-	.topics-loading {
-		display: flex;
-		align-items: center;
-		gap: 0.5rem;
-		padding: 1rem 1.5rem;
-		color: var(--theme-text-muted);
-		font-size: 0.85rem;
-	}
+.capacity-info {
+	color: rgba(var(--theme-primary-rgb), 0.8);
+	font-size: 0.8rem;
+	margin-top: 0.25rem;
+	display: block;
+}
 
 	.topics-empty {
 		padding: 1rem 1.5rem;
@@ -1948,8 +1986,16 @@
 	.clear-search-btn {
 		position: absolute;
 		right: 0.75rem;
-		background: none;
-		border: none;
+		background: linear-gradient(
+			145deg,
+			rgba(255,255,255,0.03) 0%,
+			rgba(255,255,255,0.02) 50%,
+			rgba(255,255,255,0.025) 100%
+		);
+		backdrop-filter: blur(50px) saturate(200%) brightness(1.05);
+		-webkit-backdrop-filter: blur(50px) saturate(200%) brightness(1.05);
+		border: 0.5px solid rgba(255, 255, 255, 0.12);
+		border-radius: 0.5rem;
 		color: var(--theme-text-muted);
 		cursor: pointer;
 		font-size: 1.1rem;
@@ -1957,11 +2003,26 @@
 		display: flex;
 		align-items: center;
 		justify-content: center;
-		transition: color 0.15s;
+		transition: all 0.15s;
+		box-shadow:
+			0 4px 20px rgba(0, 0, 0, 0.15),
+			inset 0 1px 1px rgba(255, 255, 255, 0.25),
+			inset 0 -1px 1px rgba(255, 255, 255, 0.08);
 	}
 
 	.clear-search-btn:hover {
 		color: var(--theme-text);
+		background: linear-gradient(
+			145deg,
+			rgba(255,255,255,0.05) 0%,
+			rgba(255,255,255,0.03) 50%,
+			rgba(255,255,255,0.04) 100%
+		);
+		transform: translateY(-1px);
+		box-shadow:
+			0 6px 25px rgba(0, 0, 0, 0.2),
+			inset 0 1px 1px rgba(255, 255, 255, 0.3),
+			inset 0 -1px 1px rgba(255, 255, 255, 0.1);
 	}
 
 	@media (max-width: 768px) {

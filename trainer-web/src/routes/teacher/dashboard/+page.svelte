@@ -182,11 +182,43 @@
 		color: inherit;
 		transition: all 0.3s ease;
 		cursor: pointer;
+		/* Enhanced blur effect - force override */
+		backdrop-filter: blur(50px) saturate(200%) brightness(1.05) !important;
+		-webkit-backdrop-filter: blur(50px) saturate(200%) brightness(1.05) !important;
+		background: linear-gradient(
+			145deg,
+			rgba(255,255,255,0.03) 0%,
+			rgba(255,255,255,0.02) 50%,
+			rgba(255,255,255,0.025) 100%
+		) !important;
+		box-shadow:
+			0 8px 40px rgba(0, 0, 0, 0.25),
+			inset 0 1px 1px rgba(255, 255, 255, 0.25),
+			inset 0 -1px 1px rgba(255, 255, 255, 0.08),
+			0 0 0 1px rgba(255, 255, 255, 0.12) !important;
+		/* Force hardware acceleration for Chromium */
+		transform: translateZ(0) scale(1);
+		backface-visibility: hidden;
+		perspective: 1000px;
+		-webkit-font-smoothing: subpixel-antialiased;
 	}
 
 	.mode-card:hover {
-		background: rgba(255, 255, 255, 0.15);
-		transform: translateY(-2px);
+		background: linear-gradient(
+			145deg,
+			rgba(255,255,255,0.05) 0%,
+			rgba(255,255,255,0.04) 50%,
+			rgba(255,255,255,0.045) 100%
+		) !important;
+		transform: translateY(-2px) translateZ(0);
+		box-shadow: 
+			0 12px 40px rgba(0, 0, 0, 0.3),
+			inset 0 1px 1px rgba(255, 255, 255, 0.3),
+			inset 0 -1px 1px rgba(255, 255, 255, 0.12),
+			0 0 0 1px rgba(255, 255, 255, 0.18) !important;
+		/* Maintain blur on hover - force override */
+		backdrop-filter: blur(50px) saturate(200%) brightness(1.05) !important;
+		-webkit-backdrop-filter: blur(50px) saturate(200%) brightness(1.05) !important;
 	}
 
 	.mode-icon {
