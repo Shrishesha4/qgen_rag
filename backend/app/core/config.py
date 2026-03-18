@@ -2,9 +2,10 @@
 Application configuration using Pydantic Settings.
 """
 
-from typing import List
+from typing import List, Optional
 from pydantic_settings import BaseSettings
 from pydantic import Field
+import os
 
 
 class Settings(BaseSettings):
@@ -14,9 +15,17 @@ class Settings(BaseSettings):
     API_PREFIX: str = Field(default="/api/v1")
 
     # Database (PostgreSQL + pgvector for vector data)
-    DATABASE_URL: str = Field(
-        default="postgresql+asyncpg://qgen_user:qgen_password@localhost:5432/qgen_db"
-    )
+    # Individual database connection parameters for Docker Compose
+    POSTGRES_HOST: str = Field(default="localhost")
+    POSTGRES_PORT: int = Field(default=5432)
+    POSTGRES_USER: str = Field(default="qgen_user")
+    POSTGRES_PASSWORD: str = Field(default="qgen_password")
+    POSTGRES_DB: str = Field(default="qgen_db")
+    
+    @property
+    def DATABASE_URL(self) -> str:
+        """Construct database URL from individual components."""
+        return f"postgresql+asyncpg://{self.POSTGRES_USER}:{self.POSTGRES_PASSWORD}@{self.POSTGRES_HOST}:{self.POSTGRES_PORT}/{self.POSTGRES_DB}"
     
     # Auth Database (SQLite for user/auth data, decoupled from pgvector)
     AUTH_DATABASE_URL: str = Field(
@@ -24,7 +33,18 @@ class Settings(BaseSettings):
     )
 
     # Redis
-    REDIS_URL: str = Field(default="redis://localhost:6379/0")
+    # Individual Redis connection parameters for Docker Compose
+    REDIS_HOST: str = Field(default="localhost")
+    REDIS_PORT: int = Field(default=6379)
+    REDIS_DB: int = Field(default=0)
+    REDIS_PASSWORD: Optional[str] = Field(default=None)
+    
+    @property
+    def REDIS_URL(self) -> str:
+        """Construct Redis URL from individual components."""
+        if self.REDIS_PASSWORD:
+            return f"redis://:{self.REDIS_PASSWORD}@{self.REDIS_HOST}:{self.REDIS_PORT}/{self.REDIS_DB}"
+        return f"redis://{self.REDIS_HOST}:{self.REDIS_PORT}/{self.REDIS_DB}"
 
     # JWT Authentication
     SECRET_KEY: str = Field(default="your-super-secret-key-change-in-production")
@@ -77,11 +97,6 @@ class Settings(BaseSettings):
     EMBEDDING_MODEL: str = Field(default="nomic-embed-text")
     EMBEDDING_DIMENSION: int = Field(default=768)
     
-    # Set to True to use instruction-based embedding (recommended for bge models)
-    EMBEDDING_USE_INSTRUCTION: bool = Field(default=False)
-    EMBEDDING_QUERY_INSTRUCTION: str = Field(default="Represent this sentence for searching relevant passages:")
-    EMBEDDING_DOCUMENT_INSTRUCTION: str = Field(default="")
-    
     # Embedding Cache Settings
     # L1 cache is always in-memory LRU
     # L2 cache uses Redis for persistence across restarts
@@ -119,9 +134,7 @@ class Settings(BaseSettings):
     PROMOTION_MAX_TIMEOUT_RATE: float = Field(default=0.02)
 
     # Queue + Worker Controls
-    QUEUE_BACKEND: str = Field(default="redis")  # redis | celery
     QUEUE_MAX_RETRIES: int = Field(default=3)
-    QUEUE_RETRY_BACKOFF_SECONDS: int = Field(default=30)
     QUEUE_DEAD_LETTER_PREFIX: str = Field(default="dlq")
 
     # Generation Controls
@@ -132,16 +145,13 @@ class Settings(BaseSettings):
     QUESTION_OPTION_SIMILARITY_THRESHOLD: float = Field(default=0.877)
 
     # Server
-    API_HOST: str = Field(default="0.0.0.0")
     API_PORT: int = Field(default=8000)
-
+    
     # Training Pipeline (LoRA fine-tuning)
     TRAINING_DATA_DIR: str = Field(default="./training_data")
     LORA_ADAPTERS_DIR: str = Field(default="./lora_adapters")
     TRAINING_BASE_MODEL: str = Field(default="deepseek-ai/DeepSeek-R1-Distill-Llama-1.7B")
 
-    # Frontend Development Ports
-    TRAINER_WEB_PORT: int = Field(default=5173)
 
     class Config:
         # Load .env first (dev defaults), then .env.local overrides (secrets).

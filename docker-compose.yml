@@ -1,21 +1,9 @@
 # ==============================================================================
-# Services:
-#   - db: PostgreSQL 16 with pgvector for vector similarity search
-#   - redis: Redis 7 for caching, sessions, and rate limiting
-#   - expo-web: Expo web dev server (React Native web)
-#   - api: FastAPI backend with ML models
-# Usage:
-#   Development:  docker-compose --env-file .env.local up -d
-#   Production:   docker-compose --env-file .env.local -f docker-compose.yml -f docker-compose.prod.yml up -d --build
-#   Logs:         docker-compose logs -f api
-#   Rebuild:      docker-compose --env-file .env.local up -d --build
-#
-# Production Deployment (Cloudflare Tunnel):
-#   1. Set PRODUCTION_API_URL in .env (e.g., https://qglm.shrishesha.space/api/v1)
-#   2. Configure Cloudflare tunnel to route subdomain to localhost:8000
-#   3. Update CORS_ORIGINS in .env if needed (default: * allows all)
-#   4. Rebuild mobile apps: ./client/build-ipa.sh and ./client/build-apk.sh
+# Production Docker Compose Configuration
+# Uses environment variables for all configuration
 # ==============================================================================
+
+version: '3.8'
 
 services:
   db:
@@ -23,9 +11,9 @@ services:
     container_name: qgen_db
     restart: unless-stopped
     environment:
-      POSTGRES_USER: ${POSTGRES_USER:-qgen_user}
-      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-qgen_password}
-      POSTGRES_DB: ${POSTGRES_DB:-qgen_db}
+      POSTGRES_USER: ${POSTGRES_USER}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD}
+      POSTGRES_DB: ${POSTGRES_DB}
       POSTGRES_INITDB_ARGS: "--encoding=UTF8 --locale=C"
     volumes:
       - postgres_data:/var/lib/postgresql/data
@@ -38,7 +26,7 @@ services:
       test:
         [
           "CMD-SHELL",
-          "pg_isready -U ${POSTGRES_USER:-qgen_user} -d ${POSTGRES_DB:-qgen_db}",
+          "pg_isready -U ${POSTGRES_USER} -d ${POSTGRES_DB}",
         ]
       interval: 10s
       timeout: 5s
@@ -58,9 +46,10 @@ services:
     command: >
       redis-server
       --appendonly yes
-      --maxmemory 512mb
+      --maxmemory ${REDIS_MAX_MEMORY:-512mb}
       --maxmemory-policy allkeys-lru
       --save 60 1000
+      ${REDIS_PASSWORD:+--requirepass ${REDIS_PASSWORD}}
     volumes:
       - redis_data:/data
     ports:
@@ -68,7 +57,7 @@ services:
     networks:
       - qgen_net
     healthcheck:
-      test: ["CMD", "redis-cli", "ping"]
+      test: ["CMD", "redis-cli", "${REDIS_PASSWORD:+-a ${REDIS_PASSWORD}}", "ping"]
       interval: 10s
       timeout: 5s
       retries: 5
@@ -76,114 +65,139 @@ services:
     deploy:
       resources:
         limits:
-          memory: 512M
+          memory: ${REDIS_MAX_MEMORY:-512M}
         reservations:
           memory: 128M
-
-  # Uncomment this section if you prefer running Ollama in Docker
-  # NOTE: For GPU acceleration, local installation is recommended
-  # ollama:
-  #   image: ollama/ollama:latest
-  #   container_name: qgen_ollama
-  #   restart: unless-stopped
-  #   volumes:
-  #     - ollama_data:/root/.ollama
-  #   ports:
-  #     - "11434:11434"
-  #   networks:
-  #     - qgen_net
-  #   # For NVIDIA GPU support, uncomment:
-  #   # deploy:
-  #   #   resources:
-  #   #     reservations:
-  #   #       devices:
-  #   #         - driver: nvidia
-  #   #           count: 1
-  #   #           capabilities: [gpu]
 
   api:
     build:
       context: ./backend
       dockerfile: Dockerfile
       args:
-        - PYTHON_VERSION=3.11
+        - PYTHON_VERSION=${PYTHON_VERSION:-3.11}
     container_name: qgen_api
     restart: unless-stopped
-    # Load environment variables from .env.local file
-    env_file: .env.local
     command: >
       uvicorn app.main:app
-      --host 0.0.0.0
-      --port 8000
-      --reload
+      --host ${API_HOST:-0.0.0.0}
+      --port ${API_PORT:-8000}
+      --workers ${API_WORKERS:-1}
       --log-level ${LOG_LEVEL:-info}
+      ${API_RELOAD:+--reload}
     extra_hosts:
       - "host.docker.internal:host-gateway"
     volumes:
-      - ./backend:/app
+      - ./backend:/app${API_RELOAD:+:delegated}
       - upload_data:/app/uploads
-      # Cache for ML models (sentence-transformers, cross-encoder)
       - model_cache:/root/.cache
+      - training_data:/app/training_data
+      - lora_adapters:/app/lora_adapters
+      - logs:/app/logs
     environment:
-      # Database
-      - DATABASE_URL=postgresql+asyncpg://${POSTGRES_USER:-qgen_user}:${POSTGRES_PASSWORD:-qgen_password}@db:5432/${POSTGRES_DB:-qgen_db}
-
-      # Redis
-      - REDIS_URL=redis://redis:6379/0
-
-      # LLM Provider Selection
-      # Options: "ollama" (local) or "gemini" (cloud)
-      - LLM_PROVIDER=${LLM_PROVIDER:-ollama}
-
-      # Ollama LLM (local)
-      # Use host.docker.internal for local Ollama, or 'ollama:11434' for Docker Ollama
+      
+      # Database connection (using individual env vars)
+      - POSTGRES_HOST=db
+      - POSTGRES_PORT=5432
+      - POSTGRES_USER=${POSTGRES_USER}
+      - POSTGRES_PASSWORD=${POSTGRES_PASSWORD}
+      - POSTGRES_DB=${POSTGRES_DB}
+      
+      # Redis connection (using individual env vars)
+      - REDIS_HOST=redis
+      - REDIS_PORT=6379
+      - REDIS_DB=${REDIS_DB:-0}
+      - REDIS_PASSWORD=${REDIS_PASSWORD}
+      
+      # API Configuration
+      - API_PORT=${API_PORT:-8000}
+      
+      # JWT Authentication
+      - SECRET_KEY=${SECRET_KEY}
+      - ACCESS_TOKEN_EXPIRE_MINUTES=${ACCESS_TOKEN_EXPIRE_MINUTES:-60}
+      - REFRESH_TOKEN_EXPIRE_DAYS=${REFRESH_TOKEN_EXPIRE_DAYS:-30}
+      
+      # LLM Provider Configuration
+      - LLM_PROVIDER=${LLM_PROVIDER:-deepseek}
+      
+      # Ollama Configuration
       - OLLAMA_BASE_URL=${OLLAMA_BASE_URL:-http://host.docker.internal:11434}
-      - OLLAMA_MODEL=${OLLAMA_MODEL:-llama3.2:3b-instruct-q4_K_M}
-
-      # Google Gemini API (cloud alternative)
-      - GEMINI_API_KEY=${GEMINI_API_KEY:-}
+      - OLLAMA_MODEL=${OLLAMA_MODEL:-llama3.1:8b}
+      
+      # Gemini Configuration
+      - GEMINI_API_KEY=${GEMINI_API_KEY}
       - GEMINI_MODEL=${GEMINI_MODEL:-gemini-2.0-flash}
       - GEMINI_MAX_OUTPUT_TOKENS=${GEMINI_MAX_OUTPUT_TOKENS:-2048}
       - GEMINI_SAFETY_BLOCK_NONE=${GEMINI_SAFETY_BLOCK_NONE:-true}
-
-      # Security
-      - SECRET_KEY=${SECRET_KEY:-your-super-secret-key-change-in-production}
-      - ACCESS_TOKEN_EXPIRE_MINUTES=${ACCESS_TOKEN_EXPIRE_MINUTES:-60}
-      - REFRESH_TOKEN_EXPIRE_DAYS=${REFRESH_TOKEN_EXPIRE_DAYS:-30}
-
-      # File Upload
+      
+      # DeepSeek Configuration
+      - DEEPSEEK_API_KEY=${DEEPSEEK_API_KEY}
+      - DEEPSEEK_MODEL=${DEEPSEEK_MODEL:-deepseek-chat}
+      - DEEPSEEK_BASE_URL=${DEEPSEEK_BASE_URL:-https://api.deepseek.com/v1}
+      
+      # File Upload Configuration
       - UPLOAD_DIR=/app/uploads
       - MAX_UPLOAD_SIZE_MB=${MAX_UPLOAD_SIZE_MB:-500}
-
-      # Embedding Model
-      - EMBEDDING_MODEL=${EMBEDDING_MODEL:-all-MiniLM-L6-v2}
-      - EMBEDDING_DIMENSION=${EMBEDDING_DIMENSION:-384}
-      - EMBEDDING_USE_INSTRUCTION=${EMBEDDING_USE_INSTRUCTION:-false}
+      
+      # Embedding Model Configuration
+      - EMBEDDING_MODEL=${EMBEDDING_MODEL:-nomic-embed-text}
+      - EMBEDDING_DIMENSION=${EMBEDDING_DIMENSION:-768}
       - EMBEDDING_REDIS_CACHE=${EMBEDDING_REDIS_CACHE:-true}
       - EMBEDDING_CACHE_TTL=${EMBEDDING_CACHE_TTL:-604800}
-
-      # Reranker
-      - RERANKER_MODEL=${RERANKER_MODEL:-cross-encoder/ms-marco-MiniLM-L-6-v2}
+      
+      # Reranker Configuration
+      - RERANKER_MODEL=${RERANKER_MODEL:-mixedbread-ai/mxbai-rerank-large-v1}
       - RERANKER_ENABLED=${RERANKER_ENABLED:-true}
-
-      # Question Generation
+      
+      # Question Generation Configuration
       - MAX_QUESTIONS_PER_REQUEST=${MAX_QUESTIONS_PER_REQUEST:-50}
-      - CHUNK_SIZE=${CHUNK_SIZE:-1000}
-      - CHUNK_OVERLAP=${CHUNK_OVERLAP:-200}
-
+      - CHUNK_SIZE=${CHUNK_SIZE:-1500}
+      - CHUNK_OVERLAP=${CHUNK_OVERLAP:-300}
+      
+      # OCR Configuration
+      - OCR_ENABLED=${OCR_ENABLED:-true}
+      - OCR_MIN_TEXT_PER_PAGE=${OCR_MIN_TEXT_PER_PAGE:-50}
+      - OCR_SPARSE_THRESHOLD=${OCR_SPARSE_THRESHOLD:-0.3}
+      - OCR_LANGUAGE=${OCR_LANGUAGE:-eng}
+      - OCR_MAX_RETRIES=${OCR_MAX_RETRIES:-2}
+      - OCR_DPI=${OCR_DPI:-300}
+      
+      # Generation Controls
+      - ENABLE_TWO_PASS_GENERATION=${ENABLE_TWO_PASS_GENERATION:-false}
+      - GENERATION_SCHEMA_ENFORCEMENT=${GENERATION_SCHEMA_ENFORCEMENT:-true}
+      - QUICK_GENERATE_PARALLEL_WORKERS=${QUICK_GENERATE_PARALLEL_WORKERS:-6}
+      - QUESTION_DEDUPE_SIMILARITY_THRESHOLD=${QUESTION_DEDUPE_SIMILARITY_THRESHOLD:-0.987}
+      - QUESTION_OPTION_SIMILARITY_THRESHOLD=${QUESTION_OPTION_SIMILARITY_THRESHOLD:-0.877}
+      
       # Logging & Monitoring
-      - LOG_LEVEL=${LOG_LEVEL:-INFO}
+      - LOG_LEVEL=${LOG_LEVEL:-info}
       - LOG_JSON=${LOG_JSON:-false}
       - ENABLE_METRICS=${ENABLE_METRICS:-true}
-
+      
       # Rate Limiting
       - RATE_LIMIT_REQUESTS=${RATE_LIMIT_REQUESTS:-100}
       - RATE_LIMIT_WINDOW_SECONDS=${RATE_LIMIT_WINDOW_SECONDS:-3600}
-
-      # CORS
+      
+      # CORS Configuration
       - CORS_ORIGINS=${CORS_ORIGINS:-*}
+      
+      # Training Pipeline Configuration
+      - TRAINING_DATA_DIR=/app/training_data
+      - LORA_ADAPTERS_DIR=/app/lora_adapters
+      - TRAINING_BASE_MODEL=${TRAINING_BASE_MODEL:-deepseek-ai/DeepSeek-R1-Distill-Llama-1.7B}
+      
+      # Queue Configuration
+      - QUEUE_MAX_RETRIES=${QUEUE_MAX_RETRIES:-3}
+      - QUEUE_DEAD_LETTER_PREFIX=${QUEUE_DEAD_LETTER_PREFIX:-dlq}
+      
+      # Promotion Gates
+      - PROMOTION_MIN_OFFLINE_PASS_RATE=${PROMOTION_MIN_OFFLINE_PASS_RATE:-0.8}
+      - PROMOTION_MAX_CANARY_APPROVE_DROP=${PROMOTION_MAX_CANARY_APPROVE_DROP:-0.02}
+      - PROMOTION_MAX_CRITICAL_REJECT_INCREASE=${PROMOTION_MAX_CRITICAL_REJECT_INCREASE:-0.01}
+      - PROMOTION_MAX_P95_LATENCY_MS=${PROMOTION_MAX_P95_LATENCY_MS:-2500}
+      - PROMOTION_MAX_TIMEOUT_RATE=${PROMOTION_MAX_TIMEOUT_RATE:-0.02}
+      
     ports:
-      - "${API_PORT:-8000}:8000"
+      - "${API_PORT:-8000}:${API_PORT:-8000}"
     depends_on:
       db:
         condition: service_healthy
@@ -194,19 +208,22 @@ services:
     deploy:
       resources:
         limits:
-          memory: 4G
+          memory: ${API_MAX_MEMORY:-4G}
+          cpus: ${API_MAX_CPUS:-2}
         reservations:
-          memory: 1G
+          memory: ${API_MIN_MEMORY:-1G}
+          cpus: ${API_MIN_CPUS:-0.5}
 
-trainer_web:
+  trainer_web:
     build:
       context: ./trainer-web
       dockerfile: Dockerfile
     container_name: qgen_trainer_web
     restart: unless-stopped
     environment:
-      - PUBLIC_API_URL=http://localhost:8000
-      - PUBLIC_WS_URL=ws://localhost:8000
+      - PUBLIC_API_URL=${PUBLIC_API_URL:-http://localhost:${API_PORT:-8000}}
+      - PUBLIC_WS_URL=${PUBLIC_WS_URL:-ws://localhost:${API_PORT:-8000}}
+      - PUBLIC_DOMAIN=${PUBLIC_DOMAIN:-localhost}
     ports:
       - "${TRAINER_WEB_PORT:-5173}:5173"
     depends_on:
@@ -216,26 +233,25 @@ trainer_web:
     deploy:
       resources:
         limits:
-          memory: 1G
+          memory: ${WEB_MAX_MEMORY:-1G}
         reservations:
-          memory: 256M
+          memory: ${WEB_MIN_MEMORY:-256M}
 
 volumes:
   postgres_data:
     name: qgen_postgres_data
-
   redis_data:
     name: qgen_redis_data
-
   upload_data:
     name: qgen_upload_data
-
   model_cache:
     name: qgen_model_cache
-
-  # Uncomment if using Docker Ollama
-  # ollama_data:
-  #   name: qgen_ollama_data
+  training_data:
+    name: qgen_training_data
+  lora_adapters:
+    name: qgen_lora_adapters
+  logs:
+    name: qgen_logs
 
 networks:
   qgen_net:
