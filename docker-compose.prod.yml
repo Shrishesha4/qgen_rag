@@ -28,8 +28,6 @@ services:
   trainer_web:
     build:
       target: production
-    volumes:
-      # Remove source-code mount for production
-      # Only keep persistent data if needed
+    volumes: []
     environment:
       - NODE_ENV=production
