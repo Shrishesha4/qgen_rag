@@ -24,3 +24,12 @@ services:
       - model_cache:/root/.cache
     environment:
       - LOG_JSON=true
+
+  trainer_web:
+    build:
+      target: production
+    volumes:
+      # Remove source-code mount for production
+      # Only keep persistent data if needed
+    environment:
+      - NODE_ENV=production
