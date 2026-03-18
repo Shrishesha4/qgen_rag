@@ -45,3 +45,4 @@ backend/.env
 trainer-web/.env
 trainer-web/.env.production
 backend/.env.production
+backend/.env.defaults
