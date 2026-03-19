@@ -2,6 +2,9 @@
 	import { onMount } from 'svelte';
 	import { goto } from '$app/navigation';
 	import { session, currentUser } from '$lib/session';
+	import WorkflowWizard from '$lib/components/WorkflowWizard.svelte';
+	import StatusDisplay from '$lib/components/StatusDisplay.svelte';
+	import ModeToggle from '$lib/components/ModeToggle.svelte';
 	import {
 		getTrainingStatus,
 		listModelVersions,
@@ -38,197 +41,22 @@
 	let trainingMethod = $state('sft+dpo');
 	let days = $state(30);
 	let confidenceMin = $state(0.0);
-	let activeHelpCard = $state<string | null>(null);
-
-	type HelpField = {
-		name: string;
-		meaning: string;
-		impact: string;
-	};
-
-	type HelpCard = {
-		title: string;
-		description: string;
-		fields: HelpField[];
-	};
-
-	const cardHelp: Record<string, HelpCard> = {
-		triggerTraining: {
-			title: 'Trigger Training',
-			description: 'Starts a new fine-tuning run from vetted data.',
-			fields: [
-				{
-					name: 'Method',
-					meaning: 'Selects which training strategy to run: SFT, DPO, or both.',
-					impact:
-						'SFT improves baseline instruction quality; DPO improves preference alignment from reject/edit signals; sft+dpo does both for stronger generation behavior.'
-				},
-				{
-					name: 'Run Training Trigger',
-					meaning: 'Queues a training job and creates a new model version entry.',
-					impact:
-						'Begins the model-improvement cycle; later generations can become better after evaluation and promotion.'
-				}
-			]
-		},
-		buildDataset: {
-			title: 'Build Dataset',
-			description: 'Builds a snapshot of training examples from recent vetting data.',
-			fields: [
-				{
-					name: 'Days',
-					meaning: 'How far back to look for vetted examples.',
-					impact:
-						'Lower values focus on recent behavior drift; higher values increase volume but may include older style patterns.'
-				},
-				{
-					name: 'Confidence Min',
-					meaning: 'Minimum confidence threshold for including examples.',
-					impact:
-						'Higher thresholds improve dataset quality but reduce size; lower thresholds increase diversity but may add noisy supervision.'
-				},
-				{
-					name: 'Build Dataset Snapshot',
-					meaning: 'Creates and stores an immutable dataset tag for downstream evaluation/training.',
-					impact:
-						'Provides reproducible inputs so training/evaluation results can be compared reliably across versions.'
-				}
-			]
-		},
-		evaluatePromote: {
-			title: 'Evaluate / Canary / Promote',
-			description: 'Runs quality gates before making a model active.',
-			fields: [
-				{
-					name: 'Version',
-					meaning: 'Target model version for evaluation or rollout actions.',
-					impact:
-						'All quality and rollout operations apply to this version; selecting the wrong version can gate or deploy the wrong candidate.'
-				},
-				{
-					name: 'Dataset Tag',
-					meaning: 'Dataset snapshot used for evaluation.',
-					impact:
-						'Determines what performance is measured; stable tags make comparisons across versions fair and repeatable.'
-				},
-				{
-					name: 'Eval Type',
-					meaning: 'Evaluation mode (for example, offline).',
-					impact:
-						'Changes which metrics and gate checks run before canary/promotion.'
-				},
-				{
-					name: 'Evaluate',
-					meaning: 'Runs evaluation and records metrics for the selected version.',
-					impact:
-						'Updates offline quality signals that promotion gates use to protect generation quality.'
-				},
-				{
-					name: 'Canary',
-					meaning: 'Starts limited rollout/validation against the active baseline.',
-					impact:
-						'Checks real-world behavior safely before full promotion.'
-				},
-				{
-					name: 'Promote',
-					meaning: 'Marks the candidate as active if gates pass.',
-					impact:
-						'Future question generation uses this model by default.'
-				},
-				{
-					name: 'Rollback',
-					meaning: 'Reverts active model to a previous stable version.',
-					impact:
-						'Reduces production risk quickly when generation quality regresses.'
-				}
-			]
-		},
-		pipelineStatus: {
-			title: 'Pipeline Status',
-			description: 'Live snapshot of the training pipeline state.',
-			fields: [
-				{
-					name: 'Status JSON',
-					meaning: 'Current backend state for training phases, latest jobs, and state flags.',
-					impact:
-						'Helps diagnose stuck phases or sequencing issues that can delay model improvements and generation updates.'
-				}
-			]
-		},
-		queueStatus: {
-			title: 'Queue Status',
-			description: 'Background worker queue health and depth.',
-			fields: [
-				{
-					name: 'Queue JSON',
-					meaning: 'Per-queue pending/running/failed counters.',
-					impact:
-						'Backlog or failures here slow evaluation/training completion, delaying generation quality updates.'
-				}
-			]
-		},
-		liveMetrics: {
-			title: 'Live Metrics',
-			description: 'Operational model quality and reliability metrics.',
-			fields: [
-				{
-					name: 'Metrics JSON',
-					meaning: 'Approve/reject rates, timeout/latency, and related live KPIs.',
-					impact:
-						'Directly reflects current generation quality; these metrics drive promotion confidence and rollback decisions.'
-				}
-			]
-		},
-		modelVersions: {
-			title: 'Recent Model Versions',
-			description: 'Most recent model lineage and metadata entries.',
-			fields: [
-				{
-					name: 'Versions JSON',
-					meaning: 'Version tags, statuses, and adapter metadata.',
-					impact:
-						'Makes it easy to select correct candidates and trace which model version changed generation behavior.'
-				}
-			]
-		},
-		recentJobs: {
-			title: 'Recent Jobs',
-			description: 'Latest training/evaluation job history.',
-			fields: [
-				{
-					name: 'Jobs JSON',
-					meaning: 'Recent job statuses, errors, and completion data.',
-					impact:
-						'Identifies failures that block training progress and prevent better generation models from going live.'
-				}
-			]
-		},
-		recentDatasets: {
-			title: 'Recent Datasets',
-			description: 'Recently built dataset snapshots used by the pipeline.',
-			fields: [
-				{
-					name: 'Datasets JSON',
-					meaning: 'Dataset tags, size, and source properties.',
-					impact:
-						'Dataset quality and coverage strongly influence what the model learns and how it generates questions.'
-				}
-			]
-		}
-	};
-
-	function getActiveHelp(): HelpCard | null {
-		if (!activeHelpCard) return null;
-		return cardHelp[activeHelpCard] ?? null;
-	}
-
-	function toggleHelp(cardId: string) {
-		activeHelpCard = activeHelpCard === cardId ? null : cardId;
-	}
-
-	function closeHelp() {
-		activeHelpCard = null;
-	}
+	let isAdvanced = $state(false);
+	let currentWorkflowStep = $state(0);
+	let stepStatuses = $state<('waiting' | 'in-progress' | 'completed' | 'error')[]>([
+		'waiting',
+		'waiting',
+		'waiting',
+		'waiting',
+		'waiting',
+	]);
+	let stepSummaries = $state<string[]>([
+		'Prepare a set of training materials to begin.',
+		'Start training when your materials are ready.',
+		'Run a quality check after training finishes.',
+		'Try the AI with a small group if you want extra reassurance.',
+		'Deploying to all students is optional and can be done later.',
+	]);
 
 	onMount(() => {
 		const unsub = session.subscribe((s) => {
@@ -237,13 +65,8 @@
 			}
 		});
 		void refreshAll();
-		const onKeyDown = (event: KeyboardEvent) => {
-			if (event.key === 'Escape') closeHelp();
-		};
-		window.addEventListener('keydown', onKeyDown);
 		return () => {
 			unsub();
-			window.removeEventListener('keydown', onKeyDown);
 		};
 	});
 
@@ -267,11 +90,216 @@
 			liveMetrics = nextLive;
 			if (!selectedVersionId && nextVersions.length > 0) selectedVersionId = nextVersions[0].id;
 			if (!selectedDatasetTag && nextDatasets.length > 0) selectedDatasetTag = nextDatasets[0].dataset_tag;
+			syncWorkflowState(nextStatus, nextVersions, nextJobs, nextDatasets);
 		} catch (e: unknown) {
 			error = e instanceof Error ? e.message : 'Failed to load ops data';
 		} finally {
 			loading = false;
 		}
+	}
+
+	function metricCount(metrics: Record<string, unknown> | null | undefined): number {
+		return metrics ? Object.keys(metrics).length : 0;
+	}
+
+	function formatTrainingProgress(job: TrainingJobResponse | null, versionTag?: string): string {
+		if (!job) {
+			return versionTag ? `${versionTag} is getting ready for training.` : 'Training has been queued.';
+		}
+
+		if (job.total_epochs > 0 && job.current_epoch > 0) {
+			return `${versionTag ?? 'Your AI'} is training now — epoch ${job.current_epoch} of ${job.total_epochs}.`;
+		}
+
+		if (job.total_steps > 0 && job.current_step > 0) {
+			return `${versionTag ?? 'Your AI'} is training now — step ${job.current_step} of ${job.total_steps}.`;
+		}
+
+		if (job.status === 'pending') {
+			return `${versionTag ?? 'Your AI'} is queued and will begin training shortly.`;
+		}
+
+		return `${versionTag ?? 'Your AI'} is training now.`;
+	}
+
+	function syncWorkflowState(
+		nextStatus: TrainingStatus,
+		nextVersions: ModelVersionResponse[],
+		nextJobs: TrainingJobResponse[],
+		nextDatasets: TrainingDatasetResponse[]
+	) {
+		const previousStatuses = [...stepStatuses];
+		const previousSummaries = [...stepSummaries];
+		const nextStepStatuses: ('waiting' | 'in-progress' | 'completed' | 'error')[] = [
+			'waiting',
+			'waiting',
+			'waiting',
+			'waiting',
+			'waiting',
+		];
+		const nextStepSummaries = [
+			'Prepare a set of training materials to begin.',
+			'Start training when your materials are ready.',
+			'Run a quality check after training finishes.',
+			'Try the AI with a small group if you want extra reassurance.',
+			'Deploying to all students is optional and can be done later.',
+		];
+
+		const selectedVersion = nextVersions.find((version) => version.id === selectedVersionId) ?? nextVersions[0] ?? null;
+		const selectedVersionTag = selectedVersion?.version_tag;
+		const latestTrainingJob = nextJobs.find((job) => /sft|dpo|train/i.test(job.job_type)) ?? null;
+		const latestEvalJob = nextJobs.find((job) => /eval/i.test(job.job_type)) ?? null;
+		const normalizedStatus = selectedVersion?.status?.toLowerCase() ?? '';
+		const activeVersionTag = nextStatus.active_version?.version_tag ?? '';
+
+		if (nextDatasets.length > 0) {
+			nextStepStatuses[0] = 'completed';
+			nextStepSummaries[0] = `Training materials are ready. Latest set: ${nextDatasets[0].dataset_tag}.`;
+		}
+
+		if (latestTrainingJob?.status === 'failed' || normalizedStatus === 'failed') {
+			nextStepStatuses[1] = 'error';
+			nextStepSummaries[1] = selectedVersion?.error_message || latestTrainingJob?.error_message || 'Training needs attention before you continue.';
+		} else if (latestTrainingJob && ['pending', 'running'].includes(latestTrainingJob.status)) {
+			nextStepStatuses[1] = 'in-progress';
+			nextStepSummaries[1] = formatTrainingProgress(latestTrainingJob, selectedVersionTag);
+		} else if (
+			selectedVersion &&
+			(selectedVersion.training_completed_at !== null || ['completed', 'ready', 'evaluated', 'canary', 'promoted', 'active'].includes(normalizedStatus))
+		) {
+			nextStepStatuses[1] = 'completed';
+			nextStepSummaries[1] = `${selectedVersion.version_tag} finished training and is ready for checking.`;
+		} else if (selectedVersion && ['pending', 'queued'].includes(normalizedStatus)) {
+			nextStepStatuses[1] = 'in-progress';
+			nextStepSummaries[1] = `${selectedVersion.version_tag} is queued and will begin training shortly.`;
+		} else if (previousStatuses[1] !== 'waiting') {
+			nextStepStatuses[1] = previousStatuses[1];
+			nextStepSummaries[1] = previousSummaries[1];
+		}
+
+		if (latestEvalJob?.status === 'failed') {
+			nextStepStatuses[2] = 'error';
+			nextStepSummaries[2] = latestEvalJob.error_message || 'The quality check did not finish successfully.';
+		} else if (latestEvalJob && ['pending', 'running'].includes(latestEvalJob.status)) {
+			nextStepStatuses[2] = 'in-progress';
+			nextStepSummaries[2] = `Quality check is running for ${selectedVersionTag ?? 'your AI version'}.`;
+		} else if (selectedVersion?.eval_metrics) {
+			nextStepStatuses[2] = 'completed';
+			nextStepSummaries[2] = `Quality check completed. ${metricCount(selectedVersion.eval_metrics)} evaluation signals were recorded.`;
+		} else if (nextStepStatuses[1] === 'completed') {
+			nextStepSummaries[2] = `Training is done. You can now run a quality check for ${selectedVersionTag ?? 'this version'}.`;
+		} else if (previousStatuses[2] !== 'waiting') {
+			nextStepStatuses[2] = previousStatuses[2];
+			nextStepSummaries[2] = previousSummaries[2];
+		}
+
+		if (normalizedStatus.includes('canary')) {
+			nextStepStatuses[3] = 'completed';
+			nextStepSummaries[3] = `${selectedVersionTag ?? 'This AI version'} has been sent to a classroom trial.`;
+		} else if (previousStatuses[3] !== 'waiting') {
+			nextStepStatuses[3] = previousStatuses[3];
+			nextStepSummaries[3] = previousSummaries[3];
+		} else if (nextStepStatuses[2] === 'completed') {
+			nextStepSummaries[3] = 'Optional: try this AI with a smaller group before deciding on full rollout.';
+		}
+
+		if ((selectedVersion?.is_active ?? false) || (selectedVersionTag && activeVersionTag === selectedVersionTag)) {
+			nextStepStatuses[4] = 'completed';
+			nextStepSummaries[4] = `${selectedVersionTag ?? 'This AI version'} is now live for all students.`;
+		} else if (previousStatuses[4] !== 'waiting') {
+			nextStepStatuses[4] = previousStatuses[4];
+			nextStepSummaries[4] = previousSummaries[4];
+		} else if (nextStepStatuses[3] === 'completed' || nextStepStatuses[2] === 'completed') {
+			nextStepSummaries[4] = 'Optional: deploy this version now, or come back later when you are comfortable.';
+		}
+
+		stepStatuses = nextStepStatuses;
+		stepSummaries = nextStepSummaries;
+
+		if (nextStepStatuses[0] !== 'completed') {
+			currentWorkflowStep = 0;
+		} else if (['waiting', 'in-progress', 'error'].includes(nextStepStatuses[1])) {
+			currentWorkflowStep = 1;
+		} else if (['waiting', 'in-progress', 'error'].includes(nextStepStatuses[2])) {
+			currentWorkflowStep = 2;
+		} else if (nextStepStatuses[4] === 'completed') {
+			currentWorkflowStep = 4;
+		} else {
+			currentWorkflowStep = 3;
+		}
+	}
+
+	async function runOpWithStepUpdate(fn: () => Promise<Record<string, unknown>>, stepIndex: number) {
+		busy = true;
+		error = '';
+		operationResult = null;
+		stepStatuses[stepIndex] = 'in-progress';
+		stepSummaries[stepIndex] = [
+			'Preparing your training materials now.',
+			'Training has started. This can take some time, and you can come back later.',
+			'Running the quality check now.',
+			'Starting the classroom trial now.',
+			'Deploying this AI version to students now.'
+		][stepIndex];
+		try {
+			operationResult = await fn();
+			if (stepIndex === 0) {
+				stepStatuses[stepIndex] = 'completed';
+				stepSummaries[stepIndex] = 'Training materials were prepared successfully.';
+			} else if (stepIndex === 4) {
+				stepStatuses[stepIndex] = 'completed';
+				stepSummaries[stepIndex] = 'This AI version has been deployed for all students.';
+			}
+			if (currentWorkflowStep === stepIndex && stepIndex < 3) {
+				currentWorkflowStep++;
+			}
+			await refreshAll();
+		} catch (e: unknown) {
+			error = e instanceof Error ? e.message : 'Operation failed';
+			stepStatuses[stepIndex] = 'error';
+		} finally {
+			busy = false;
+		}
+	}
+
+	async function handleBuildDataset() {
+		await runOpWithStepUpdate(() => buildTrainingDataset({ days, confidence_min: confidenceMin }), 0);
+	}
+
+	async function handleTriggerTraining() {
+		await runOpWithStepUpdate(() => triggerTraining({ training_method: trainingMethod }), 1);
+	}
+
+	async function handleEvaluate() {
+		if (!selectedVersionId) {
+			error = 'Please select a model version to evaluate';
+			return;
+		}
+		await runOpWithStepUpdate(() => evaluateModelVersion(selectedVersionId, { dataset_tag: selectedDatasetTag || undefined, eval_type: evalType || 'offline' }), 2);
+	}
+
+	async function handleCanary() {
+		if (!selectedVersionId) {
+			error = 'Please select a model version for classroom trial';
+			return;
+		}
+		await runOpWithStepUpdate(() => canaryModelVersion(selectedVersionId), 3);
+	}
+
+	async function handlePromote() {
+		if (!selectedVersionId) {
+			error = 'Please select a model version to deploy';
+			return;
+		}
+		await runOpWithStepUpdate(() => promoteModelVersion(selectedVersionId), 4);
+	}
+
+	async function handleRollback() {
+		if (!selectedVersionId) {
+			error = 'Please select a model version to rollback';
+			return;
+		}
+		await runOp(() => rollbackModelVersion(selectedVersionId));
 	}
 
 	async function runOp(fn: () => Promise<Record<string, unknown>>) {
@@ -294,31 +322,43 @@
 </script>
 
 <svelte:head>
-	<title>Training Ops — VQuest Trainer</title>
+	<title>AI Training Studio — VQuest Trainer</title>
 </svelte:head>
 
 <div class="ops-page">
 	<div class="hero glass-panel">
-		<h1 class="font-serif">Training Ops</h1>
-		<p class="muted">Signed in as: {$currentUser?.username} ({$currentUser?.role})</p>
+		<h1 class="font-serif">AI Training Studio</h1>
+		<p class="muted">Welcome back: {$currentUser?.username} ({$currentUser?.role})</p>
 	</div>
 
+	<ModeToggle bind:isAdvanced />
+
 	{#if loading}
-		<div class="glass-panel">Loading training operations data...</div>
-	{:else}
+		<div class="glass-panel loading-message">
+			<div class="loading-spinner">⟳</div>
+			Setting up your training studio...
+		</div>
+	{:else if isAdvanced}
+		<!-- Advanced Mode - Show original technical interface -->
+		<div class="advanced-notice">
+			<h3>⚙️ Advanced Mode</h3>
+			<p>Technical interface for experienced users</p>
+		</div>
+		
+		<!-- Status Display in Advanced Mode -->
+		<StatusDisplay 
+			status={status as Record<string, unknown> | null}
+			{queueStatus} 
+			{liveMetrics} 
+			{isAdvanced} 
+			{loading}
+		/>
+
 		<div class="grid">
+			<!-- Original technical cards here -->
 			<section class="glass-panel card">
 				<div class="card-head">
 					<h2>Trigger Training</h2>
-					<button
-						type="button"
-						class="info-btn"
-						onclick={() => toggleHelp('triggerTraining')}
-						aria-label="Explain Trigger Training card"
-						aria-expanded={activeHelpCard === 'triggerTraining'}
-					>
-						i
-					</button>
 				</div>
 				<div class="row">
 					<label for="training-method">Method</label>
@@ -334,15 +374,6 @@
 			<section class="glass-panel card">
 				<div class="card-head">
 					<h2>Build Dataset</h2>
-					<button
-						type="button"
-						class="info-btn"
-						onclick={() => toggleHelp('buildDataset')}
-						aria-label="Explain Build Dataset card"
-						aria-expanded={activeHelpCard === 'buildDataset'}
-					>
-						i
-					</button>
 				</div>
 				<div class="row">
 					<label for="dataset-days">Days</label>
@@ -352,10 +383,7 @@
 					<label for="confidence-min">Confidence Min</label>
 					<input id="confidence-min" type="number" min="0" max="1" step="0.05" bind:value={confidenceMin} />
 				</div>
-				<button
-					disabled={busy}
-					onclick={() => runOp(() => buildTrainingDataset({ days, confidence_min: confidenceMin }))}
-				>
+				<button disabled={busy} onclick={() => runOp(() => buildTrainingDataset({ days, confidence_min: confidenceMin }))}>
 					Build Dataset Snapshot
 				</button>
 			</section>
@@ -363,15 +391,6 @@
 			<section class="glass-panel card">
 				<div class="card-head">
 					<h2>Evaluate / Canary / Promote</h2>
-					<button
-						type="button"
-						class="info-btn"
-						onclick={() => toggleHelp('evaluatePromote')}
-						aria-label="Explain Evaluate, Canary and Promote card"
-						aria-expanded={activeHelpCard === 'evaluatePromote'}
-					>
-						i
-					</button>
 				</div>
 				<div class="row">
 					<label for="selected-version">Version</label>
@@ -397,134 +416,48 @@
 				</div>
 			</section>
 
-			<section class="glass-panel card">
-				<div class="card-head">
-					<h2>Pipeline Status</h2>
-					<button
-						type="button"
-						class="info-btn"
-						onclick={() => toggleHelp('pipelineStatus')}
-						aria-label="Explain Pipeline Status card"
-						aria-expanded={activeHelpCard === 'pipelineStatus'}
-					>
-						i
-					</button>
-				</div>
-				<pre>{getPretty(status)}</pre>
-			</section>
-
-			<section class="glass-panel card">
-				<div class="card-head">
-					<h2>Queue Status</h2>
-					<button
-						type="button"
-						class="info-btn"
-						onclick={() => toggleHelp('queueStatus')}
-						aria-label="Explain Queue Status card"
-						aria-expanded={activeHelpCard === 'queueStatus'}
-					>
-						i
-					</button>
-				</div>
-				<pre>{getPretty(queueStatus)}</pre>
-			</section>
-
-			<section class="glass-panel card">
-				<div class="card-head">
-					<h2>Live Metrics</h2>
-					<button
-						type="button"
-						class="info-btn"
-						onclick={() => toggleHelp('liveMetrics')}
-						aria-label="Explain Live Metrics card"
-						aria-expanded={activeHelpCard === 'liveMetrics'}
-					>
-						i
-					</button>
-				</div>
-				<pre>{getPretty(liveMetrics)}</pre>
-			</section>
-
-			<section class="glass-panel card">
-				<div class="card-head">
-					<h2>Recent Model Versions</h2>
-					<button
-						type="button"
-						class="info-btn"
-						onclick={() => toggleHelp('modelVersions')}
-						aria-label="Explain Recent Model Versions card"
-						aria-expanded={activeHelpCard === 'modelVersions'}
-					>
-						i
-					</button>
-				</div>
-				<pre>{getPretty(versions.slice(0, 10))}</pre>
-			</section>
-
-			<section class="glass-panel card">
-				<div class="card-head">
-					<h2>Recent Jobs</h2>
-					<button
-						type="button"
-						class="info-btn"
-						onclick={() => toggleHelp('recentJobs')}
-						aria-label="Explain Recent Jobs card"
-						aria-expanded={activeHelpCard === 'recentJobs'}
-					>
-						i
-					</button>
-				</div>
-				<pre>{getPretty(jobs.slice(0, 10))}</pre>
-			</section>
-
-			<section class="glass-panel card">
-				<div class="card-head">
-					<h2>Recent Datasets</h2>
-					<button
-						type="button"
-						class="info-btn"
-						onclick={() => toggleHelp('recentDatasets')}
-						aria-label="Explain Recent Datasets card"
-						aria-expanded={activeHelpCard === 'recentDatasets'}
-					>
-						i
-					</button>
-				</div>
-				<pre>{getPretty(datasets.slice(0, 10))}</pre>
-			</section>
+			<!-- Add more advanced cards as needed -->
 		</div>
+	{:else}
+		<!-- Simple Mode - Show teacher-friendly workflow -->
+		<div class="simple-notice">
+			<h3>👩‍🏫 Teacher Mode</h3>
+			<p>Step-by-step guidance to train your AI assistant</p>
+		</div>
+
+		<!-- Status Display in Simple Mode -->
+		<StatusDisplay 
+			status={status as Record<string, unknown> | null}
+			{queueStatus} 
+			{liveMetrics} 
+			{isAdvanced} 
+			{loading}
+		/>
+
+		<WorkflowWizard
+			bind:currentStep={currentWorkflowStep}
+			bind:stepStatuses={stepStatuses}
+			{stepSummaries}
+			{busy}
+			{error}
+			{days}
+			{confidenceMin}
+			{trainingMethod}
+			bind:selectedVersionId
+			bind:selectedDatasetTag
+			{versions}
+			onBuildDataset={handleBuildDataset}
+			onTriggerTraining={handleTriggerTraining}
+			onEvaluate={handleEvaluate}
+			onCanary={handleCanary}
+			onPromote={handlePromote}
+		/>
 	{/if}
 
-	{#if error}
-		<div class="glass-panel error">{error}</div>
-	{/if}
-	{#if operationResult}
+	{#if operationResult && isAdvanced}
 		<div class="glass-panel result">
 			<h2>Last Operation Result</h2>
 			<pre>{getPretty(operationResult)}</pre>
-		</div>
-	{/if}
-
-	{#if activeHelpCard && getActiveHelp()}
-		<button
-			type="button"
-			class="help-backdrop"
-			onclick={closeHelp}
-			aria-label="Close help window"
-		></button>
-		<div class="help-modal" role="dialog" aria-modal="true" aria-label="Card help details">
-			<div class="help-modal-head">
-				<h3>{getActiveHelp()?.title}</h3>
-				<button type="button" class="help-close" onclick={closeHelp} aria-label="Close help">×</button>
-			</div>
-			<p>{getActiveHelp()?.description}</p>
-			{#each getActiveHelp()?.fields ?? [] as field}
-				<div class="help-field">
-					<strong>{field.name}</strong>
-					<p><span>Meaning:</span> {field.meaning}</p>
-					<p><span>Impact:</span> {field.impact}</p>
-				</div>
-			{/each}
 		</div>
 	{/if}
 </div>
@@ -561,6 +494,51 @@
 		font-size: 0.96rem;
 	}
 
+	.loading-message {
+		display: flex;
+		align-items: center;
+		gap: 0.75rem;
+		padding: 2rem;
+		text-align: center;
+		font-size: 1.1rem;
+		justify-content: center;
+	}
+
+	.loading-spinner {
+		animation: spin 1s linear infinite;
+		font-size: 1.5rem;
+	}
+
+	@keyframes spin {
+		from { transform: rotate(0deg); }
+		to { transform: rotate(360deg); }
+	}
+
+	.advanced-notice,
+	.simple-notice {
+		background: rgba(255, 255, 255, 0.05);
+		border: 1px solid rgba(255, 255, 255, 0.1);
+		border-radius: 0.75rem;
+		padding: 1rem;
+		text-align: center;
+		margin-bottom: 1rem;
+	}
+
+	.advanced-notice h3,
+	.simple-notice h3 {
+		margin: 0 0 0.5rem 0;
+		font-size: 1rem;
+		font-weight: 600;
+		color: rgba(255, 255, 255, 0.95);
+	}
+
+	.advanced-notice p,
+	.simple-notice p {
+		margin: 0;
+		font-size: 0.85rem;
+		color: rgba(255, 255, 255, 0.7);
+	}
+
 	.grid {
 		display: grid;
 		grid-template-columns: repeat(auto-fill, minmax(320px, 1fr));
@@ -590,122 +568,6 @@
 		gap: 0.7rem;
 	}
 
-	button.info-btn {
-		margin-top: 0 !important;
-		width: 2.1rem !important;
-		height: 2.1rem !important;
-		min-width: 2.1rem !important;
-		max-width: 2.1rem !important;
-		min-height: 2.1rem !important;
-		max-height: 2.1rem !important;
-		aspect-ratio: 1 / 1 !important;
-		padding: 0 !important;
-		border-radius: 50% !important;
-		font-size: 0.9rem;
-		font-weight: 700;
-		line-height: 1;
-		display: inline-flex;
-		align-items: center;
-		justify-content: center;
-		text-transform: lowercase;
-		flex-shrink: 0;
-	}
-
-	.help-modal {
-		position: fixed;
-		top: 50%;
-		left: 50%;
-		transform: translate(-50%, -50%);
-		z-index: 45;
-		width: min(720px, calc(100vw - 2rem));
-		max-height: min(80vh, 760px);
-		overflow: auto;
-		border: 1px solid var(--theme-modal-border);
-		background: var(--theme-modal-surface);
-		backdrop-filter: var(--theme-modal-backdrop-blur);
-		-webkit-backdrop-filter: var(--theme-modal-backdrop-blur);
-		border-radius: 0.85rem;
-		padding: 0.95rem 1rem;
-		display: flex;
-		flex-direction: column;
-		gap: 0.62rem;
-		box-shadow: var(--theme-modal-shadow);
-	}
-
-	.help-modal-head {
-		display: flex;
-		align-items: center;
-		justify-content: space-between;
-		gap: 0.5rem;
-	}
-
-	.help-modal h3 {
-		margin: 0;
-		font-size: 1.04rem;
-		font-weight: 650;
-	}
-
-	.help-close {
-		margin-top: 0 !important;
-		width: 2.1rem !important;
-		height: 2.1rem !important;
-		min-width: 2.1rem !important;
-		max-width: 2.1rem !important;
-		min-height: 2.1rem !important;
-		max-height: 2.1rem !important;
-		aspect-ratio: 1 / 1 !important;
-		padding: 0 !important;
-		border-radius: 50% !important;
-		font-size: 1.15rem;
-		line-height: 1;
-		display: inline-flex;
-		align-items: center;
-		justify-content: center;
-		flex-shrink: 0;
-	}
-
-	.help-modal > p {
-		margin: 0;
-		font-size: 0.86rem;
-		line-height: 1.35;
-		opacity: 0.95;
-	}
-
-	.help-field {
-		padding-top: 0.45rem;
-		border-top: 1px solid rgba(255, 255, 255, 0.1);
-	}
-
-	.help-field strong {
-		display: block;
-		font-size: 0.9rem;
-		margin-bottom: 0.22rem;
-	}
-
-	.help-field p {
-		margin: 0.1rem 0;
-		font-size: 0.82rem;
-		line-height: 1.34;
-		color: rgba(238, 245, 255, 0.95);
-	}
-
-	.help-field span {
-		font-weight: 650;
-	}
-
-	.help-backdrop {
-		position: fixed;
-		inset: 0;
-		z-index: 40;
-		border: 0;
-		margin: 0;
-		padding: 0;
-		background: var(--theme-modal-backdrop);
-		backdrop-filter: var(--theme-modal-backdrop-blur);
-		-webkit-backdrop-filter: var(--theme-modal-backdrop-blur);
-		cursor: default;
-	}
-
 	.row {
 		display: grid;
 		grid-template-columns: 120px minmax(0, 1fr);
@@ -716,62 +578,67 @@
 
 	.row label {
 		min-width: 0;
-		opacity: 0.93;
+		opacity: 0.95;
 		font-size: 1rem;
 		font-weight: 560;
+		color: rgba(255, 255, 255, 0.96);
 	}
 
 	.row input,
 	.row select {
 		width: 100%;
-		padding: 0.72rem 0.78rem;
-		border-radius: 0.6rem;
-		border: 1px solid rgba(255, 255, 255, 0.26);
-		background: rgba(255, 255, 255, 0.11);
-		color: rgba(255, 255, 255, 0.97);
-		font-size: 1.04rem;
+		padding: 0.78rem 0.85rem;
+		border-radius: 0.7rem;
+		border: 1px solid rgba(255, 255, 255, 0.28);
+		background: rgba(10, 18, 30, 0.72);
+		color: #f8fbff;
+		font-size: 1rem;
 		font-weight: 520;
 		outline: none;
+		box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.06);
 	}
 
 	.row input::placeholder {
-		color: rgba(220, 230, 245, 0.65);
+		color: rgba(220, 230, 245, 0.58);
 	}
 
 	.row input:focus,
 	.row select:focus {
 		border-color: rgba(var(--theme-primary-rgb), 0.8);
-		box-shadow: 0 0 0 3px rgba(var(--theme-primary-rgb), 0.2);
+		box-shadow:
+			0 0 0 3px rgba(var(--theme-primary-rgb), 0.2),
+			inset 0 1px 0 rgba(255, 255, 255, 0.08);
 	}
 
 	.row select option {
-		background: #1a2433;
-		color: #f2f6ff;
+		background: #172132;
+		color: #f4f8ff;
 	}
 
 	button {
-		margin-top: 0.2rem;
-		padding: 0.76rem 1rem;
-		border-radius: 0.6rem;
-		border: 1px solid rgba(var(--theme-primary-rgb), 0.68);
+		margin-top: 0.35rem;
+		padding: 0.82rem 1rem;
+		border-radius: 0.7rem;
+		border: 1px solid rgba(var(--theme-primary-rgb), 0.72);
 		background: linear-gradient(
 			180deg,
-			rgba(var(--theme-primary-rgb), 0.52) 0%,
-			rgba(var(--theme-primary-rgb), 0.36) 100%
+			rgba(var(--theme-primary-rgb), 0.92) 0%,
+			rgba(var(--theme-primary-rgb), 0.62) 100%
 		);
 		color: #ffffff;
-		font-size: 1.05rem;
-		font-weight: 640;
+		font-size: 1rem;
+		font-weight: 680;
 		letter-spacing: 0.01em;
-		text-shadow: 0 1px 6px rgba(0, 0, 0, 0.45);
+		text-shadow: 0 1px 6px rgba(0, 0, 0, 0.4);
 		cursor: pointer;
-		transition: transform 100ms ease, filter 120ms ease, box-shadow 120ms ease;
+		transition: transform 120ms ease, filter 120ms ease, box-shadow 120ms ease;
+		box-shadow: 0 8px 20px rgba(0, 0, 0, 0.24);
 	}
 
 	button:hover:not(:disabled) {
 		filter: brightness(1.08);
 		transform: translateY(-1px);
-		box-shadow: 0 6px 18px rgba(0, 0, 0, 0.25);
+		box-shadow: 0 10px 24px rgba(0, 0, 0, 0.28);
 	}
 
 	button:active:not(:disabled) {
@@ -779,31 +646,31 @@
 	}
 
 	button:focus-visible {
-		outline: 2px solid rgba(255, 255, 255, 0.95);
+		outline: 2px solid rgba(255, 255, 255, 0.96);
 		outline-offset: 2px;
 	}
 
 	button:disabled {
-		opacity: 0.48;
+		opacity: 0.5;
 		cursor: not-allowed;
 		transform: none;
 		box-shadow: none;
 	}
 
 	button.danger {
-		border-color: rgba(255, 130, 130, 0.75);
-		background: linear-gradient(180deg, rgba(210, 70, 70, 0.74) 0%, rgba(140, 35, 35, 0.82) 100%);
+		border-color: rgba(255, 130, 130, 0.78);
+		background: linear-gradient(180deg, rgba(214, 78, 78, 0.9) 0%, rgba(147, 44, 44, 0.95) 100%);
 	}
 
 	.button-row {
 		display: flex;
 		gap: 0.65rem;
 		flex-wrap: wrap;
-		margin-top: 0.2rem;
+		margin-top: 0.35rem;
 	}
 
 	.button-row button {
-		min-width: 100px;
+		min-width: 112px;
 	}
 
 	pre {
@@ -819,8 +686,8 @@
 		border: 1px solid rgba(255, 255, 255, 0.12);
 	}
 
-	.error {
-		border: 1px solid rgba(255, 99, 99, 0.35);
+	.result {
+		border: 1px solid rgba(255, 255, 255, 0.2);
 	}
 
 	@media (max-width: 640px) {
@@ -843,31 +710,6 @@
 			grid-template-columns: 1fr;
 			row-gap: 0.45rem;
 			margin: 0.1rem 0;
-		}
-
-		.help-modal {
-			width: calc(100vw - 1.1rem);
-			padding: 0.82rem 0.85rem;
-		}
-
-		button.info-btn {
-			width: 2.1rem !important;
-			height: 2.1rem !important;
-			min-width: 2.1rem !important;
-			max-width: 2.1rem !important;
-			min-height: 2.1rem !important;
-			max-height: 2.1rem !important;
-			padding: 0 !important;
-		}
-
-		.help-close {
-			width: 2.1rem !important;
-			height: 2.1rem !important;
-			min-width: 2.1rem !important;
-			max-width: 2.1rem !important;
-			min-height: 2.1rem !important;
-			max-height: 2.1rem !important;
-			padding: 0 !important;
 		}
 	}
 </style>
