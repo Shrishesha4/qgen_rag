@@ -420,23 +420,27 @@
 		if (!subjects.length) return;
 		
 		const hasInProgress = Object.keys(bgStatusBySubject).some(id => bgStatusBySubject[id]?.in_progress);
-		// Reduced polling frequency for better performance
-		const pollInterval = hasInProgress ? 4000 : 6000; // 4 seconds when active, 6 seconds when idle
+		// Further reduced polling frequency for mobile devices
+		const isMobile = window.innerWidth <= 768;
+		const pollInterval = hasInProgress 
+			? (isMobile ? 6000 : 4000)  // 6s mobile, 4s desktop when active
+			: (isMobile ? 10000 : 6000); // 10s mobile, 6s desktop when idle
 		
 		bgStatusPollTimer = setInterval(() => {
 			void refreshBackgroundStatuses();
 		}, pollInterval);
 		
-		// Reduced frequency for subject refresh - every 15s instead of 10s
+		// Further reduced frequency for subject refresh on mobile
+		const subjectRefreshInterval = isMobile ? 20000 : 15000; // 20s mobile, 15s desktop
 		bgSubjectRefreshTimer = setInterval(() => {
 			for (const [subjectId, status] of Object.entries(bgStatusBySubject)) {
 				if (status.in_progress) {
 					void refreshSubject(subjectId);
 				}
 			}
-		}, 15000);
+		}, subjectRefreshInterval);
 		
-		console.log('[bg-gen] Started polling', { pollInterval, hasInProgress });
+		console.log('[bg-gen] Started polling', { pollInterval, hasInProgress, isMobile });
 	}
 
 	function allReferenceDocs() {
@@ -487,10 +491,12 @@
 	function ensureReferenceProgressPolling() {
 		clearReferencePolling();
 		if (!showReferenceModal || !hasAnyProcessingDocs()) return;
-		// Reduced polling frequency from 3s to 5s for better performance
+		// Further reduced polling frequency on mobile
+		const isMobile = window.innerWidth <= 768;
+		const pollInterval = isMobile ? 7000 : 5000; // 7s mobile, 5s desktop
 		referencePollTimer = setInterval(() => {
 			void loadReferenceMaterials(referenceSubjectId, false);
-		}, 5000);
+		}, pollInterval);
 	}
 
 	// Debounced search query to reduce filtering frequency
@@ -527,9 +533,12 @@
 	function handleSearchChange(value: string) {
 		searchQuery = value;
 		if (searchDebounceTimer) clearTimeout(searchDebounceTimer);
+		// Longer debounce on mobile for better performance
+		const isMobile = window.innerWidth <= 768;
+		const debounceTime = isMobile ? 250 : 150; // 250ms mobile, 150ms desktop
 		searchDebounceTimer = setTimeout(() => {
 			debouncedSearchQuery = value;
-		}, 150); // 150ms debounce
+		}, debounceTime);
 	}
 
 	async function loadSubjects() {

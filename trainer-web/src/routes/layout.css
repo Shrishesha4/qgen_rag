@@ -1020,9 +1020,18 @@ a:hover {
 
   .glass-panel {
     border-radius: var(--glass-radius);
-    /* Ensure blur works on mobile */
-    backdrop-filter: blur(10px) saturate(150%) brightness(1.02) !important;
-    -webkit-backdrop-filter: blur(10px) saturate(150%) brightness(1.02) !important;
+    /* Disable blur on mobile for performance */
+    backdrop-filter: none !important;
+    -webkit-backdrop-filter: none !important;
+    background: rgba(255, 255, 255, 0.08) !important;
+  }
+
+  .glass-card {
+    border-radius: var(--glass-radius);
+    /* Disable blur on mobile for performance */
+    backdrop-filter: none !important;
+    -webkit-backdrop-filter: none !important;
+    background: rgba(255, 255, 255, 0.08) !important;
   }
 
   .glass-input {
@@ -1030,6 +1039,10 @@ a:hover {
     font-size: 0.9rem;
     /* Force 16px font size to prevent zoom on iOS */
     font-size: 16px !important;
+    /* Disable blur on mobile */
+    backdrop-filter: none !important;
+    -webkit-backdrop-filter: none !important;
+    background: rgba(255, 255, 255, 0.06) !important;
   }
 
   .font-serif {
@@ -1065,6 +1078,44 @@ a:hover {
     --glass-radius-sm: 12px;
     --glass-radius-lg: 24px;
   }
+
+  /* Disable blur effects on all mobile devices for performance */
+  .glass,
+  .glass-heavy,
+  .glass-card,
+  .glass-panel,
+  .glass-sidebar,
+  .glass-input {
+    backdrop-filter: none !important;
+    -webkit-backdrop-filter: none !important;
+  }
+
+  .glass {
+    background: rgba(255, 255, 255, 0.08) !important;
+  }
+
+  .glass-heavy {
+    background: rgba(255, 255, 255, 0.12) !important;
+  }
+
+  .glass-card,
+  .glass-panel {
+    background: rgba(255, 255, 255, 0.08) !important;
+  }
+
+  .glass-sidebar {
+    background: rgba(255, 255, 255, 0.06) !important;
+  }
+
+  .glass-input {
+    background: rgba(255, 255, 255, 0.06) !important;
+  }
+
+  .glass-btn,
+  .glass-btn-secondary {
+    backdrop-filter: none !important;
+    -webkit-backdrop-filter: none !important;
+  }
 }
 
 /* ── Touch-friendly tap targets ── */
@@ -1094,6 +1145,29 @@ a:hover {
   * {
     touch-action: manipulation;
   }
+
+  /* Disable complex animations on mobile for performance */
+  .glass-card::before,
+  .glass-card::after,
+  .glass::before,
+  .glass::after,
+  .glass-heavy::before,
+  .glass-heavy::after {
+    display: none !important;
+  }
+
+  /* Simplify transitions */
+  * {
+    transition-duration: 0.1s !important;
+  }
+
+  /* Disable chromatic aberration effects */
+  .glass::after,
+  .glass-heavy::after,
+  .glass-card::after,
+  .glass-panel::after {
+    display: none !important;
+  }
 }
 
 /* ── Reduced motion ── */
@@ -1121,8 +1195,79 @@ a:hover {
     box-shadow:
       0 0 0 2px rgba(255, 255, 255, 0.5),
       0 8px 32px rgba(0, 0, 0, 0.2);
-    /* Ensure blur works on all screen sizes */
-    backdrop-filter: blur(10px) saturate(150%) brightness(1.02) !important;
-    -webkit-backdrop-filter: blur(10px) saturate(150%) brightness(1.02) !important;
+    /* Disable blur on all screen sizes */
+    backdrop-filter: none !important;
+    -webkit-backdrop-filter: none !important;
+  }
+}
+
+/* ── Android-specific optimizations ── */
+@media screen and (-webkit-min-device-pixel-ratio: 0) and (min-resolution: .001dpcm) {
+  /* Target Android devices */
+  .glass,
+  .glass-heavy,
+  .glass-card,
+  .glass-panel,
+  .glass-sidebar,
+  .glass-input,
+  .glass-btn,
+  .glass-btn-secondary {
+    backdrop-filter: none !important;
+    -webkit-backdrop-filter: none !important;
+    /* Force hardware acceleration */
+    transform: translateZ(0);
+    will-change: auto;
+  }
+
+  /* Simplified backgrounds for Android */
+  .glass {
+    background: rgba(255, 255, 255, 0.08) !important;
+  }
+
+  .glass-heavy {
+    background: rgba(255, 255, 255, 0.12) !important;
+  }
+
+  .glass-card,
+  .glass-panel {
+    background: rgba(255, 255, 255, 0.08) !important;
+  }
+
+  .glass-sidebar {
+    background: rgba(255, 255, 255, 0.06) !important;
+  }
+
+  .glass-input {
+    background: rgba(255, 255, 255, 0.06) !important;
+  }
+
+  /* Remove all pseudo-elements for performance */
+  .glass::before,
+  .glass::after,
+  .glass-heavy::before,
+  .glass-heavy::after,
+  .glass-card::before,
+  .glass-card::after,
+  .glass-panel::before,
+  .glass-panel::after,
+  .glass-sidebar::before,
+  .glass-sidebar::after {
+    display: none !important;
+  }
+
+  /* Simplified shadows */
+  .glass,
+  .glass-card,
+  .glass-panel {
+    box-shadow: 0 4px 16px rgba(0, 0, 0, 0.2) !important;
+  }
+
+  .glass-heavy {
+    box-shadow: 0 8px 24px rgba(0, 0, 0, 0.3) !important;
+  }
+
+  .glass-btn,
+  .glass-btn-secondary {
+    box-shadow: 0 2px 8px rgba(0, 0, 0, 0.2) !important;
   }
 }
