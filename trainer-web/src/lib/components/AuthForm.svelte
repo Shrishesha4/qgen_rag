@@ -189,8 +189,8 @@
 		max-width: 26rem;
 		border-radius: 1.5rem;
 		/* Enhanced blur effect to match other pages */
-		backdrop-filter: blur(50px) saturate(200%) brightness(1.05);
-		-webkit-backdrop-filter: blur(50px) saturate(200%) brightness(1.05);
+		backdrop-filter: blur(10px) saturate(150%) brightness(1.02);
+		-webkit-backdrop-filter: blur(10px) saturate(150%) brightness(1.02);
 		background: linear-gradient(
 			145deg,
 			rgba(255,255,255,0.1) 0%,
@@ -398,8 +398,8 @@
 			padding: 2rem 1.5rem;
 			border-radius: 1.25rem;
 			/* Maintain blur effect on mobile */
-			backdrop-filter: blur(50px) saturate(200%) brightness(1.05);
-			-webkit-backdrop-filter: blur(50px) saturate(200%) brightness(1.05);
+			backdrop-filter: blur(10px) saturate(150%) brightness(1.02);
+			-webkit-backdrop-filter: blur(10px) saturate(150%) brightness(1.02);
 		}
 
 		.auth-icon {
@@ -432,8 +432,8 @@
 			padding: 1.5rem 1.25rem;
 			border-radius: 1rem;
 			/* Maintain blur effect on small mobile */
-			backdrop-filter: blur(50px) saturate(200%) brightness(1.05);
-			-webkit-backdrop-filter: blur(50px) saturate(200%) brightness(1.05);
+			backdrop-filter: blur(10px) saturate(150%) brightness(1.02);
+			-webkit-backdrop-filter: blur(10px) saturate(150%) brightness(1.02);
 		}
 
 		.back-link {

@@ -56,8 +56,8 @@
   --glass-bg-active: rgba(255, 255, 255, 0.22);
   --glass-border: rgba(255, 255, 255, 0.18);
   --glass-border-subtle: rgba(255, 255, 255, 0.1);
-  --glass-blur: blur(40px) saturate(200%) brightness(1.05);
-  --glass-blur-heavy: blur(60px) saturate(250%) brightness(1.08);
+  --glass-blur: blur(8px) saturate(150%) brightness(1.02);
+  --glass-blur-heavy: blur(12px) saturate(180%) brightness(1.03);
   --glass-highlight: rgba(255, 255, 255, 0.08);
   --glass-shadow: 0 8px 32px rgba(0, 0, 0, 0.12);
   --glass-shadow-lg: 0 16px 48px rgba(0, 0, 0, 0.18);
@@ -148,7 +148,6 @@ a:hover {
   background: var(--liquid-bg);
   backdrop-filter: var(--glass-blur);
   -webkit-backdrop-filter: var(--glass-blur);
-  will-change: backdrop-filter;
   transform: translateZ(0);
   border-radius: var(--glass-radius);
   box-shadow:
@@ -256,7 +255,6 @@ a:hover {
   );
   backdrop-filter: var(--glass-blur-heavy);
   -webkit-backdrop-filter: var(--glass-blur-heavy);
-  will-change: backdrop-filter;
   transform: translateZ(0);
   border-radius: var(--glass-radius-lg);
   box-shadow:
@@ -317,7 +315,6 @@ a:hover {
   );
   backdrop-filter: var(--glass-blur);
   -webkit-backdrop-filter: var(--glass-blur);
-  will-change: backdrop-filter;
   transform: translateZ(0);
   border-radius: var(--glass-radius);
   box-shadow:
@@ -417,7 +414,6 @@ a:hover {
   );
   backdrop-filter: var(--glass-blur);
   -webkit-backdrop-filter: var(--glass-blur);
-  will-change: backdrop-filter;
   transform: translateZ(0);
   border-radius: var(--glass-radius);
   box-shadow:
@@ -476,8 +472,8 @@ a:hover {
     rgba(255,255,255,0.04) 70%,
     rgba(255,255,255,0.08) 100%
   );
-  backdrop-filter: blur(50px) saturate(200%) brightness(1.05);
-  -webkit-backdrop-filter: blur(50px) saturate(200%) brightness(1.05);
+  backdrop-filter: blur(10px) saturate(150%) brightness(1.02);
+  -webkit-backdrop-filter: blur(10px) saturate(150%) brightness(1.02);
   box-shadow:
     inset 1px 0 1px rgba(255, 255, 255, 0.15),
     inset -1px 0 1px rgba(255, 255, 255, 0.05),
@@ -530,9 +526,8 @@ a:hover {
 .glass-input {
   position: relative;
   background: rgba(255, 255, 255, 0.06);
-  backdrop-filter: blur(20px) saturate(180%);
-  -webkit-backdrop-filter: blur(20px) saturate(180%);
-  will-change: backdrop-filter;
+  backdrop-filter: blur(6px) saturate(140%);
+  -webkit-backdrop-filter: blur(6px) saturate(140%);
   transform: translateZ(0);
   border-radius: var(--glass-radius-sm);
   color: var(--theme-text);
@@ -570,9 +565,8 @@ a:hover {
     rgba(var(--theme-primary-rgb), 0.7) 50%,
     rgba(var(--theme-primary-rgb), 0.85) 100%
   );
-  backdrop-filter: blur(16px);
-  -webkit-backdrop-filter: blur(16px);
-  will-change: backdrop-filter;
+  backdrop-filter: blur(4px);
+  -webkit-backdrop-filter: blur(4px);
   transform: translateZ(0);
   border-radius: var(--glass-radius-sm);
   color: #fff;
@@ -666,9 +660,8 @@ a:hover {
     rgba(255,255,255,0.08) 50%,
     rgba(255,255,255,0.1) 100%
   );
-  backdrop-filter: blur(16px);
-  -webkit-backdrop-filter: blur(16px);
-  will-change: backdrop-filter;
+  backdrop-filter: blur(4px);
+  -webkit-backdrop-filter: blur(4px);
   transform: translateZ(0);
   border-radius: var(--glass-radius-sm);
   color: var(--theme-text);
@@ -748,9 +741,8 @@ a:hover {
     rgba(255,255,255,0.02) 50%,
     rgba(255,255,255,0.025) 100%
   );
-  backdrop-filter: blur(50px) saturate(200%) brightness(1.05) !important;
-  -webkit-backdrop-filter: blur(50px) saturate(200%) brightness(1.05) !important;
-  will-change: backdrop-filter;
+  backdrop-filter: blur(10px) saturate(150%) brightness(1.02) !important;
+  -webkit-backdrop-filter: blur(10px) saturate(150%) brightness(1.02) !important;
   transform: translateZ(0);
   border-radius: var(--glass-radius);
   box-shadow:
@@ -774,7 +766,7 @@ a:hover {
   background-size: cover;
   background-position: center;
   background-attachment: fixed;
-  filter: blur(50px) saturate(200%) brightness(1.05);
+  filter: blur(10px) saturate(150%) brightness(1.02);
   z-index: -1;
   pointer-events: none;
 }
@@ -797,8 +789,8 @@ a:hover {
 /* glass-card — same appearance as glass-panel, used on teacher pages */
 .glass-card {
   position: relative;
-  backdrop-filter: blur(50px) saturate(200%) brightness(1.05) !important;
-  -webkit-backdrop-filter: blur(50px) saturate(200%) brightness(1.05) !important;
+  backdrop-filter: blur(10px) saturate(150%) brightness(1.02) !important;
+  -webkit-backdrop-filter: blur(10px) saturate(150%) brightness(1.02) !important;
   background: linear-gradient(
     145deg,
     rgba(255,255,255,0.03) 0%,
@@ -827,7 +819,7 @@ a:hover {
   background-size: cover;
   background-position: center;
   background-attachment: fixed;
-  filter: blur(50px) saturate(200%) brightness(1.05);
+  filter: blur(10px) saturate(150%) brightness(1.02);
   z-index: -1;
   pointer-events: none;
 }
@@ -910,8 +902,8 @@ a:hover {
   inset: 0;
   z-index: 1;
   background: rgba(0, 0, 0, 0.4);
-  backdrop-filter: blur(2px);
-  -webkit-backdrop-filter: blur(2px);
+  backdrop-filter: blur(1px);
+  -webkit-backdrop-filter: blur(1px);
   transform: translateZ(0);
   will-change: transform;
 }
@@ -1029,8 +1021,8 @@ a:hover {
   .glass-panel {
     border-radius: var(--glass-radius);
     /* Ensure blur works on mobile */
-    backdrop-filter: blur(50px) saturate(200%) brightness(1.05) !important;
-    -webkit-backdrop-filter: blur(50px) saturate(200%) brightness(1.05) !important;
+    backdrop-filter: blur(10px) saturate(150%) brightness(1.02) !important;
+    -webkit-backdrop-filter: blur(10px) saturate(150%) brightness(1.02) !important;
   }
 
   .glass-input {
@@ -1130,7 +1122,7 @@ a:hover {
       0 0 0 2px rgba(255, 255, 255, 0.5),
       0 8px 32px rgba(0, 0, 0, 0.2);
     /* Ensure blur works on all screen sizes */
-    backdrop-filter: blur(50px) saturate(200%) brightness(1.05) !important;
-    -webkit-backdrop-filter: blur(50px) saturate(200%) brightness(1.05) !important;
+    backdrop-filter: blur(10px) saturate(150%) brightness(1.02) !important;
+    -webkit-backdrop-filter: blur(10px) saturate(150%) brightness(1.02) !important;
   }
 }

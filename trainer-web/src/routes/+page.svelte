@@ -134,8 +134,8 @@
 		transition: all 0.3s ease;
 		cursor: pointer;
 		/* Enhanced blur effect */
-		backdrop-filter: blur(50px) saturate(200%) brightness(1.05);
-		-webkit-backdrop-filter: blur(50px) saturate(200%) brightness(1.05);
+		backdrop-filter: blur(10px) saturate(150%) brightness(1.02);
+		-webkit-backdrop-filter: blur(10px) saturate(150%) brightness(1.02);
 		background: linear-gradient(
 			145deg,
 			rgba(255,255,255,0.1) 0%,
@@ -163,8 +163,8 @@
 			inset 0 -1px 1px rgba(255, 255, 255, 0.12),
 			0 0 0 1px rgba(255, 255, 255, 0.18);
 		/* Maintain blur on hover */
-		backdrop-filter: blur(50px) saturate(200%) brightness(1.05);
-		-webkit-backdrop-filter: blur(50px) saturate(200%) brightness(1.05);
+		backdrop-filter: blur(10px) saturate(150%) brightness(1.02);
+		-webkit-backdrop-filter: blur(10px) saturate(150%) brightness(1.02);
 	}
 
 	.role-icon {

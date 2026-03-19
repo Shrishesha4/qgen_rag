@@ -1354,8 +1354,8 @@
 		text-decoration: none;
 		transition: all 0.2s ease;
 		/* Enhanced blur effect - force override */
-		backdrop-filter: blur(50px) saturate(200%) brightness(1.05) !important;
-		-webkit-backdrop-filter: blur(50px) saturate(200%) brightness(1.05) !important;
+		backdrop-filter: blur(10px) saturate(150%) brightness(1.02) !important;
+		-webkit-backdrop-filter: blur(10px) saturate(150%) brightness(1.02) !important;
 		background: linear-gradient(
 			145deg,
 			rgba(255,255,255,0.03) 0%,
@@ -1384,8 +1384,8 @@
 			inset 0 -1px 1px rgba(255, 255, 255, 0.12),
 			0 0 0 1px rgba(255, 255, 255, 0.18) !important;
 		/* Maintain blur on hover - force override */
-		backdrop-filter: blur(50px) saturate(200%) brightness(1.05) !important;
-		-webkit-backdrop-filter: blur(50px) saturate(200%) brightness(1.05) !important;
+		backdrop-filter: blur(10px) saturate(150%) brightness(1.02) !important;
+		-webkit-backdrop-filter: blur(10px) saturate(150%) brightness(1.02) !important;
 	}
 
 	.discipline-card.selected {
@@ -1393,8 +1393,8 @@
 		border-color: rgba(var(--theme-primary-rgb), 0.45);
 		box-shadow: 0 0 0 1px rgba(var(--theme-primary-rgb), 0.2);
 		/* Maintain blur on selected - force override */
-		backdrop-filter: blur(50px) saturate(200%) brightness(1.05) !important;
-		-webkit-backdrop-filter: blur(50px) saturate(200%) brightness(1.05) !important;
+		backdrop-filter: blur(10px) saturate(150%) brightness(1.02) !important;
+		-webkit-backdrop-filter: blur(10px) saturate(150%) brightness(1.02) !important;
 	}
 
 	.discipline-icon {
@@ -1638,8 +1638,8 @@
 		font-size: 0.85rem;
 		color: var(--theme-text);
 		/* Enhanced blur effect - force override */
-		backdrop-filter: blur(50px) saturate(200%) brightness(1.05) !important;
-		-webkit-backdrop-filter: blur(50px) saturate(200%) brightness(1.05) !important;
+		backdrop-filter: blur(10px) saturate(150%) brightness(1.02) !important;
+		-webkit-backdrop-filter: blur(10px) saturate(150%) brightness(1.02) !important;
 		background: linear-gradient(
 			145deg,
 			rgba(255,255,255,0.03) 0%,
@@ -1722,8 +1722,8 @@
 		overflow: hidden;
 		transition: border-color 0.2s;
 		/* Enhanced blur effect - force override */
-		backdrop-filter: blur(50px) saturate(200%) brightness(1.05) !important;
-		-webkit-backdrop-filter: blur(50px) saturate(200%) brightness(1.05) !important;
+		backdrop-filter: blur(10px) saturate(150%) brightness(1.02) !important;
+		-webkit-backdrop-filter: blur(10px) saturate(150%) brightness(1.02) !important;
 		background: linear-gradient(
 			145deg,
 			rgba(255,255,255,0.03) 0%,
@@ -1836,8 +1836,8 @@
 		border: 0.5px solid rgba(255, 255, 255, 0.08);
 		font-size: 0.85rem;
 		/* Enhanced blur effect - force override */
-		backdrop-filter: blur(50px) saturate(200%) brightness(1.05) !important;
-		-webkit-backdrop-filter: blur(50px) saturate(200%) brightness(1.05) !important;
+		backdrop-filter: blur(10px) saturate(150%) brightness(1.02) !important;
+		-webkit-backdrop-filter: blur(10px) saturate(150%) brightness(1.02) !important;
 		background: linear-gradient(
 			145deg,
 			rgba(255,255,255,0.03) 0%,
@@ -1951,8 +1951,8 @@
 		border-radius: var(--glass-radius);
 		background: rgba(var(--theme-primary-rgb), 0.08);
 		/* Enhanced blur effect - force override */
-		backdrop-filter: blur(50px) saturate(200%) brightness(1.05) !important;
-		-webkit-backdrop-filter: blur(50px) saturate(200%) brightness(1.05) !important;
+		backdrop-filter: blur(10px) saturate(150%) brightness(1.02) !important;
+		-webkit-backdrop-filter: blur(10px) saturate(150%) brightness(1.02) !important;
 		background: linear-gradient(
 			145deg,
 			rgba(255,255,255,0.03) 0%,
@@ -2030,8 +2030,8 @@
 	.review-card {
 		padding: 1.5rem;
 		/* Enhanced blur effect - force override */
-		backdrop-filter: blur(50px) saturate(200%) brightness(1.05) !important;
-		-webkit-backdrop-filter: blur(50px) saturate(200%) brightness(1.05) !important;
+		backdrop-filter: blur(10px) saturate(150%) brightness(1.02) !important;
+		-webkit-backdrop-filter: blur(10px) saturate(150%) brightness(1.02) !important;
 		background: linear-gradient(
 			145deg,
 			rgba(255,255,255,0.03) 0%,
@@ -2171,7 +2171,7 @@
 		padding: 0.5rem;
 		border-radius: 14px;
 		background: rgba(11, 18, 32, 0.5);
-		backdrop-filter: blur(10px);
+		backdrop-filter: blur(6px);
 		z-index: 15;
 	}
 

@@ -81,8 +81,8 @@
 		outline: none;
 		gap: 0.5rem;
 		/* Enhanced blur effect - force override */
-		backdrop-filter: blur(50px) saturate(200%) brightness(1.05) !important;
-		-webkit-backdrop-filter: blur(50px) saturate(200%) brightness(1.05) !important;
+		backdrop-filter: blur(10px) saturate(150%) brightness(1.02) !important;
+		-webkit-backdrop-filter: blur(10px) saturate(150%) brightness(1.02) !important;
 		background: linear-gradient(
 			145deg,
 			rgba(255,255,255,0.03) 0%,
@@ -111,8 +111,8 @@
 		border-color: rgba(var(--theme-primary-rgb), 0.5);
 		transform: translateZ(0) scale(1.02);
 		/* Maintain blur on hover - force override */
-		backdrop-filter: blur(50px) saturate(200%) brightness(1.05) !important;
-		-webkit-backdrop-filter: blur(50px) saturate(200%) brightness(1.05) !important;
+		backdrop-filter: blur(10px) saturate(150%) brightness(1.02) !important;
+		-webkit-backdrop-filter: blur(10px) saturate(150%) brightness(1.02) !important;
 	}
 
 	.upload-icon {

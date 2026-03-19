@@ -189,6 +189,7 @@
 		clearReferencePolling();
 		clearBackgroundStatusPolling();
 		if (bgSubjectRefreshTimer) { clearInterval(bgSubjectRefreshTimer); bgSubjectRefreshTimer = null; }
+		if (searchDebounceTimer) { clearTimeout(searchDebounceTimer); searchDebounceTimer = null; }
 	});
 
 	const optimisticUpdates = $state<Record<string, boolean>>({});
@@ -307,16 +308,17 @@
 				bgMissCountBySubject = {};
 				return;
 			}
-			const subjectIds = subjects.map((s) => s.id);
 
-			// On first load, seed from localStorage so cached indicators show immediately
-			const hasAnyState = Object.keys(bgStatusBySubject).length > 0;
-			if (!hasAnyState) {
-				const cached = readCachedBgStatuses();
-				if (Object.keys(cached).length > 0) {
-					bgStatusBySubject = cached;
-					console.log('[bg-gen] Loaded cached statuses for subjects', Object.keys(cached));
-				}
+			// Only poll for subjects that are visible or have active status
+			const subjectIds = subjects.filter(s => {
+				const status = bgStatusBySubject[s.id];
+				return status?.in_progress || !status; // Include unknown status
+			}).map(s => s.id);
+
+			if (subjectIds.length === 0) {
+				// No active subjects, reduce polling frequency
+				console.log('[bg-gen] No active subjects, skipping poll');
+				return;
 			}
 
 			const res = await getBackgroundGenerationStatuses(subjectIds);
@@ -327,7 +329,6 @@
 				subjectCount: subjectIds.length,
 				wasInProgressCount: Object.keys(bgStatusBySubject).filter(id => bgStatusBySubject[id]?.in_progress).length,
 				liveStatusCount: Object.keys(live).length,
-				optimisticCount: Object.keys(optimisticUpdates).length,
 			});
 
 			// Simple, robust state update strategy
@@ -418,22 +419,22 @@
 		if (bgSubjectRefreshTimer) { clearInterval(bgSubjectRefreshTimer); bgSubjectRefreshTimer = null; }
 		if (!subjects.length) return;
 		
-		// Poll more frequently when we have in-progress indicators
 		const hasInProgress = Object.keys(bgStatusBySubject).some(id => bgStatusBySubject[id]?.in_progress);
-		const pollInterval = hasInProgress ? 2000 : 3500; // 2 seconds when active, 3.5 seconds when idle
+		// Reduced polling frequency for better performance
+		const pollInterval = hasInProgress ? 4000 : 6000; // 4 seconds when active, 6 seconds when idle
 		
 		bgStatusPollTimer = setInterval(() => {
 			void refreshBackgroundStatuses();
 		}, pollInterval);
 		
-		// Separate timer for live question count refresh — every 10s
+		// Reduced frequency for subject refresh - every 15s instead of 10s
 		bgSubjectRefreshTimer = setInterval(() => {
 			for (const [subjectId, status] of Object.entries(bgStatusBySubject)) {
 				if (status.in_progress) {
 					void refreshSubject(subjectId);
 				}
 			}
-		}, 10000);
+		}, 15000);
 		
 		console.log('[bg-gen] Started polling', { pollInterval, hasInProgress });
 	}
@@ -486,34 +487,50 @@
 	function ensureReferenceProgressPolling() {
 		clearReferencePolling();
 		if (!showReferenceModal || !hasAnyProcessingDocs()) return;
+		// Reduced polling frequency from 3s to 5s for better performance
 		referencePollTimer = setInterval(() => {
 			void loadReferenceMaterials(referenceSubjectId, false);
-		}, 3000);
+		}, 5000);
 	}
 
+	// Debounced search query to reduce filtering frequency
+	let debouncedSearchQuery = $state('');
+	let searchDebounceTimer: ReturnType<typeof setTimeout> | null = null;
+	
+	// Optimized filtering with memoization
 	let filteredSubjects = $derived.by(() => {
-		const baseFiltered = subjects.map((subject) => {
-			const subjectMatches =
-				subject.name.toLowerCase().includes(searchQuery.toLowerCase()) ||
-				subject.code.toLowerCase().includes(searchQuery.toLowerCase());
-
-			const topics = topicsMap[subject.id] || [];
-			const filteredTopics = topics.filter(
-				(topic) =>
-					topic.name.toLowerCase().includes(searchQuery.toLowerCase()) ||
-					(topic.syllabus_content &&
-						topic.syllabus_content.toLowerCase().includes(searchQuery.toLowerCase()))
-			);
-
-			return { subject, filteredTopics, subjectMatches };
-		});
-
-		if (!searchQuery.trim()) {
-			return baseFiltered;
+		const query = debouncedSearchQuery.toLowerCase().trim();
+		if (!query) {
+			return subjects.map((subject) => ({
+				subject,
+				filteredTopics: topicsMap[subject.id] || [],
+				subjectMatches: true
+			}));
 		}
-
-		return baseFiltered.filter((item) => item.subjectMatches || item.filteredTopics.length > 0);
+		
+		return subjects.map((subject) => {
+			const subjectMatches = 
+				subject.name.toLowerCase().includes(query) ||
+				subject.code.toLowerCase().includes(query);
+			
+			const topics = topicsMap[subject.id] || [];
+			const filteredTopics = topics.filter((topic) =>
+				topic.name.toLowerCase().includes(query) ||
+				(topic.syllabus_content && topic.syllabus_content.toLowerCase().includes(query))
+			);
+			
+			return { subject, filteredTopics, subjectMatches };
+		}).filter((item) => item.subjectMatches || item.filteredTopics.length > 0);
 	});
+	
+	// Debounced search handler
+	function handleSearchChange(value: string) {
+		searchQuery = value;
+		if (searchDebounceTimer) clearTimeout(searchDebounceTimer);
+		searchDebounceTimer = setTimeout(() => {
+			debouncedSearchQuery = value;
+		}, 150); // 150ms debounce
+	}
 
 	async function loadSubjects() {
 		loading = true;
@@ -850,10 +867,11 @@
 				type="text"
 				class="search-input"
 				placeholder="Search here..."
-				bind:value={searchQuery}
+				value={searchQuery}
+				oninput={(e) => handleSearchChange((e.target as HTMLInputElement).value)}
 			/>
 			{#if searchQuery}
-				<button class="clear-search-btn" onclick={() => (searchQuery = '')}>✕</button>
+				<button class="clear-search-btn" onclick={() => handleSearchChange('')}>✕</button>
 			{/if}
 		</div>
 
@@ -861,7 +879,7 @@
 			<div class="center-state" style="padding-top: 2rem;">
 				<span class="empty-icon">🔍</span>
 				<p>No results found for "{searchQuery}"</p>
-				<button class="glass-btn" onclick={() => (searchQuery = '')}>Clear Search</button>
+				<button class="glass-btn" onclick={() => handleSearchChange('')}>Clear Search</button>
 			</div>
 		{:else}
 			<div class="subject-list">
@@ -1309,6 +1327,9 @@
 		display: flex;
 		flex-direction: column;
 		gap: 1rem;
+		/* Performance optimizations */
+		contain: layout style paint;
+		will-change: auto; /* Remove will-change for better performance */
 	}
 
 	.subject-card {
@@ -1316,9 +1337,12 @@
 		width: 100%;
 		overflow: hidden;
 		transition: all 0.2s;
+		/* Performance optimizations */
+		contain: layout style paint;
+		transform: translateZ(0); /* Hardware acceleration without will-change */
 		/* Enhanced blur effect - force override */
-		backdrop-filter: blur(50px) saturate(200%) brightness(1.05) !important;
-		-webkit-backdrop-filter: blur(50px) saturate(200%) brightness(1.05) !important;
+		backdrop-filter: blur(10px) saturate(150%) brightness(1.02) !important;
+		-webkit-backdrop-filter: blur(10px) saturate(150%) brightness(1.02) !important;
 		background: linear-gradient(
 			145deg,
 			rgba(255,255,255,0.1) 0%,
@@ -1335,8 +1359,8 @@
 	.subject-card.expanded {
 		border-color: rgba(var(--theme-primary-rgb), 0.3);
 		/* Maintain blur on expanded - force override */
-		backdrop-filter: blur(50px) saturate(200%) brightness(1.05) !important;
-		-webkit-backdrop-filter: blur(50px) saturate(200%) brightness(1.05) !important;
+		backdrop-filter: blur(10px) saturate(150%) brightness(1.02) !important;
+		-webkit-backdrop-filter: blur(10px) saturate(150%) brightness(1.02) !important;
 	}
 
 	.subject-card-row {
@@ -1999,8 +2023,8 @@
 			rgba(255,255,255,0.02) 50%,
 			rgba(255,255,255,0.025) 100%
 		);
-		backdrop-filter: blur(50px) saturate(200%) brightness(1.05);
-		-webkit-backdrop-filter: blur(50px) saturate(200%) brightness(1.05);
+		backdrop-filter: blur(10px) saturate(150%) brightness(1.02);
+		-webkit-backdrop-filter: blur(10px) saturate(150%) brightness(1.02);
 		border: 0.5px solid rgba(255, 255, 255, 0.12);
 		border-radius: 0.5rem;
 		color: var(--theme-text-muted);

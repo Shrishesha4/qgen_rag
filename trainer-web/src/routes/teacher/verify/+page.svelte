@@ -352,8 +352,8 @@
 		padding: 1rem;
 		gap: 0.25rem;
 		/* Enhanced blur effect - force override */
-		backdrop-filter: blur(50px) saturate(200%) brightness(1.05) !important;
-		-webkit-backdrop-filter: blur(50px) saturate(200%) brightness(1.05) !important;
+		backdrop-filter: blur(10px) saturate(150%) brightness(1.02) !important;
+		-webkit-backdrop-filter: blur(10px) saturate(150%) brightness(1.02) !important;
 		background: linear-gradient(
 			145deg,
 			rgba(255,255,255,0.03) 0%,
@@ -407,8 +407,8 @@
 		color: inherit;
 		transition: all 0.2s;
 		/* Enhanced blur effect - force override */
-		backdrop-filter: blur(50px) saturate(200%) brightness(1.05) !important;
-		-webkit-backdrop-filter: blur(50px) saturate(200%) brightness(1.05) !important;
+		backdrop-filter: blur(10px) saturate(150%) brightness(1.02) !important;
+		-webkit-backdrop-filter: blur(10px) saturate(150%) brightness(1.02) !important;
 		background: linear-gradient(
 			145deg,
 			rgba(255,255,255,0.03) 0%,

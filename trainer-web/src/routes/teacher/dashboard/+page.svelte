@@ -183,8 +183,8 @@
 		transition: all 0.3s ease;
 		cursor: pointer;
 		/* Enhanced blur effect - force override */
-		backdrop-filter: blur(50px) saturate(200%) brightness(1.05) !important;
-		-webkit-backdrop-filter: blur(50px) saturate(200%) brightness(1.05) !important;
+		backdrop-filter: blur(10px) saturate(150%) brightness(1.02) !important;
+		-webkit-backdrop-filter: blur(10px) saturate(150%) brightness(1.02) !important;
 		background: linear-gradient(
 			145deg,
 			rgba(255,255,255,0.03) 0%,
@@ -217,8 +217,8 @@
 			inset 0 -1px 1px rgba(255, 255, 255, 0.12),
 			0 0 0 1px rgba(255, 255, 255, 0.18) !important;
 		/* Maintain blur on hover - force override */
-		backdrop-filter: blur(50px) saturate(200%) brightness(1.05) !important;
-		-webkit-backdrop-filter: blur(50px) saturate(200%) brightness(1.05) !important;
+		backdrop-filter: blur(10px) saturate(150%) brightness(1.02) !important;
+		-webkit-backdrop-filter: blur(10px) saturate(150%) brightness(1.02) !important;
 	}
 
 	.mode-icon {
