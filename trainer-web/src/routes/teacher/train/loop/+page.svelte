@@ -1543,7 +1543,7 @@
 		color: var(--theme-text-muted);
 	}
 
-	.caught-up-stats {
+	/* .caught-up-stats {
 		width: 100%;
 		display: grid;
 		grid-template-columns: repeat(3, minmax(0, 1fr));
@@ -1571,7 +1571,7 @@
 		letter-spacing: 0.08em;
 		text-transform: uppercase;
 		color: var(--theme-text-muted);
-	}
+	} */
 
 	.caught-up-actions {
 		display: flex;
@@ -1792,9 +1792,9 @@
 			padding: 1.25rem 1rem 11.5rem;
 		}
 
-		.caught-up-stats {
+		/* .caught-up-stats {
 			grid-template-columns: 1fr;
-		}
+		} */
 
 		.floating-stack {
 			width: calc(100vw - 1rem);

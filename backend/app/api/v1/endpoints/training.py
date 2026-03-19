@@ -382,3 +382,241 @@ async def get_training_queue_status(
 ):
     """Get queue depth and dead-letter counts by training pipeline queue."""
     return await training_service.get_queue_status()
+
+
+# ══════════════════════════════════════
+# Training Data Export
+# ══════════════════════════════════════
+
+@router.get("/export/sft")
+async def export_sft_jsonl(
+    subject_id: Optional[str] = Query(None, description="Filter by subject ID"),
+    status_filter: str = Query("all", description="all | approved | pending"),
+    include_context: bool = Query(True, description="Include source chunk text in input field"),
+    limit: int = Query(10000, ge=1, le=50000),
+    current_user: User = Depends(get_current_teacher_or_admin),
+    db: AsyncSession = Depends(get_db),
+):
+    """
+    Export questions as JSONL for Supervised Fine-Tuning (SFT).
+
+    Each line is a JSON object with:
+    - instruction: system + metadata prompt
+    - input: source context (optional)
+    - output: full MCQ JSON (question_text, options, correct_answer, correct_answer_text, explanation)
+
+    Compatible with axolotl, unsloth, and LLaMA-Factory training pipelines.
+    """
+    import json as json_mod
+    import re
+    from fastapi.responses import StreamingResponse
+    from sqlalchemy.orm import selectinload
+    from app.models.document import DocumentChunk
+
+    # Build query
+    q = (
+        select(Question)
+        .options(selectinload(Question.subject), selectinload(Question.topic))
+        .where(Question.is_archived == False, Question.is_latest == True)
+    )
+
+    if subject_id:
+        q = q.where(Question.subject_id == uuid.UUID(subject_id))
+    if status_filter == "approved":
+        q = q.where(Question.vetting_status == "approved")
+    elif status_filter == "pending":
+        q = q.where(Question.vetting_status == "pending")
+
+    q = q.order_by(Question.generated_at.desc()).limit(limit)
+    result = await db.execute(q)
+    questions = result.scalars().all()
+
+    # Pre-fetch source chunks if include_context
+    chunk_cache: dict = {}
+    if include_context:
+        all_chunk_ids = set()
+        for question in questions:
+            if question.source_chunk_ids:
+                all_chunk_ids.update(question.source_chunk_ids)
+        if all_chunk_ids:
+            chunk_result = await db.execute(
+                select(DocumentChunk).where(DocumentChunk.id.in_(list(all_chunk_ids)[:500]))
+            )
+            for chunk in chunk_result.scalars().all():
+                chunk_cache[chunk.id] = chunk.chunk_text
+
+    def _extract_option_text(opt: str) -> str:
+        m = re.match(r'^[A-F]\)\s*', opt)
+        return opt[m.end():] if m else opt
+
+    def generate_lines():
+        for question in questions:
+            # Build instruction
+            instruction_parts = [
+                "You are an expert MCQ generator for university examinations.",
+                "Generate a high-quality multiple choice question from the given context.",
+                "",
+            ]
+
+            subject_name = question.subject.name if question.subject else "Unknown"
+            subject_code = question.subject.code if question.subject else ""
+            topic_name = question.topic.name if question.topic else (question.topic_tags[0] if question.topic_tags else "General")
+
+            instruction_parts.append(f"Subject: {subject_name} ({subject_code})")
+            instruction_parts.append(f"Topic: {topic_name}")
+            instruction_parts.append(f"Difficulty: {question.difficulty_level or 'medium'}")
+            instruction_parts.append(f"Bloom Level: {question.bloom_taxonomy_level or 'apply'}")
+            if question.marks:
+                instruction_parts.append(f"Marks: {question.marks}")
+            instruction_parts.append("")
+            instruction_parts.append("Generate an MCQ with 4 options (A-D), the correct answer letter, and a detailed explanation. Output valid JSON only.")
+
+            instruction = "\n".join(instruction_parts)
+
+            # Build input (source context)
+            input_text = ""
+            if include_context and question.source_chunk_ids:
+                chunks_text = []
+                for cid in question.source_chunk_ids[:3]:
+                    if cid in chunk_cache:
+                        chunks_text.append(chunk_cache[cid])
+                if chunks_text:
+                    input_text = "\n\n---\n\n".join(chunks_text)
+
+            # Build output — full MCQ JSON
+            options = question.options or []
+            correct_letter = question.correct_answer or "A"
+            correct_text = ""
+            labels = ['A', 'B', 'C', 'D', 'E', 'F']
+            for i, label in enumerate(labels[:len(options)]):
+                if label == correct_letter.strip().upper():
+                    correct_text = _extract_option_text(options[i])
+                    break
+
+            output = {
+                "question_text": question.question_text,
+                "options": options,
+                "correct_answer": correct_letter,
+                "correct_answer_text": correct_text,
+                "explanation": question.explanation or "",
+            }
+
+            record = {
+                "instruction": instruction,
+                "input": input_text,
+                "output": json_mod.dumps(output, ensure_ascii=False),
+            }
+
+            yield json_mod.dumps(record, ensure_ascii=False) + "\n"
+
+    return StreamingResponse(
+        generate_lines(),
+        media_type="application/x-ndjson",
+        headers={
+            "Content-Disposition": f"attachment; filename=sft_mcq_export_{datetime.now(timezone.utc).strftime('%Y%m%d_%H%M%S')}.jsonl",
+        },
+    )
+
+
+@router.get("/export/dpo")
+async def export_dpo_jsonl(
+    limit: int = Query(10000, ge=1, le=50000),
+    current_user: User = Depends(get_current_teacher_or_admin),
+    db: AsyncSession = Depends(get_db),
+):
+    """
+    Export DPO training pairs as JSONL.
+
+    Each line is a JSON object with:
+    - prompt: enriched generation prompt
+    - chosen: preferred response
+    - rejected: rejected response
+
+    Compatible with TRL DPOTrainer and axolotl DPO pipelines.
+    """
+    import json as json_mod
+    from fastapi.responses import StreamingResponse
+
+    result = await db.execute(
+        select(TrainingPair)
+        .where(TrainingPair.status.in_(["pending", "queued", "used"]))
+        .order_by(TrainingPair.created_at.desc())
+        .limit(limit)
+    )
+    pairs = result.scalars().all()
+
+    def generate_lines():
+        for pair in pairs:
+            record = {
+                "prompt": pair.prompt,
+                "chosen": pair.chosen_response,
+                "rejected": pair.rejected_response,
+                "metadata": {
+                    "pair_type": pair.pair_type,
+                    "confidence": pair.confidence,
+                    "language": pair.language,
+                    "rejected_reason_codes": pair.rejected_reason_codes,
+                },
+            }
+            yield json_mod.dumps(record, ensure_ascii=False) + "\n"
+
+    return StreamingResponse(
+        generate_lines(),
+        media_type="application/x-ndjson",
+        headers={
+            "Content-Disposition": f"attachment; filename=dpo_pairs_export_{datetime.now(timezone.utc).strftime('%Y%m%d_%H%M%S')}.jsonl",
+        },
+    )
+
+
+@router.get("/export/stats")
+async def export_stats(
+    current_user: User = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+):
+    """Get training data statistics — overview of available data for fine-tuning."""
+    from app.models.question import Question
+    from app.models.subject import Subject
+
+    total_q = await db.execute(select(func.count(Question.id)).where(Question.is_archived == False))
+    approved_q = await db.execute(select(func.count(Question.id)).where(Question.is_archived == False, Question.vetting_status == "approved"))
+    pending_q = await db.execute(select(func.count(Question.id)).where(Question.is_archived == False, Question.vetting_status == "pending"))
+    total_pairs = await db.execute(select(func.count(TrainingPair.id)))
+    total_subjects = await db.execute(select(func.count(Subject.id)))
+
+    # Bloom distribution
+    bloom_result = await db.execute(
+        select(Question.bloom_taxonomy_level, func.count(Question.id))
+        .where(Question.is_archived == False)
+        .group_by(Question.bloom_taxonomy_level)
+    )
+    bloom_dist = {row[0]: row[1] for row in bloom_result.all()}
+
+    # Difficulty distribution
+    diff_result = await db.execute(
+        select(Question.difficulty_level, func.count(Question.id))
+        .where(Question.is_archived == False)
+        .group_by(Question.difficulty_level)
+    )
+    diff_dist = {row[0]: row[1] for row in diff_result.all()}
+
+    # Answer distribution
+    ans_result = await db.execute(
+        select(Question.correct_answer, func.count(Question.id))
+        .where(Question.is_archived == False)
+        .group_by(Question.correct_answer)
+    )
+    ans_dist = {row[0]: row[1] for row in ans_result.all()}
+
+    return {
+        "total_questions": total_q.scalar(),
+        "approved_questions": approved_q.scalar(),
+        "pending_questions": pending_q.scalar(),
+        "dpo_pairs": total_pairs.scalar(),
+        "subjects": total_subjects.scalar(),
+        "bloom_distribution": bloom_dist,
+        "difficulty_distribution": diff_dist,
+        "answer_distribution": ans_dist,
+        "sft_ready": total_q.scalar() > 0,
+        "dpo_ready": total_pairs.scalar() >= 10,
+    }

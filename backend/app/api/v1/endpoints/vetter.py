@@ -1068,25 +1068,47 @@ def _reconstruct_prompt(question: Question) -> str:
     """
     Reconstruct the generation prompt from question metadata.
     Used as the 'prompt' field in DPO training pairs.
+    Includes subject, topic, bloom, difficulty, and source context for rich training signal.
     """
     parts = []
+
+    # System instruction
+    parts.append("You are an expert MCQ generator for university examinations. Generate a high-quality multiple choice question from the given context.")
+
+    # Structured metadata
+    meta_parts = []
+    meta_parts.append(f"Question Type: {question.question_type or 'mcq'}")
+
+    loaded_subject = question.__dict__.get("subject")
+    if loaded_subject and getattr(loaded_subject, "name", None):
+        meta_parts.append(f"Subject: {loaded_subject.name}")
+        if getattr(loaded_subject, "code", None):
+            meta_parts.append(f"Subject Code: {loaded_subject.code}")
+
+    loaded_topic = question.__dict__.get("topic")
+    if loaded_topic and getattr(loaded_topic, "name", None):
+        meta_parts.append(f"Topic: {loaded_topic.name}")
+    elif question.topic_tags:
+        meta_parts.append(f"Topic: {question.topic_tags[0]}")
+
+    if question.difficulty_level:
+        meta_parts.append(f"Difficulty: {question.difficulty_level}")
+    if question.bloom_taxonomy_level:
+        meta_parts.append(f"Bloom Level: {question.bloom_taxonomy_level}")
+    if question.marks:
+        meta_parts.append(f"Marks: {question.marks}")
+
+    parts.append("\n".join(meta_parts))
+
+    # Source context from generation metadata
     if question.generation_metadata:
         meta = question.generation_metadata
-        if "system_prompt" in meta:
-            parts.append(meta["system_prompt"])
-        if "user_prompt" in meta:
-            parts.append(meta["user_prompt"])
-    if not parts:
-        # Fallback: construct from question attributes
-        parts.append(f"Generate a {question.question_type or 'question'}")
-        if question.difficulty_level:
-            parts.append(f"at {question.difficulty_level} difficulty")
-        loaded_topic = question.__dict__.get("topic")
-        if loaded_topic and getattr(loaded_topic, "name", None):
-            parts.append(f"about {loaded_topic.name}")
-        elif question.topic_tags:
-            parts.append(f"about {question.topic_tags[0]}")
-    return "\n".join(parts)
+        raw = meta.get("raw_response", {})
+        if isinstance(raw, dict) and raw.get("topic_tags"):
+            parts.append(f"Focus: {', '.join(raw['topic_tags'])}")
+
+    parts.append("Generate an MCQ with 4 options, correct answer, and explanation. Output valid JSON.")
+    return "\n\n".join(parts)
 
 
 # ============== Bulk Vet ==============

@@ -6,18 +6,17 @@ This service implements:
 2. Blacklisting of previously generated questions to avoid duplicates
 3. LLM-based question generation with structured output
 4. Quality validation and deduplication
-5. Stateful tracking across sessions
 """
 
 import json
 from datetime import datetime, timezone
-from typing import Optional, List, AsyncGenerator, Dict, Any, Tuple
+from typing import Optional, List, Dict, Any, Tuple, AsyncGenerator
 import uuid
 import asyncio
 
 from sqlalchemy import select, func, and_, or_
 from sqlalchemy.ext.asyncio import AsyncSession
-from sqlalchemy.orm import selectinload
+from sqlalchemy.orm import selectinload, joinedload
 
 from app.models.document import Document, DocumentChunk
 from app.models.question import Question, GenerationSession
@@ -356,6 +355,9 @@ class QuestionGenerationService:
                             difficulty=request.difficulty,
                             chunk_ids=[c.id for c in selected_chunks],
                             chunks=selected_chunks,
+                            subject_id=document.subject_id,
+                            user_id=user_id,
+                            used_reference_materials=bool(selected_chunks),
                         )
                         
                         questions_generated += 1
@@ -855,12 +857,12 @@ Output valid JSON only."""
         question_data: Dict[str, Any],
         question_type: str,
         chunks: List[DocumentChunk],
-    ) -> tuple[bool, str, float]:
+    ) -> tuple[bool, str, float, List[str]]:
         """
         Validate the quality of a generated question.
         
         Returns:
-            Tuple of (is_valid, reason, confidence_score)
+            Tuple of (is_valid, reason, confidence_score, validation_issues)
         """
         import re
         
@@ -868,9 +870,9 @@ Output valid JSON only."""
         
         # Basic length checks
         if len(q_text) < 15:
-            return False, "Question too short", 0.0
+            return False, "Question too short", 0.0, []
         if len(q_text) > 1000:
-            return False, "Question too long", 0.0
+            return False, "Question too long", 0.0, []
         
         # Check question has interrogative structure
         question_patterns = [
@@ -886,7 +888,7 @@ Output valid JSON only."""
             re.search(pattern, q_text, re.IGNORECASE) for pattern in question_patterns
         )
         if not has_question_structure:
-            return False, "Question lacks proper interrogative structure", 0.3
+            return False, "Question lacks proper interrogative structure", 0.3, []
         
         # NOTE: Grounding overlap check removed — it was unreliable (punctuation, stemming,
         # and LLM rephrasing all caused false rejections on perfectly valid questions).
@@ -898,11 +900,11 @@ Output valid JSON only."""
             options = question_data.get("options", [])
             
             if not options:
-                return False, "MCQ missing options", 0.0
+                return False, "MCQ missing options", 0.0, []
             if len(options) < 3:
-                return False, f"MCQ has only {len(options)} options, needs at least 3", 0.3
+                return False, f"MCQ has only {len(options)} options, needs at least 3", 0.3, []
             if len(options) > 6:
-                return False, "MCQ has too many options", 0.5
+                return False, "MCQ has too many options", 0.5, []
 
             normalized_options = self._normalize_options(options)
             question_data["options"] = normalized_options
@@ -910,11 +912,11 @@ Output valid JSON only."""
             # Check for unique options
             option_texts = [self._extract_option_text(opt) for opt in normalized_options]
             if len(set(option_texts)) != len(option_texts):
-                return False, "MCQ options are not unique", 0.3
+                return False, "MCQ options are not unique", 0.3, []
             
             normalized_answer = self._normalize_mcq_correct_answer(question_data, normalized_options)
             if not normalized_answer:
-                return False, "MCQ missing/invalid correct answer", 0.0
+                return False, "MCQ missing/invalid correct answer", 0.0, []
             question_data["correct_answer"] = normalized_answer
 
             explanation = str(question_data.get("explanation") or "")
@@ -925,40 +927,64 @@ Output valid JSON only."""
             
             # Check options are not too similar
             if await self._check_options_too_similar(normalized_options):
-                return False, "MCQ options are too similar to each other", 0.4
+                return False, "MCQ options are too similar to each other", 0.4, ["similar_options"]
 
             # Verify answer against explanation + evidence context.
             verified_label, verify_conf, _ = await self._verify_mcq_answer_with_llm(question_data, chunks)
             if verified_label and verified_label != normalized_answer and verify_conf >= 0.8:
                 question_data["correct_answer"] = verified_label
             elif verified_label and verified_label != normalized_answer and verify_conf >= 0.55:
-                return False, "MCQ answer inconsistent with evidence", 0.35
+                return False, "MCQ answer inconsistent with evidence", 0.35, ["answer_mismatch"]
         
         # Short answer validation
         elif question_type == "short_answer":
             expected_answer = question_data.get("expected_answer") or question_data.get("correct_answer")
             if not expected_answer:
-                return False, "Short answer missing expected answer", 0.0
+                return False, "Short answer missing expected answer", 0.0, []
             if len(str(expected_answer)) < 10:
-                return False, "Expected answer too brief", 0.5
+                return False, "Expected answer too brief", 0.5, []
         
         # Long answer validation
         elif question_type == "long_answer":
             key_points = question_data.get("key_points", [])
             if not key_points or len(key_points) < 2:
-                return False, "Long answer should have at least 2 key points", 0.5
+                return False, "Long answer should have at least 2 key points", 0.5, []
         
-        # Calculate confidence score based on available factors
-        confidence = 0.75  # Base confidence
+        # Calculate confidence score based on validation results
+        base_confidence = 0.75  # Base confidence
+        
+        # Track specific issues for score calculation
+        issues = []
+        
+        # Check for specific issues that affect scores
+        if question_type == "mcq":
+            if await self._check_options_too_similar(normalized_options):
+                issues.append("similar_options")
+            
+            # Check answer consistency
+            verified_label, verify_conf, _ = await self._verify_mcq_answer_with_llm(question_data, chunks)
+            if verified_label and verified_label != normalized_answer and verify_conf >= 0.55:
+                issues.append("answer_mismatch")
+        
+        # Calculate final confidence based on issues
+        confidence = base_confidence
+        
+        # Deductions for each issue
+        for issue in issues:
+            if issue == "similar_options":
+                confidence -= 0.15
+            elif issue == "answer_mismatch":
+                confidence -= 0.25
         
         # Boost for having proper structure
         if has_question_structure:
-            confidence += 0.1
+            confidence += 0.05
         
-        # Cap at 0.95
-        confidence = min(confidence, 0.95)
+        # Ensure confidence is in valid range
+        confidence = max(0.0, min(confidence, 0.95))
         
-        return True, "Valid", confidence
+        # Store validation issues for score calculation
+        return True, "Valid", confidence, issues
 
     def _extract_option_text(self, option: str) -> str:
         """Extract the text portion of an option, removing the label."""
@@ -992,6 +1018,104 @@ Output valid JSON only."""
                     return True
         
         return False
+
+    def _coerce_quality_score(self, value: Any, default: float = 0.5) -> float:
+        if value is None:
+            return default
+
+        try:
+            if isinstance(value, str):
+                raw_value = value.strip()
+                if not raw_value:
+                    return default
+                is_percent = raw_value.endswith("%")
+                numeric = float(raw_value.rstrip("% "))
+                if is_percent or numeric > 1.0:
+                    numeric = numeric / 100.0
+                value = numeric
+            else:
+                value = float(value)
+                if value > 1.0:
+                    value = value / 100.0
+        except (TypeError, ValueError):
+            return default
+
+        return max(0.0, min(1.0, value))
+
+    def _normalize_quality_scores(self, scores: Any) -> Dict[str, float]:
+        if not isinstance(scores, dict):
+            raise ValueError(f"Expected dict quality scores, got {type(scores).__name__}")
+
+        return {
+            "answerability": self._coerce_quality_score(scores.get("answerability"), 0.5),
+            "specificity": self._coerce_quality_score(scores.get("specificity"), 0.5),
+            "quality": self._coerce_quality_score(scores.get("quality"), 0.5),
+        }
+
+    async def _evaluate_question_with_llm(self, question_data: Dict[str, Any], question_type: str) -> Dict[str, float]:
+        """
+        Evaluate question quality using LLM-based auto-critique.
+        Returns scores for answerability, specificity, and overall quality.
+        """
+        prompt = f"""Evaluate this {question_type.replace('_', ' ')} exam question.
+
+Question: {question_data.get('question_text', '')}
+
+Options:
+{chr(10).join([f"  {opt}" for opt in question_data.get('options', [])])}
+
+Correct Answer: {question_data.get('correct_answer', '')}
+
+Explanation: {question_data.get('explanation', '')}
+
+Return a JSON object with these exact keys:
+{{
+  "answerability": <0.0-1.0>,
+  "specificity": <0.0-1.0>,
+  "quality": <0.0-1.0>
+}}"""
+
+        system_prompt = "You are an expert educator evaluating exam question quality. Score strictly and return only JSON."
+
+        try:
+            scores = await self.llm_service.generate_json(
+                prompt=prompt,
+                system_prompt=system_prompt,
+                temperature=0.1,
+                max_tokens=300,
+            )
+            return self._normalize_quality_scores(scores)
+        except Exception as structured_error:
+            import json
+            import logging
+            logger = logging.getLogger(__name__)
+            logger.warning(f"Structured LLM evaluation failed: {structured_error}; retrying with plain generation")
+
+            try:
+                raw_response = await self.llm_service.generate(
+                    prompt=prompt,
+                    system_prompt=system_prompt,
+                    temperature=0.1,
+                    max_tokens=300,
+                )
+
+                if isinstance(raw_response, dict):
+                    return self._normalize_quality_scores(raw_response)
+
+                response_text = str(raw_response or "").strip()
+                if not response_text:
+                    raise ValueError("Empty evaluation response")
+
+                extractor = getattr(self.llm_service, "_extract_json_object", None)
+                if callable(extractor):
+                    parsed_scores = extractor(response_text)
+                else:
+                    parsed_scores = json.loads(response_text)
+
+                return self._normalize_quality_scores(parsed_scores)
+            except Exception as e:
+                logger.warning(f"LLM evaluation failed: {e}, using fallback scores")
+            return {"answerability": 0.6, "specificity": 0.6, "quality": 0.6}
 
     def _extract_option_label(self, answer: Any, option_count: int) -> Optional[str]:
         """Extract normalized option label (A/B/C/...) from varied answer formats."""
@@ -1171,6 +1295,10 @@ Return JSON only:
         topic_id: Optional[uuid.UUID] = None,
         skip_quality_validation: bool = False,
         prevalidated_confidence: Optional[float] = None,
+        user_id: Optional[uuid.UUID] = None,
+        novelty_result: Optional[NoveltyResult] = None,
+        generation_attempt_count: int = 1,
+        used_reference_materials: Optional[bool] = None,
     ) -> tuple[Question, QuestionResponse]:
         """
         Save generated question to database after validation.
@@ -1183,20 +1311,46 @@ Return JSON only:
         
         # Validate question quality if chunks provided
         confidence_score = 0.8  # Default confidence
+        validation_issues = []
         if skip_quality_validation and prevalidated_confidence is not None:
             confidence_score = max(0.0, min(1.0, prevalidated_confidence))
         elif chunks:
-            is_valid, reason, confidence_score = await self._validate_question_quality(
+            is_valid, reason, confidence_score, validation_issues = await self._validate_question_quality(
                 question_data, question_type, chunks
             )
             if not is_valid:
                 logger.warning(f"Question validation failed: {reason}")
                 raise ValueError(f"Question validation failed: {reason}")
+        else:
+            # No chunks provided - still need validation_issues defined
+            validation_issues = []
+        
+        # Get LLM-based quality evaluation (separate API call)
+        try:
+            llm_scores = await self._evaluate_question_with_llm(question_data, question_type)
+            logger.info(f"LLM evaluation scores: {llm_scores}")
+        except Exception as e:
+            logger.warning(f"LLM evaluation failed: {e}")
+            llm_scores = {"answerability": 0.6, "specificity": 0.6, "quality": 0.6}
         
         # Generate embedding for the question
         question_embedding = await self.embedding_service.get_embedding(
             question_data["question_text"]
         )
+
+        if novelty_result is None and user_id is not None:
+            try:
+                novelty_result = await self.novelty_service.compute_novelty(
+                    question_text=question_data["question_text"],
+                    question_embedding=question_embedding,
+                    user_id=user_id,
+                    subject_id=subject_id,
+                )
+            except Exception as e:
+                logger.warning(f"Novelty computation failed: {e}")
+
+        if used_reference_materials is None:
+            used_reference_materials = bool(chunk_ids)
         
         # Normalize options - LLM may return different formats
         raw_options = question_data.get("options")
@@ -1208,6 +1362,12 @@ Return JSON only:
         # Normalize correct answer
         if question_type == "mcq" and normalized_options:
             correct_answer = self._normalize_mcq_correct_answer(question_data, normalized_options)
+            # Shuffle options to eliminate answer position bias
+            if correct_answer and normalized_options and len(normalized_options) >= 2:
+                normalized_options, correct_answer = self._shuffle_mcq_options(
+                    normalized_options, correct_answer
+                )
+                question_data["options"] = normalized_options
         else:
             correct_answer = question_data.get("correct_answer") or question_data.get("expected_answer") or question_data.get("answer")
             if isinstance(correct_answer, dict):
@@ -1217,15 +1377,32 @@ Return JSON only:
         source_info = self._build_source_info(chunks, question_data)
         logger.info(f"Built source info with {len(source_info.get('sources', []))} sources for question")
 
-        # Compute quality scores from confidence and question structure
-        answerability = min(1.0, confidence_score * 1.1) if confidence_score else 0.8
-        specificity = min(1.0, confidence_score * 0.95) if confidence_score else 0.7
-        # Boost answerability if correct_answer is present
+        # Compute quality scores - prioritize LLM evaluation over basic validation
+        # Start with LLM scores (more accurate)
+        answerability = llm_scores["answerability"]
+        specificity = llm_scores["specificity"]
+        
+        # Apply minor adjustments based on validation issues
+        for issue in validation_issues:
+            if issue == "similar_options":
+                answerability = max(0.0, answerability - 0.05)
+                specificity = max(0.0, specificity - 0.05)
+            elif issue == "answer_mismatch":
+                answerability = max(0.0, answerability - 0.1)
+                specificity = max(0.0, specificity - 0.05)
+        
+        # Small boosts for positive attributes
         if correct_answer:
-            answerability = min(1.0, answerability + 0.05)
-        # Boost specificity if topic_tags are present
+            answerability = min(1.0, answerability + 0.02)
         if question_data.get("topic_tags"):
-            specificity = min(1.0, specificity + 0.05)
+            specificity = min(1.0, specificity + 0.02)
+        
+        # Final validation to ensure scores are in valid range
+        answerability = max(0.0, min(1.0, answerability))
+        specificity = max(0.0, min(1.0, specificity))
+        
+        # Store generation_confidence as the overall quality score from LLM
+        generation_confidence = llm_scores["quality"]
 
         question = Question(
             document_id=document_id,
@@ -1243,9 +1420,15 @@ Return JSON only:
             options=normalized_options,
             topic_tags=question_data.get("topic_tags"),
             source_chunk_ids=chunk_ids,
-            generation_confidence=confidence_score,
+            generation_confidence=generation_confidence,
             answerability_score=answerability,
             specificity_score=specificity,
+            novelty_score=novelty_result.novelty_score if novelty_result else None,
+            max_similarity=novelty_result.max_similarity if novelty_result else None,
+            similarity_source=novelty_result.similarity_source if novelty_result else None,
+            generation_attempt_count=generation_attempt_count,
+            used_reference_materials=used_reference_materials,
+            novelty_metadata=novelty_result.similarity_breakdown if novelty_result else None,
             generation_metadata={
                 "raw_response": question_data,
                 "source_info": source_info,
@@ -1507,6 +1690,44 @@ Return JSON only:
         
         return normalized
 
+    @staticmethod
+    def _shuffle_mcq_options(options: List[str], correct_answer: str) -> tuple:
+        """Shuffle MCQ options and remap the correct answer letter to eliminate position bias."""
+        import random as _rng
+        import re
+
+        labels = ['A', 'B', 'C', 'D', 'E', 'F']
+        # Extract the text part of each option (strip "A) " prefix)
+        option_texts = []
+        for opt in options:
+            m = re.match(r'^[A-F]\)\s*', opt)
+            option_texts.append(opt[m.end():] if m else opt)
+
+        # Find which index is the correct answer
+        correct_idx = None
+        ans = correct_answer.strip().upper()
+        for i, label in enumerate(labels[:len(options)]):
+            if ans == label:
+                correct_idx = i
+                break
+
+        if correct_idx is None:
+            return options, correct_answer  # Can't determine — return unchanged
+
+        correct_text = option_texts[correct_idx]
+
+        # Shuffle
+        _rng.shuffle(option_texts)
+
+        # Find new position of correct answer
+        new_correct_idx = option_texts.index(correct_text)
+        new_correct_label = labels[new_correct_idx]
+
+        # Rebuild options with new labels
+        new_options = [f"{labels[i]}) {text}" for i, text in enumerate(option_texts)]
+
+        return new_options, new_correct_label
+
     async def _build_topic_assignment_profiles(
         self,
         subject_id: uuid.UUID,
@@ -1692,9 +1913,7 @@ Return JSON only:
         
         generated_embeddings = generated_embeddings or []
         
-        # Get user's novelty settings
         novelty_settings = await self.novelty_service.get_user_novelty_settings(user_id)
-        novelty_threshold = novelty_settings["novelty_threshold"]
         max_attempts = novelty_settings["max_regeneration_attempts"]
         
         used_chunk_ids: List[uuid.UUID] = []
@@ -1755,93 +1974,34 @@ Return JSON only:
             
             logger.info(
                 f"Attempt {attempt}: Novelty score = {novelty_result.novelty_score:.2f}, "
-                f"threshold = {novelty_threshold}, source = {novelty_result.similarity_source}"
+                f"source = {novelty_result.similarity_source}"
             )
             
-            # Check if novelty threshold is met
-            if novelty_result.novelty_score >= novelty_threshold:
-                # Save the question with novelty metadata
-                try:
-                    question, question_response = await self._save_question_with_novelty(
-                        document_id=document_id,
-                        session_id=session_id,
-                        question_data=question_data,
-                        question_type=question_type,
-                        marks=marks,
-                        difficulty=difficulty,
-                        chunk_ids=[c.id for c in current_chunks],
-                        chunks=current_chunks,
-                        subject_id=subject_id,
-                        topic_id=topic_id,
-                        novelty_result=novelty_result,
-                        attempt_count=attempt,
-                        used_reference=used_reference or use_reference,
-                    )
-                    
-                    logger.info(f"Question accepted with novelty score {novelty_result.novelty_score:.2f}")
-                    return question, question_response, question_embedding
-                    
-                except Exception as e:
-                    logger.error(f"Failed to save question: {e}")
-                    await self.db.rollback()
-                    continue
-            
-            # Novelty threshold not met - prepare for regeneration
-            logger.info(f"Attempt {attempt}: Novelty threshold not met, preparing for regeneration")
-            
-            # Track used chunks to avoid reusing them
-            used_chunk_ids.extend([c.id for c in current_chunks])
-            
-            # Get alternative chunks for next attempt
-            if use_reference and subject_id:
-                used_reference = True
-                
-                if document_ids and self.document_service:
-                    # Use hybrid search across all documents (primary + reference books)
-                    alternative_chunks = await self.document_service.hybrid_search_multi_document(
-                        document_ids=document_ids,
-                        query=question_text,
-                        query_embedding=question_embedding,
-                        top_k=4,
-                        alpha=0.6,
-                    )
-                    # Filter out previously used chunks
-                    current_chunks = [c for c in alternative_chunks if c.id not in set(used_chunk_ids)]
-                    if not current_chunks:
-                        current_chunks = alternative_chunks[:3]
-                else:
-                    # Fallback: vector-only reference chunks + primary alternatives
-                    reference_chunks = await self.document_service.get_reference_chunks(
-                        user_id=user_id,
-                        subject_id=subject_id,
-                        query_embedding=question_embedding,
-                        top_k=2,
-                    )
-                    
-                    # Combine primary and reference chunks
-                    primary_alternatives = await self.document_service.get_primary_chunks_excluding_used(
-                        document_id=document_id,
-                        used_chunk_ids=used_chunk_ids,
-                        query_embedding=question_embedding,
-                        top_k=2,
-                    )
-                    
-                    current_chunks = primary_alternatives + reference_chunks
-            else:
-                # Get alternative primary chunks
-                current_chunks = await self.document_service.get_primary_chunks_excluding_used(
+            try:
+                question, question_response = await self._save_question_with_novelty(
                     document_id=document_id,
-                    used_chunk_ids=used_chunk_ids,
-                    query_embedding=question_embedding,
-                    top_k=3,
+                    session_id=session_id,
+                    question_data=question_data,
+                    question_type=question_type,
+                    marks=marks,
+                    difficulty=difficulty,
+                    chunk_ids=[c.id for c in current_chunks],
+                    chunks=current_chunks,
+                    subject_id=subject_id,
+                    topic_id=topic_id,
+                    novelty_result=novelty_result,
+                    attempt_count=attempt,
+                    used_reference=used_reference or use_reference,
                 )
-            
-            # If no more chunks available, fall back to original
-            if not current_chunks:
-                current_chunks = chunks
+                
+                logger.info(f"Question saved with novelty score {novelty_result.novelty_score:.2f}")
+                return question, question_response, question_embedding
+            except Exception as e:
+                logger.error(f"Failed to save question: {e}")
+                await self.db.rollback()
+                continue
         
-        # All attempts exhausted - log discarded question
-        logger.warning(f"Question discarded after {max_attempts} attempts - novelty threshold not met")
+        logger.warning(f"Question generation failed after {max_attempts} attempts")
         
         return None, None, []
 
@@ -1851,7 +2011,7 @@ Return JSON only:
             "\n\nDIVERSITY REQUIREMENTS (this is a regeneration attempt):",
             "- Generate a SEMANTICALLY DIFFERENT question from previous attempts",
         ]
-        
+
         if attempt == 2:
             instructions.extend([
                 "- Use different phrasing and sentence structure",
@@ -1860,10 +2020,9 @@ Return JSON only:
         elif attempt >= 3:
             instructions.extend([
                 "- Approach the topic from a completely different angle",
-                "- Use a different context or scenario",
                 "- Consider alternative applications or examples",
             ])
-        
+
         if use_reference:
             instructions.extend([
                 "\nREFERENCE MATERIAL USAGE:",
@@ -1871,7 +2030,7 @@ Return JSON only:
                 "- Do NOT copy or closely paraphrase reference questions",
                 "- Create an ORIGINAL question that tests similar concepts differently",
             ])
-        
+
         return "\n".join(instructions)
 
     async def _generate_single_question_with_diversity(
@@ -1982,13 +2141,22 @@ Output valid JSON only."""
         
         # Validate question quality if chunks provided
         confidence_score = 0.8
+        validation_issues = []
         if chunks:
-            is_valid, reason, confidence_score = await self._validate_question_quality(
+            is_valid, reason, confidence_score, validation_issues = await self._validate_question_quality(
                 question_data, question_type, chunks
             )
             if not is_valid:
                 logger.warning(f"Question validation failed: {reason}")
                 raise ValueError(f"Question validation failed: {reason}")
+        
+        # Get LLM-based quality evaluation (separate API call)
+        try:
+            llm_scores = await self._evaluate_question_with_llm(question_data, question_type)
+            logger.info(f"LLM evaluation scores: {llm_scores}")
+        except Exception as e:
+            logger.warning(f"LLM evaluation failed: {e}")
+            llm_scores = {"answerability": 0.6, "specificity": 0.6, "quality": 0.6}
         
         # Generate embedding for the question
         question_embedding = await self.embedding_service.get_embedding(
@@ -2010,6 +2178,37 @@ Output valid JSON only."""
             if isinstance(correct_answer, dict):
                 correct_answer = correct_answer.get("option") or correct_answer.get("value") or str(correct_answer)
         
+        # Build source information from chunks
+        source_info = self._build_source_info(chunks, question_data)
+        logger.info(f"Built source info with {len(source_info.get('sources', []))} sources for question")
+
+        # Compute quality scores - prioritize LLM evaluation over basic validation
+        # Start with LLM scores (more accurate)
+        answerability = llm_scores["answerability"]
+        specificity = llm_scores["specificity"]
+        
+        # Apply minor adjustments based on validation issues
+        for issue in validation_issues:
+            if issue == "similar_options":
+                answerability = max(0.0, answerability - 0.05)
+                specificity = max(0.0, specificity - 0.05)
+            elif issue == "answer_mismatch":
+                answerability = max(0.0, answerability - 0.1)
+                specificity = max(0.0, specificity - 0.05)
+        
+        # Small boosts for positive attributes
+        if correct_answer:
+            answerability = min(1.0, answerability + 0.02)
+        if question_data.get("topic_tags"):
+            specificity = min(1.0, specificity + 0.02)
+        
+        # Final validation to ensure scores are in valid range
+        answerability = max(0.0, min(1.0, answerability))
+        specificity = max(0.0, min(1.0, specificity))
+        
+        # Store generation_confidence as the overall quality score from LLM
+        generation_confidence = llm_scores["quality"]
+
         question = Question(
             document_id=document_id,
             session_id=session_id,
@@ -2026,13 +2225,14 @@ Output valid JSON only."""
             explanation=question_data.get("explanation"),
             topic_tags=question_data.get("topic_tags"),
             source_chunk_ids=chunk_ids,
-            generation_confidence=confidence_score,
-            # Novelty metadata
+            generation_confidence=generation_confidence,
+            answerability_score=answerability,
+            specificity_score=specificity,
             novelty_score=novelty_result.novelty_score,
             max_similarity=novelty_result.max_similarity,
             similarity_source=novelty_result.similarity_source,
             generation_attempt_count=attempt_count,
-            used_reference_materials=used_reference,
+            used_reference_materials=used_reference or bool(chunk_ids),
             novelty_metadata=novelty_result.similarity_breakdown,
             generation_status="accepted",
             generation_metadata={
@@ -2624,7 +2824,7 @@ Output valid JSON only."""
                             "reason": "empty_question_data",
                         }
 
-                    is_valid, reason, confidence_score = await self._validate_question_quality(
+                    is_valid, reason, confidence_score, validation_issues = await self._validate_question_quality(
                         question_data,
                         q_type,
                         selected_chunks,
@@ -2739,6 +2939,8 @@ Output valid JSON only."""
                             topic_id=topic_id,
                             skip_quality_validation=True,
                             prevalidated_confidence=confidence_score,
+                            user_id=user_id,
+                            used_reference_materials=bool(selected_chunks),
                         )
 
                         questions_generated += 1
@@ -3402,7 +3604,7 @@ Output valid JSON only."""
                             "reason": "empty_question_data",
                         }
 
-                    is_valid, reason, confidence_score = await self._validate_question_quality(
+                    is_valid, reason, confidence_score, validation_issues = await self._validate_question_quality(
                         question_data,
                         q_type,
                         selected_chunks,
@@ -3557,6 +3759,8 @@ Output valid JSON only."""
                             topic_id=assigned_topic_id,
                             skip_quality_validation=True,
                             prevalidated_confidence=confidence_score,
+                            user_id=user_id,
+                            used_reference_materials=bool(selected_chunks),
                         )
                         questions_generated += 1
                         final_embedding = question.question_embedding if question.question_embedding is not None else new_embedding
@@ -4021,17 +4225,15 @@ Tasks:
         try:
             logger.info(f"quick_generate_with_novelty: Starting for user {user_id}, context: {context}")
             
-            # Get user's novelty settings
             novelty_settings = await self.novelty_service.get_user_novelty_settings(user_id)
-            novelty_threshold = novelty_settings["novelty_threshold"]
             max_attempts = novelty_settings["max_regeneration_attempts"]
             
-            logger.info(f"Novelty threshold: {novelty_threshold}, max attempts: {max_attempts}")
+            logger.info(f"Max attempts per question: {max_attempts}")
             
             yield QuickGenerateProgress(
                 status="generating",
                 progress=5,
-                message=f"Preparing content (novelty threshold: {novelty_threshold:.0%})...",
+                message="Preparing content for novelty-tracked generation...",
                 document_id=document_id,
             )
 
@@ -4082,7 +4284,6 @@ Tasks:
                     "mode": "quick_generate_with_novelty",
                     "context": context,
                     "bloom_levels": bloom_levels,
-                    "novelty_threshold": novelty_threshold,
                     "max_regeneration_attempts": max_attempts,
                 },
             )
@@ -4094,7 +4295,7 @@ Tasks:
             # Generate questions with novelty validation
             questions_generated = 0
             questions_failed = 0
-            questions_discarded = 0  # Questions that failed novelty threshold
+            questions_discarded = 0
             generated_embeddings: List[List[float]] = []
             
             # Distribute question types
@@ -4166,7 +4367,7 @@ Tasks:
                             )
                         else:
                             questions_discarded += 1
-                            logger.warning(f"Question discarded after novelty validation")
+                            logger.warning(f"Question not saved after repeated generation attempts")
                             
                     except Exception as e:
                         logger.exception(f"Exception during question generation: {e}")
@@ -4198,7 +4399,7 @@ Tasks:
                 current_question=questions_generated,
                 total_questions=count,
                 message=f"Generated {questions_generated} unique questions" + 
-                       (f" ({questions_discarded} below novelty threshold)" if questions_discarded > 0 else ""),
+                       (f" ({questions_discarded} not saved)" if questions_discarded > 0 else ""),
                 document_id=document_id,
                 questions_failed=max(0, count - questions_generated),
             )

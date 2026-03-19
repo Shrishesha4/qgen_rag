@@ -34,7 +34,6 @@ class NoveltyResult:
     novelty_score: float
     max_similarity: float
     similarity_source: str  # approved, pending, template, reference
-    passed_threshold: bool
     similarity_breakdown: Dict[str, float]
 
 
@@ -59,8 +58,7 @@ class NoveltyService:
     Responsibilities:
     1. Compute novelty scores for generated questions
     2. Compare against approved, pending, template, and reference questions
-    3. Enforce user-defined novelty thresholds
-    4. Provide context for intelligent regeneration
+    3. Provide context for intelligent regeneration
     """
 
     def __init__(
@@ -122,7 +120,7 @@ class NoveltyService:
             subject_id=subject_id,
             index_type="reference_book",
         )
-        
+
         # Find maximum similarity and its source
         similarities = {
             "approved": approved_sim,
@@ -137,15 +135,10 @@ class NoveltyService:
         # Compute novelty score
         novelty_score = 1.0 - max_similarity
         
-# Get user's novelty threshold (default to strict novelty = 1.0)
-        user = await self._get_user(user_id)
-        threshold = user.novelty_threshold if user else 1.0
-        
         return NoveltyResult(
             novelty_score=novelty_score,
             max_similarity=max_similarity,
             similarity_source=similarity_source,
-            passed_threshold=novelty_score >= threshold,
             similarity_breakdown=similarities,
         )
 
@@ -267,13 +260,13 @@ class NoveltyService:
         user = await self._get_user(user_id)
         if not user:
             return {
-                "novelty_threshold": 1.0,
                 "max_regeneration_attempts": 5,
             }
-        
+
+        preferences = getattr(user, "preferences", {}) or {}
+
         return {
-            "novelty_threshold": user.novelty_threshold,
-            "max_regeneration_attempts": user.max_regeneration_attempts,
+            "max_regeneration_attempts": preferences.get("max_regeneration_attempts", 5),
         }
 
     async def prepare_regeneration_context(
@@ -433,15 +426,7 @@ class NoveltyService:
         question.generation_attempt_count = attempt_count
         question.used_reference_materials = used_reference
         question.novelty_metadata = novelty_result.similarity_breakdown
-        
-        if novelty_result.passed_threshold:
-            question.generation_status = "accepted"
-        else:
-            question.generation_status = "discarded"
-            question.discard_reason = (
-                f"Novelty score {novelty_result.novelty_score:.2f} below threshold. "
-                f"Highest similarity ({novelty_result.max_similarity:.2f}) from {novelty_result.similarity_source}."
-            )
+        question.generation_status = "accepted"
         
         return question
 

@@ -75,7 +75,15 @@
 	let schedulingBulk = $state(false);
 	let generateModeError = $state('');
 	let generateModeSuccess = $state('');
-	let capacityEstimate = $state<{suggested_count: number, reasoning: string} | null>(null);
+	let capacityEstimate = $state<{
+	subject_id: string;
+	primary_documents: number;
+	completed_documents: number;
+	reference_documents: number;
+	template_documents: number;
+	total_chunks: number;
+	discovery_strategy: string;
+} | null>(null);
 	let loadingCapacity = $state(false);
 
 	const BG_STATUS_CACHE_KEY = 'trainer.bgGenerationStatusCache.v1';
@@ -111,8 +119,7 @@
 		loadingCapacity = true;
 		try {
 			const capacity = await estimateQuestionCapacity(subject.id);
-			capacityEstimate = capacity.recommendation;
-			generateQuestionCount = capacity.recommendation.suggested_count;
+			capacityEstimate = capacity;
 		} catch (e) {
 			console.error('Failed to load capacity estimate:', e);
 		} finally {
@@ -1102,10 +1109,10 @@
 									class="search-input"
 								/>
 								{#if loadingCapacity}
-									<small class="capacity-loading">Loading capacity estimate...</small>
+									<small class="capacity-loading">Loading capacity...</small>
 								{:else if capacityEstimate}
 									<small class="capacity-info">
-										📊 Suggested: {capacityEstimate.suggested_count} ({capacityEstimate.reasoning})
+										📊 {capacityEstimate.completed_documents} docs ({capacityEstimate.total_chunks} chunks)
 									</small>
 								{/if}
 							</label>

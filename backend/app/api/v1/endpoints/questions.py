@@ -16,6 +16,7 @@ from fastapi import APIRouter, Depends, HTTPException, status, Query, UploadFile
 from fastapi.responses import StreamingResponse
 from sqlalchemy import select, func
 from sqlalchemy.ext.asyncio import AsyncSession
+from sqlalchemy.orm import selectinload
 from pydantic import BaseModel
 
 from app.core.database import get_db
@@ -1227,49 +1228,73 @@ async def estimate_question_capacity(
     except ValueError:
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Invalid subject_id format")
 
-    # Get subject with primary documents
+    # Get subject
     subject_res = await db.execute(
         select(Subject)
-        .options(selectinload(Subject.documents))
         .where(Subject.id == parsed_subject_id, Subject.user_id == current_user.id)
     )
     subject = subject_res.scalar_one_or_none()
     if not subject:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Subject not found")
 
-    # Count primary documents and their chunks
-    primary_docs = [doc for doc in subject.documents if doc.document_type == "primary"]
-    total_chunks = sum(doc.total_chunks or 0 for doc in primary_docs)
-    
-    # Estimate capacity based on content
-    # Rough estimate: 1 question per 10 chunks, adjusted by document type
-    estimated_capacity = 0
-    if total_chunks > 0:
-        # Base capacity: 1 question per 8-12 chunks depending on content richness
-        base_questions_per_chunk = 0.1  # 1 question per 10 chunks
-        estimated_capacity = int(total_chunks * base_questions_per_chunk)
-        
-        # Adjust for document types
-        has_reference_books = any(doc.index_type == "reference_book" for doc in primary_docs)
-        has_template_papers = any(doc.index_type == "template_paper" for doc in primary_docs)
-        
-        if has_reference_books:
-            estimated_capacity = int(estimated_capacity * 1.5)  # More content available
-        if has_template_papers:
-            estimated_capacity = int(estimated_capacity * 1.2)  # Structured content
-        
-        # Ensure reasonable bounds
-        estimated_capacity = max(5, min(estimated_capacity, 500))  # Between 5 and 500 questions
+    # Match the same document discovery strategy used by subject generation.
+    # Strategy 1: directly linked completed primary documents.
+    direct_primary_res = await db.execute(
+        select(Document).where(
+            Document.subject_id == parsed_subject_id,
+            Document.user_id == current_user.id,
+            Document.index_type == "primary",
+            Document.processing_status == "completed",
+        )
+    )
+    direct_primary_docs = list(direct_primary_res.scalars().all())
 
+    completed_docs: List[Document] = direct_primary_docs
+    discovery_strategy = "direct_primary"
+
+    # Strategy 2: completed documents used in prior generation sessions for this subject.
+    if not completed_docs:
+        session_docs_res = await db.execute(
+            select(Document)
+            .distinct()
+            .join(GenerationSession, GenerationSession.document_id == Document.id)
+            .where(
+                GenerationSession.user_id == current_user.id,
+                GenerationSession.subject_id == parsed_subject_id,
+                Document.user_id == current_user.id,
+                Document.processing_status == "completed",
+            )
+        )
+        completed_docs = list(session_docs_res.scalars().all())
+        if completed_docs:
+            discovery_strategy = "generation_sessions"
+
+    # Strategy 3: any completed document linked to this subject.
+    if not completed_docs:
+        any_completed_res = await db.execute(
+            select(Document).where(
+                Document.subject_id == parsed_subject_id,
+                Document.user_id == current_user.id,
+                Document.processing_status == "completed",
+            )
+        )
+        completed_docs = list(any_completed_res.scalars().all())
+        if completed_docs:
+            discovery_strategy = "all_completed_subject_docs"
+
+    primary_docs = [doc for doc in completed_docs if doc.index_type == "primary"]
+    reference_docs = [doc for doc in completed_docs if doc.index_type == "reference_book"]
+    template_docs = [doc for doc in completed_docs if doc.index_type in {"template_paper", "reference_questions"}]
+    total_chunks = sum(doc.total_chunks or 0 for doc in completed_docs)
+    
     return {
         "subject_id": str(subject_id),
         "primary_documents": len(primary_docs),
+        "completed_documents": len(completed_docs),
+        "reference_documents": len(reference_docs),
+        "template_documents": len(template_docs),
         "total_chunks": total_chunks,
-        "estimated_capacity": estimated_capacity,
-        "recommendation": {
-            "suggested_count": min(estimated_capacity, 200),  # API limit
-            "reasoning": f"Based on {len(primary_docs)} primary documents with {total_chunks} total chunks"
-        }
+        "discovery_strategy": discovery_strategy,
     }
 
 
