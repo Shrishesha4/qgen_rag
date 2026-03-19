@@ -81,8 +81,7 @@ class QueueService:
         client = self.redis._client
         queues = [
             "dataset_build",
-            "training_sft",
-            "training_dpo",
+            "training",
             "evaluation",
             "offline_embeddings",
             "analytics",

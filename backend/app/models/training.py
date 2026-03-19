@@ -344,6 +344,12 @@ class TrainingJob(Base):
     training_data_path: Mapped[Optional[str]] = mapped_column(String(500))
     training_samples: Mapped[int] = mapped_column(Integer, default=0)
     validation_samples: Mapped[int] = mapped_column(Integer, default=0)
+    idempotency_key: Mapped[Optional[str]] = mapped_column(
+        String(128), index=True,
+    )
+    replayed_from_job_id: Mapped[Optional[uuid.UUID]] = mapped_column(
+        UUID(as_uuid=True), ForeignKey("training_jobs.id", ondelete="SET NULL"),
+    )
 
     # Progress
     current_epoch: Mapped[int] = mapped_column(Integer, default=0)
@@ -429,4 +435,34 @@ class ModelEvaluation(Base):
     pass_fail: Mapped[Optional[bool]] = mapped_column(Boolean)
     created_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), server_default=func.now(),
+    )
+
+    # Evaluation lifecycle
+    eval_status: Mapped[str] = mapped_column(
+        String(30), default="pending",
+        comment="pending | running | completed | failed",
+    )
+    completed_at: Mapped[Optional[datetime]] = mapped_column(DateTime(timezone=True))
+    error_message: Mapped[Optional[str]] = mapped_column(Text)
+
+    # Quality gate details
+    gate_checks: Mapped[Optional[dict]] = mapped_column(
+        JSONB, comment="Per-gate pass/fail breakdown",
+    )
+
+    # Spot-check workflow
+    spot_check_status: Mapped[Optional[str]] = mapped_column(
+        String(30), default="not_required",
+        comment="not_required | pending | approved | rejected",
+    )
+    spot_check_samples: Mapped[Optional[dict]] = mapped_column(
+        JSONB, comment="Sample question IDs selected for human review",
+    )
+    spot_check_reviewed_by: Mapped[Optional[str]] = mapped_column(String(36))
+    spot_check_reviewed_at: Mapped[Optional[datetime]] = mapped_column(DateTime(timezone=True))
+    spot_check_notes: Mapped[Optional[str]] = mapped_column(Text)
+
+    # Lineage
+    evaluated_by: Mapped[Optional[str]] = mapped_column(
+        String(36), comment="User ID or 'system' for automated evaluations",
     )

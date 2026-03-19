@@ -89,7 +89,7 @@ async def run_worker_pool(queue_name: str) -> None:
         handler = _dataset_build_handler
     elif queue_name == "evaluation":
         handler = _evaluation_handler
-    elif queue_name in {"training_sft", "training_dpo"}:
+    elif queue_name == "training":
         handler = _gpu_training_handler
     else:
         handler = _default_handler
@@ -100,8 +100,7 @@ async def main() -> None:
     # Launch isolated worker loops. Deploy each loop in a separate process in production.
     await asyncio.gather(
         run_worker_pool("dataset_build"),
-        run_worker_pool("training_sft"),
-        run_worker_pool("training_dpo"),
+        run_worker_pool("training"),
         run_worker_pool("evaluation"),
         run_worker_pool("offline_embeddings"),
         run_worker_pool("analytics"),

@@ -46,6 +46,22 @@ class TriggerTrainingRequest(BaseModel):
     )
     base_model: Optional[str] = Field(None, description="Override base model name")
     hyperparameters: Optional[dict] = Field(None, description="Custom hyperparameters")
+    parent_adapter_path: Optional[str] = Field(
+        None,
+        description="Optional filesystem path to a LoRA adapter checkpoint to warm-start from",
+    )
+    idempotency_key: Optional[str] = Field(
+        None,
+        description="Optional client-supplied idempotency key to deduplicate training job creation",
+    )
+    max_samples: Optional[int] = Field(
+        None, ge=1,
+        description="Cap on training samples per data type (SFT/DPO). Prevents OOM on large datasets.",
+    )
+    sample_strategy: Optional[str] = Field(
+        None, pattern="^(recent_first|stratified|random)$",
+        description="Sampling strategy: recent_first (default), stratified (balanced by difficulty), random.",
+    )
 
 
 class ModelVersionResponse(BaseModel):
@@ -86,6 +102,12 @@ class TrainingJobResponse(BaseModel):
     completed_at: Optional[str]
     triggered_by: Optional[str]
     error_message: Optional[str]
+    idempotency_key: Optional[str]
+    replayed_from_job_id: Optional[str]
+
+
+class ReplayTrainingJobRequest(BaseModel):
+    idempotency_key: Optional[str] = None
 
 
 class TrainingPairResponse(BaseModel):
@@ -147,6 +169,10 @@ async def trigger_training(
         base_model=request.base_model,
         training_method=request.training_method,
         hyperparameters=request.hyperparameters,
+        parent_adapter_path=request.parent_adapter_path,
+        idempotency_key=request.idempotency_key,
+        max_samples=request.max_samples,
+        sample_strategy=request.sample_strategy,
     )
     return result
 
@@ -227,9 +253,40 @@ async def list_training_jobs(
             completed_at=j.completed_at.isoformat() if j.completed_at else None,
             triggered_by=j.triggered_by,
             error_message=j.error_message,
+            idempotency_key=j.idempotency_key,
+            replayed_from_job_id=str(j.replayed_from_job_id) if j.replayed_from_job_id else None,
         )
         for j in jobs
     ]
+
+
+@router.get("/jobs/{job_id}", response_model=dict)
+async def get_training_job(
+    job_id: uuid.UUID,
+    current_user: User = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+):
+    """Get a single training job by ID."""
+    job = await training_service.get_training_job(db=db, job_id=job_id)
+    if not job:
+        raise HTTPException(status_code=404, detail="Training job not found")
+    return job
+
+
+@router.post("/jobs/{job_id}/replay", response_model=dict)
+async def replay_training_job(
+    job_id: uuid.UUID,
+    payload: ReplayTrainingJobRequest,
+    current_user: User = Depends(get_current_teacher_or_admin),
+    db: AsyncSession = Depends(get_db),
+):
+    """Replay a finished training job for ops/debugging purposes."""
+    return await training_service.replay_training_job(
+        db=db,
+        job_id=job_id,
+        replayed_by=current_user.id,
+        idempotency_key=payload.idempotency_key,
+    )
 
 
 @router.get("/pairs", response_model=dict)
@@ -339,6 +396,53 @@ async def evaluate_model_version(
         version_id=version_id,
         dataset_tag=dataset_tag,
         eval_type=eval_type,
+        evaluated_by=current_user.id,
+    )
+
+
+@router.get("/evaluations", response_model=list)
+async def list_evaluations(
+    version_id: Optional[uuid.UUID] = Query(None, description="Filter by model version ID"),
+    limit: int = Query(50, ge=1, le=200),
+    current_user: User = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+):
+    """List model evaluations, optionally filtered by version."""
+    return await training_service.list_evaluations(db=db, version_id=version_id, limit=limit)
+
+
+@router.get("/evaluations/{evaluation_id}", response_model=dict)
+async def get_evaluation(
+    evaluation_id: uuid.UUID,
+    current_user: User = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+):
+    """Get a single model evaluation by ID, including spot-check details."""
+    result = await training_service.get_evaluation(db=db, evaluation_id=evaluation_id)
+    if not result:
+        raise HTTPException(status_code=404, detail="Evaluation not found")
+    return result
+
+
+class SpotCheckRequest(BaseModel):
+    decision: str = Field(..., pattern="^(approved|rejected)$", description="Spot-check decision")
+    notes: Optional[str] = Field(None, description="Reviewer notes on spot-check quality")
+
+
+@router.post("/evaluations/{evaluation_id}/spot-check", response_model=dict)
+async def complete_spot_check(
+    evaluation_id: uuid.UUID,
+    payload: SpotCheckRequest,
+    current_user: User = Depends(get_current_teacher_or_admin),
+    db: AsyncSession = Depends(get_db),
+):
+    """Complete a human-in-the-loop spot check for a model evaluation."""
+    return await training_service.complete_spot_check(
+        db=db,
+        evaluation_id=evaluation_id,
+        decision=payload.decision,
+        reviewed_by=current_user.id,
+        notes=payload.notes,
     )
 
 
@@ -545,12 +649,27 @@ async def export_dpo_jsonl(
     )
     pairs = result.scalars().all()
 
+    synthetic_records = []
+    if len(pairs) < limit:
+        excluded_question_ids = {
+            pair.chosen_question_id
+            for pair in pairs
+            if pair.chosen_question_id is not None
+        }
+        synthetic_records = await training_service._generate_synthetic_dpo_records(
+            db=db,
+            since=training_service._resolve_training_since(),
+            limit=limit - len(pairs),
+            exclude_question_ids=excluded_question_ids,
+        )
+
     def generate_lines():
         for pair in pairs:
             record = {
-                "prompt": pair.prompt,
-                "chosen": pair.chosen_response,
-                "rejected": pair.rejected_response,
+                "prompt": training_service._normalize_dpo_prompt(pair.prompt),
+                "chosen": training_service._normalize_dpo_completion(pair.chosen_response),
+                "rejected": training_service._normalize_dpo_completion(pair.rejected_response),
+                "weight": pair.pair_weight or 1.0,
                 "metadata": {
                     "pair_type": pair.pair_type,
                     "confidence": pair.confidence,
@@ -558,6 +677,9 @@ async def export_dpo_jsonl(
                     "rejected_reason_codes": pair.rejected_reason_codes,
                 },
             }
+            yield json_mod.dumps(record, ensure_ascii=False) + "\n"
+
+        for record in synthetic_records:
             yield json_mod.dumps(record, ensure_ascii=False) + "\n"
 
     return StreamingResponse(
