@@ -5,6 +5,7 @@ __pycache__/
 uploads/
 training_data/
 lora_adapters/
+backend/models/
 
 # Distribution / packaging
 .Python

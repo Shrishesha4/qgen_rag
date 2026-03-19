@@ -121,7 +121,7 @@ services:
       context: ./backend
       dockerfile: Dockerfile.dgx
     container_name: qgen_training
-    command: ["python", "-m", "app.workers.training_worker"]
+    command: ["python", "-m", "app.workers.runner"]
     environment:
       DATABASE_URL: postgresql+asyncpg://qgen_user:${POSTGRES_PASSWORD:-qgen_password}@postgres:5432/qgen_rag
       REDIS_URL: redis://:${REDIS_PASSWORD:-redis_password}@redis:6379/0

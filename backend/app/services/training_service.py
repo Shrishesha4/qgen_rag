@@ -12,7 +12,9 @@ This service runs as a background pipeline, independent of the web request cycle
 
 import json
 import logging
+import math
 import os
+import re
 import uuid
 import hashlib
 from datetime import datetime, timezone, timedelta
@@ -68,6 +70,151 @@ class TrainingService:
         LORA_ADAPTERS_DIR.mkdir(parents=True, exist_ok=True)
         self.queue_service = QueueService()
 
+    @staticmethod
+    def _normalize_dpo_prompt(prompt: Optional[str]) -> str:
+        prompt_text = (prompt or "").replace("\r\n", "\n").strip()
+        if prompt_text.endswith("### Response:"):
+            return f"{prompt_text}\n"
+        return f"{prompt_text}\n\n### Response:\n"
+
+    @staticmethod
+    def _normalize_dpo_completion(text: Optional[str]) -> str:
+        return (text or "").replace("\r\n", "\n").strip()
+
+    @staticmethod
+    def _resolve_warmup_steps(
+        hp: dict[str, Any],
+        dataset_size: int,
+        num_train_epochs: float,
+        per_device_train_batch_size: int,
+        gradient_accumulation_steps: int,
+        max_steps: int,
+    ) -> int:
+        explicit_warmup_steps = hp.get("warmup_steps")
+        if explicit_warmup_steps is not None:
+            return max(0, int(explicit_warmup_steps))
+
+        warmup_ratio = float(hp.get("warmup_ratio", 0.0) or 0.0)
+        if max_steps > 0:
+            total_steps = max_steps
+        else:
+            effective_batch_size = max(
+                1,
+                int(per_device_train_batch_size) * int(gradient_accumulation_steps),
+            )
+            steps_per_epoch = max(1, math.ceil(dataset_size / effective_batch_size))
+            total_steps = max(1, math.ceil(float(num_train_epochs) * steps_per_epoch))
+
+        return max(0, int(total_steps * warmup_ratio))
+
+    @staticmethod
+    def _distribution_from_rows(rows: list[tuple[Any, Any]]) -> dict[str, int]:
+        distribution = {}
+        for key, value in rows:
+            label = str(key).strip() if key not in (None, "") else "unknown"
+            distribution[label] = int(value or 0)
+        return distribution
+
+    @staticmethod
+    def _strip_choice_prefix(text: Optional[str]) -> str:
+        cleaned = (text or "").strip()
+        return re.sub(r"^\(?([A-Za-z]|\d+)\)?[\).:-]\s*", "", cleaned)
+
+    @classmethod
+    def _normalize_correct_answer(cls, answer: Optional[str], options: Optional[list[Any]]) -> str:
+        answer_text = (answer or "").strip()
+        if not answer_text:
+            return ""
+        normalized_answer = cls._strip_choice_prefix(answer_text)
+        for index, option in enumerate(options or []):
+            cleaned_option = cls._strip_choice_prefix(str(option))
+            option_letter = chr(65 + index)
+            if answer_text.upper() == option_letter or normalized_answer == cleaned_option:
+                return f"{option_letter}. {cleaned_option}"
+        return answer_text
+
+    @classmethod
+    def _build_sft_input(cls, q: Question) -> str:
+        meta = q.generation_metadata if isinstance(q.generation_metadata, dict) else {}
+        raw_response = meta.get("raw_response", {}) if isinstance(meta.get("raw_response"), dict) else {}
+        topic_tags = list(getattr(q, "topic_tags", None) or [])
+        if not topic_tags and raw_response.get("topic_tags"):
+            topic_tags = [str(tag) for tag in raw_response.get("topic_tags", []) if tag]
+
+        spec_lines = [
+            f"Question Type: {q.question_type or 'mcq'}",
+            f"Difficulty: {q.difficulty_level or 'unspecified'}",
+            f"Bloom Level: {q.bloom_taxonomy_level or 'unspecified'}",
+            f"Marks: {q.marks or 'unspecified'}",
+        ]
+        if topic_tags:
+            spec_lines.append(f"Topic Tags: {', '.join(topic_tags[:6])}")
+        if getattr(q, "course_outcome_mapping", None):
+            spec_lines.append(
+                "Course Outcome Mapping: "
+                + json.dumps(q.course_outcome_mapping, ensure_ascii=False, sort_keys=True)
+            )
+
+        context = ""
+        if isinstance(meta.get("context"), str):
+            context = meta["context"].strip()
+        elif isinstance(meta.get("source_info"), dict):
+            sources = meta["source_info"].get("sources") or []
+            snippets = [
+                str(source.get("excerpt") or source.get("content") or "").strip()
+                for source in sources
+                if isinstance(source, dict)
+            ]
+            context = "\n\n".join(snippet for snippet in snippets if snippet)
+
+        parts = [
+            "Generate one high-quality university exam question that follows the specification and uses the supplied source context.",
+            "Question Specification:\n" + "\n".join(spec_lines),
+        ]
+        if context:
+            parts.append("Source Context:\n" + context[:3000])
+        parts.append(
+            "Return a complete final item with question text, options, correct answer, and explanation."
+        )
+        return "\n\n".join(parts)
+
+    def _build_dataset_manifest(
+        self,
+        *,
+        dataset_tag: str,
+        created_at: datetime,
+        snapshot_filter: dict[str, Any],
+        sample_counts: dict[str, int],
+        composition: dict[str, Any],
+    ) -> dict[str, Any]:
+        return {
+            "schema_version": 2,
+            "dataset_tag": dataset_tag,
+            "created_at": created_at.isoformat(),
+            "snapshot_filter": snapshot_filter,
+            "sample_counts": sample_counts,
+            "composition": composition,
+            "data_contract": {
+                "sft": {
+                    "fields": ["instruction", "input", "output"],
+                    "input_sections": [
+                        "Question Specification",
+                        "Source Context",
+                    ],
+                    "output_sections": [
+                        "Question",
+                        "Options",
+                        "Correct Answer",
+                        "Explanation",
+                    ],
+                },
+                "dpo": {
+                    "fields": ["prompt", "chosen", "rejected", "weight"],
+                    "prompt_suffix": "### Response:",
+                },
+            },
+        }
+
     # ═══════════════════════════════════════════
     # Phase 1: SFT Data Preparation
     # ═══════════════════════════════════════════
@@ -116,11 +263,7 @@ class TrainingService:
             for q in questions:
                 instruction = self._build_sft_instruction(q)
                 output_text = self._build_sft_output(q)
-                input_text = ""
-
-                # Use generation metadata for context if available
-                if q.generation_metadata and "context" in q.generation_metadata:
-                    input_text = q.generation_metadata["context"][:2000]
+                input_text = self._build_sft_input(q)
 
                 record = {
                     "instruction": instruction,
@@ -180,12 +323,15 @@ class TrainingService:
         pair_ids = []
         with open(output_path, "w") as f:
             for pair in pairs:
-                if not pair.chosen_response or not pair.rejected_response:
+                prompt = self._normalize_dpo_prompt(pair.prompt)
+                chosen = self._normalize_dpo_completion(pair.chosen_response)
+                rejected = self._normalize_dpo_completion(pair.rejected_response)
+                if not chosen or not rejected:
                     continue
                 record = {
-                    "prompt": pair.prompt,
-                    "chosen": pair.chosen_response,
-                    "rejected": pair.rejected_response,
+                    "prompt": prompt,
+                    "chosen": chosen,
+                    "rejected": rejected,
                     "weight": pair.pair_weight or 1.0,
                 }
                 f.write(json.dumps(record, ensure_ascii=False) + "\n")
@@ -237,7 +383,7 @@ class TrainingService:
             "lora_alpha": 32,
             "lora_dropout": 0.05,
             "max_seq_length": 2048,
-            "warmup_ratio": 0.03,
+            "warmup_steps": 0,
             "weight_decay": 0.01,
         }
         if hyperparameters:
@@ -470,12 +616,20 @@ class TrainingService:
         if not dataset:
             return {"status": "error", "message": "Dataset not found"}
 
-        manifest = {
-            "dataset_tag": dataset.dataset_tag,
-            "created_at": dataset.created_at.isoformat() if dataset.created_at else None,
-            "snapshot_filter": dataset.snapshot_filter,
-            "sample_counts": dataset.sample_counts,
-        }
+        manifest = None
+        if dataset.manifest_path and os.path.exists(dataset.manifest_path):
+            try:
+                with open(dataset.manifest_path) as f:
+                    manifest = json.load(f)
+            except Exception:
+                manifest = None
+        if manifest is None:
+            manifest = {
+                "dataset_tag": dataset.dataset_tag,
+                "created_at": dataset.created_at.isoformat() if dataset.created_at else None,
+                "snapshot_filter": dataset.snapshot_filter,
+                "sample_counts": dataset.sample_counts,
+            }
         manifest_json = json.dumps(manifest, sort_keys=True)
         checksum = hashlib.sha256(manifest_json.encode("utf-8")).hexdigest()
 
@@ -554,6 +708,7 @@ class TrainingService:
         Uses: transformers, peft, trl (SFTTrainer).
         """
         # Delayed imports — these are heavy ML dependencies
+        import torch  # type: ignore
         from transformers import (        # type: ignore
             AutoModelForCausalLM,
             AutoTokenizer,
@@ -574,11 +729,53 @@ class TrainingService:
         if tokenizer.pad_token is None:
             tokenizer.pad_token = tokenizer.eos_token
 
+        use_cuda = torch.cuda.is_available()
+        if use_cuda:
+            model_load_kwargs = {
+                "dtype": torch.float16,
+                "device_map": "auto",
+            }
+            use_fp16 = True
+            use_bf16 = False
+            dataloader_pin_memory = True
+            use_cpu = False
+            optim_name = "adamw_torch_fused"
+        else:
+            model_load_kwargs = {
+                "dtype": torch.float32,
+                "low_cpu_mem_usage": True,
+            }
+            use_fp16 = False
+            use_bf16 = False
+            dataloader_pin_memory = False
+            use_cpu = True
+            optim_name = "adamw_torch"
+
+        local_smoke_test = not use_cuda
+        if local_smoke_test:
+            num_train_epochs = 1
+            per_device_train_batch_size = 1
+            gradient_accumulation_steps = 1
+            max_steps = 10
+            logger.info(
+                "Non-CUDA environment detected; enabling local smoke-test mode "
+                "(epochs=%d, batch_size=%d, grad_accum=%d, max_steps=%d)",
+                num_train_epochs,
+                per_device_train_batch_size,
+                gradient_accumulation_steps,
+                max_steps,
+            )
+        else:
+            num_train_epochs = hp.get("num_epochs", 3)
+            per_device_train_batch_size = hp.get("batch_size", 4)
+            gradient_accumulation_steps = hp.get("gradient_accumulation_steps", 4)
+            max_steps = hp.get("max_steps", -1)
+
         model = AutoModelForCausalLM.from_pretrained(
             version.base_model,
-            torch_dtype="auto",
-            device_map="auto",
+            **model_load_kwargs,
         )
+        model.config.use_cache = False
 
         # LoRA config
         lora_config = LoraConfig(
@@ -590,41 +787,49 @@ class TrainingService:
         )
 
         output_dir = version.lora_adapter_path
+        warmup_steps = self._resolve_warmup_steps(
+            hp=hp,
+            dataset_size=len(dataset),
+            num_train_epochs=num_train_epochs,
+            per_device_train_batch_size=per_device_train_batch_size,
+            gradient_accumulation_steps=gradient_accumulation_steps,
+            max_steps=max_steps,
+        )
         training_args = TrainingArguments(
             output_dir=output_dir,
-            num_train_epochs=hp.get("num_epochs", 3),
-            per_device_train_batch_size=hp.get("batch_size", 4),
-            gradient_accumulation_steps=hp.get("gradient_accumulation_steps", 4),
+            num_train_epochs=num_train_epochs,
+            per_device_train_batch_size=per_device_train_batch_size,
+            gradient_accumulation_steps=gradient_accumulation_steps,
+            max_steps=max_steps,
             learning_rate=hp.get("learning_rate", 2e-4),
-            warmup_ratio=hp.get("warmup_ratio", 0.03),
+            warmup_steps=warmup_steps,
             weight_decay=hp.get("weight_decay", 0.01),
-            logging_steps=10,
+            optim=optim_name,
+            logging_steps=1 if local_smoke_test else 10,
             save_strategy="epoch",
-            fp16=True,
+            fp16=use_fp16,
+            bf16=use_bf16,
             max_grad_norm=1.0,
+            use_cpu=use_cpu,
+            dataloader_pin_memory=dataloader_pin_memory,
             report_to="none",
         )
 
-        def formatting_func(examples):
-            texts = []
-            for inst, inp, out in zip(
-                examples["instruction"], examples["input"], examples["output"]
-            ):
-                if inp:
-                    text = f"### Instruction:\n{inst}\n\n### Input:\n{inp}\n\n### Response:\n{out}"
-                else:
-                    text = f"### Instruction:\n{inst}\n\n### Response:\n{out}"
-                texts.append(text)
-            return texts
+        def formatting_func(example):
+            inst = example["instruction"]
+            inp = example["input"]
+            out = example["output"]
+            if inp:
+                return f"### Instruction:\n{inst}\n\n### Input:\n{inp}\n\n### Response:\n{out}"
+            return f"### Instruction:\n{inst}\n\n### Response:\n{out}"
 
         trainer = SFTTrainer(
             model=model,
-            tokenizer=tokenizer,
             train_dataset=dataset,
             peft_config=lora_config,
             args=training_args,
+            processing_class=tokenizer,
             formatting_func=formatting_func,
-            max_seq_length=hp.get("max_seq_length", 2048),
         )
 
         logger.info("Starting SFT training...")
@@ -659,9 +864,10 @@ class TrainingService:
 
         Uses: trl (DPOTrainer).
         """
-        from transformers import AutoModelForCausalLM, AutoTokenizer, TrainingArguments  # type: ignore
+        import torch  # type: ignore
+        from transformers import AutoModelForCausalLM, AutoTokenizer  # type: ignore
         from peft import LoraConfig, TaskType  # type: ignore
-        from trl import DPOTrainer  # type: ignore
+        from trl import DPOConfig, DPOTrainer  # type: ignore
         from datasets import load_dataset  # type: ignore
 
         hp = version.hyperparameters or {}
@@ -675,30 +881,53 @@ class TrainingService:
         data_path = str(dpo_files[0])
         logger.info("Loading DPO dataset from %s", data_path)
         dataset = load_dataset("json", data_files=data_path, split="train")
+        dataset = dataset.map(
+            lambda example: {
+                "prompt": self._normalize_dpo_prompt(example.get("prompt")),
+                "chosen": self._normalize_dpo_completion(example.get("chosen")),
+                "rejected": self._normalize_dpo_completion(example.get("rejected")),
+                "weight": example.get("weight", 1.0),
+            }
+        )
 
         logger.info("Loading model for DPO: %s", version.base_model)
         tokenizer = AutoTokenizer.from_pretrained(version.base_model)
         if tokenizer.pad_token is None:
             tokenizer.pad_token = tokenizer.eos_token
 
-        # Load model (with SFT adapter if available)
-        adapter_path = version.lora_adapter_path
-        if adapter_path and os.path.exists(os.path.join(adapter_path, "adapter_config.json")):
-            from peft import PeftModel  # type: ignore
-            base_model = AutoModelForCausalLM.from_pretrained(
-                version.base_model, torch_dtype="auto", device_map="auto"
-            )
-            model = PeftModel.from_pretrained(base_model, adapter_path)
-            model = model.merge_and_unload()  # Merge SFT adapter before DPO
+        use_cuda = torch.cuda.is_available()
+        if use_cuda:
+            model_load_kwargs = {
+                "dtype": torch.float16,
+                "device_map": "auto",
+            }
+            use_fp16 = True
+            use_bf16 = False
+            dataloader_pin_memory = True
+            use_cpu = False
+            optim_name = "adamw_torch_fused"
         else:
-            model = AutoModelForCausalLM.from_pretrained(
-                version.base_model, torch_dtype="auto", device_map="auto"
-            )
+            model_load_kwargs = {
+                "dtype": torch.float32,
+                "low_cpu_mem_usage": True,
+            }
+            use_fp16 = False
+            use_bf16 = False
+            dataloader_pin_memory = False
+            use_cpu = True
+            optim_name = "adamw_torch"
 
-        # Reference model (frozen copy for DPO)
-        ref_model = AutoModelForCausalLM.from_pretrained(
-            version.base_model, torch_dtype="auto", device_map="auto"
-        )
+        local_smoke_test = not use_cuda
+        if local_smoke_test:
+            num_train_epochs = 1
+            per_device_train_batch_size = 1
+            gradient_accumulation_steps = 1
+            max_steps = 3
+        else:
+            num_train_epochs = hp.get("num_epochs", 1)
+            per_device_train_batch_size = hp.get("batch_size", 2)
+            gradient_accumulation_steps = hp.get("gradient_accumulation_steps", 4)
+            max_steps = hp.get("max_steps", -1)
 
         lora_config = LoraConfig(
             task_type=TaskType.CAUSAL_LM,
@@ -708,21 +937,62 @@ class TrainingService:
             target_modules=["q_proj", "k_proj", "v_proj", "o_proj"],
         )
 
+        # Load model (with SFT adapter if available)
+        adapter_path = version.lora_adapter_path
+        if adapter_path and os.path.exists(os.path.join(adapter_path, "adapter_config.json")):
+            from peft import PeftModel  # type: ignore
+            base_model = AutoModelForCausalLM.from_pretrained(
+                version.base_model, **model_load_kwargs
+            )
+            model = PeftModel.from_pretrained(
+                base_model,
+                adapter_path,
+                is_trainable=True,
+            )
+            trainer_peft_config = None
+        else:
+            model = AutoModelForCausalLM.from_pretrained(
+                version.base_model, **model_load_kwargs
+            )
+            trainer_peft_config = lora_config
+        model.config.use_cache = False
+
+        # Reference model (frozen copy for DPO)
+        ref_model = AutoModelForCausalLM.from_pretrained(
+            version.base_model, **model_load_kwargs
+        )
+        ref_model.config.use_cache = False
+
         dpo_output = adapter_path + "-dpo" if adapter_path else str(
             LORA_ADAPTERS_DIR / f"{version.version_tag}-dpo"
         )
-        training_args = TrainingArguments(
+        warmup_steps = self._resolve_warmup_steps(
+            hp=hp,
+            dataset_size=len(dataset),
+            num_train_epochs=num_train_epochs,
+            per_device_train_batch_size=per_device_train_batch_size,
+            gradient_accumulation_steps=gradient_accumulation_steps,
+            max_steps=max_steps,
+        )
+        training_args = DPOConfig(
             output_dir=dpo_output,
-            num_train_epochs=hp.get("num_epochs", 1),
-            per_device_train_batch_size=hp.get("batch_size", 2),
-            gradient_accumulation_steps=hp.get("gradient_accumulation_steps", 4),
+            num_train_epochs=num_train_epochs,
+            per_device_train_batch_size=per_device_train_batch_size,
+            gradient_accumulation_steps=gradient_accumulation_steps,
+            max_steps=max_steps,
             learning_rate=hp.get("learning_rate", 5e-5),
-            warmup_ratio=0.1,
-            logging_steps=10,
+            warmup_steps=warmup_steps,
+            logging_steps=1 if local_smoke_test else 10,
             save_strategy="epoch",
-            fp16=True,
+            fp16=use_fp16,
+            bf16=use_bf16,
+            use_cpu=use_cpu,
+            dataloader_pin_memory=dataloader_pin_memory,
+            optim=optim_name,
             report_to="none",
             remove_unused_columns=False,
+            beta=0.1,
+            max_length=hp.get("max_seq_length", 2048),
         )
 
         trainer = DPOTrainer(
@@ -730,11 +1000,8 @@ class TrainingService:
             ref_model=ref_model,
             args=training_args,
             train_dataset=dataset,
-            tokenizer=tokenizer,
-            peft_config=lora_config,
-            beta=0.1,  # DPO temperature parameter
-            max_length=hp.get("max_seq_length", 2048),
-            max_prompt_length=512,
+            processing_class=tokenizer,
+            peft_config=trainer_peft_config,
         )
 
         logger.info("Starting DPO training...")
@@ -887,30 +1154,57 @@ class TrainingService:
         snapshot_filter = snapshot_filter or {}
         since_days = int(snapshot_filter.get("days", 30))
         confidence_min = float(snapshot_filter.get("confidence_min", 0.0))
+        since_dt = datetime.now(timezone.utc) - timedelta(days=since_days)
+
+        sft_filters = [
+            Question.vetting_status == "approved",
+            Question.is_latest == True,
+            Question.vetted_at >= since_dt,
+        ]
+        dpo_filters = [
+            TrainingPair.status.in_(["pending", "queued", "used"]),
+            (TrainingPair.confidence.is_(None) | (TrainingPair.confidence >= confidence_min)),
+            TrainingPair.created_at >= since_dt,
+        ]
 
         sft_count_result = await db.execute(
-            select(func.count(Question.id)).where(
-                Question.vetting_status == "approved",
-                Question.is_latest == True,
-            )
+            select(func.count(Question.id)).where(*sft_filters)
         )
         sft_count = int(sft_count_result.scalar() or 0)
 
         dpo_count_result = await db.execute(
-            select(func.count(TrainingPair.id)).where(
-                TrainingPair.status.in_(["pending", "queued", "used"]),
-                (TrainingPair.confidence.is_(None) | (TrainingPair.confidence >= confidence_min)),
-            )
+            select(func.count(TrainingPair.id)).where(*dpo_filters)
         )
         dpo_count = int(dpo_count_result.scalar() or 0)
 
         reject_count_result = await db.execute(
             select(func.count(VettingLog.id)).where(
                 VettingLog.decision == "reject",
-                VettingLog.created_at >= datetime.now(timezone.utc) - timedelta(days=since_days),
+                VettingLog.created_at >= since_dt,
             )
         )
         critique_labels = int(reject_count_result.scalar() or 0)
+
+        sft_by_type_result = await db.execute(
+            select(Question.question_type, func.count(Question.id))
+            .where(*sft_filters)
+            .group_by(Question.question_type)
+        )
+        sft_by_difficulty_result = await db.execute(
+            select(Question.difficulty_level, func.count(Question.id))
+            .where(*sft_filters)
+            .group_by(Question.difficulty_level)
+        )
+        sft_by_bloom_result = await db.execute(
+            select(Question.bloom_taxonomy_level, func.count(Question.id))
+            .where(*sft_filters)
+            .group_by(Question.bloom_taxonomy_level)
+        )
+        dpo_by_pair_type_result = await db.execute(
+            select(TrainingPair.pair_type, func.count(TrainingPair.id))
+            .where(*dpo_filters)
+            .group_by(TrainingPair.pair_type)
+        )
 
         stamp = datetime.now(timezone.utc).strftime("%Y%m%d-%H%M%S")
         dataset_tag = f"ds-{stamp}"
@@ -919,13 +1213,31 @@ class TrainingService:
             "dpo": dpo_count,
             "critique_labels": critique_labels,
         }
-
-        manifest = {
-            "dataset_tag": dataset_tag,
-            "created_at": datetime.now(timezone.utc).isoformat(),
-            "snapshot_filter": snapshot_filter,
-            "sample_counts": sample_counts,
+        composition = {
+            "sft": {
+                "by_question_type": self._distribution_from_rows(sft_by_type_result.all()),
+                "by_difficulty": self._distribution_from_rows(sft_by_difficulty_result.all()),
+                "by_bloom_level": self._distribution_from_rows(sft_by_bloom_result.all()),
+            },
+            "dpo": {
+                "by_pair_type": self._distribution_from_rows(dpo_by_pair_type_result.all()),
+            },
         }
+        enriched_snapshot_filter = {
+            **snapshot_filter,
+            "days": since_days,
+            "confidence_min": confidence_min,
+            "since": since_dt.isoformat(),
+        }
+        manifest_created_at = datetime.now(timezone.utc)
+
+        manifest = self._build_dataset_manifest(
+            dataset_tag=dataset_tag,
+            created_at=manifest_created_at,
+            snapshot_filter=enriched_snapshot_filter,
+            sample_counts=sample_counts,
+            composition=composition,
+        )
         manifest_json = json.dumps(manifest, sort_keys=True)
         checksum = hashlib.sha256(manifest_json.encode("utf-8")).hexdigest()
         manifest_path = str(TRAINING_DATA_DIR / f"{dataset_tag}.manifest.json")
@@ -1279,26 +1591,31 @@ class TrainingService:
     @staticmethod
     def _build_sft_instruction(q: Question) -> str:
         """Build the instruction string for an SFT sample."""
-        parts = [f"Generate a {q.question_type or 'question'}"]
+        parts = [f"Generate one high-quality {q.question_type or 'question'} for a university-level assessment"]
         if q.difficulty_level:
             parts.append(f"at {q.difficulty_level} difficulty")
         if q.bloom_taxonomy_level:
-            parts.append(f"targeting {q.bloom_taxonomy_level} level of Bloom's taxonomy")
+            parts.append(f"targeting the {q.bloom_taxonomy_level} Bloom level")
         if q.marks:
             parts.append(f"worth {q.marks} marks")
+        parts.append("Use the provided source context and follow the requested format exactly")
         return " ".join(parts) + "."
 
-    @staticmethod
-    def _build_sft_output(q: Question) -> str:
+    @classmethod
+    def _build_sft_output(cls, q: Question) -> str:
         """Build the output string for an SFT sample."""
-        parts = [q.question_text]
+        parts = ["Question:", q.question_text.strip()]
         if q.options:
+            parts.append("")
+            parts.append("Options:")
             for i, opt in enumerate(q.options):
-                parts.append(f"{chr(65 + i)}) {opt}")
+                parts.append(f"{chr(65 + i)}. {cls._strip_choice_prefix(str(opt))}")
         if q.correct_answer:
-            parts.append(f"\nAnswer: {q.correct_answer}")
+            parts.append("")
+            parts.append(f"Correct Answer: {cls._normalize_correct_answer(q.correct_answer, q.options)}")
         if q.explanation:
-            parts.append(f"\nExplanation: {q.explanation}")
+            parts.append("")
+            parts.append(f"Explanation: {q.explanation.strip()}")
         return "\n".join(parts)
 
     # ═══════════════════════════════════════════
