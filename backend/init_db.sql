@@ -112,3 +112,34 @@ $$ LANGUAGE plpgsql;
 
 -- Grant permissions if needed for specific roles
 -- GRANT SELECT, INSERT, UPDATE, DELETE ON ALL TABLES IN SCHEMA public TO qgen_user;
+
+-- ============================================================
+-- Seed vetting_reason_codes (controlled taxonomy)
+-- ============================================================
+CREATE OR REPLACE FUNCTION seed_vetting_reason_codes() RETURNS void AS $$
+BEGIN
+    IF EXISTS (SELECT 1 FROM information_schema.tables WHERE table_name = 'vetting_reason_codes') THEN
+        INSERT INTO vetting_reason_codes (id, code, label, description, severity_default, is_active) VALUES
+        (gen_random_uuid(), 'factual_error', 'Factual Error', 'The question or answer contains incorrect factual information', 'critical', true),
+        (gen_random_uuid(), 'ambiguous_question', 'Ambiguous Question', 'The question text is unclear or can be interpreted multiple ways', 'major', true),
+        (gen_random_uuid(), 'ambiguous_options', 'Ambiguous Options', 'Answer options are unclear, overlapping, or poorly differentiated', 'major', true),
+        (gen_random_uuid(), 'wrong_answer', 'Wrong Correct Answer', 'The marked correct answer is incorrect', 'critical', true),
+        (gen_random_uuid(), 'poor_distractors', 'Poor Distractors', 'MCQ distractors are implausible or too obviously wrong', 'minor', true),
+        (gen_random_uuid(), 'too_easy', 'Too Easy', 'Question does not match intended difficulty (too simple)', 'minor', true),
+        (gen_random_uuid(), 'too_hard', 'Too Hard', 'Question does not match intended difficulty (too complex)', 'minor', true),
+        (gen_random_uuid(), 'off_topic', 'Off Topic', 'Question is not relevant to the specified subject or topic', 'major', true),
+        (gen_random_uuid(), 'duplicate', 'Duplicate', 'Question is too similar to an existing question', 'major', true),
+        (gen_random_uuid(), 'poor_grammar', 'Poor Grammar', 'Question has grammatical errors or poor language quality', 'minor', true),
+        (gen_random_uuid(), 'incomplete', 'Incomplete', 'Question or answer is missing required information', 'major', true),
+        (gen_random_uuid(), 'quality_issue', 'General Quality Issue', 'Question does not meet overall quality standards', 'major', true),
+        (gen_random_uuid(), 'bloom_mismatch', 'Bloom Level Mismatch', 'Question does not match the target Bloom taxonomy level', 'minor', true),
+        (gen_random_uuid(), 'formatting_issue', 'Formatting Issue', 'Question has formatting problems', 'minor', true),
+        (gen_random_uuid(), 'explanation_missing', 'Explanation Missing', 'Question is missing a proper explanation', 'minor', true),
+        (gen_random_uuid(), 'explanation_wrong', 'Explanation Wrong', 'Explanation does not correctly justify the answer', 'major', true),
+        (gen_random_uuid(), 'references_document', 'References Document', 'Question inappropriately references the source document', 'major', true),
+        (gen_random_uuid(), 'not_standalone', 'Not Standalone', 'Question cannot be answered without external context', 'major', true)
+        ON CONFLICT (code) DO NOTHING;
+        RAISE NOTICE 'Seeded vetting_reason_codes';
+    END IF;
+END;
+$$ LANGUAGE plpgsql;

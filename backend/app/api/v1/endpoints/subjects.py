@@ -255,6 +255,7 @@ async def delete_subject(
 async def create_topic(
     subject_id: uuid.UUID,
     topic_data: TopicCreate,
+    background_tasks: BackgroundTasks,
     current_user: User = Depends(get_current_user),
     db: AsyncSession = Depends(get_db),
 ):
@@ -289,6 +290,12 @@ async def create_topic(
     
     await db.commit()
     await db.refresh(topic)
+
+    # Trigger LO+CO regeneration if syllabus content was provided
+    if getattr(topic_data, 'syllabus_content', None):
+        background_tasks.add_task(_bg_generate_los, subject_id=subject_id, user_id=current_user.id)
+        background_tasks.add_task(_bg_generate_cos, subject_id=subject_id, user_id=current_user.id)
+
     return TopicResponse.model_validate(topic)
 
 
@@ -549,8 +556,9 @@ async def upload_topic_syllabus(
     await db.commit()
     await db.refresh(topic)
 
-    # Trigger LO generation in the background so upload response is instant
+    # Trigger LO and CO generation in the background so upload response is instant
     background_tasks.add_task(_bg_generate_los, subject_id=subject_id, user_id=current_user.id)
+    background_tasks.add_task(_bg_generate_cos, subject_id=subject_id, user_id=current_user.id)
 
     return TopicResponse.model_validate(topic)
 
@@ -586,10 +594,133 @@ async def _bg_generate_los(subject_id: uuid.UUID, user_id: uuid.UUID) -> None:
                 los = list(_GENERIC_LOS)
 
             subject.learning_outcomes = {"outcomes": los}
+
+            # Map LOs to individual topics based on content relevance
+            for t in topics:
+                topic_text = (t.syllabus_content or t.name or "").lower()
+                mapped_los = []
+                for lo in los:
+                    lo_desc = (lo.get("description") or lo.get("name") or "").lower()
+                    # Simple keyword overlap check
+                    lo_words = set(lo_desc.split()) - {"the", "a", "an", "and", "or", "of", "to", "in", "for", "is", "are", "be"}
+                    topic_words = set(topic_text.split()) - {"the", "a", "an", "and", "or", "of", "to", "in", "for", "is", "are", "be"}
+                    overlap = len(lo_words & topic_words)
+                    if overlap >= 2 or len(los) <= 3:
+                        mapped_los.append({"id": lo.get("id"), "name": lo.get("name"), "level": 2})
+                if not mapped_los and los:
+                    # At least map the first LO
+                    mapped_los.append({"id": los[0].get("id"), "name": los[0].get("name"), "level": 1})
+                t.learning_outcome_mappings = {"mapped_outcomes": mapped_los}
+
             await db.commit()
             logger.info(f"Background LO generation complete for subject {subject_id}")
     except Exception as e:
         logger.error(f"Background LO generation failed for subject {subject_id}: {e}")
+
+
+async def _bg_generate_cos(subject_id: uuid.UUID, user_id: uuid.UUID) -> None:
+    """Background task: regenerate COs for a subject after new syllabus content is added."""
+    from app.core.database import AsyncSessionLocal
+    try:
+        async with AsyncSessionLocal() as db:
+            subj_result = await db.execute(
+                select(Subject).where(Subject.id == subject_id, Subject.user_id == user_id)
+            )
+            subject = subj_result.scalar_one_or_none()
+            if not subject:
+                return
+
+            topics_result = await db.execute(
+                select(Topic).where(Topic.subject_id == subject_id).order_by(Topic.order_index)
+            )
+            topics = topics_result.scalars().all()
+
+            parts = []
+            for t in topics:
+                if t.syllabus_content:
+                    parts.append(f"Chapter: {t.name}\n{t.syllabus_content[:1500]}")
+                else:
+                    parts.append(f"Chapter: {t.name}")
+            combined = "\n\n".join(parts).strip()
+
+            # Include LOs if already generated
+            los_text = ""
+            if subject.learning_outcomes and subject.learning_outcomes.get("outcomes"):
+                los_text = "\n\nExisting Learning Outcomes:\n" + "\n".join(
+                    f"- {lo.get('id', '')}: {lo.get('description', lo.get('name', ''))}"
+                    for lo in subject.learning_outcomes["outcomes"]
+                )
+
+            if len(combined) > 100:
+                cos = await _generate_cos_with_llm(subject.name, subject.code, combined + los_text)
+            else:
+                cos = list(_GENERIC_COS)
+
+            subject.course_outcomes = {"outcomes": cos}
+            await db.commit()
+            logger.info(f"Background CO generation complete for subject {subject_id}")
+    except Exception as e:
+        logger.error(f"Background CO generation failed for subject {subject_id}: {e}")
+
+
+_GENERIC_COS = [
+    {"id": "CO1", "name": "Foundational Knowledge",
+     "description": "Demonstrate understanding of core concepts, terminology, and principles of the subject."},
+    {"id": "CO2", "name": "Problem Solving",
+     "description": "Apply subject knowledge to analyse and solve standard and complex problems."},
+    {"id": "CO3", "name": "Critical Thinking",
+     "description": "Evaluate different approaches, identify limitations, and justify conclusions with evidence."},
+    {"id": "CO4", "name": "Design & Implementation",
+     "description": "Design solutions or systems by integrating concepts from multiple topics within the subject."},
+    {"id": "CO5", "name": "Professional Practice",
+     "description": "Communicate technical ideas effectively and apply ethical reasoning in professional contexts."},
+]
+
+
+async def _generate_cos_with_llm(subject_name: str, subject_code: str, syllabus_text: str) -> list:
+    """Use LLM to derive 4-6 Course Outcomes from aggregated syllabus content; falls back to generic COs."""
+    llm_service = LLMService()
+    truncated = syllabus_text[:12000]
+
+    system_prompt = (
+        "You are an expert curriculum designer specialising in Outcome-Based Education (OBE). "
+        "Generate 4 to 6 Course Outcomes (COs) for a university subject from its syllabus.\n\n"
+        "Course Outcomes are broader than Learning Outcomes — they define what a student should be able to DO "
+        "at the end of the entire course. They map to Programme Outcomes (POs) and are used in OBE accreditation.\n\n"
+        "Each CO must:\n"
+        "- Be specific to this subject's domain\n"
+        "- Start with an action verb aligned to Bloom's taxonomy (e.g. Demonstrate, Apply, Analyse, Design, Evaluate)\n"
+        "- Be measurable and assessable through exams or assignments\n"
+        "- Cover a distinct competency area of the course\n\n"
+        "Return ONLY a valid JSON array:\n"
+        '[{"id":"CO1","name":"Short 2-5 word label","description":"Full CO statement."},...]\n'
+        "No markdown, no extra text."
+    )
+    prompt = (
+        f"Subject: {subject_name} ({subject_code})\n\n"
+        f"Syllabus and context:\n{truncated}\n\n"
+        "Generate 4-6 specific, measurable Course Outcomes."
+    )
+
+    try:
+        result = await llm_service.generate_json(prompt=prompt, system_prompt=system_prompt, temperature=0.3)
+        cos_raw = result if isinstance(result, list) else next(
+            (v for v in result.values() if isinstance(v, list)), None
+        )
+        if not cos_raw:
+            return _GENERIC_COS
+        validated = []
+        for i, co in enumerate(cos_raw[:6], start=1):
+            if isinstance(co, dict):
+                validated.append({
+                    "id": str(co.get("id") or f"CO{i}")[:10],
+                    "name": str(co.get("name") or f"CO{i}")[:100],
+                    "description": str(co["description"])[:500] if co.get("description") else None,
+                })
+        return validated or _GENERIC_COS
+    except Exception as e:
+        logger.error(f"CO generation LLM failed: {e}")
+        return _GENERIC_COS
 
 
 async def _extract_text_from_file(content: bytes, extension: str) -> str:

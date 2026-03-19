@@ -71,9 +71,37 @@ class DeepSeekService:
             pool=5.0,
         )
 
+        # Token usage tracking
+        self._total_tokens_used: int = 0
+        self._total_calls: int = 0
+
         logger.info(
             f"DeepSeekService initialized - base_url={self.base_url}, model={self.model}"
         )
+
+    @property
+    def total_tokens_used(self) -> int:
+        """Return cumulative tokens used across all calls."""
+        return self._total_tokens_used
+
+    @property
+    def total_calls(self) -> int:
+        """Return cumulative LLM call count."""
+        return self._total_calls
+
+    def reset_usage(self) -> None:
+        """Reset token and call counters (call at start of a generation session)."""
+        self._total_tokens_used = 0
+        self._total_calls = 0
+
+    def _track_usage(self, result: dict) -> None:
+        """Extract and accumulate token usage from API response."""
+        usage = result.get("usage", {})
+        total = usage.get("total_tokens", 0)
+        if total:
+            self._total_tokens_used += total
+            self._total_calls += 1
+            logger.debug(f"DeepSeek usage: +{total} tokens (cumulative: {self._total_tokens_used})")
 
     def _headers(self) -> Dict[str, str]:
         return {
@@ -133,6 +161,8 @@ class DeepSeekService:
 
                     response.raise_for_status()
                     result = response.json()
+
+                self._track_usage(result)
 
                 content = (
                     result.get("choices", [{}])[0]
@@ -353,6 +383,8 @@ class DeepSeekService:
 
                     resp.raise_for_status()
                     result = resp.json()
+
+                self._track_usage(result)
 
                 content = (
                     result.get("choices", [{}])[0]

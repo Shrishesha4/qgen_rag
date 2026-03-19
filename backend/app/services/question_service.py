@@ -780,13 +780,14 @@ Output JSON only, no explanation."""
             import random
             bloom_level = random.choice(bloom_levels)
         else:
-            # Elevated defaults for more challenging questions
-            bloom_defaults = {
-                "mcq": "apply",  # Changed from "understand" to "apply"
-                "short_answer": "analyze",  # Changed from "apply" to "analyze"
-                "long_answer": "evaluate",  # Changed from "analyze" to "evaluate"
+            # Randomize Bloom's level based on difficulty for variety
+            import random as _rng
+            _bloom_pools = {
+                "easy": ["remember", "understand", "understand", "apply"],
+                "medium": ["understand", "apply", "analyze", "apply"],
+                "hard": ["analyze", "evaluate", "evaluate", "create"],
             }
-            bloom_level = bloom_defaults.get(question_type, "apply")
+            bloom_level = _rng.choice(_bloom_pools.get(difficulty, ["understand", "apply", "analyze", "evaluate"]))
 
         difficulty_guidance = {
             "easy": "Target foundational comprehension with direct but non-trivial checks.",
@@ -1216,6 +1217,16 @@ Return JSON only:
         source_info = self._build_source_info(chunks, question_data)
         logger.info(f"Built source info with {len(source_info.get('sources', []))} sources for question")
 
+        # Compute quality scores from confidence and question structure
+        answerability = min(1.0, confidence_score * 1.1) if confidence_score else 0.8
+        specificity = min(1.0, confidence_score * 0.95) if confidence_score else 0.7
+        # Boost answerability if correct_answer is present
+        if correct_answer:
+            answerability = min(1.0, answerability + 0.05)
+        # Boost specificity if topic_tags are present
+        if question_data.get("topic_tags"):
+            specificity = min(1.0, specificity + 0.05)
+
         question = Question(
             document_id=document_id,
             session_id=session_id,
@@ -1232,7 +1243,9 @@ Return JSON only:
             options=normalized_options,
             topic_tags=question_data.get("topic_tags"),
             source_chunk_ids=chunk_ids,
-            generation_confidence=confidence_score,  # Calculated from validation
+            generation_confidence=confidence_score,
+            answerability_score=answerability,
+            specificity_score=specificity,
             generation_metadata={
                 "raw_response": question_data,
                 "source_info": source_info,
@@ -1895,13 +1908,14 @@ Return JSON only:
             import random
             bloom_level = random.choice(bloom_levels)
         else:
-            # Elevated defaults for more challenging questions
-            bloom_defaults = {
-                "mcq": "apply",  # Changed from "understand" to "apply"
-                "short_answer": "analyze",  # Changed from "apply" to "analyze"
-                "long_answer": "evaluate",  # Changed from "analyze" to "evaluate"
+            # Randomize Bloom's level based on difficulty for variety
+            import random as _rng
+            _bloom_pools = {
+                "easy": ["remember", "understand", "understand", "apply"],
+                "medium": ["understand", "apply", "analyze", "apply"],
+                "hard": ["analyze", "evaluate", "evaluate", "create"],
             }
-            bloom_level = bloom_defaults.get(question_type, "apply")
+            bloom_level = _rng.choice(_bloom_pools.get(difficulty, ["understand", "apply", "analyze", "evaluate"]))
         
         # Build enhanced prompt
         prompt = f"""Topic/Context: {context}
@@ -2876,6 +2890,10 @@ Output valid JSON only."""
         try:
             logger.info(f"quick_generate_from_subject: user={user_id}, subject={subject_id}, count={count}")
 
+            # Reset LLM token tracking for this session
+            if hasattr(self.llm_service, 'reset_usage'):
+                self.llm_service.reset_usage()
+
             yield QuickGenerateProgress(
                 status="generating",
                 progress=5,
@@ -3479,6 +3497,27 @@ Output valid JSON only."""
                                 f"similarity={max_sim:.4f} matched {match_source} question #{max_idx}, "
                                 f"rejected: \"{q_text[:120]}...\""
                             )
+                            # Save discarded question to DB for traceability
+                            try:
+                                discarded_q = Question(
+                                    document_id=getattr(selected_chunks[0], 'document_id', None) if selected_chunks else None,
+                                    session_id=session_id,
+                                    subject_id=subject_id,
+                                    topic_id=topic_id,
+                                    question_text=q_text,
+                                    question_embedding=new_embedding,
+                                    question_type=q_type,
+                                    difficulty_level=difficulty,
+                                    bloom_taxonomy_level=question_data.get("bloom_taxonomy_level", "apply"),
+                                    generation_confidence=confidence_score,
+                                    generation_status="discarded",
+                                    discard_reason=f"duplicate (sim={max_sim:.4f}, source={match_source})",
+                                    is_archived=True,
+                                    is_latest=False,
+                                )
+                                self.db.add(discarded_q)
+                            except Exception:
+                                pass  # Non-critical
                             generated_questions_text.append(q_text)
                             slot["attempts"] += 1
                             questions_failed += 1
@@ -3500,8 +3539,13 @@ Output valid JSON only."""
                                 topic_profiles=topic_profiles,
                             )
 
+                        # Derive document_id from the chunk's parent document
+                        chunk_doc_id = None
+                        if selected_chunks:
+                            chunk_doc_id = getattr(selected_chunks[0], 'document_id', None)
+
                         question, question_response = await self._save_question(
-                            document_id=None,
+                            document_id=chunk_doc_id,
                             session_id=session_id,
                             question_data=question_data,
                             question_type=q_type,
@@ -3575,10 +3619,49 @@ Output valid JSON only."""
                 session.questions_failed = prior_failed + max(0, count - questions_generated)
                 session.status = "completed"
                 session.completed_at = datetime.now(timezone.utc)
+                session.chunks_used = len(subj_chunk_pool) if subj_chunk_pool else len(all_chunks)
+                session.blacklist_size = len(existing_embeddings)
+                session.llm_calls = total_attempted
+                # Capture token usage from LLM service
+                if hasattr(self.llm_service, 'total_tokens_used'):
+                    session.tokens_used = self.llm_service.total_tokens_used
                 if session.started_at:
                     session.total_duration_seconds = (
                         session.completed_at - session.started_at
                     ).total_seconds()
+
+                # Update total_questions on topic(s) and subject
+                if questions_generated > 0:
+                    # Update subject total
+                    await self.db.execute(
+                        Subject.__table__.update()
+                        .where(Subject.id == subject_id)
+                        .values(total_questions=Subject.total_questions + questions_generated)
+                    )
+
+                    if topic_id:
+                        await self.db.execute(
+                            Topic.__table__.update()
+                            .where(Topic.id == topic_id)
+                            .values(total_questions=Topic.total_questions + questions_generated)
+                        )
+                    else:
+                        # Update per-topic counts for auto-mapped questions
+                        topic_count_res = await self.db.execute(
+                            select(Question.topic_id, func.count(Question.id))
+                            .where(
+                                Question.session_id == session_id,
+                                Question.topic_id.isnot(None),
+                            )
+                            .group_by(Question.topic_id)
+                        )
+                        for tid, cnt in topic_count_res.all():
+                            await self.db.execute(
+                                Topic.__table__.update()
+                                .where(Topic.id == tid)
+                                .values(total_questions=Topic.total_questions + cnt)
+                            )
+
                 await self.db.commit()
 
             yield QuickGenerateProgress(
@@ -3654,13 +3737,14 @@ Output valid JSON only."""
             import random
             bloom_level = random.choice(bloom_levels)
         else:
-            # Elevated defaults for more challenging questions
-            bloom_defaults = {
-                "mcq": "apply",  # Changed from "understand" to "apply"
-                "short_answer": "analyze",  # Changed from "apply" to "analyze"
-                "long_answer": "evaluate",  # Changed from "analyze" to "evaluate"
+            # Randomize Bloom's level based on difficulty for variety
+            import random as _rng
+            _bloom_pools = {
+                "easy": ["remember", "understand", "understand", "apply"],
+                "medium": ["understand", "apply", "analyze", "apply"],
+                "hard": ["analyze", "evaluate", "evaluate", "create"],
             }
-            bloom_level = bloom_defaults.get(question_type, "apply")
+            bloom_level = _rng.choice(_bloom_pools.get(difficulty, ["understand", "apply", "analyze", "evaluate"]))
 
         # Build diversity hints based on question index - more challenging patterns
         diversity_hints = [

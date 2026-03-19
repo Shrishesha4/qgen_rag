@@ -879,16 +879,35 @@ async def submit_vetting(
                     "rationale": rationale.get("explanation"),
                 }
 
+        # Auto-infer reason_codes from feedback if not explicitly provided
+        inferred_codes = data.reason_codes
+        if not inferred_codes and (data.feedback or data.notes or data.rejection_reasons):
+            inferred_codes = _infer_reason_codes(
+                feedback=data.feedback or data.notes or "",
+                rejection_reasons=data.rejection_reasons,
+                decision=data.decision,
+            )
+
+        # Auto-compute quality_score if not provided
+        quality = data.quality_score
+        if quality is None:
+            quality = {"approve": 0.9, "edit": 0.7, "reject": 0.3}.get(data.decision, 0.5)
+
+        # Auto-compute severity_level if not provided
+        severity = data.severity_level
+        if severity is None and data.decision in ("reject", "edit"):
+            severity = "major" if data.decision == "reject" else "minor"
+
         # 3. Create VettingLog
         vetting_log = VettingLog(
             question_id=data.question_id,
             vetter_id=current_user.id,
             decision=data.decision,
             review_version=data.review_version,
-            quality_score=data.quality_score,
+            quality_score=quality,
             rubric_snapshot=rubric_snapshot,
-            reason_codes=data.reason_codes,
-            severity_level=data.severity_level,
+            reason_codes=inferred_codes,
+            severity_level=severity,
             original_text=original_text,
             edited_text=data.edited_text if data.decision == "edit" else None,
             edit_diff=edit_diff,
@@ -1006,6 +1025,43 @@ async def submit_vetting(
     except Exception:
         vetting_submit_failure_total.inc()
         raise
+
+
+def _infer_reason_codes(feedback: str, rejection_reasons: Optional[List[str]] = None, decision: str = "reject") -> List[str]:
+    """Infer structured reason codes from free-text feedback using keyword matching."""
+    text = (feedback or "").lower()
+    if rejection_reasons:
+        text += " " + " ".join(r.lower() for r in rejection_reasons)
+
+    code_keywords = {
+        "factual_error": ["wrong", "incorrect", "factual", "inaccurate", "false", "error in fact"],
+        "ambiguous_question": ["ambiguous", "unclear", "confusing", "vague", "interpret"],
+        "ambiguous_options": ["options", "distractor", "choices", "overlapping"],
+        "wrong_answer": ["wrong answer", "incorrect answer", "answer is wrong", "correct answer should"],
+        "poor_distractors": ["distractor", "too obvious", "implausible", "weak option"],
+        "too_easy": ["too easy", "too simple", "trivial", "basic"],
+        "too_hard": ["too hard", "too difficult", "too complex", "too advanced"],
+        "off_topic": ["off topic", "irrelevant", "not related", "wrong topic", "wrong subject"],
+        "duplicate": ["duplicate", "similar", "already", "repeated", "same question"],
+        "poor_grammar": ["grammar", "spelling", "typo", "language", "poorly written", "rephrase", "re-phrase", "reword"],
+        "incomplete": ["incomplete", "missing", "lacks", "not enough"],
+        "bloom_mismatch": ["bloom", "taxonomy", "cognitive level"],
+        "formatting_issue": ["format", "formatting", "spacing", "punctuation"],
+        "explanation_missing": ["no explanation", "explanation missing", "needs explanation"],
+        "explanation_wrong": ["explanation wrong", "explanation incorrect", "bad explanation"],
+        "references_document": ["reference", "document", "passage", "text says", "according to"],
+        "not_standalone": ["standalone", "context needed", "cannot answer without"],
+    }
+
+    matched = []
+    for code, keywords in code_keywords.items():
+        if any(kw in text for kw in keywords):
+            matched.append(code)
+
+    if not matched:
+        matched = ["quality_issue"] if decision in ("reject", "edit") else []
+
+    return matched[:5]  # Cap at 5 codes
 
 
 def _reconstruct_prompt(question: Question) -> str:
@@ -1202,6 +1258,10 @@ async def reject_with_feedback(
         original_text=original_text,
         rejection_reasons=req.rejection_reasons or [req.feedback[:200]],
         feedback=req.feedback,
+        reason_codes=req.rejection_reasons[:3] if req.rejection_reasons else ["quality_issue"],
+        severity_level="major",
+        quality_score=0.3,
+        time_spent_seconds=req.time_spent_seconds if hasattr(req, 'time_spent_seconds') else None,
     )
     db.add(vetting_log)
 
@@ -1216,6 +1276,8 @@ async def reject_with_feedback(
 
         # Create DPO pair (rejected signal — chosen will be filled when replacement is approved)
         generation_prompt = _reconstruct_prompt(question)
+        import hashlib
+        dedupe_source = f"{generation_prompt}|{original_text}|reject_regen"
         training_pair = TrainingPair(
             prompt=generation_prompt,
             chosen_response="",
@@ -1225,6 +1287,11 @@ async def reject_with_feedback(
             pair_type="reject_approve",
             status="pending",
             confidence=0.7,
+            pair_weight=0.8,
+            language="en",
+            source_split="train",
+            dedupe_hash=hashlib.sha256(dedupe_source.encode("utf-8")).hexdigest(),
+            rejected_reason_codes=req.rejection_reasons[:3] if req.rejection_reasons else ["quality_issue"],
         )
         db.add(training_pair)
 
@@ -1474,6 +1541,8 @@ Return ONLY the JSON, no other text."""
 
         # Create DPO training pair (original=rejected, improved=chosen)
         generation_prompt = _reconstruct_prompt(question)
+        import hashlib
+        dedupe_source = f"{generation_prompt}|{improved_text}|{original_text}|improve"
         training_pair = TrainingPair(
             prompt=generation_prompt,
             chosen_response=improved_text,
@@ -1482,7 +1551,12 @@ Return ONLY the JSON, no other text."""
             chosen_question_id=question.id,
             rejected_question_id=question.id,
             pair_type="edit",
-            confidence=0.8,  # Slightly lower than manual edit since LLM-mediated
+            confidence=0.8,
+            pair_weight=0.9,
+            language="en",
+            source_split="train",
+            dedupe_hash=hashlib.sha256(dedupe_source.encode("utf-8")).hexdigest(),
+            rejected_reason_codes=req.rejection_reasons[:3] if req.rejection_reasons else ["quality_issue"],
         )
         db.add(training_pair)
 
