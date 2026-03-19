@@ -92,7 +92,11 @@
 <div class="bg-overlay-layer" aria-hidden="true"></div>
 
 {#if showGlobalBack}
-	<button class="global-back-btn" aria-label="Go back" onclick={goBack}>←</button>
+	<button class="global-back-btn" aria-label="Go back" onclick={goBack}>
+		<svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round">
+			<path d="M19 12H5M5 12L12 19M5 12L12 5"/>
+		</svg>
+	</button>
 {/if}
 
 <div class="app-shell">
@@ -105,8 +109,8 @@
 		top: calc(env(safe-area-inset-top) + 0.75rem);
 		left: calc(env(safe-area-inset-left) + 0.75rem);
 		z-index: 70;
-		width: 42px;
-		height: 42px;
+		width: 48px;
+		height: 48px;
 		padding: 0;
 		display: inline-flex;
 		align-items: center;
@@ -114,26 +118,75 @@
 		line-height: 1;
 		aspect-ratio: 1 / 1;
 		border-radius: 50%;
-		border: 1px solid rgba(255, 255, 255, 0.24);
-		background: rgba(10, 18, 34, 0.56);
-		backdrop-filter: blur(8px);
-		-webkit-backdrop-filter: blur(8px);
+		border: 1px solid rgba(255, 255, 255, 0.2);
+		background: rgba(10, 18, 34, 0.8);
+		backdrop-filter: blur(12px);
+		-webkit-backdrop-filter: blur(12px);
 		color: var(--theme-text);
-		font-size: 1.05rem;
-		font-weight: 700;
+		font-size: 1.1rem;
+		font-weight: 600;
 		cursor: pointer;
-		box-shadow: 0 8px 18px rgba(0, 0, 0, 0.28);
-		transition: transform 0.16s ease, background 0.16s ease, border-color 0.16s ease;
+		box-shadow: 
+			0 4px 20px rgba(0, 0, 0, 0.3),
+			0 0 0 1px rgba(255, 255, 255, 0.1),
+			inset 0 1px 1px rgba(255, 255, 255, 0.2);
+		transition: all 0.2s cubic-bezier(0.23, 1, 0.32, 1);
+		/* Android optimization */
+		touch-action: manipulation;
+		-webkit-tap-highlight-color: transparent;
 	}
 
 	.global-back-btn:hover {
-		transform: translateY(-1px);
-		background: rgba(var(--theme-primary-rgb), 0.22);
-		border-color: rgba(var(--theme-primary-rgb), 0.52);
+		transform: translateY(-2px) scale(1.05);
+		background: rgba(var(--theme-primary-rgb), 0.25);
+		border-color: rgba(var(--theme-primary-rgb), 0.4);
+		box-shadow: 
+			0 8px 30px rgba(var(--theme-primary-rgb), 0.3),
+			0 0 0 1px rgba(var(--theme-primary-rgb), 0.2),
+			inset 0 1px 1px rgba(255, 255, 255, 0.3);
 	}
 
 	.global-back-btn:active {
-		transform: translateY(0);
+		transform: translateY(0) scale(0.95);
+		transition: all 0.1s ease;
+	}
+
+	/* Mobile optimizations */
+	@media (max-width: 768px) {
+		.global-back-btn {
+			width: 44px;
+			height: 44px;
+			backdrop-filter: none;
+			-webkit-backdrop-filter: none;
+			background: rgba(10, 18, 34, 0.9);
+			box-shadow: 
+				0 4px 16px rgba(0, 0, 0, 0.4),
+				0 0 0 1px rgba(255, 255, 255, 0.15);
+		}
+
+		.global-back-btn:hover {
+			transform: translateY(-1px) scale(1.02);
+		}
+
+		.global-back-btn svg {
+			width: 18px;
+			height: 18px;
+		}
+	}
+
+	/* Touch device optimizations */
+	@media (hover: none) and (pointer: coarse) {
+		.global-back-btn {
+			transition: all 0.1s ease;
+		}
+
+		.global-back-btn:hover {
+			transform: none;
+		}
+
+		.global-back-btn:active {
+			transform: scale(0.95);
+		}
 	}
 
 	.app-shell {

@@ -141,7 +141,7 @@
 		const input = e.target as HTMLInputElement;
 		searchQuery = input.value;
 		
-		// Auto-search after space is typed (with debounce)
+
 		if (searchQuery.includes(' ')) {
 			// Clear existing timeout
 			if (searchTimeout) {
@@ -233,7 +233,7 @@
 			<div class="search-field">
 				<input
 					type="text"
-					placeholder="Search questions... (auto-searches after space)"
+					placeholder="Search for questions..."
 					bind:value={searchQuery}
 					class="search-input"
 					oninput={handleSearchInput}
