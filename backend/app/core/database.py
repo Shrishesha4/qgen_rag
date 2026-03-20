@@ -43,19 +43,25 @@ Base = declarative_base()
 
 
 async def init_db():
-    """Initialize database and create tables."""
+    """Initialize database and create tables.
+    
+    Note: This only sets up extensions and indexes.
+    Tables should be created via Alembic migrations: `alembic upgrade head`
+    """
     # Initialize PostgreSQL (pgvector) database
     async with engine.begin() as conn:
         # Enable pgvector extension
         await conn.execute(text("CREATE EXTENSION IF NOT EXISTS vector"))
-        # Create all pgvector tables
-        await conn.run_sync(Base.metadata.create_all)
+        
+        # DO NOT use Base.metadata.create_all() here!
+        # It can cause type conflicts and bypasses migration tracking.
+        # Always use: alembic upgrade head
     
     # Initialize SQLite auth database
     from app.core.auth_database import init_auth_db
     await init_auth_db()
     
-    # Create indexes after tables exist
+    # Create indexes after tables exist (safe to run multiple times)
     await create_indexes()
 
 
