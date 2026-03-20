@@ -81,11 +81,6 @@ async def check_database() -> tuple[list[str], list[str]]:
             else:
                 warnings.append("pgvector extension not installed (will be created on startup)")
 
-            if "pg_trgm" in extensions:
-                print("✅ pg_trgm extension installed")
-            else:
-                warnings.append("pg_trgm extension not installed")
-
             print("\n3. Checking migration state...")
             tables_result = await conn.execute(
                 text(
