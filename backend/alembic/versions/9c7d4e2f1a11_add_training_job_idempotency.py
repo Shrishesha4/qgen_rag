@@ -9,7 +9,6 @@ from typing import Union
 
 from alembic import op
 import sqlalchemy as sa
-from sqlalchemy.dialects.postgresql import UUID
 
 
 revision: str = "9c7d4e2f1a11"
@@ -52,7 +51,7 @@ def upgrade() -> None:
     if not column_exists("training_jobs", "replayed_from_job_id"):
         op.add_column(
             "training_jobs",
-            sa.Column("replayed_from_job_id", UUID(as_uuid=True), nullable=True),
+            sa.Column("replayed_from_job_id", sa.String(length=36), nullable=True),
         )
         inspector = sa.inspect(bind)
 

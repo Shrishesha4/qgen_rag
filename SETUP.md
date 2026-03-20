@@ -60,11 +60,14 @@ python scripts/reset_database.py --confirm
 # Mark database as migrated (migrations have conflicts, use stamp instead)
 alembic stamp head
 
-# Verify database health
+# Verify database health (includes auth database permission check)
 python scripts/check_database.py
 ```
 
-**Note**: Due to migration history conflicts, we use `alembic stamp head` instead of `alembic upgrade head` for fresh installations. The initial migration creates all tables correctly, but later migrations have conflicts.
+**Note**: 
+- Due to migration history conflicts, we use `alembic stamp head` instead of `alembic upgrade head` for fresh installations
+- The auth database (SQLite) permissions are automatically set during setup
+- If you ever run the app with `sudo`, fix permissions with: `sudo chown $USER:$USER auth.db && sudo chmod 664 auth.db`
 
 ### 6. Frontend Setup
 ```bash
@@ -258,12 +261,38 @@ TRAINER_WEB_PORT=5173
 
 ## Troubleshooting
 
-If you encounter any issues not covered here:
+### Common Issues
+
+**SQLite "attempt to write a readonly database" error:**
+```bash
+# Fix permissions (run as the user who owns the app)
+sudo chown $USER:$USER auth.db auth.db-wal auth.db-shm
+sudo chmod 664 auth.db auth.db-wal auth.db-shm
+```
+
+**PostgreSQL connection errors:**
+```bash
+# Check if database is running
+docker compose ps
+
+# Restart database
+docker compose restart db
+```
+
+**Migration errors:**
+```bash
+# Reset and re-stamp
+python scripts/reset_database.py --confirm
+alembic stamp head
+```
+
+### General Troubleshooting
 
 1. Check logs in `backend/logs/`
-2. Verify all services are running: `docker-compose ps`
+2. Verify all services are running: `docker compose ps`
 3. Check environment variables are set correctly
-4. Try resetting the database: `python scripts/reset_database.py`
+4. Run database health check: `python scripts/check_database.py`
+5. Try resetting the database: `python scripts/reset_database.py`
 5. Check the issue tracker or create a new issue
 
 ## Getting Help

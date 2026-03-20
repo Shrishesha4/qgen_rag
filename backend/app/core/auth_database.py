@@ -6,6 +6,8 @@ and independent of the vector database.
 """
 
 from typing import AsyncGenerator
+import os
+from pathlib import Path
 from sqlalchemy.ext.asyncio import create_async_engine, AsyncSession, async_sessionmaker
 from sqlalchemy.orm import declarative_base
 from sqlalchemy import event
@@ -14,6 +16,20 @@ import logging
 from app.core.config import settings
 
 logger = logging.getLogger(__name__)
+
+# Ensure auth database directory exists and has correct permissions
+auth_db_path = Path(settings.AUTH_DATABASE_URL.replace("sqlite+aiosqlite:///", ""))
+auth_db_path = auth_db_path.resolve()
+
+# Create directory if it doesn't exist
+auth_db_path.parent.mkdir(parents=True, exist_ok=True)
+
+# Set correct permissions on directory (755)
+os.chmod(auth_db_path.parent, 0o755)
+
+# If database file exists, ensure correct permissions (664)
+if auth_db_path.exists():
+    os.chmod(auth_db_path, 0o664)
 
 # Create async SQLite engine for auth
 auth_engine = create_async_engine(
@@ -50,6 +66,11 @@ async def init_auth_db():
     """Initialize SQLite auth database and create tables."""
     async with auth_engine.begin() as conn:
         await conn.run_sync(AuthBase.metadata.create_all)
+    
+    # Ensure database file has correct permissions after creation
+    if auth_db_path.exists():
+        os.chmod(auth_db_path, 0o664)
+    
     logger.info("Auth database (SQLite) initialized")
 
 

@@ -9,7 +9,7 @@ from typing import Union
 
 from alembic import op
 import sqlalchemy as sa
-from sqlalchemy.dialects.postgresql import UUID, JSONB, ARRAY
+from sqlalchemy.dialects.postgresql import JSONB, ARRAY
 
 
 revision: str = "f1a2b3c4d5e6"
@@ -104,7 +104,7 @@ def upgrade() -> None:
     if not table_exists("vetting_reason_codes"):
         op.create_table(
             "vetting_reason_codes",
-            sa.Column("id", UUID(as_uuid=True), primary_key=True),
+            sa.Column("id", sa.String(length=36), primary_key=True),
             sa.Column("code", sa.String(length=80), nullable=False),
             sa.Column("label", sa.String(length=255), nullable=False),
             sa.Column("description", sa.Text(), nullable=True),
@@ -123,7 +123,7 @@ def upgrade() -> None:
     if not table_exists("training_datasets"):
         op.create_table(
             "training_datasets",
-            sa.Column("id", UUID(as_uuid=True), primary_key=True),
+            sa.Column("id", sa.String(length=36), primary_key=True),
             sa.Column("dataset_tag", sa.String(length=100), nullable=False),
             sa.Column("created_at", sa.DateTime(timezone=True), server_default=sa.func.now(), nullable=False),
             sa.Column("created_by", sa.String(length=36), nullable=True),
@@ -140,8 +140,8 @@ def upgrade() -> None:
     if not table_exists("model_evaluations"):
         op.create_table(
             "model_evaluations",
-            sa.Column("id", UUID(as_uuid=True), primary_key=True),
-            sa.Column("model_version_id", UUID(as_uuid=True), sa.ForeignKey("model_versions.id", ondelete="CASCADE"), nullable=False),
+            sa.Column("id", sa.String(length=36), primary_key=True),
+            sa.Column("model_version_id", sa.String(length=36), sa.ForeignKey("model_versions.id", ondelete="CASCADE"), nullable=False),
             sa.Column("dataset_tag", sa.String(length=100), nullable=False),
             sa.Column("eval_type", sa.String(length=50), nullable=False),
             sa.Column("metrics", JSONB(), nullable=True),

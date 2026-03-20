@@ -7,7 +7,6 @@ Create Date: 2026-02-22
 """
 from alembic import op
 import sqlalchemy as sa
-from sqlalchemy.dialects.postgresql import UUID
 
 
 # revision identifiers, used by Alembic.
@@ -17,43 +16,64 @@ branch_labels = None
 depends_on = None
 
 
+def _column_exists(table_name: str, column_name: str) -> bool:
+    bind = op.get_bind()
+    inspector = sa.inspect(bind)
+    columns = inspector.get_columns(table_name)
+    return any(col["name"] == column_name for col in columns)
+
+
+def _index_exists(table_name: str, index_name: str) -> bool:
+    bind = op.get_bind()
+    inspector = sa.inspect(bind)
+    indexes = inspector.get_indexes(table_name)
+    return any(idx["name"] == index_name for idx in indexes)
+
+
 def upgrade() -> None:
     # Add replaced_by_id - points to the question that replaced this one
-    op.add_column('questions', sa.Column(
-        'replaced_by_id',
-        UUID(as_uuid=True),
-        sa.ForeignKey('questions.id', ondelete='SET NULL'),
-        nullable=True,
-    ))
+    if not _column_exists('questions', 'replaced_by_id'):
+        op.add_column('questions', sa.Column(
+            'replaced_by_id',
+            sa.String(length=36),
+            sa.ForeignKey('questions.id', ondelete='SET NULL'),
+            nullable=True,
+        ))
     
     # Add replaces_id - points to the question this one replaced
-    op.add_column('questions', sa.Column(
-        'replaces_id',
-        UUID(as_uuid=True),
-        sa.ForeignKey('questions.id', ondelete='SET NULL'),
-        nullable=True,
-    ))
+    if not _column_exists('questions', 'replaces_id'):
+        op.add_column('questions', sa.Column(
+            'replaces_id',
+            sa.String(length=36),
+            sa.ForeignKey('questions.id', ondelete='SET NULL'),
+            nullable=True,
+        ))
     
     # Add version_number - starts at 1, increments with each regeneration
-    op.add_column('questions', sa.Column(
-        'version_number',
-        sa.Integer(),
-        nullable=False,
-        server_default='1'
-    ))
+    if not _column_exists('questions', 'version_number'):
+        op.add_column('questions', sa.Column(
+            'version_number',
+            sa.Integer(),
+            nullable=False,
+            server_default='1'
+        ))
     
     # Add is_latest - true only for the most recent version
-    op.add_column('questions', sa.Column(
-        'is_latest',
-        sa.Boolean(),
-        nullable=False,
-        server_default='true'
-    ))
+    if not _column_exists('questions', 'is_latest'):
+        op.add_column('questions', sa.Column(
+            'is_latest',
+            sa.Boolean(),
+            nullable=False,
+            server_default='true'
+        ))
     
     # Create index for efficient version chain queries
-    op.create_index('ix_questions_replaced_by_id', 'questions', ['replaced_by_id'])
-    op.create_index('ix_questions_replaces_id', 'questions', ['replaces_id'])
-    op.create_index('ix_questions_is_latest', 'questions', ['is_latest'])
+    if not _index_exists('questions', 'ix_questions_replaced_by_id'):
+        op.create_index('ix_questions_replaced_by_id', 'questions', ['replaced_by_id'])
+    if not _index_exists('questions', 'ix_questions_replaces_id'):
+        op.create_index('ix_questions_replaces_id', 'questions', ['replaces_id'])
+    if not _index_exists('questions', 'ix_questions_is_latest'):
+        op.create_index('ix_questions_is_latest', 'questions', ['is_latest'])
 
 
 def downgrade() -> None:

@@ -19,38 +19,65 @@ branch_labels: Union[str, Sequence[str], None] = None
 depends_on: Union[str, Sequence[str], None] = None
 
 
+def _column_exists(table_name: str, column_name: str) -> bool:
+    bind = op.get_bind()
+    inspector = sa.inspect(bind)
+    columns = inspector.get_columns(table_name)
+    return any(col["name"] == column_name for col in columns)
+
+
+def _index_exists(table_name: str, index_name: str) -> bool:
+    bind = op.get_bind()
+    inspector = sa.inspect(bind)
+    indexes = inspector.get_indexes(table_name)
+    return any(idx["name"] == index_name for idx in indexes)
+
+
 def upgrade() -> None:
     # User model: Add novelty settings
-    op.add_column('users', sa.Column('novelty_threshold', sa.Float(), nullable=True, default=1.0))
-    op.add_column('users', sa.Column('max_regeneration_attempts', sa.Integer(), nullable=True, default=5))
-    op.add_column('users', sa.Column('subject_reference_materials', sa.JSON(), nullable=True))
+    if not _column_exists('users', 'novelty_threshold'):
+        op.add_column('users', sa.Column('novelty_threshold', sa.Float(), nullable=True, default=1.0))
+    if not _column_exists('users', 'max_regeneration_attempts'):
+        op.add_column('users', sa.Column('max_regeneration_attempts', sa.Integer(), nullable=True, default=5))
+    if not _column_exists('users', 'subject_reference_materials'):
+        op.add_column('users', sa.Column('subject_reference_materials', sa.JSON(), nullable=True))
     
     # Set default values for existing users
     op.execute("UPDATE users SET novelty_threshold = 1.0 WHERE novelty_threshold IS NULL")
     op.execute("UPDATE users SET max_regeneration_attempts = 5 WHERE max_regeneration_attempts IS NULL")
     
     # Document model: Add index_type and subject_id
-    op.add_column('documents', sa.Column('index_type', sa.String(50), nullable=True, default='primary'))
-    op.add_column('documents', sa.Column(
-        'subject_id',
-        UUID(as_uuid=True),
-        sa.ForeignKey('subjects.id', ondelete='SET NULL'),
-        nullable=True,
-        index=True
-    ))
+    if not _column_exists('documents', 'index_type'):
+        op.add_column('documents', sa.Column('index_type', sa.String(50), nullable=True, default='primary'))
+    if not _column_exists('documents', 'subject_id'):
+        op.add_column('documents', sa.Column(
+            'subject_id',
+            UUID(as_uuid=True),
+            sa.ForeignKey('subjects.id', ondelete='SET NULL'),
+            nullable=True,
+            index=True
+        ))
     
     # Set default index_type for existing documents
     op.execute("UPDATE documents SET index_type = 'primary' WHERE index_type IS NULL")
     
     # Question model: Add novelty validation fields
-    op.add_column('questions', sa.Column('novelty_score', sa.Float(), nullable=True))
-    op.add_column('questions', sa.Column('max_similarity', sa.Float(), nullable=True))
-    op.add_column('questions', sa.Column('similarity_source', sa.String(50), nullable=True))
-    op.add_column('questions', sa.Column('generation_attempt_count', sa.Integer(), nullable=True, default=1))
-    op.add_column('questions', sa.Column('used_reference_materials', sa.Boolean(), nullable=True, default=False))
-    op.add_column('questions', sa.Column('novelty_metadata', sa.JSON(), nullable=True))
-    op.add_column('questions', sa.Column('generation_status', sa.String(20), nullable=True, default='accepted'))
-    op.add_column('questions', sa.Column('discard_reason', sa.Text(), nullable=True))
+    if not _column_exists('questions', 'novelty_score'):
+        op.add_column('questions', sa.Column('novelty_score', sa.Float(), nullable=True))
+    if not _column_exists('questions', 'max_similarity'):
+        op.add_column('questions', sa.Column('max_similarity', sa.Float(), nullable=True))
+    if not _column_exists('questions', 'similarity_source'):
+        op.add_column('questions', sa.Column('similarity_source', sa.String(50), nullable=True))
+    if not _column_exists('questions', 'generation_attempt_count'):
+        op.add_column('questions', sa.Column('generation_attempt_count', sa.Integer(), nullable=True, default=1))
+    if not _column_exists('questions', 'used_reference_materials'):
+        op.add_column('questions', sa.Column('used_reference_materials', sa.Boolean(), nullable=True, default=False))
+    if not _column_exists('questions', 'novelty_metadata'):
+        op.add_column('questions', sa.Column('novelty_metadata', sa.JSON(), nullable=True))
+    if not _column_exists('questions', 'generation_status'):
+        op.add_column('questions', sa.Column('generation_status', sa.String(20), nullable=True, default='accepted'))
+    if not _column_exists('questions', 'discard_reason'):
+        op.add_column('questions', sa.Column('discard_reason', sa.Text(), nullable=True))
     
     # Set default values for existing questions
     op.execute("UPDATE questions SET generation_attempt_count = 1 WHERE generation_attempt_count IS NULL")
@@ -58,9 +85,12 @@ def upgrade() -> None:
     op.execute("UPDATE questions SET generation_status = 'accepted' WHERE generation_status IS NULL")
     
     # Create index for novelty queries
-    op.create_index('ix_questions_generation_status', 'questions', ['generation_status'])
-    op.create_index('ix_questions_novelty_score', 'questions', ['novelty_score'])
-    op.create_index('ix_documents_index_type', 'documents', ['index_type'])
+    if not _index_exists('questions', 'ix_questions_generation_status'):
+        op.create_index('ix_questions_generation_status', 'questions', ['generation_status'])
+    if not _index_exists('questions', 'ix_questions_novelty_score'):
+        op.create_index('ix_questions_novelty_score', 'questions', ['novelty_score'])
+    if not _index_exists('documents', 'ix_documents_index_type'):
+        op.create_index('ix_documents_index_type', 'documents', ['index_type'])
 
 
 def downgrade() -> None:

@@ -44,6 +44,8 @@ setup-backend:
 		cp backend/.env.local.example backend/.env.local; \
 		echo "📝 Created backend/.env.local - please configure it"; \
 	fi
+	@echo "🔐 Setting up auth database permissions..."
+	@cd backend && .venv/bin/python -c "from app.core.auth_database import auth_db_path; import os; auth_db_path.parent.mkdir(parents=True, exist_ok=True); os.chmod(auth_db_path.parent, 0o755); print('✅ Auth database directory permissions set')"
 	@echo "✅ Backend setup complete"
 
 # Frontend setup

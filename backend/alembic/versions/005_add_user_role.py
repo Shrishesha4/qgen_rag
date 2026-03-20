@@ -18,9 +18,17 @@ branch_labels: Union[str, Sequence[str], None] = None
 depends_on: Union[str, Sequence[str], None] = None
 
 
+def _column_exists(table_name: str, column_name: str) -> bool:
+    bind = op.get_bind()
+    inspector = sa.inspect(bind)
+    columns = inspector.get_columns(table_name)
+    return any(col["name"] == column_name for col in columns)
+
+
 def upgrade() -> None:
     # Add role column with default 'teacher' for existing users
-    op.add_column('users', sa.Column('role', sa.String(20), nullable=False, server_default='teacher'))
+    if not _column_exists('users', 'role'):
+        op.add_column('users', sa.Column('role', sa.String(20), nullable=False, server_default='teacher'))
 
 
 def downgrade() -> None:

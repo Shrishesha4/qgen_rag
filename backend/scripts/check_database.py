@@ -24,25 +24,97 @@ from app.core.config import settings
 async def check_database():
     """Check database for common issues."""
     
-    print("🔍 Checking database health...\n")
+    print("\n🔍 Checking database health...\n")
     
     issues = []
     warnings = []
     
-    async with engine.begin() as conn:
-        # Check 1: Database connection
-        try:
-            await conn.execute(text("SELECT 1"))
-            print("✅ Database connection successful")
-        except Exception as e:
-            issues.append(f"Cannot connect to database: {e}")
-            return issues, warnings
+    # Check auth database permissions first
+    print("0. Checking auth database permissions...")
+    try:
+        from app.core.auth_database import auth_db_path
+        import os
         
-        # Check 2: Required extensions
-        result = await conn.execute(text("""
-            SELECT extname FROM pg_extension 
-            WHERE extname IN ('vector', 'pg_trgm')
-        """))
+        # Check directory exists and is accessible
+        if not auth_db_path.parent.exists():
+            auth_db_path.parent.mkdir(parents=True, exist_ok=True)
+            print("   Created auth database directory")
+        
+        # Set directory permissions
+        os.chmod(auth_db_path.parent, 0o755)
+        
+        # If file exists, check permissions
+        if auth_db_path.exists():
+            os.chmod(auth_db_path, 0o664)
+            print("✅ Auth database permissions verified")
+        else:
+            print("ℹ️  Auth database will be created on startup")
+    except Exception as e:
+        print(f"⚠️  Auth database permission check failed: {e}")
+    
+    # Test main database connection
+    print("\n1. Testing PostgreSQL connection...")
+    try:
+        async with engine.begin() as conn:
+            result = await conn.execute(text("SELECT 1"))
+            print("✅ Database connection successful")
+    except Exception as e:
+        print(f"❌ Database connection failed: {e}")
+        return False, issues, warnings
+    
+    # Check 2: Required extensions
+    result = await conn.execute(text("""
+        SELECT extname FROM pg_extension 
+        WHERE extname IN ('vector', 'pg_trgm')
+    """))
+    extensions = {row[0] for row in result}
+    
+    if 'vector' not in extensions:
+        warnings.append("pgvector extension not installed (will be created on startup)")
+    else:
+        print("✅ pgvector extension installed")
+    
+    if 'pg_trgm' not in extensions:
+        warnings.append("pg_trgm extension not installed")
+    else:
+        print("✅ pg_trgm extension installed")
+    
+    # Check 3: Type name conflicts
+    result = await conn.execute(text("""
+        SELECT typname 
+        FROM pg_type 
+        WHERE typnamespace = (SELECT oid FROM pg_namespace WHERE nspname = 'public')
+        AND typname IN ('subjects', 'topics', 'questions', 'users', 'training_jobs', 
+                       'training_pairs', 'model_versions', 'model_evaluations')
+    """))
+    conflicting_types = [row[0] for row in result]
+    
+    if conflicting_types:
+        issues.append(
+            f"Type name conflicts detected: {', '.join(conflicting_types)}\n"
+            f"   These type names conflict with table names.\n"
+            f"   Run: python scripts/reset_database.py"
+        )
+    else:
+        print("✅ No type name conflicts")
+    
+    # Check 4: Existing tables
+    result = await conn.execute(text("""
+        SELECT tablename 
+        FROM pg_tables 
+        WHERE schemaname = 'public'
+        ORDER BY tablename
+    """))
+    tables = [row[0] for row in result]
+    
+    if tables:
+        print(f"ℹ️  Found {len(tables)} existing tables")
+        if 'alembic_version' in tables:
+            # Check migration version
+            result = await conn.execute(text("SELECT version_num FROM alembic_version"))
+            version = result.scalar_one_or_none()
+            if version:
+                print(f"✅ Alembic version: {version}")
         extensions = {row[0] for row in result}
         
         if 'vector' not in extensions:

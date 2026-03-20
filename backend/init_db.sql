@@ -73,8 +73,14 @@ BEGIN
         IF NOT EXISTS (SELECT 1 FROM pg_indexes WHERE indexname = 'idx_questions_document_id') THEN
             CREATE INDEX idx_questions_document_id ON questions(document_id);
         END IF;
-        IF NOT EXISTS (SELECT 1 FROM pg_indexes WHERE indexname = 'idx_questions_subject_id') THEN
-            CREATE INDEX idx_questions_subject_id ON questions(subject_id);
+        IF EXISTS (
+            SELECT 1
+            FROM information_schema.columns
+            WHERE table_name = 'questions' AND column_name = 'subject_id'
+        ) THEN
+            IF NOT EXISTS (SELECT 1 FROM pg_indexes WHERE indexname = 'idx_questions_subject_id') THEN
+                CREATE INDEX idx_questions_subject_id ON questions(subject_id);
+            END IF;
         END IF;
         IF NOT EXISTS (SELECT 1 FROM pg_indexes WHERE indexname = 'idx_questions_vetting_status') THEN
             CREATE INDEX idx_questions_vetting_status ON questions(vetting_status) WHERE is_archived = false;
