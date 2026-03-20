@@ -9,6 +9,7 @@ Validates:
 """
 
 import asyncio
+import os
 import sys
 from pathlib import Path
 
@@ -36,6 +37,31 @@ REQUIRED_TABLES = {
 }
 
 
+def _check_writable_dir(path_value: str, label: str, issues: list[str]) -> None:
+    """Ensure a configured directory is writable (create + probe write)."""
+    directory = Path(path_value)
+
+    try:
+        directory.mkdir(parents=True, exist_ok=True)
+    except Exception as e:
+        issues.append(
+            f"{label} directory is not creatable: {directory} ({e})\n"
+            f"   Fix: mkdir -p {directory} && chown -R $USER:$USER {directory.parent}"
+        )
+        return
+
+    probe_file = directory / ".write_probe"
+    try:
+        with open(probe_file, "w", encoding="utf-8") as f:
+            f.write("ok")
+        probe_file.unlink(missing_ok=True)
+    except Exception as e:
+        issues.append(
+            f"{label} directory is not writable: {directory} ({e})\n"
+            f"   Fix: chmod -R u+rwX {directory} && chown -R $USER:$USER {directory}"
+        )
+
+
 async def check_database() -> tuple[list[str], list[str]]:
     """Check database for setup issues and return (issues, warnings)."""
     print("\n🔍 Checking database health...\n")
@@ -43,11 +69,10 @@ async def check_database() -> tuple[list[str], list[str]]:
     issues: list[str] = []
     warnings: list[str] = []
 
-    # Check auth database permissions first
-    print("0. Checking auth database permissions...")
+    # Check local filesystem permissions first
+    print("0. Checking local filesystem permissions...")
     try:
         from app.core.auth_database import auth_db_path
-        import os
 
         auth_db_path.parent.mkdir(parents=True, exist_ok=True)
         os.chmod(auth_db_path.parent, 0o755)
@@ -56,6 +81,12 @@ async def check_database() -> tuple[list[str], list[str]]:
             print("✅ Auth database permissions verified")
         else:
             print("ℹ️  Auth database will be created on startup")
+
+        _check_writable_dir(settings.UPLOAD_DIR, "Upload", issues)
+        _check_writable_dir(settings.TRAINING_DATA_DIR, "Training data", issues)
+        _check_writable_dir(settings.LORA_ADAPTERS_DIR, "LoRA adapters", issues)
+        if not issues:
+            print("✅ Local filesystem permissions verified")
     except Exception as e:
         warnings.append(f"Auth DB permission check failed: {e}")
 

@@ -72,7 +72,7 @@ class Settings(BaseSettings):
     DEEPSEEK_BASE_URL: str = Field(default="https://api.deepseek.com/v1")
 
     # File Upload
-    UPLOAD_DIR: str = Field(default="./uploads")
+    UPLOAD_DIR: str = Field(default="./.data/uploads")
     MAX_UPLOAD_SIZE_MB: int = Field(default=500)
     ALLOWED_EXTENSIONS: List[str] = Field(default=[".pdf", ".docx", ".txt", ".xlsx", ".csv"])
 
@@ -148,8 +148,8 @@ class Settings(BaseSettings):
     API_PORT: int = Field(default=8000)
     
     # Training Pipeline (LoRA fine-tuning)
-    TRAINING_DATA_DIR: str = Field(default="./training_data")
-    LORA_ADAPTERS_DIR: str = Field(default="./lora_adapters")
+    TRAINING_DATA_DIR: str = Field(default="./.data/training_data")
+    LORA_ADAPTERS_DIR: str = Field(default="./.data/lora_adapters")
     TRAINING_BASE_MODEL: str = Field(default="deepseek-ai/DeepSeek-R1-Distill-Llama-1.7B")
 
 

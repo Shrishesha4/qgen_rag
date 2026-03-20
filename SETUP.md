@@ -41,6 +41,10 @@ pip install -r requirements.txt
 
 # Copy environment template
 cp .env.local.example .env.local
+
+# Create writable runtime directories (prevents PermissionError on fresh installs)
+mkdir -p .data/uploads .data/training_data .data/lora_adapters
+chmod -R u+rwX .data
 ```
 
 ### 4. Configure Environment
@@ -67,6 +71,7 @@ python scripts/check_database.py
 **Note**: 
 - The auth database (SQLite) permissions are automatically set during setup
 - If you ever run the app with `sudo`, fix permissions with: `sudo chown $USER:$USER auth.db && sudo chmod 664 auth.db`
+- If data directory permissions are wrong, fix with: `sudo chown -R $USER:$USER .data && chmod -R u+rwX .data`
 
 ### 6. Frontend Setup
 ```bash
