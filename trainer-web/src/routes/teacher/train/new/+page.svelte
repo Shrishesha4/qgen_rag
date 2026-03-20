@@ -77,6 +77,9 @@
 		processing_detail?: string;
 	}>>([]);
 	let uploadingMaterials = $state(false);
+	let uploadProgress = $state(0);
+	let uploadTotal = $state(0);
+	let uploadCurrent = $state(0);
 	let materialsStatusError = $state('');
 	let materialsStatusMessage = $state('');
 	let skipReferencePdf = $state(false);
@@ -536,11 +539,17 @@
 		materialsStatusError = '';
 		skipReferencePdf = false;
 		materials = [...materials, ...files];
+		uploadTotal = files.length;
+		uploadCurrent = 0;
+		uploadProgress = 0;
 
 		try {
 			const subjectId = await ensureSubjectId();
-			for (const file of files) {
-				await uploadDocument(file, subjectId, 'reference_book');
+			for (let i = 0; i < files.length; i++) {
+				uploadCurrent = i + 1;
+				uploadProgress = Math.round(((i + 0.5) / files.length) * 100);
+				await uploadDocument(files[i], subjectId, 'reference_book');
+				uploadProgress = Math.round(((i + 1) / files.length) * 100);
 			}
 			await refreshMaterialStatuses();
 			startMaterialPolling();
@@ -548,6 +557,9 @@
 			materialsStatusError = e instanceof Error ? e.message : 'Failed to upload reference materials';
 		} finally {
 			uploadingMaterials = false;
+			uploadProgress = 0;
+			uploadTotal = 0;
+			uploadCurrent = 0;
 		}
 	}
 
@@ -876,69 +888,103 @@
 
 		<!-- Step 4: References -->
 		{:else if step === 4}
-			<p class="step-desc">Upload reference materials now, or mark this subject as not requiring PDF and continue.</p>
-			<FileUploadZone
-				accept=".pdf,.doc,.docx,.txt,.pptx"
-				label="Upload Reference Materials"
-				hint="PDF, Word, PowerPoint, or Text — multiple files allowed"
-				files={materials}
-				onfilesSelected={handleMaterialsSelected}
-			/>
-			<button
-				type="button"
-				class="glass-btn skip-pdf-btn"
-				class:active={skipReferencePdf}
-				onclick={toggleSkipReferencePdf}
-			>
-				{#if skipReferencePdf}
-					✓ This subject doesn't require PDF
-				{:else}
-					This subject doesn't require PDF
-				{/if}
-			</button>
-			{#if uploadingMaterials}
-				<p class="step-hint">Uploading files...</p>
-			{/if}
-			{#if skipReferencePdf}
-				<p class="step-hint">PDF upload skipped. You can continue with topic and syllabus-based setup.</p>
-			{:else if materialsStatusMessage}
-				<p class="step-hint">{materialsStatusMessage}</p>
-			{/if}
-
-			<p class="step-desc ref-questions-desc">Upload question papers or question banks (optional)</p>
-			<FileUploadZone
-				accept=".pdf,.doc,.docx,.txt,.csv,.xlsx,.xls"
-				label="Upload Reference Questions"
-				hint="PDF, Word, Excel, CSV — multiple files allowed"
-				files={refQuestions}
-				onfilesSelected={handleRefQuestionsSelected}
-			/>
-			{#if uploadingRefQuestions}
-				<p class="step-hint">Uploading reference question files...</p>
-			{/if}
-			{#if refQuestionsStatusMessage}
-				<p class="step-hint">{refQuestionsStatusMessage}</p>
-			{/if}
-
-			<div class="question-count-card">
-				<label class="field-label" for="question-count-input">Questions To Generate</label>
-				<div class="question-count-row">
-					<input
-						id="question-count-input"
-						class="glass-input question-count-input"
-						type="number"
-						min={MIN_QUESTION_COUNT}
-						max={MAX_QUESTION_COUNT}
-						bind:value={desiredQuestionCount}
-						oninput={handleQuestionCountInput}
-					/>
-					<span class="question-count-unit">questions</span>
+			<!-- Reference Materials Section -->
+			<div class="upload-section">
+				<div class="upload-section-header">
+					<h3 class="upload-section-title">📚 Reference Materials</h3>
+					<span class="upload-section-badge">{materialDocs.length > 0 ? `${materialDocs.length} file${materialDocs.length !== 1 ? 's' : ''}` : 'Required'}</span>
 				</div>
-				<p class="question-count-hint">Set this now. It will be used when training starts even if processing finishes later.</p>
+				<p class="upload-section-desc">Upload textbooks, notes, or study materials to generate questions from.</p>
+				
+				<FileUploadZone
+					accept=".pdf,.doc,.docx,.txt,.pptx"
+					label="Drop files here or click to browse"
+					hint="PDF, Word, PowerPoint, or Text"
+					files={materials}
+					onfilesSelected={handleMaterialsSelected}
+				/>
+
+				{#if uploadingMaterials}
+					<div class="upload-progress-card">
+						<div class="upload-progress-header">
+							<span class="upload-progress-label">📤 Uploading {uploadCurrent} of {uploadTotal}...</span>
+							<span class="upload-progress-pct">{uploadProgress}%</span>
+						</div>
+						<div class="upload-progress-track">
+							<div class="upload-progress-fill" style:width="{uploadProgress}%"></div>
+						</div>
+					</div>
+				{/if}
+
+				<button
+					type="button"
+					class="glass-btn skip-pdf-btn"
+					class:active={skipReferencePdf}
+					onclick={toggleSkipReferencePdf}
+				>
+					{#if skipReferencePdf}
+						✓ Generate without reference materials
+					{:else}
+						Generate without reference materials
+					{/if}
+				</button>
+
+				{#if skipReferencePdf}
+					<p class="step-hint success-hint">✓ Will use topic and syllabus content only.</p>
+				{:else if materialsStatusMessage && !uploadingMaterials}
+					<p class="step-hint">{materialsStatusMessage}</p>
+				{/if}
+			</div>
+
+			<!-- Reference Questions Section -->
+			<div class="upload-section">
+				<div class="upload-section-header">
+					<h3 class="upload-section-title">📝 Reference Questions</h3>
+					<span class="upload-section-badge optional">Optional</span>
+				</div>
+				<p class="upload-section-desc">Upload past papers or question banks to help match question style.</p>
+				
+				<FileUploadZone
+					accept=".pdf,.doc,.docx,.txt,.csv,.xlsx,.xls"
+					label="Drop files here or click to browse"
+					hint="PDF, Word, Excel, or CSV"
+					files={refQuestions}
+					onfilesSelected={handleRefQuestionsSelected}
+				/>
+
+				{#if uploadingRefQuestions}
+					<p class="step-hint">📤 Uploading reference questions...</p>
+				{/if}
+				{#if refQuestionsStatusMessage && !uploadingRefQuestions}
+					<p class="step-hint">{refQuestionsStatusMessage}</p>
+				{/if}
+			</div>
+
+			<!-- Generation Settings -->
+			<div class="upload-section settings-section">
+				<div class="upload-section-header">
+					<h3 class="upload-section-title">⚙️ Generation Settings</h3>
+				</div>
+				<div class="question-count-card">
+					<label class="field-label" for="question-count-input">Questions To Generate</label>
+					<div class="question-count-row">
+						<input
+							id="question-count-input"
+							class="glass-input question-count-input"
+							type="number"
+							min={MIN_QUESTION_COUNT}
+							max={MAX_QUESTION_COUNT}
+							bind:value={desiredQuestionCount}
+							oninput={handleQuestionCountInput}
+						/>
+						<span class="question-count-unit">questions</span>
+					</div>
+					<p class="question-count-hint">This count will be used when training starts.</p>
+				</div>
 			</div>
 
 			{#if tempSubjectId}
-				<p class="step-hint resume-note">This step is saved automatically. You can leave and return later to continue from here.</p>
+				<p class="step-hint resume-note">💾 Progress saved. You can leave and return later.</p>
 			{/if}
 			{#if materialDocs.length > 0 && !materialsReadyForNext}
 				<div class="material-progress-wrap">
@@ -1966,8 +2012,108 @@
 			0 0 0 1px rgba(255, 255, 255, 0.12) !important;
 	}
 
-	.ref-questions-desc {
-		margin-top: 1rem;
+	/* Upload section styles */
+	.upload-section {
+		margin-bottom: 1.5rem;
+		padding: 1rem;
+		border-radius: var(--glass-radius);
+		background: rgba(255, 255, 255, 0.03);
+		border: 1px solid rgba(255, 255, 255, 0.08);
+	}
+
+	.upload-section-header {
+		display: flex;
+		align-items: center;
+		justify-content: space-between;
+		margin-bottom: 0.5rem;
+	}
+
+	.upload-section-title {
+		font-size: 1rem;
+		font-weight: 700;
+		margin: 0;
+		color: var(--theme-text);
+	}
+
+	.upload-section-badge {
+		font-size: 0.7rem;
+		font-weight: 600;
+		padding: 0.2rem 0.6rem;
+		border-radius: 12px;
+		background: rgba(var(--theme-primary-rgb), 0.2);
+		color: var(--theme-primary);
+		text-transform: uppercase;
+		letter-spacing: 0.03em;
+	}
+
+	.upload-section-badge.optional {
+		background: rgba(255, 255, 255, 0.1);
+		color: var(--theme-text-muted);
+	}
+
+	.upload-section-desc {
+		font-size: 0.85rem;
+		color: var(--theme-text-muted);
+		margin: 0 0 0.75rem;
+	}
+
+	.settings-section {
+		background: rgba(var(--theme-primary-rgb), 0.05);
+		border-color: rgba(var(--theme-primary-rgb), 0.15);
+	}
+
+	.settings-section .question-count-card {
+		margin-top: 0;
+		padding: 0;
+		border: none;
+		background: none;
+		box-shadow: none !important;
+	}
+
+	/* Upload progress card */
+	.upload-progress-card {
+		margin-top: 0.75rem;
+		padding: 0.75rem 1rem;
+		border-radius: 10px;
+		background: rgba(var(--theme-primary-rgb), 0.1);
+		border: 1px solid rgba(var(--theme-primary-rgb), 0.25);
+	}
+
+	.upload-progress-header {
+		display: flex;
+		justify-content: space-between;
+		align-items: center;
+		margin-bottom: 0.5rem;
+	}
+
+	.upload-progress-label {
+		font-size: 0.85rem;
+		font-weight: 600;
+		color: var(--theme-text);
+	}
+
+	.upload-progress-pct {
+		font-size: 0.85rem;
+		font-weight: 700;
+		color: var(--theme-primary);
+	}
+
+	.upload-progress-track {
+		height: 6px;
+		border-radius: 3px;
+		background: rgba(255, 255, 255, 0.1);
+		overflow: hidden;
+	}
+
+	.upload-progress-fill {
+		height: 100%;
+		background: linear-gradient(90deg, var(--theme-primary), var(--theme-primary-hover));
+		border-radius: 3px;
+		transition: width 0.3s ease;
+	}
+
+	.success-hint {
+		color: #9be4b9 !important;
 	}
 
 	.skip-pdf-btn {
