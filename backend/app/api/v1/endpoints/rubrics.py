@@ -77,7 +77,7 @@ async def create_rubric(
 async def list_rubrics(
     page: int = Query(1, ge=1),
     limit: int = Query(20, ge=1, le=100),
-    subject_id: Optional[uuid.UUID] = Query(None, description="Filter by subject"),
+    subject_id: Optional[str] = Query(None, description="Filter by subject"),
     exam_type: Optional[str] = Query(None, description="Filter by exam type"),
     current_user: User = Depends(get_current_user),
     db: AsyncSession = Depends(get_db),
@@ -114,7 +114,7 @@ async def list_rubrics(
 
 @router.get("/{rubric_id}", response_model=RubricDetailResponse)
 async def get_rubric(
-    rubric_id: uuid.UUID,
+    rubric_id: str,
     current_user: User = Depends(get_current_user),
     db: AsyncSession = Depends(get_db),
 ):
@@ -144,7 +144,7 @@ async def get_rubric(
 
 @router.put("/{rubric_id}", response_model=RubricResponse)
 async def update_rubric(
-    rubric_id: uuid.UUID,
+    rubric_id: str,
     rubric_data: RubricUpdate,
     current_user: User = Depends(get_current_user),
     db: AsyncSession = Depends(get_db),
@@ -189,7 +189,7 @@ async def update_rubric(
 
 @router.delete("/{rubric_id}", status_code=status.HTTP_204_NO_CONTENT)
 async def delete_rubric(
-    rubric_id: uuid.UUID,
+    rubric_id: str,
     current_user: User = Depends(get_current_user),
     db: AsyncSession = Depends(get_db),
 ):

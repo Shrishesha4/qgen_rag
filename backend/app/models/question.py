@@ -6,12 +6,13 @@ from datetime import datetime
 from typing import Optional, List
 from sqlalchemy import String, Integer, Float, Boolean, DateTime, Text, ForeignKey, CheckConstraint, func
 from sqlalchemy.orm import Mapped, mapped_column, relationship
-from sqlalchemy.dialects.postgresql import UUID, JSONB, ARRAY
+from sqlalchemy.dialects.postgresql import JSONB
 from pgvector.sqlalchemy import Vector
 import uuid
 
 from app.core.database import Base
 from app.core.config import settings
+from app.core.types import UUIDString
 
 
 class Question(Base):
@@ -19,19 +20,19 @@ class Question(Base):
     
     __tablename__ = "questions"
 
-    id: Mapped[uuid.UUID] = mapped_column(
-        UUID(as_uuid=True), primary_key=True, default=uuid.uuid4
+    id: Mapped[str] = mapped_column(
+        UUIDString(), primary_key=True, default=lambda: str(uuid.uuid4())
     )
-    document_id: Mapped[Optional[uuid.UUID]] = mapped_column(
-        UUID(as_uuid=True), ForeignKey("documents.id", ondelete="SET NULL"), nullable=True
+    document_id: Mapped[Optional[str]] = mapped_column(
+        UUIDString(), ForeignKey("documents.id", ondelete="SET NULL"), nullable=True
     )
-    subject_id: Mapped[Optional[uuid.UUID]] = mapped_column(
-        UUID(as_uuid=True), ForeignKey("subjects.id", ondelete="SET NULL"), nullable=True
+    subject_id: Mapped[Optional[str]] = mapped_column(
+        String(36), ForeignKey("subjects.id", ondelete="SET NULL"), nullable=True
     )
-    topic_id: Mapped[Optional[uuid.UUID]] = mapped_column(
-        UUID(as_uuid=True), ForeignKey("topics.id", ondelete="SET NULL"), nullable=True
+    topic_id: Mapped[Optional[str]] = mapped_column(
+        String(36), ForeignKey("topics.id", ondelete="SET NULL"), nullable=True
     )
-    session_id: Mapped[Optional[uuid.UUID]] = mapped_column(UUID(as_uuid=True))
+    session_id: Mapped[Optional[str]] = mapped_column(UUIDString())
     
     # Question content
     question_text: Mapped[str] = mapped_column(Text, nullable=False)
@@ -45,12 +46,12 @@ class Question(Base):
     
     # Answer for MCQs
     correct_answer: Mapped[Optional[str]] = mapped_column(Text)
-    options: Mapped[Optional[List[str]]] = mapped_column(ARRAY(Text))
+    options: Mapped[Optional[List[str]]] = mapped_column(JSONB)
     explanation: Mapped[Optional[str]] = mapped_column(Text)  # Explanation for the answer
     
     # Context
-    source_chunk_ids: Mapped[Optional[List[uuid.UUID]]] = mapped_column(ARRAY(UUID(as_uuid=True)))
-    topic_tags: Mapped[Optional[List[str]]] = mapped_column(ARRAY(Text))
+    source_chunk_ids: Mapped[Optional[List[str]]] = mapped_column(JSONB)
+    topic_tags: Mapped[Optional[List[str]]] = mapped_column(JSONB)
     
     # OBE Course Outcome mapping (CO1-CO5 with levels 1-3)
     course_outcome_mapping: Mapped[Optional[dict]] = mapped_column(JSONB)  # {"CO1": 2, "CO3": 1}
@@ -86,7 +87,7 @@ class Question(Base):
     
     # User interaction
     times_shown: Mapped[int] = mapped_column(Integer, default=0)
-    user_rating: Mapped[Optional[int]] = mapped_column(Integer)
+    user_rating: Mapped[Optional[float]] = mapped_column(Float)
     user_difficulty_rating: Mapped[Optional[str]] = mapped_column(String(20))
     user_answer: Mapped[Optional[str]] = mapped_column(Text)
     answer_correctness: Mapped[Optional[bool]] = mapped_column(Boolean)
@@ -95,11 +96,11 @@ class Question(Base):
     is_archived: Mapped[bool] = mapped_column(Boolean, default=False)
     
     # Version control for regeneration tracking
-    replaced_by_id: Mapped[Optional[uuid.UUID]] = mapped_column(
-        UUID(as_uuid=True), ForeignKey("questions.id", ondelete="SET NULL"), nullable=True
+    replaced_by_id: Mapped[Optional[str]] = mapped_column(
+        UUIDString(), ForeignKey("questions.id", ondelete="SET NULL"), nullable=True
     )
-    replaces_id: Mapped[Optional[uuid.UUID]] = mapped_column(
-        UUID(as_uuid=True), ForeignKey("questions.id", ondelete="SET NULL"), nullable=True
+    replaces_id: Mapped[Optional[str]] = mapped_column(
+        UUIDString(), ForeignKey("questions.id", ondelete="SET NULL"), nullable=True
     )
     version_number: Mapped[int] = mapped_column(Integer, default=1)
     is_latest: Mapped[bool] = mapped_column(Boolean, default=True)
@@ -134,20 +135,20 @@ class GenerationSession(Base):
     
     __tablename__ = "generation_sessions"
 
-    id: Mapped[uuid.UUID] = mapped_column(
-        UUID(as_uuid=True), primary_key=True, default=uuid.uuid4
+    id: Mapped[str] = mapped_column(
+        UUIDString(), primary_key=True, default=lambda: str(uuid.uuid4())
     )
-    document_id: Mapped[Optional[uuid.UUID]] = mapped_column(
-        UUID(as_uuid=True), ForeignKey("documents.id", ondelete="SET NULL"), nullable=True
+    document_id: Mapped[Optional[str]] = mapped_column(
+        UUIDString(), ForeignKey("documents.id", ondelete="SET NULL"), nullable=True
     )
     user_id: Mapped[str] = mapped_column(
         String(36), nullable=False, index=True
     )
-    subject_id: Mapped[Optional[uuid.UUID]] = mapped_column(
-        UUID(as_uuid=True), ForeignKey("subjects.id", ondelete="SET NULL"), nullable=True
+    subject_id: Mapped[Optional[str]] = mapped_column(
+        String(36), ForeignKey("subjects.id", ondelete="SET NULL"), nullable=True
     )
-    topic_id: Mapped[Optional[uuid.UUID]] = mapped_column(
-        UUID(as_uuid=True), ForeignKey("topics.id", ondelete="SET NULL"), nullable=True
+    topic_id: Mapped[Optional[str]] = mapped_column(
+        String(36), ForeignKey("topics.id", ondelete="SET NULL"), nullable=True
     )
     
     # Generation method: quick, rubric, chapter, import
@@ -155,10 +156,10 @@ class GenerationSession(Base):
     
     # Request parameters
     requested_count: Mapped[int] = mapped_column(Integer, default=0)
-    requested_types: Mapped[Optional[List[str]]] = mapped_column(ARRAY(Text))
+    requested_types: Mapped[Optional[List[str]]] = mapped_column(JSONB)
     requested_marks: Mapped[Optional[int]] = mapped_column(Integer)
     requested_difficulty: Mapped[Optional[str]] = mapped_column(String(20))
-    focus_topics: Mapped[Optional[List[str]]] = mapped_column(ARRAY(Text))
+    focus_topics: Mapped[Optional[List[str]]] = mapped_column(JSONB)
     
     # Generation tracking
     status: Mapped[str] = mapped_column(String(20), default="in_progress")

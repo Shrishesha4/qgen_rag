@@ -5,7 +5,6 @@ Document management API endpoints.
 import asyncio
 import os
 from typing import Optional, Literal
-import uuid
 
 from fastapi import APIRouter, Depends, HTTPException, status, UploadFile, File, Query, Form
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -130,7 +129,7 @@ async def list_documents(
 
 @router.get("/{document_id}", response_model=DocumentResponse)
 async def get_document(
-    document_id: uuid.UUID,
+    document_id: str,
     current_user: User = Depends(get_current_user),
     db: AsyncSession = Depends(get_db),
 ):
@@ -152,7 +151,7 @@ async def get_document(
 
 @router.delete("/{document_id}")
 async def delete_document(
-    document_id: uuid.UUID,
+    document_id: str,
     current_user: User = Depends(get_current_user),
     db: AsyncSession = Depends(get_db),
 ):
@@ -174,7 +173,7 @@ async def delete_document(
 
 @router.get("/{document_id}/chunks")
 async def get_document_chunks(
-    document_id: uuid.UUID,
+    document_id: str,
     current_user: User = Depends(get_current_user),
     db: AsyncSession = Depends(get_db),
 ):
@@ -209,7 +208,7 @@ async def get_document_chunks(
 
 @router.get("/{document_id}/status")
 async def get_document_status(
-    document_id: uuid.UUID,
+    document_id: str,
     current_user: User = Depends(get_current_user),
     db: AsyncSession = Depends(get_db),
 ):
@@ -356,19 +355,20 @@ async def _process_pdf_reference_questions(
     document_service: DocumentService,
     content: bytes,
     filename: str,
-    document_id: uuid.UUID,
+    document_id: str,
 ) -> None:
     """
     Background task: Extract text from a PDF (with OCR fallback for scanned docs),
     then use the LLM to parse questions into structured format.
     Uses short-lived DB sessions to avoid holding connections during long operations.
     """
-    import tempfile
     import logging
     from sqlalchemy import update
     from app.models.document import Document
     from app.services.llm_service import LLMService
     from app.core.database import AsyncSessionLocal
+    import fitz
+    import re
     
     logger = logging.getLogger(__name__)
     
@@ -381,183 +381,152 @@ async def _process_pdf_reference_questions(
             await session.commit()
     
     try:
-        # Update status to processing
         await _update_doc({
             "processing_status": "processing",
-            "document_metadata": {"processing_step": "extracting_text", "processing_progress": 10},
+            "document_metadata": {
+                "processing_step": "extracting_text",
+                "processing_progress": 10,
+                "processing_detail": "Fast parsing mode",
+            },
         })
-        
-        # Write PDF to a temp file for extraction
-        with tempfile.NamedTemporaryFile(suffix=".pdf", delete=False) as tmp:
-            tmp.write(content)
-            tmp_path = tmp.name
-        
-        try:
-            # Create a short-lived session just for the DocumentService init
-            # The extraction itself doesn't need DB — only the progress callback does
-            async def progress_cb(step, progress, detail):
-                await _update_doc({
-                    "document_metadata": {
-                        "processing_step": step,
-                        "processing_progress": min(progress, 50),
-                        "processing_detail": detail,
-                    }
-                })
-            
-            # Use a temporary session for DocumentService (extraction is mostly CPU/IO, not DB)
-            async with AsyncSessionLocal() as tmp_session:
-                bg_document_service = DocumentService(tmp_session)
-                pages_data = await bg_document_service._extract_text_with_pages(
-                    tmp_path, "application/pdf", progress_callback=progress_cb
-                )
-            
-            # Combine all page text
-            full_text = "\n\n".join(
-                p["text"] for p in pages_data if p.get("text", "").strip()
-            )
-            
-            if not full_text.strip():
-                logger.warning(f"No text extracted from PDF: {filename}")
-                await _update_doc({
-                    "processing_status": "completed",
-                    "total_chunks": 0,
-                    "document_metadata": {
-                        "parsed_questions": [],
-                        "total_parsed": 0,
-                        "error": "No text could be extracted from the PDF.",
-                    },
-                })
-                return
-            
-            used_ocr = any(p.get("extraction_method") == "ocr" for p in pages_data)
-            
-            # Update status for LLM parsing phase
+
+        max_pages = 40
+        pages_data = []
+        with fitz.open(stream=content, filetype="pdf") as doc:
+            total_pages = min(len(doc), max_pages)
+            for i in range(total_pages):
+                txt = doc[i].get_text("text").strip()
+                if txt:
+                    pages_data.append({"text": txt, "extraction_method": "native"})
+
+        full_text = "\n\n".join(p["text"] for p in pages_data if p.get("text"))
+        used_ocr = False
+
+        # If native extraction yields almost nothing, fall back to existing OCR-capable extractor.
+        if len(full_text) < 500:
             await _update_doc({
                 "document_metadata": {
-                    "processing_step": "llm_parsing",
-                    "processing_progress": 55,
-                    "processing_detail": f"Extracted {len(pages_data)} pages. Parsing questions with AI...",
-                    "used_ocr": used_ocr,
-                    "total_pages": len(pages_data),
+                    "processing_step": "extracting_text",
+                    "processing_progress": 35,
+                    "processing_detail": "Low native text, trying OCR fallback...",
                 }
             })
-            
-            # Use LLM to parse questions from the extracted text
-            llm = LLMService()
-            
-            # Process in chunks — keep small to avoid LLM output truncation
-            max_chunk_size = 8000
-            text_chunks = []
-            if len(full_text) > max_chunk_size:
-                current_chunk = ""
-                for page in pages_data:
-                    page_text = page.get("text", "").strip()
-                    if not page_text:
-                        continue
-                    if len(current_chunk) + len(page_text) > max_chunk_size and current_chunk:
-                        text_chunks.append(current_chunk)
-                        current_chunk = page_text
-                    else:
-                        current_chunk += "\n\n" + page_text if current_chunk else page_text
-                if current_chunk:
-                    text_chunks.append(current_chunk)
-            else:
-                text_chunks = [full_text]
-            
-            all_questions = []
-            for chunk_idx, chunk_text in enumerate(text_chunks):
-                progress = 55 + int((chunk_idx / len(text_chunks)) * 40)
-                await _update_doc({
-                    "document_metadata": {
-                        "processing_step": "llm_parsing",
-                        "processing_progress": progress,
-                        "processing_detail": f"Parsing questions (part {chunk_idx + 1}/{len(text_chunks)})...",
-                        "used_ocr": used_ocr,
-                        "total_pages": len(pages_data),
-                    }
-                })
-                
-                system_prompt = (
-                    "You are an expert at extracting exam/test questions from document text. "
-                    "Parse the following text and identify all questions present. "
-                    "For each question, extract the question text, options (if MCQ), correct answer (if available), "
-                    "question type (mcq, short_answer, long_answer, true_false, fill_in_blank), "
-                    "difficulty level, marks/points, course outcome (CO), and learning outcome (LO) if mentioned."
-                )
-                
-                prompt = f"""Extract all questions from the following exam/question paper text.
-Respond with ONLY a JSON object — no explanation, no markdown, no text before or after.
-
-TEXT:
-{chunk_text}
-
-JSON format:
-{{
-  "questions": [
-    {{
-      "question_text": "The full question text",
-      "options": ["Option A", "Option B", "Option C", "Option D"],
-      "correct_answer": "answer or null",
-      "question_type": "mcq",
-      "difficulty": "easy",
-      "marks": "5",
-      "co": "CO1",
-      "lo": "LO1"
-    }}
-  ]
-}}
-
-Rules:
-- question_type: mcq | short_answer | long_answer | true_false | fill_in_blank
-- options: array for MCQs, null otherwise
-- Set null for any field not found in the text
-- Extract EVERY question including sub-questions (a, b, c)
-- Do NOT invent questions not present in the text
-- Return {{"questions": []}} if no questions found"""
-
-                try:
-                    result = await llm.generate_json(
-                        prompt=prompt,
-                        system_prompt=system_prompt,
-                        temperature=0.1,
+            import tempfile
+            with tempfile.NamedTemporaryFile(suffix=".pdf", delete=False) as tmp:
+                tmp.write(content)
+                tmp_path = tmp.name
+            try:
+                async with AsyncSessionLocal() as tmp_session:
+                    bg_document_service = DocumentService(tmp_session)
+                    pages_data = await bg_document_service._extract_text_with_pages(
+                        tmp_path, "application/pdf", progress_callback=None
                     )
-                    
-                    questions = result.get("questions", [])
-                    for q in questions:
-                        if not q.get("question_text"):
-                            continue
-                        all_questions.append({
-                            "question_text": q["question_text"],
-                            "options": q.get("options"),
-                            "correct_answer": q.get("correct_answer"),
-                            "question_type": q.get("question_type", "short_answer"),
-                            "difficulty": q.get("difficulty"),
-                            "marks": q.get("marks"),
-                            "co": q.get("co"),
-                            "lo": q.get("lo"),
-                        })
-                except Exception as e:
-                    logger.error(f"LLM parsing failed for chunk {chunk_idx + 1}: {e}")
-            
-            # Update document with final results
+                full_text = "\n\n".join(p.get("text", "") for p in pages_data if p.get("text", "").strip())
+                used_ocr = any(p.get("extraction_method") == "ocr" for p in pages_data)
+            finally:
+                try:
+                    os.unlink(tmp_path)
+                except OSError:
+                    pass
+
+        if not full_text.strip():
             await _update_doc({
                 "processing_status": "completed",
-                "total_chunks": len(all_questions),
+                "total_chunks": 0,
                 "document_metadata": {
-                    "parsed_questions": all_questions,
-                    "total_parsed": len(all_questions),
+                    "parsed_questions": [],
+                    "total_parsed": 0,
+                    "error": "No text could be extracted from the PDF.",
                     "used_ocr": used_ocr,
                     "total_pages": len(pages_data),
                 },
             })
-            logger.info(f"PDF reference questions parsed: {len(all_questions)} questions from {filename}")
-            
-        finally:
-            try:
-                os.unlink(tmp_path)
-            except OSError:
-                pass
-                
+            return
+
+        await _update_doc({
+            "document_metadata": {
+                "processing_step": "heuristic_parsing",
+                "processing_progress": 65,
+                "processing_detail": "Extracting questions with fast parser...",
+                "used_ocr": used_ocr,
+                "total_pages": len(pages_data),
+            }
+        })
+
+        question_pattern = re.compile(r"(?:^|\n)\s*(?:Q\.?\s*\d+|\d+[\.)])\s+(.+?)(?=(?:\n\s*(?:Q\.?\s*\d+|\d+[\.)])\s+)|\Z)", re.IGNORECASE | re.DOTALL)
+        heuristic_questions = []
+        for match in question_pattern.finditer(full_text):
+            q_text = re.sub(r"\s+", " ", match.group(1)).strip()
+            if len(q_text) < 12:
+                continue
+            heuristic_questions.append({
+                "question_text": q_text[:2000],
+                "options": None,
+                "correct_answer": None,
+                "question_type": "short_answer",
+                "difficulty": None,
+                "marks": None,
+                "co": None,
+                "lo": None,
+            })
+
+        all_questions = heuristic_questions
+
+        # Optional single LLM pass if heuristic parser found too few questions.
+        if len(all_questions) < 3:
+            await _update_doc({
+                "document_metadata": {
+                    "processing_step": "llm_parsing",
+                    "processing_progress": 80,
+                    "processing_detail": "Refining extraction with AI...",
+                    "used_ocr": used_ocr,
+                    "total_pages": len(pages_data),
+                }
+            })
+            llm = LLMService()
+            prompt_text = full_text[:14000]
+            result = await llm.generate_json(
+                prompt=(
+                    "Extract exam questions from this text and return ONLY JSON with key 'questions'.\n\n"
+                    f"TEXT:\n{prompt_text}"
+                ),
+                system_prompt=(
+                    "Return JSON: {\"questions\":[{\"question_text\":str,\"options\":list|null,"
+                    "\"correct_answer\":str|null,\"question_type\":str,\"difficulty\":str|null,"
+                    "\"marks\":str|null,\"co\":str|null,\"lo\":str|null}]}"
+                ),
+                temperature=0.0,
+            )
+            llm_questions = result.get("questions", []) if isinstance(result, dict) else []
+            if llm_questions:
+                all_questions = []
+                for q in llm_questions:
+                    qt = (q.get("question_text") or "").strip()
+                    if not qt:
+                        continue
+                    all_questions.append({
+                        "question_text": qt[:2000],
+                        "options": q.get("options"),
+                        "correct_answer": q.get("correct_answer"),
+                        "question_type": q.get("question_type", "short_answer"),
+                        "difficulty": q.get("difficulty"),
+                        "marks": q.get("marks"),
+                        "co": q.get("co"),
+                        "lo": q.get("lo"),
+                    })
+
+        await _update_doc({
+            "processing_status": "completed",
+            "total_chunks": len(all_questions),
+            "document_metadata": {
+                "parsed_questions": all_questions,
+                "total_parsed": len(all_questions),
+                "used_ocr": used_ocr,
+                "total_pages": len(pages_data),
+            },
+        })
+        logger.info(f"PDF reference questions parsed quickly: {len(all_questions)} questions from {filename}")
+
     except Exception as e:
         logger.error(f"Background PDF reference question processing failed: {e}")
         try:
@@ -610,14 +579,6 @@ async def upload_reference_document(
             detail=f"File too large. Maximum size: {settings.MAX_UPLOAD_SIZE_MB}MB",
         )
     
-    try:
-        parsed_subject_id = uuid.UUID(subject_id)
-    except ValueError:
-        raise HTTPException(
-            status_code=status.HTTP_400_BAD_REQUEST,
-            detail="Invalid subject_id format",
-        )
-    
     mime_type = MIME_TYPE_MAPPING.get(ext, "application/octet-stream")
     
     document_service = DocumentService(db)
@@ -628,7 +589,7 @@ async def upload_reference_document(
             filename=filename,
             file_content=content,
             mime_type=mime_type,
-            subject_id=parsed_subject_id,
+            subject_id=subject_id,
             index_type=index_type,
         )
         linked_from = (document.document_metadata or {}).get("linked_from_document_id")
@@ -715,7 +676,7 @@ async def upload_reference_document(
 
 @router.get("/reference/list")
 async def list_reference_documents(
-    subject_id: Optional[uuid.UUID] = Query(None, description="Filter by subject"),
+    subject_id: Optional[str] = Query(None, description="Filter by subject"),
     index_type: Optional[str] = Query(None, description="Filter by type: reference_book, template_paper, reference_questions"),
     current_user: User = Depends(get_current_user),
     db: AsyncSession = Depends(get_db),

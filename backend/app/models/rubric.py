@@ -3,13 +3,14 @@ Rubric database model for exam generation.
 """
 
 from datetime import datetime
-from typing import Optional, List
+from typing import Optional
 from sqlalchemy import String, Integer, DateTime, Text, ForeignKey, func
 from sqlalchemy.orm import Mapped, mapped_column, relationship
-from sqlalchemy.dialects.postgresql import UUID, JSONB
+from sqlalchemy.dialects.postgresql import JSONB
 import uuid
 
 from app.core.database import Base
+from app.core.types import UUIDString
 
 
 class Rubric(Base):
@@ -17,14 +18,14 @@ class Rubric(Base):
     
     __tablename__ = "rubrics"
 
-    id: Mapped[uuid.UUID] = mapped_column(
-        UUID(as_uuid=True), primary_key=True, default=uuid.uuid4
+    id: Mapped[str] = mapped_column(
+        UUIDString(), primary_key=True, default=lambda: str(uuid.uuid4())
     )
     user_id: Mapped[str] = mapped_column(
         String(36), nullable=False, index=True
     )
-    subject_id: Mapped[uuid.UUID] = mapped_column(
-        UUID(as_uuid=True), ForeignKey("subjects.id", ondelete="CASCADE"), nullable=False
+    subject_id: Mapped[str] = mapped_column(
+        String(36), ForeignKey("subjects.id", ondelete="CASCADE"), nullable=False
     )
     
     # Rubric info

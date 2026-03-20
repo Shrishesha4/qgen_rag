@@ -14,13 +14,14 @@ from sqlalchemy import (
     ForeignKey, func, Enum as SAEnum,
 )
 from sqlalchemy.orm import Mapped, mapped_column
-from sqlalchemy.dialects.postgresql import UUID, JSONB, ARRAY
+from sqlalchemy.dialects.postgresql import JSONB, ARRAY
 from pgvector.sqlalchemy import Vector
 import uuid
 import enum
 
 from app.core.database import Base
 from app.core.config import settings
+from app.core.types import UUIDString
 
 
 class VettingDecision(str, enum.Enum):
@@ -62,11 +63,11 @@ class VettingLog(Base):
 
     __tablename__ = "vetting_logs"
 
-    id: Mapped[uuid.UUID] = mapped_column(
-        UUID(as_uuid=True), primary_key=True, default=uuid.uuid4
+    id: Mapped[str] = mapped_column(
+        UUIDString(), primary_key=True, default=lambda: str(uuid.uuid4())
     )
-    question_id: Mapped[uuid.UUID] = mapped_column(
-        UUID(as_uuid=True), ForeignKey("questions.id", ondelete="CASCADE"),
+    question_id: Mapped[str] = mapped_column(
+        UUIDString(), ForeignKey("questions.id", ondelete="CASCADE"),
         nullable=False, index=True,
     )
     vetter_id: Mapped[str] = mapped_column(
@@ -156,8 +157,8 @@ class TrainingPair(Base):
 
     __tablename__ = "training_pairs"
 
-    id: Mapped[uuid.UUID] = mapped_column(
-        UUID(as_uuid=True), primary_key=True, default=uuid.uuid4
+    id: Mapped[str] = mapped_column(
+        UUIDString(), primary_key=True, default=lambda: str(uuid.uuid4())
     )
 
     # The generation prompt that produced both responses
@@ -170,14 +171,14 @@ class TrainingPair(Base):
     rejected_response: Mapped[str] = mapped_column(Text, nullable=False)
 
     # Provenance
-    vetting_log_id: Mapped[Optional[uuid.UUID]] = mapped_column(
-        UUID(as_uuid=True), ForeignKey("vetting_logs.id", ondelete="SET NULL"),
+    vetting_log_id: Mapped[Optional[str]] = mapped_column(
+        UUIDString(), ForeignKey("vetting_logs.id", ondelete="SET NULL"),
     )
-    chosen_question_id: Mapped[Optional[uuid.UUID]] = mapped_column(
-        UUID(as_uuid=True), ForeignKey("questions.id", ondelete="SET NULL"),
+    chosen_question_id: Mapped[Optional[str]] = mapped_column(
+        UUIDString(), ForeignKey("questions.id", ondelete="SET NULL"),
     )
-    rejected_question_id: Mapped[Optional[uuid.UUID]] = mapped_column(
-        UUID(as_uuid=True), ForeignKey("questions.id", ondelete="SET NULL"),
+    rejected_question_id: Mapped[Optional[str]] = mapped_column(
+        UUIDString(), ForeignKey("questions.id", ondelete="SET NULL"),
     )
 
     # Pair type for filtering during training
@@ -245,8 +246,8 @@ class ModelVersion(Base):
 
     __tablename__ = "model_versions"
 
-    id: Mapped[uuid.UUID] = mapped_column(
-        UUID(as_uuid=True), primary_key=True, default=uuid.uuid4
+    id: Mapped[str] = mapped_column(
+        UUIDString(), primary_key=True, default=lambda: str(uuid.uuid4())
     )
 
     version_tag: Mapped[str] = mapped_column(
@@ -295,8 +296,8 @@ class ModelVersion(Base):
     error_message: Mapped[Optional[str]] = mapped_column(Text)
 
     # Parent version (for lineage tracking)
-    parent_version_id: Mapped[Optional[uuid.UUID]] = mapped_column(
-        UUID(as_uuid=True), ForeignKey("model_versions.id", ondelete="SET NULL"),
+    parent_version_id: Mapped[Optional[str]] = mapped_column(
+        UUIDString(), ForeignKey("model_versions.id", ondelete="SET NULL"),
     )
 
     # Timestamps
@@ -321,12 +322,12 @@ class TrainingJob(Base):
 
     __tablename__ = "training_jobs"
 
-    id: Mapped[uuid.UUID] = mapped_column(
-        UUID(as_uuid=True), primary_key=True, default=uuid.uuid4
+    id: Mapped[str] = mapped_column(
+        UUIDString(), primary_key=True, default=lambda: str(uuid.uuid4())
     )
 
-    model_version_id: Mapped[uuid.UUID] = mapped_column(
-        UUID(as_uuid=True), ForeignKey("model_versions.id", ondelete="CASCADE"),
+    model_version_id: Mapped[str] = mapped_column(
+        UUIDString(), ForeignKey("model_versions.id", ondelete="CASCADE"),
         nullable=False,
     )
 
@@ -347,8 +348,8 @@ class TrainingJob(Base):
     idempotency_key: Mapped[Optional[str]] = mapped_column(
         String(128), index=True,
     )
-    replayed_from_job_id: Mapped[Optional[uuid.UUID]] = mapped_column(
-        UUID(as_uuid=True), ForeignKey("training_jobs.id", ondelete="SET NULL"),
+    replayed_from_job_id: Mapped[Optional[str]] = mapped_column(
+        UUIDString(), ForeignKey("training_jobs.id", ondelete="SET NULL"),
     )
 
     # Progress
@@ -384,8 +385,8 @@ class VettingReasonCode(Base):
 
     __tablename__ = "vetting_reason_codes"
 
-    id: Mapped[uuid.UUID] = mapped_column(
-        UUID(as_uuid=True), primary_key=True, default=uuid.uuid4
+    id: Mapped[str] = mapped_column(
+        UUIDString(), primary_key=True, default=lambda: str(uuid.uuid4())
     )
     code: Mapped[str] = mapped_column(String(80), unique=True, nullable=False, index=True)
     label: Mapped[str] = mapped_column(String(255), nullable=False)
@@ -403,8 +404,8 @@ class TrainingDataset(Base):
 
     __tablename__ = "training_datasets"
 
-    id: Mapped[uuid.UUID] = mapped_column(
-        UUID(as_uuid=True), primary_key=True, default=uuid.uuid4
+    id: Mapped[str] = mapped_column(
+        UUIDString(), primary_key=True, default=lambda: str(uuid.uuid4())
     )
     dataset_tag: Mapped[str] = mapped_column(String(100), unique=True, nullable=False, index=True)
     created_at: Mapped[datetime] = mapped_column(
@@ -422,11 +423,11 @@ class ModelEvaluation(Base):
 
     __tablename__ = "model_evaluations"
 
-    id: Mapped[uuid.UUID] = mapped_column(
-        UUID(as_uuid=True), primary_key=True, default=uuid.uuid4
+    id: Mapped[str] = mapped_column(
+        UUIDString(), primary_key=True, default=lambda: str(uuid.uuid4())
     )
-    model_version_id: Mapped[uuid.UUID] = mapped_column(
-        UUID(as_uuid=True), ForeignKey("model_versions.id", ondelete="CASCADE"),
+    model_version_id: Mapped[str] = mapped_column(
+        UUIDString(), ForeignKey("model_versions.id", ondelete="CASCADE"),
         nullable=False, index=True,
     )
     dataset_tag: Mapped[str] = mapped_column(String(100), nullable=False, index=True)

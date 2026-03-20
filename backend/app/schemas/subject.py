@@ -5,7 +5,6 @@ Subject and Topic Pydantic schemas.
 from datetime import datetime
 from typing import Optional, List
 from pydantic import BaseModel, Field
-import uuid
 
 
 # Learning Outcome schemas
@@ -54,7 +53,7 @@ class TopicBase(BaseModel):
 
 class TopicCreate(TopicBase):
     """Schema for creating a Topic."""
-    subject_id: uuid.UUID
+    subject_id: str
     syllabus_content: Optional[str] = None
 
 
@@ -70,8 +69,8 @@ class TopicUpdate(BaseModel):
 
 class TopicResponse(TopicBase):
     """Schema for Topic response."""
-    id: uuid.UUID
-    subject_id: uuid.UUID
+    id: str
+    subject_id: str
     has_syllabus: bool
     syllabus_content: Optional[str]
     learning_outcome_mappings: Optional[dict]
@@ -113,8 +112,8 @@ class SubjectUpdate(BaseModel):
 
 class SubjectResponse(SubjectBase):
     """Schema for Subject response."""
-    id: uuid.UUID
-    user_id: uuid.UUID
+    id: str
+    user_id: str
     learning_outcomes: Optional[dict]
     course_outcomes: Optional[dict]
     total_questions: int

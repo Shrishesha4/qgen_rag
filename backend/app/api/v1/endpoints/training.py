@@ -212,7 +212,7 @@ async def list_model_versions(
 
 @router.post("/versions/{version_id}/activate")
 async def activate_model_version(
-    version_id: uuid.UUID,
+    version_id: str,
     current_user: User = Depends(get_current_superuser),
     db: AsyncSession = Depends(get_db),
 ):
@@ -262,7 +262,7 @@ async def list_training_jobs(
 
 @router.get("/jobs/{job_id}", response_model=dict)
 async def get_training_job(
-    job_id: uuid.UUID,
+    job_id: str,
     current_user: User = Depends(get_current_user),
     db: AsyncSession = Depends(get_db),
 ):
@@ -275,7 +275,7 @@ async def get_training_job(
 
 @router.post("/jobs/{job_id}/replay", response_model=dict)
 async def replay_training_job(
-    job_id: uuid.UUID,
+    job_id: str,
     payload: ReplayTrainingJobRequest,
     current_user: User = Depends(get_current_teacher_or_admin),
     db: AsyncSession = Depends(get_db),
@@ -371,7 +371,7 @@ async def list_training_datasets(
 
 @router.get("/datasets/{dataset_id}", response_model=DatasetResponse)
 async def get_training_dataset(
-    dataset_id: uuid.UUID,
+    dataset_id: str,
     current_user: User = Depends(get_current_user),
     db: AsyncSession = Depends(get_db),
 ):
@@ -384,7 +384,7 @@ async def get_training_dataset(
 
 @router.post("/evaluate/{version_id}", response_model=dict)
 async def evaluate_model_version(
-    version_id: uuid.UUID,
+    version_id: str,
     dataset_tag: Optional[str] = Query(None),
     eval_type: str = Query("offline"),
     current_user: User = Depends(get_current_teacher_or_admin),
@@ -402,7 +402,7 @@ async def evaluate_model_version(
 
 @router.get("/evaluations", response_model=list)
 async def list_evaluations(
-    version_id: Optional[uuid.UUID] = Query(None, description="Filter by model version ID"),
+    version_id: Optional[str] = Query(None, description="Filter by model version ID"),
     limit: int = Query(50, ge=1, le=200),
     current_user: User = Depends(get_current_user),
     db: AsyncSession = Depends(get_db),
@@ -413,7 +413,7 @@ async def list_evaluations(
 
 @router.get("/evaluations/{evaluation_id}", response_model=dict)
 async def get_evaluation(
-    evaluation_id: uuid.UUID,
+    evaluation_id: str,
     current_user: User = Depends(get_current_user),
     db: AsyncSession = Depends(get_db),
 ):
@@ -431,7 +431,7 @@ class SpotCheckRequest(BaseModel):
 
 @router.post("/evaluations/{evaluation_id}/spot-check", response_model=dict)
 async def complete_spot_check(
-    evaluation_id: uuid.UUID,
+    evaluation_id: str,
     payload: SpotCheckRequest,
     current_user: User = Depends(get_current_teacher_or_admin),
     db: AsyncSession = Depends(get_db),
@@ -448,7 +448,7 @@ async def complete_spot_check(
 
 @router.post("/versions/{version_id}/canary", response_model=dict)
 async def canary_model_version(
-    version_id: uuid.UUID,
+    version_id: str,
     current_user: User = Depends(get_current_teacher_or_admin),
     db: AsyncSession = Depends(get_db),
 ):
@@ -458,7 +458,7 @@ async def canary_model_version(
 
 @router.post("/versions/{version_id}/promote", response_model=dict)
 async def promote_model_version(
-    version_id: uuid.UUID,
+    version_id: str,
     current_user: User = Depends(get_current_teacher_or_admin),
     db: AsyncSession = Depends(get_db),
 ):
@@ -472,7 +472,7 @@ async def promote_model_version(
 
 @router.post("/versions/{version_id}/rollback", response_model=dict)
 async def rollback_model_version(
-    version_id: uuid.UUID,
+    version_id: str,
     current_user: User = Depends(get_current_teacher_or_admin),
     db: AsyncSession = Depends(get_db),
 ):
@@ -525,7 +525,7 @@ async def export_sft_jsonl(
     )
 
     if subject_id:
-        q = q.where(Question.subject_id == uuid.UUID(subject_id))
+        q = q.where(Question.subject_id == str(subject_id))
     if status_filter == "approved":
         q = q.where(Question.vetting_status == "approved")
     elif status_filter == "pending":

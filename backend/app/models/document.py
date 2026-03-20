@@ -6,7 +6,7 @@ from datetime import datetime
 from typing import Optional, List
 from sqlalchemy import String, Integer, BigInteger, DateTime, Text, ForeignKey, func
 from sqlalchemy.orm import Mapped, mapped_column, relationship
-from sqlalchemy.dialects.postgresql import UUID, JSONB, ARRAY
+from sqlalchemy.dialects.postgresql import JSONB
 from pgvector.sqlalchemy import Vector
 import uuid
 
@@ -22,14 +22,14 @@ class Document(Base):
     
     __tablename__ = "documents"
 
-    id: Mapped[uuid.UUID] = mapped_column(
-        UUID(as_uuid=True), primary_key=True, default=uuid.uuid4
+    id: Mapped[str] = mapped_column(
+        String(36), primary_key=True, default=lambda: str(uuid.uuid4())
     )
     user_id: Mapped[str] = mapped_column(
         String(36), nullable=False, index=True
     )
-    subject_id: Mapped[Optional[uuid.UUID]] = mapped_column(
-        UUID(as_uuid=True), ForeignKey("subjects.id", ondelete="SET NULL"), nullable=True
+    subject_id: Mapped[Optional[str]] = mapped_column(
+        String(36), ForeignKey("subjects.id", ondelete="SET NULL"), nullable=True
     )
     
     # File info
@@ -77,11 +77,11 @@ class DocumentChunk(Base):
     
     __tablename__ = "document_chunks"
 
-    id: Mapped[uuid.UUID] = mapped_column(
-        UUID(as_uuid=True), primary_key=True, default=uuid.uuid4
+    id: Mapped[str] = mapped_column(
+        String(36), primary_key=True, default=lambda: str(uuid.uuid4())
     )
-    document_id: Mapped[uuid.UUID] = mapped_column(
-        UUID(as_uuid=True), ForeignKey("documents.id", ondelete="CASCADE"), nullable=False
+    document_id: Mapped[str] = mapped_column(
+        String(36), ForeignKey("documents.id", ondelete="CASCADE"), nullable=False
     )
     
     # Chunk content

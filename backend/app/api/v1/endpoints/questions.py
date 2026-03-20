@@ -62,11 +62,11 @@ _MAX_RETRY_ATTEMPTS = 3  # Max retry attempts for failed queue items
 logger = logging.getLogger(__name__)
 
 
-def _bg_gen_task_key(user_id: uuid.UUID, subject_id: uuid.UUID) -> str:
+def _bg_gen_task_key(user_id: str, subject_id: str) -> str:
     return f"{user_id}:{subject_id}"
 
 
-def _get_queue_position(user_id: uuid.UUID, subject_id: uuid.UUID) -> int:
+def _get_queue_position(user_id: str, subject_id: str) -> int:
     """Get position in queue for this user/subject combination.
     Returns 0 if not found, 1-based position if found."""
     for i, item in enumerate(_BACKGROUND_GENERATION_QUEUE):
@@ -75,7 +75,7 @@ def _get_queue_position(user_id: uuid.UUID, subject_id: uuid.UUID) -> int:
     return 0
 
 
-def _add_to_queue(user_id: uuid.UUID, subject_id: uuid.UUID, count: int, request_data: dict) -> int:
+def _add_to_queue(user_id: str, subject_id: str, count: int, request_data: dict) -> int:
     """Add to queue and return position (1-based)"""
     queue_item = {
         "user_id": user_id,
@@ -192,8 +192,8 @@ async def _process_queue():
 
 async def _wait_for_subject_docs_ready(
     db: AsyncSession,
-    user_id: uuid.UUID,
-    subject_id: uuid.UUID,
+    user_id: str,
+    subject_id: str,
     timeout_seconds: int = 30 * 60,
     poll_interval_seconds: float = 3.0,
 ) -> bool:
@@ -237,14 +237,14 @@ async def _delayed_status_cleanup(task_key: str, delay_seconds: float = 60.0) ->
 
 
 async def _run_background_subject_generation(
-    user_id: uuid.UUID,
-    subject_id: uuid.UUID,
+    user_id: str,
+    subject_id: str,
     count: int,
     types: list[str],
     difficulty: str,
     run_id: Optional[str] = None,
-    topic_id: Optional[uuid.UUID] = None,
-    topic_ids: Optional[list[uuid.UUID]] = None,
+    topic_id: Optional[str] = None,
+    topic_ids: Optional[list[str]] = None,
     allow_without_reference: bool = False,
 ) -> None:
     task_key = _bg_gen_task_key(user_id, subject_id)
@@ -681,7 +681,7 @@ DEDUPE_SIMILARITY_THRESHOLD = 0.895
 
 async def _preload_subject_embeddings(
     db: AsyncSession,
-    subject_id: uuid.UUID,
+    subject_id: str,
     limit: int = 2000,
 ) -> list:
     """
@@ -944,10 +944,10 @@ async def quick_generate_questions(
     
     mime_type = MIME_TYPE_MAPPING.get(ext, "application/octet-stream")
 
-    parsed_existing_session_id: Optional[uuid.UUID] = None
+    parsed_existing_session_id: Optional[str] = None
     if existing_session_id:
         try:
-            parsed_existing_session_id = uuid.UUID(existing_session_id)
+            parsed_existing_session_id = str(existing_session_id)
         except ValueError:
             pass
 
@@ -1007,8 +1007,8 @@ async def quick_generate_questions(
             }
             
             # Parse subject_id and topic_id
-            parsed_subject_id = uuid.UUID(subject_id) if subject_id else None
-            parsed_topic_id = uuid.UUID(topic_id) if topic_id else None
+            parsed_subject_id = str(subject_id) if subject_id else None
+            parsed_topic_id = str(topic_id) if topic_id else None
             
             try:
                 generator = question_service.quick_generate(
@@ -1130,21 +1130,21 @@ async def quick_generate_from_subject(
         )
 
     try:
-        parsed_subject_id = uuid.UUID(subject_id)
+        parsed_subject_id = str(subject_id)
     except ValueError:
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Invalid subject_id format")
 
-    parsed_topic_id: Optional[uuid.UUID] = None
+    parsed_topic_id: Optional[str] = None
     if topic_id:
         try:
-            parsed_topic_id = uuid.UUID(topic_id)
+            parsed_topic_id = str(topic_id)
         except ValueError:
             raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Invalid topic_id format")
 
-    parsed_existing_session_id_subj: Optional[uuid.UUID] = None
+    parsed_existing_session_id_subj: Optional[str] = None
     if existing_session_id:
         try:
-            parsed_existing_session_id_subj = uuid.UUID(existing_session_id)
+            parsed_existing_session_id_subj = str(existing_session_id)
         except ValueError:
             pass
 
@@ -1224,7 +1224,7 @@ async def estimate_question_capacity(
     This helps determine the optimal question count for training.
     """
     try:
-        parsed_subject_id = uuid.UUID(subject_id)
+        parsed_subject_id = str(subject_id)
     except ValueError:
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Invalid subject_id format")
 
@@ -1329,7 +1329,7 @@ async def schedule_background_generation(
         )
 
     try:
-        parsed_subject_id = uuid.UUID(subject_id)
+        parsed_subject_id = str(subject_id)
     except ValueError:
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Invalid subject_id format")
 
@@ -1340,11 +1340,11 @@ async def schedule_background_generation(
     if not subject:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Subject not found")
 
-    parsed_topic_id: Optional[uuid.UUID] = None
-    parsed_topic_ids: list[uuid.UUID] = []
+    parsed_topic_id: Optional[str] = None
+    parsed_topic_ids: list[str] = []
     if topic_id:
         try:
-            parsed_topic_id = uuid.UUID(topic_id)
+            parsed_topic_id = str(topic_id)
         except ValueError:
             raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Invalid topic_id format")
 
@@ -1357,7 +1357,7 @@ async def schedule_background_generation(
     if topic_ids:
         for raw_id in [item.strip() for item in topic_ids.split(",") if item.strip()]:
             try:
-                parsed_topic_ids.append(uuid.UUID(raw_id))
+                parsed_topic_ids.append(str(raw_id))
             except ValueError:
                 raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Invalid topic_ids format")
 
@@ -1503,7 +1503,7 @@ async def get_background_generation_statuses(
     statuses: dict[str, dict] = {}
     for subject_id_str in raw_ids:
         try:
-            parsed_subject_id = uuid.UUID(subject_id_str)
+            parsed_subject_id = str(subject_id_str)
         except ValueError:
             continue
 
@@ -1609,7 +1609,7 @@ async def backfill_topic_mapping(
 ):
     """One-click backfill: auto-map existing unmapped subject questions to topics."""
     try:
-        parsed_subject_id = uuid.UUID(subject_id)
+        parsed_subject_id = str(subject_id)
     except ValueError:
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Invalid subject_id format")
 
@@ -1633,9 +1633,9 @@ async def backfill_topic_mapping(
 
 @router.get("", response_model=QuestionListResponse)
 async def list_questions(
-    document_id: Optional[uuid.UUID] = Query(None, description="Document ID to get questions for"),
-    subject_id: Optional[uuid.UUID] = Query(None, description="Subject ID to filter by"),
-    topic_id: Optional[uuid.UUID] = Query(None, description="Topic ID to filter by"),
+    document_id: Optional[str] = Query(None, description="Document ID to get questions for"),
+    subject_id: Optional[str] = Query(None, description="Subject ID to filter by"),
+    topic_id: Optional[str] = Query(None, description="Topic ID to filter by"),
     vetting_status: Optional[str] = Query(None, description="Filter by vetting status (pending, approved, rejected)"),
     page: int = Query(1, ge=1),
     limit: int = Query(20, ge=1, le=100),
@@ -1683,7 +1683,7 @@ async def list_questions(
 
 @router.get("/{question_id}", response_model=QuestionResponse)
 async def get_question(
-    question_id: uuid.UUID,
+    question_id: str,
     current_user: User = Depends(get_current_user),
     db: AsyncSession = Depends(get_db),
 ):
@@ -1720,7 +1720,7 @@ async def get_question(
 
 @router.get("/{question_id}/versions", response_model=List[QuestionResponse])
 async def get_question_versions(
-    question_id: uuid.UUID,
+    question_id: str,
     current_user: User = Depends(get_current_user),
     db: AsyncSession = Depends(get_db),
 ):
@@ -1783,7 +1783,7 @@ async def get_question_versions(
 
 @router.post("/{question_id}/promote-version", response_model=QuestionResponse)
 async def promote_question_version(
-    question_id: uuid.UUID,
+    question_id: str,
     current_user: User = Depends(get_current_user),
     db: AsyncSession = Depends(get_db),
 ):
@@ -1883,7 +1883,7 @@ async def promote_question_version(
 
 @router.post("/{question_id}/rate", response_model=QuestionResponse)
 async def rate_question(
-    question_id: uuid.UUID,
+    question_id: str,
     rating_data: QuestionRatingRequest,
     current_user: User = Depends(get_current_user),
     db: AsyncSession = Depends(get_db),
@@ -1912,7 +1912,7 @@ async def rate_question(
 
 @router.delete("/{question_id}")
 async def archive_question(
-    question_id: uuid.UUID,
+    question_id: str,
     current_user: User = Depends(get_current_user),
     db: AsyncSession = Depends(get_db),
 ):
@@ -1938,7 +1938,7 @@ async def archive_question(
 
 @router.post("/{question_id}/unarchive")
 async def unarchive_question(
-    question_id: uuid.UUID,
+    question_id: str,
     current_user: User = Depends(get_current_user),
     db: AsyncSession = Depends(get_db),
 ):
@@ -1997,10 +1997,10 @@ async def import_questions_from_file(
     
     # Parse subject/topic IDs
     try:
-        parsed_subject_id = uuid.UUID(subject_id)
+        parsed_subject_id = str(subject_id)
     except ValueError:
         raise HTTPException(status_code=400, detail="Invalid subject_id")
-    parsed_topic_id = uuid.UUID(topic_id) if topic_id else None
+    parsed_topic_id = str(topic_id) if topic_id else None
     
     # Read file content
     content = await file.read()
@@ -2208,8 +2208,8 @@ async def import_questions_from_file(
 
 @router.get("/sessions/list")
 async def list_generation_sessions(
-    document_id: Optional[uuid.UUID] = Query(None, description="Filter by document"),
-    subject_id: Optional[uuid.UUID] = Query(None, description="Filter by subject"),
+    document_id: Optional[str] = Query(None, description="Filter by document"),
+    subject_id: Optional[str] = Query(None, description="Filter by subject"),
     page: int = Query(1, ge=1),
     limit: int = Query(20, ge=1, le=100),
     current_user: User = Depends(get_current_user),
@@ -2295,7 +2295,7 @@ async def list_generation_sessions(
 
 @router.get("/sessions/{session_id}/questions")
 async def get_session_questions(
-    session_id: uuid.UUID,
+    session_id: str,
     current_user: User = Depends(get_current_user),
     db: AsyncSession = Depends(get_db),
 ):
@@ -2398,7 +2398,7 @@ async def get_session_questions(
 
 @router.get("/sessions/{session_id}", response_model=GenerationSessionResponse)
 async def get_generation_session(
-    session_id: uuid.UUID,
+    session_id: str,
     current_user: User = Depends(get_current_user),
     db: AsyncSession = Depends(get_db),
 ):
@@ -2427,7 +2427,7 @@ async def get_generation_session(
 
 @router.delete("/sessions/{session_id}")
 async def delete_generation_session(
-    session_id: uuid.UUID,
+    session_id: str,
     current_user: User = Depends(get_current_user),
     db: AsyncSession = Depends(get_db),
 ):
@@ -2558,7 +2558,7 @@ async def get_teacher_dashboard(
 
 @router.get("/stats/summary")
 async def get_question_stats(
-    document_id: Optional[uuid.UUID] = Query(None, description="Filter by document"),
+    document_id: Optional[str] = Query(None, description="Filter by document"),
     current_user: User = Depends(get_current_user),
     db: AsyncSession = Depends(get_db),
 ):
@@ -2670,8 +2670,8 @@ class VettingStatsResponse(BaseModel):
 
 @router.get("/vetting/pending", response_model=QuestionListResponse)
 async def get_pending_questions(
-    subject_id: Optional[uuid.UUID] = Query(None, description="Filter by subject"),
-    topic_id: Optional[uuid.UUID] = Query(None, description="Filter by topic"),
+    subject_id: Optional[str] = Query(None, description="Filter by subject"),
+    topic_id: Optional[str] = Query(None, description="Filter by topic"),
     question_type: Optional[str] = Query(None, description="Filter by question type"),
     page: int = Query(1, ge=1),
     limit: int = Query(20, ge=1, le=100),
@@ -2702,7 +2702,7 @@ async def get_pending_questions(
 
 @router.post("/{question_id}/vet", response_model=QuestionResponse)
 async def vet_question(
-    question_id: uuid.UUID,
+    question_id: str,
     vetting_data: VettingRequest,
     current_user: User = Depends(get_current_user),
     db: AsyncSession = Depends(get_db),
@@ -3534,7 +3534,7 @@ Output valid JSON only."""
                                     assigned_lo = response.get("learning_outcome_id") or response.get("learning_outcome")
                                     topic_obj = None
                                     try:
-                                        tres = await db.execute(select(Topic).where(Topic.id == uuid.UUID(selected_chunk["topic_id"])))
+                                        tres = await db.execute(select(Topic).where(Topic.id == str(selected_chunk["topic_id"])))
                                         topic_obj = tres.scalar_one_or_none()
                                     except Exception:
                                         pass
@@ -3570,7 +3570,7 @@ Output valid JSON only."""
 
                                     new_question = QuestionModel(
                                         subject_id=question_snapshot["subject_id"],
-                                        topic_id=uuid.UUID(selected_chunk["topic_id"]),
+                                        topic_id=str(selected_chunk["topic_id"]),
                                         session_id=session_id,
                                         question_text=question_text,
                                         question_embedding=question_embedding,
@@ -3668,7 +3668,7 @@ Output valid JSON only."""
 
 @router.put("/{question_id}/co-mapping", response_model=QuestionResponse)
 async def update_co_mapping(
-    question_id: uuid.UUID,
+    question_id: str,
     mapping: dict,
     current_user: User = Depends(get_current_user),
     db: AsyncSession = Depends(get_db),
@@ -3710,7 +3710,7 @@ async def update_co_mapping(
 
 @router.put("/{question_id}", response_model=QuestionResponse)
 async def update_question(
-    question_id: uuid.UUID,
+    question_id: str,
     update_data: dict,  # Using dict to accept partial updates
     current_user: User = Depends(get_current_user),
     db: AsyncSession = Depends(get_db),
@@ -3812,7 +3812,7 @@ async def update_question(
 
 @router.get("/vetting/stats")
 async def get_vetting_stats(
-    subject_id: Optional[uuid.UUID] = Query(None, description="Filter by subject"),
+    subject_id: Optional[str] = Query(None, description="Filter by subject"),
     current_user: User = Depends(get_current_user),
     db: AsyncSession = Depends(get_db),
 ):
@@ -3918,7 +3918,7 @@ async def get_analytics_by_subject(
 
 @router.get("/analytics/by-learning-outcome")
 async def get_analytics_by_lo(
-    subject_id: Optional[uuid.UUID] = Query(None, description="Filter by subject"),
+    subject_id: Optional[str] = Query(None, description="Filter by subject"),
     current_user: User = Depends(get_current_user),
     db: AsyncSession = Depends(get_db),
 ):
@@ -3961,7 +3961,7 @@ async def get_analytics_by_lo(
 
 @router.get("/analytics/by-bloom")
 async def get_analytics_by_bloom(
-    subject_id: Optional[uuid.UUID] = Query(None, description="Filter by subject"),
+    subject_id: Optional[str] = Query(None, description="Filter by subject"),
     current_user: User = Depends(get_current_user),
     db: AsyncSession = Depends(get_db),
 ):
@@ -4006,8 +4006,8 @@ async def get_analytics_by_bloom(
 
 class RubricGenerationRequest(BaseModel):
     """Schema for generating questions from a rubric."""
-    rubric_id: uuid.UUID
-    topic_id: Optional[uuid.UUID] = None  # If set, restrict generation to this chapter only
+    rubric_id: str
+    topic_id: Optional[str] = None  # If set, restrict generation to this chapter only
     count_override: Optional[int] = None  # If set, stop after this many questions (for retry-failed)
 
 
@@ -4186,7 +4186,7 @@ async def generate_from_rubric(
                 # Get reference book IDs once
                 ref_doc_ids = await doc_service.get_reference_document_ids(
                     user_id=current_user.id,
-                    subject_id=uuid.UUID(subject_id_str),
+                    subject_id=str(subject_id_str),
                     index_type="reference_book",
                 )
                 
@@ -4222,7 +4222,7 @@ async def generate_from_rubric(
                     query_emb = await embedding_service.get_query_embedding(rag_query)
                     fallback_chunks = await doc_service.get_reference_chunks(
                         user_id=current_user.id,
-                        subject_id=uuid.UUID(subject_id_str),
+                        subject_id=str(subject_id_str),
                         index_type="reference_book",
                         query_embedding=query_emb,
                         top_k=5,
@@ -4263,8 +4263,8 @@ async def generate_from_rubric(
             rubric_gen_session = GenerationSession(
                 id=rubric_session_id,
                 user_id=current_user.id,
-                subject_id=uuid.UUID(subject_id_str),
-                topic_id=uuid.UUID(str(request.topic_id)) if request.topic_id else None,
+                subject_id=str(subject_id_str),
+                topic_id=str(str(request.topic_id)) if request.topic_id else None,
                 generation_method="rubric",
                 requested_count=total_questions,
                 status="in_progress",
@@ -4286,7 +4286,7 @@ async def generate_from_rubric(
             used_starters_rubric: list[str] = []  # Track starters for variety
 
             # Preload existing question embeddings for subject-level dedupe
-            existing_question_embeddings = await _preload_subject_embeddings(db, uuid.UUID(subject_id_str))
+            existing_question_embeddings = await _preload_subject_embeddings(db, str(subject_id_str))
 
             # Type mapping
             type_mapping = {
@@ -4519,8 +4519,8 @@ Output valid JSON only."""
                         # Create question (accepted candidate) with LO/CO and metadata
                         question = Question(
                             session_id=rubric_session_id,
-                            subject_id=uuid.UUID(subject_id_str),
-                            topic_id=uuid.UUID(selected_chunk["topic_id"]),
+                            subject_id=str(subject_id_str),
+                            topic_id=str(selected_chunk["topic_id"]),
                             question_text=question_text,
                             question_embedding=question_embedding,
                             question_type=mapped_type,
@@ -4581,7 +4581,7 @@ Output valid JSON only."""
             # Update subject stats
             try:
                 result = await db.execute(
-                    select(Subject).where(Subject.id == uuid.UUID(subject_id_str))
+                    select(Subject).where(Subject.id == str(subject_id_str))
                 )
                 subj = result.scalar_one_or_none()
                 if subj:
@@ -4627,7 +4627,7 @@ class QuestionTypeSpec(BaseModel):
 
 class ChapterGenerationRequest(BaseModel):
     """Schema for generating questions from a single chapter."""
-    topic_id: uuid.UUID
+    topic_id: str
     question_types: dict  # e.g. {"mcq": {"count": 5, "marks_each": 2}, ...}
     difficulty: Optional[str] = "medium"  # easy | medium | hard
     lo_filter: Optional[List[str]] = None  # restrict to these LO ids, e.g. ["LO1", "LO2"]
@@ -4793,7 +4793,7 @@ async def generate_chapter(
                 doc_service = DocumentService(db, embedding_service)
                 ref_doc_ids = await doc_service.get_reference_document_ids(
                     user_id=user_id,
-                    subject_id=uuid.UUID(subject_id_str),
+                    subject_id=str(subject_id_str),
                     index_type="reference_book",
                 )
 
@@ -4844,7 +4844,7 @@ async def generate_chapter(
                     fallback_emb = await embedding_service.get_query_embedding(topic_name)
                     ref_chunk_pool = await doc_service.get_reference_chunks(
                         user_id=user_id,
-                        subject_id=uuid.UUID(subject_id_str),
+                        subject_id=str(subject_id_str),
                         index_type="reference_book",
                         query_embedding=fallback_emb,
                         top_k=10,
@@ -4914,8 +4914,8 @@ async def generate_chapter(
             chapter_gen_session = GenerationSession(
                 id=chapter_session_id,
                 user_id=user_id,
-                subject_id=uuid.UUID(subject_id_str),
-                topic_id=uuid.UUID(topic_id_str),
+                subject_id=str(subject_id_str),
+                topic_id=str(topic_id_str),
                 generation_method="chapter",
                 requested_count=total_questions,
                 status="in_progress",
@@ -4930,7 +4930,7 @@ async def generate_chapter(
             await db.refresh(chapter_gen_session)
 
             # ── Preload existing embeddings ──
-            existing_embeddings = await _preload_subject_embeddings(db, uuid.UUID(subject_id_str))
+            existing_embeddings = await _preload_subject_embeddings(db, str(subject_id_str))
 
             questions_generated = 0
             questions_failed = 0
@@ -5140,8 +5140,8 @@ Output valid JSON only."""
 
                             question = Question(
                                 session_id=chapter_session_id,
-                                subject_id=uuid.UUID(subject_id_str),
-                                topic_id=uuid.UUID(topic_id_str),
+                                subject_id=str(subject_id_str),
+                                topic_id=str(topic_id_str),
                                 question_text=candidate_text,
                                 question_embedding=candidate_emb,
                                 question_type=q_type,
@@ -5199,7 +5199,7 @@ Output valid JSON only."""
             # Update subject stats
             try:
                 from app.models.subject import Subject as SubjModel
-                result = await db.execute(select(SubjModel).where(SubjModel.id == uuid.UUID(subject_id_str)))
+                result = await db.execute(select(SubjModel).where(SubjModel.id == str(subject_id_str)))
                 subj = result.scalar_one_or_none()
                 if subj:
                     subj.total_questions = (subj.total_questions or 0) + questions_generated

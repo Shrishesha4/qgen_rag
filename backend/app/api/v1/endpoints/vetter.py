@@ -39,7 +39,7 @@ router = APIRouter()
 
 class TeacherSummary(BaseModel):
     """Summary of a teacher for vetting."""
-    id: uuid.UUID
+    id: str
     username: str
     full_name: Optional[str]
     email: str
@@ -53,11 +53,11 @@ class TeacherSummary(BaseModel):
 
 class SubjectSummary(BaseModel):
     """Summary of a subject for vetting."""
-    id: uuid.UUID
+    id: str
     name: str
     code: str
     description: Optional[str] = None
-    teacher_id: uuid.UUID
+    teacher_id: str
     teacher_name: str
     pending_count: int
     approved_count: int
@@ -69,7 +69,7 @@ class SubjectSummary(BaseModel):
 
 class TopicQuestionStats(BaseModel):
     """Stats for topics."""
-    id: uuid.UUID
+    id: str
     name: str
     pending_count: int
     approved_count: int
@@ -88,9 +88,9 @@ class VetterDashboard(BaseModel):
 
 class VetterQuestionFilters(BaseModel):
     """Filters for vetter question list."""
-    teacher_id: Optional[uuid.UUID] = None
-    subject_id: Optional[uuid.UUID] = None
-    topic_id: Optional[uuid.UUID] = None
+    teacher_id: Optional[str] = None
+    subject_id: Optional[str] = None
+    topic_id: Optional[str] = None
     question_type: Optional[str] = None
     status: Optional[str] = "pending"  # pending, approved, rejected, all
     from_date: Optional[datetime] = None
@@ -99,7 +99,7 @@ class VetterQuestionFilters(BaseModel):
 
 class QuestionForVetting(BaseModel):
     """Question data for vetting UI."""
-    id: uuid.UUID
+    id: str
     question_text: str
     question_type: str
     options: Optional[List[str]]
@@ -115,21 +115,21 @@ class QuestionForVetting(BaseModel):
     generated_at: datetime
     
     # Teacher info
-    teacher_id: Optional[uuid.UUID]
+    teacher_id: Optional[str]
     teacher_name: Optional[str]
     
     # Subject/Topic info
-    subject_id: Optional[uuid.UUID]
+    subject_id: Optional[str]
     subject_name: Optional[str]
     subject_code: Optional[str]
-    topic_id: Optional[uuid.UUID]
+    topic_id: Optional[str]
     topic_name: Optional[str]
     source_info: Optional[QuestionSourceInfo] = None
 
     # Version control
     version_number: int = 1
-    replaces_id: Optional[uuid.UUID] = None
-    replaced_by_id: Optional[uuid.UUID] = None
+    replaces_id: Optional[str] = None
+    replaced_by_id: Optional[str] = None
 
     model_config = {"from_attributes": True}
 
@@ -148,7 +148,7 @@ class VetQuestionSubmitRequest(BaseModel):
     Rich vetting submission — supports Edit & Approve, creating DPO pairs.
     Maps to POST /api/vetting/submit.
     """
-    question_id: uuid.UUID
+    question_id: str
     decision: str = Field(..., pattern="^(approve|reject|edit)$")
     # For edits: the corrected question text
     edited_text: Optional[str] = None
@@ -173,7 +173,7 @@ class VetQuestionSubmitRequest(BaseModel):
 
 
 class ReasonCodeResponse(BaseModel):
-    id: uuid.UUID
+    id: str
     code: str
     label: str
     description: Optional[str]
@@ -194,7 +194,7 @@ class ReasonCodeCreateRequest(BaseModel):
 
 class BulkVetRequest(BaseModel):
     """Request to vet multiple questions at once."""
-    question_ids: List[uuid.UUID]
+    question_ids: List[str]
     status: str = Field(..., pattern="^(approved|rejected)$")
     notes: Optional[str] = None
 
@@ -410,7 +410,7 @@ async def get_teachers_with_questions(
 
 @router.get("/subjects", response_model=List[SubjectSummary])
 async def get_subjects_with_questions(
-    teacher_id: Optional[uuid.UUID] = Query(None, description="Filter by teacher"),
+    teacher_id: Optional[str] = Query(None, description="Filter by teacher"),
     current_user: User = Depends(get_current_vetter),
     db: AsyncSession = Depends(get_db),
 ):
@@ -513,7 +513,7 @@ async def get_subjects_with_questions(
 
 @router.get("/subjects/{subject_id}", response_model=SubjectSummary)
 async def get_subject_for_vetting(
-    subject_id: uuid.UUID,
+    subject_id: str,
     current_user: User = Depends(get_current_vetter),
     db: AsyncSession = Depends(get_db),
 ):
@@ -583,9 +583,9 @@ async def get_subject_for_vetting(
 async def get_questions_for_vetting(
     page: int = Query(1, ge=1),
     limit: int = Query(20, ge=1, le=100),
-    teacher_id: Optional[uuid.UUID] = Query(None),
-    subject_id: Optional[uuid.UUID] = Query(None),
-    topic_id: Optional[uuid.UUID] = Query(None),
+    teacher_id: Optional[str] = Query(None),
+    subject_id: Optional[str] = Query(None),
+    topic_id: Optional[str] = Query(None),
     question_type: Optional[str] = Query(None),
     status: str = Query("pending", pattern="^(pending|approved|rejected|all)$"),
     current_user: User = Depends(get_current_vetter),
@@ -720,7 +720,7 @@ async def get_questions_for_vetting(
 
 @router.post("/questions/{question_id}/vet")
 async def vet_question(
-    question_id: uuid.UUID,
+    question_id: str,
     vet_data: VetQuestionRequest,
     current_user: User = Depends(get_current_vetter),
     db: AsyncSession = Depends(get_db),
@@ -1160,7 +1160,7 @@ async def bulk_vet_questions(
 
 @router.get("/subjects/{subject_id}/topics", response_model=List[TopicQuestionStats])
 async def get_topic_stats(
-    subject_id: uuid.UUID,
+    subject_id: str,
     current_user: User = Depends(get_current_vetter),
     db: AsyncSession = Depends(get_db),
 ):
@@ -1242,7 +1242,7 @@ class RejectWithFeedbackRequest(BaseModel):
 
 @router.post("/questions/{question_id}/reject-with-feedback")
 async def reject_with_feedback(
-    question_id: uuid.UUID,
+    question_id: str,
     req: RejectWithFeedbackRequest,
     current_user: User = Depends(get_current_vetter),
     db: AsyncSession = Depends(get_db),
@@ -1632,7 +1632,7 @@ Return ONLY the JSON, no other text."""
 
 @router.post("/questions/{question_id}/reject-and-regenerate")
 async def reject_and_regenerate_question(
-    question_id: uuid.UUID,
+    question_id: str,
     vet_data: RejectAndRegenerateRequest,
     current_user: User = Depends(get_current_vetter),
     db: AsyncSession = Depends(get_db),
@@ -1935,7 +1935,7 @@ class VetterUpdateQuestionRequest(BaseModel):
 
 @router.get("/questions/{question_id}/version-history")
 async def get_question_version_history(
-    question_id: uuid.UUID,
+    question_id: str,
     current_user: User = Depends(get_current_vetter),
     db: AsyncSession = Depends(get_db),
 ):
@@ -2001,7 +2001,7 @@ async def get_question_version_history(
 
 @router.post("/questions/{question_id}/restore")
 async def restore_question_version(
-    question_id: uuid.UUID,
+    question_id: str,
     current_user: User = Depends(get_current_vetter),
     db: AsyncSession = Depends(get_db),
 ):
@@ -2066,7 +2066,7 @@ async def restore_question_version(
 
 @router.put("/questions/{question_id}", response_model=dict)
 async def update_question_as_vetter(
-    question_id: uuid.UUID,
+    question_id: str,
     update_data: VetterUpdateQuestionRequest,
     current_user: User = Depends(get_current_vetter),
     db: AsyncSession = Depends(get_db),

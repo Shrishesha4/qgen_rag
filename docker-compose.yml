@@ -212,28 +212,28 @@ services:
   #         memory: ${API_MIN_MEMORY:-1G}
   #         cpus: ${API_MIN_CPUS:-0.5}
 
-  # trainer_web:
-  #   build:
-  #     context: ./trainer-web
-  #     dockerfile: Dockerfile
-  #   container_name: qgen_trainer_web
-  #   restart: unless-stopped
-  #   environment:
-  #     - PUBLIC_API_URL=${PUBLIC_API_URL:-http://localhost:${API_PORT:-8000}}
-  #     - PUBLIC_WS_URL=${PUBLIC_WS_URL:-ws://localhost:${API_PORT:-8000}}
-  #     - PUBLIC_DOMAIN=${PUBLIC_DOMAIN:-localhost}
-  #   ports:
-  #     - "${TRAINER_WEB_PORT:-5173}:5173"
-  #   depends_on:
-  #     - api
-  #   networks:
-  #     - qgen_net
-  #   deploy:
-  #     resources:
-  #       limits:
-  #         memory: ${WEB_MAX_MEMORY:-1G}
-  #       reservations:
-  #         memory: ${WEB_MIN_MEMORY:-256M}
+  trainer_web:
+    build:
+      context: ./trainer-web
+      dockerfile: Dockerfile
+    container_name: qgen_trainer_web
+    restart: unless-stopped
+    environment:
+      - PUBLIC_API_URL=${PUBLIC_API_URL:-http://localhost:${API_PORT:-8000}}
+      - PUBLIC_WS_URL=${PUBLIC_WS_URL:-ws://localhost:${API_PORT:-8000}}
+      - PUBLIC_DOMAIN=${PUBLIC_DOMAIN:-localhost}
+    ports:
+      - "${TRAINER_WEB_PORT:-5173}:5173"
+    # depends_on:
+    #   - api
+    networks:
+      - qgen_net
+    deploy:
+      resources:
+        limits:
+          memory: ${WEB_MAX_MEMORY:-1G}
+        reservations:
+          memory: ${WEB_MIN_MEMORY:-256M}
 
 volumes:
   postgres_data:

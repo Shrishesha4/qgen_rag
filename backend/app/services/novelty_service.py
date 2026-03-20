@@ -75,9 +75,9 @@ class NoveltyService:
         self,
         question_text: str,
         question_embedding: List[float],
-        user_id: uuid.UUID,
-        subject_id: Optional[uuid.UUID] = None,
-        exclude_question_ids: Optional[List[uuid.UUID]] = None,
+        user_id: str,
+        subject_id: Optional[str] = None,
+        exclude_question_ids: Optional[List[str]] = None,
     ) -> NoveltyResult:
         """
         Compute novelty score for a question by comparing against:
@@ -145,8 +145,8 @@ class NoveltyService:
     async def _compute_max_similarity_against_questions(
         self,
         question_embedding: List[float],
-        user_id: uuid.UUID,
-        subject_id: Optional[uuid.UUID],
+        user_id: str,
+        subject_id: Optional[str],
         vetting_status: str,
         exclude_ids: set,
     ) -> float:
@@ -193,8 +193,8 @@ class NoveltyService:
     async def _compute_max_similarity_against_reference(
         self,
         question_embedding: List[float],
-        user_id: uuid.UUID,
-        subject_id: Optional[uuid.UUID],
+        user_id: str,
+        subject_id: Optional[str],
         index_type: str,  # reference_book or template_paper
     ) -> float:
         """Compute maximum similarity against reference document chunks."""
@@ -273,8 +273,8 @@ class NoveltyService:
         self,
         question_data: Dict[str, Any],
         original_chunks: List[DocumentChunk],
-        user_id: uuid.UUID,
-        subject_id: Optional[uuid.UUID],
+        user_id: str,
+        subject_id: Optional[str],
         attempt_number: int,
         use_reference: bool = False,
     ) -> RegenerationContext:
@@ -313,8 +313,8 @@ class NoveltyService:
 
     async def _get_reference_chunks(
         self,
-        user_id: uuid.UUID,
-        subject_id: uuid.UUID,
+        user_id: str,
+        subject_id: str,
         focus_topics: Optional[List[str]],
         num_chunks: int = 3,
     ) -> List[DocumentChunk]:
@@ -393,8 +393,8 @@ class NoveltyService:
 
     async def get_reference_documents_for_subject(
         self,
-        user_id: uuid.UUID,
-        subject_id: uuid.UUID,
+        user_id: str,
+        subject_id: str,
     ) -> Dict[str, List[Document]]:
         """Get reference books and template papers for a subject."""
         result = await self.db.execute(
@@ -447,9 +447,9 @@ class NoveltyService:
 
     async def get_existing_question_embeddings(
         self,
-        user_id: uuid.UUID,
-        subject_id: Optional[uuid.UUID] = None,
-        document_id: Optional[uuid.UUID] = None,
+        user_id: str,
+        subject_id: Optional[str] = None,
+        document_id: Optional[str] = None,
         include_pending: bool = True,
     ) -> List[List[float]]:
         """

@@ -199,7 +199,7 @@ class QuestionGenerationService:
 
     async def generate_questions(
         self,
-        user_id: uuid.UUID,
+        user_id: str,
         request: QuestionGenerationRequest,
     ) -> AsyncGenerator[GenerationProgress, None]:
         """
@@ -277,7 +277,7 @@ class QuestionGenerationService:
             session.chunks_used = len(chunks)
 
             # 5b. Collect reference book document IDs to include in search
-            reference_doc_ids: List[uuid.UUID] = []
+            reference_doc_ids: List[str] = []
             if document.subject_id and self.document_service:
                 reference_doc_ids = await self.document_service.get_reference_document_ids(
                     user_id=user_id,
@@ -422,8 +422,8 @@ class QuestionGenerationService:
 
     async def _get_document(
         self,
-        document_id: uuid.UUID,
-        user_id: uuid.UUID,
+        document_id: str,
+        user_id: str,
     ) -> Optional[Document]:
         """Get document with user ownership verification."""
         result = await self.db.execute(
@@ -436,7 +436,7 @@ class QuestionGenerationService:
 
     async def _create_session(
         self,
-        user_id: uuid.UUID,
+        user_id: str,
         request: QuestionGenerationRequest,
     ) -> GenerationSession:
         """Create a new generation session."""
@@ -461,9 +461,9 @@ class QuestionGenerationService:
 
     async def _build_blacklist(
         self,
-        document_id: uuid.UUID,
-        user_id: uuid.UUID,
-        exclude_ids: Optional[List[uuid.UUID]] = None,
+        document_id: str,
+        user_id: str,
+        exclude_ids: Optional[List[str]] = None,
     ) -> Dict[str, Any]:
         """
         Build blacklist of existing questions for deduplication.
@@ -501,7 +501,7 @@ class QuestionGenerationService:
 
         return blacklist
 
-    async def _get_chunks(self, document_id: uuid.UUID) -> List[DocumentChunk]:
+    async def _get_chunks(self, document_id: str) -> List[DocumentChunk]:
         """Get all chunks for a document."""
         result = await self.db.execute(
             select(DocumentChunk)
@@ -517,8 +517,8 @@ class QuestionGenerationService:
         focus_topics: Optional[List[str]],
         blacklist_chunks: set,
         num_chunks: int = 3,
-        document_id: Optional[uuid.UUID] = None,
-        document_ids: Optional[List[uuid.UUID]] = None,
+        document_id: Optional[str] = None,
+        document_ids: Optional[List[str]] = None,
     ) -> List[DocumentChunk]:
         """
         Select relevant chunks for question generation using hybrid search.
@@ -664,8 +664,8 @@ Output JSON only, no explanation."""
         context: str,
         blacklist_chunks: set,
         num_chunks: int = 3,
-        document_id: Optional[uuid.UUID] = None,
-        document_ids: Optional[List[uuid.UUID]] = None,
+        document_id: Optional[str] = None,
+        document_ids: Optional[List[str]] = None,
         expand_queries: bool = True,
     ) -> List[DocumentChunk]:
         """
@@ -1283,19 +1283,19 @@ Return JSON only:
 
     async def _save_question(
         self,
-        document_id: Optional[uuid.UUID],
-        session_id: uuid.UUID,
+        document_id: Optional[str],
+        session_id: str,
         question_data: Dict[str, Any],
         question_type: str,
         marks: Optional[int],
         difficulty: str,
-        chunk_ids: List[uuid.UUID],
+        chunk_ids: List[str],
         chunks: Optional[List[DocumentChunk]] = None,
-        subject_id: Optional[uuid.UUID] = None,
-        topic_id: Optional[uuid.UUID] = None,
+        subject_id: Optional[str] = None,
+        topic_id: Optional[str] = None,
         skip_quality_validation: bool = False,
         prevalidated_confidence: Optional[float] = None,
-        user_id: Optional[uuid.UUID] = None,
+        user_id: Optional[str] = None,
         novelty_result: Optional[NoveltyResult] = None,
         generation_attempt_count: int = 1,
         used_reference_materials: Optional[bool] = None,
@@ -1730,7 +1730,7 @@ Return JSON only:
 
     async def _build_topic_assignment_profiles(
         self,
-        subject_id: uuid.UUID,
+        subject_id: str,
     ) -> List[Dict[str, Any]]:
         """Build topic profiles with embeddings for automatic question->topic mapping."""
         result = await self.db.execute(
@@ -1762,7 +1762,7 @@ Return JSON only:
         question_data: Dict[str, Any],
         chunks: List[DocumentChunk],
         topic_profiles: List[Dict[str, Any]],
-    ) -> Optional[uuid.UUID]:
+    ) -> Optional[str]:
         """Infer the best matching topic using semantic + lexical scoring."""
         import re
 
@@ -1784,7 +1784,7 @@ Return JSON only:
         query_embedding = await self.embedding_service.get_embedding(query_text)
 
         q_terms = set(re.findall(r"[a-zA-Z0-9_]+", question_text.lower()))
-        best_topic_id: Optional[uuid.UUID] = None
+        best_topic_id: Optional[str] = None
         best_score = -1.0
 
         for profile in topic_profiles:
@@ -1803,8 +1803,8 @@ Return JSON only:
 
     async def backfill_unmapped_questions_for_subject(
         self,
-        user_id: uuid.UUID,
-        subject_id: uuid.UUID,
+        user_id: str,
+        subject_id: str,
         limit: int = 500,
         dry_run: bool = False,
     ) -> Dict[str, Any]:
@@ -1887,19 +1887,19 @@ Return JSON only:
 
     async def _generate_with_novelty_validation(
         self,
-        user_id: uuid.UUID,
-        document_id: uuid.UUID,
+        user_id: str,
+        document_id: str,
         chunks: List[DocumentChunk],
         question_type: str,
         difficulty: str,
         marks: Optional[int],
         bloom_levels: Optional[List[str]],
         context: str,
-        session_id: uuid.UUID,
-        subject_id: Optional[uuid.UUID] = None,
-        topic_id: Optional[uuid.UUID] = None,
+        session_id: str,
+        subject_id: Optional[str] = None,
+        topic_id: Optional[str] = None,
         generated_embeddings: Optional[List[List[float]]] = None,
-        document_ids: Optional[List[uuid.UUID]] = None,
+        document_ids: Optional[List[str]] = None,
     ) -> Tuple[Optional[Question], Optional[QuestionResponse], List[float]]:
         """
         Generate a question with novelty validation and intelligent regeneration.
@@ -1916,7 +1916,7 @@ Return JSON only:
         novelty_settings = await self.novelty_service.get_user_novelty_settings(user_id)
         max_attempts = novelty_settings["max_regeneration_attempts"]
         
-        used_chunk_ids: List[uuid.UUID] = []
+        used_chunk_ids: List[str] = []
         used_reference = False
         current_chunks = chunks
         
@@ -2043,8 +2043,8 @@ Return JSON only:
         context: str = "",
         diversity_instructions: str = "",
         use_reference: bool = False,
-        user_id: Optional[uuid.UUID] = None,
-        subject_id: Optional[uuid.UUID] = None,
+        user_id: Optional[str] = None,
+        subject_id: Optional[str] = None,
     ) -> Optional[Dict[str, Any]]:
         """Generate a single question with optional diversity instructions."""
         import logging
@@ -2121,19 +2121,19 @@ Output valid JSON only."""
 
     async def _save_question_with_novelty(
         self,
-        document_id: uuid.UUID,
-        session_id: uuid.UUID,
+        document_id: str,
+        session_id: str,
         question_data: Dict[str, Any],
         question_type: str,
         marks: Optional[int],
         difficulty: str,
-        chunk_ids: List[uuid.UUID],
+        chunk_ids: List[str],
         chunks: List[DocumentChunk],
         novelty_result: NoveltyResult,
         attempt_count: int,
         used_reference: bool,
-        subject_id: Optional[uuid.UUID] = None,
-        topic_id: Optional[uuid.UUID] = None,
+        subject_id: Optional[str] = None,
+        topic_id: Optional[str] = None,
     ) -> tuple[Question, QuestionResponse]:
         """Save a question with novelty metadata."""
         import logging
@@ -2297,10 +2297,10 @@ Output valid JSON only."""
 
     async def get_questions(
         self,
-        user_id: uuid.UUID,
-        document_id: Optional[uuid.UUID] = None,
-        subject_id: Optional[uuid.UUID] = None,
-        topic_id: Optional[uuid.UUID] = None,
+        user_id: str,
+        document_id: Optional[str] = None,
+        subject_id: Optional[str] = None,
+        topic_id: Optional[str] = None,
         vetting_status: Optional[str] = None,
         page: int = 1,
         limit: int = 20,
@@ -2373,8 +2373,8 @@ Output valid JSON only."""
 
     async def rate_question(
         self,
-        question_id: uuid.UUID,
-        user_id: uuid.UUID,
+        question_id: str,
+        user_id: str,
         rating: int,
         difficulty_rating: Optional[str] = None,
     ) -> Question:
@@ -2405,8 +2405,8 @@ Output valid JSON only."""
 
     async def archive_question(
         self,
-        question_id: uuid.UUID,
-        user_id: uuid.UUID,
+        question_id: str,
+        user_id: str,
     ) -> bool:
         """Archive a question."""
         from sqlalchemy import or_
@@ -2434,8 +2434,8 @@ Output valid JSON only."""
     
     async def unarchive_question(
         self,
-        question_id: uuid.UUID,
-        user_id: uuid.UUID,
+        question_id: str,
+        user_id: str,
     ) -> bool:
         """Unarchive a question (restore it)."""
         from sqlalchemy import or_
@@ -2462,8 +2462,8 @@ Output valid JSON only."""
 
     async def get_generation_sessions(
         self,
-        user_id: uuid.UUID,
-        document_id: Optional[uuid.UUID] = None,
+        user_id: str,
+        document_id: Optional[str] = None,
         page: int = 1,
         limit: int = 20,
     ) -> tuple[List[GenerationSession], Dict[str, Any]]:
@@ -2497,8 +2497,8 @@ Output valid JSON only."""
 
     async def quick_generate(
         self,
-        user_id: uuid.UUID,
-        document_id: uuid.UUID,
+        user_id: str,
+        document_id: str,
         context: str,
         count: int = 5,
         types: Optional[List[str]] = None,
@@ -2506,9 +2506,9 @@ Output valid JSON only."""
         bloom_levels: Optional[List[str]] = None,
         use_query_expansion: bool = False,
         marks_by_type: Optional[dict] = None,
-        subject_id: Optional[uuid.UUID] = None,
-        topic_id: Optional[uuid.UUID] = None,
-        existing_session_id: Optional[uuid.UUID] = None,
+        subject_id: Optional[str] = None,
+        topic_id: Optional[str] = None,
+        existing_session_id: Optional[str] = None,
     ) -> AsyncGenerator[QuickGenerateProgress, None]:
         """
         Generate questions from an already-processed document with minimal configuration.
@@ -2578,7 +2578,7 @@ Output valid JSON only."""
             )
 
             # 2b. Collect reference book document IDs to include in search
-            reference_doc_ids: List[uuid.UUID] = []
+            reference_doc_ids: List[str] = []
             if subject_id and self.document_service:
                 reference_doc_ids = await self.document_service.get_reference_document_ids(
                     user_id=user_id,
@@ -3050,15 +3050,15 @@ Output valid JSON only."""
 
     async def quick_generate_from_subject(
         self,
-        user_id: uuid.UUID,
-        subject_id: uuid.UUID,
+        user_id: str,
+        subject_id: str,
         context: str,
         count: int = 5,
         types: Optional[List[str]] = None,
         difficulty: str = "medium",
         marks_by_type: Optional[dict] = None,
-        topic_id: Optional[uuid.UUID] = None,
-        existing_session_id: Optional[uuid.UUID] = None,
+        topic_id: Optional[str] = None,
+        existing_session_id: Optional[str] = None,
         allow_without_reference: bool = False,
         skip_generation_lock: bool = False,
     ) -> AsyncGenerator[QuickGenerateProgress, None]:
@@ -3302,7 +3302,7 @@ Output valid JSON only."""
             )
 
             # 2. Get reference document IDs for style/scope context
-            reference_doc_ids: List[uuid.UUID] = []
+            reference_doc_ids: List[str] = []
             if self.document_service and not no_reference_mode:
                 reference_doc_ids = await self.document_service.get_reference_document_ids(
                     user_id=user_id,
@@ -3441,7 +3441,7 @@ Output valid JSON only."""
                 )
                 current_subject = current_subject_res.scalar_one_or_none()
 
-                related_subject_ids: List[uuid.UUID] = [subject_id]
+                related_subject_ids: List[str] = [subject_id]
                 if current_subject:
                     related_subjects_res = await self.db.execute(
                         select(Subject.id).where(
@@ -3903,8 +3903,8 @@ Output valid JSON only."""
         question_index: int = 0,
         reference_questions: Optional[List[Dict[str, Any]]] = None,
         learning_outcome: Optional[str] = None,
-        subject_id: Optional[uuid.UUID] = None,
-        topic_id: Optional[uuid.UUID] = None,
+        subject_id: Optional[str] = None,
+        topic_id: Optional[str] = None,
         rejection_guidance_override: Optional[str] = None,
     ) -> Optional[Dict[str, Any]]:
         """Generate a single question for quick generation with context awareness.
@@ -4168,16 +4168,16 @@ Tasks:
 
     async def quick_generate_with_novelty(
         self,
-        user_id: uuid.UUID,
-        document_id: uuid.UUID,
+        user_id: str,
+        document_id: str,
         context: str,
         count: int = 5,
         types: Optional[List[str]] = None,
         difficulty: str = "medium",
         bloom_levels: Optional[List[str]] = None,
         marks_by_type: Optional[dict] = None,
-        subject_id: Optional[uuid.UUID] = None,
-        topic_id: Optional[uuid.UUID] = None,
+        subject_id: Optional[str] = None,
+        topic_id: Optional[str] = None,
     ) -> AsyncGenerator[QuickGenerateProgress, None]:
         """
         Generate questions with full novelty validation pipeline.
@@ -4249,7 +4249,7 @@ Tasks:
                 return
 
             # Collect reference book document IDs to include in search
-            reference_doc_ids: List[uuid.UUID] = []
+            reference_doc_ids: List[str] = []
             if subject_id and self.document_service:
                 reference_doc_ids = await self.document_service.get_reference_document_ids(
                     user_id=user_id,

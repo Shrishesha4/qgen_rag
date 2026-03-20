@@ -6,7 +6,7 @@ from datetime import datetime
 from typing import Optional, List
 from sqlalchemy import String, Integer, DateTime, Text, ForeignKey, func, Boolean
 from sqlalchemy.orm import Mapped, mapped_column, relationship
-from sqlalchemy.dialects.postgresql import UUID, JSONB, ARRAY
+from sqlalchemy.dialects.postgresql import JSONB
 import uuid
 
 from app.core.database import Base
@@ -17,8 +17,8 @@ class Subject(Base):
     
     __tablename__ = "subjects"
 
-    id: Mapped[uuid.UUID] = mapped_column(
-        UUID(as_uuid=True), primary_key=True, default=uuid.uuid4
+    id: Mapped[str] = mapped_column(
+        String(36), primary_key=True, default=lambda: str(uuid.uuid4())
     )
     user_id: Mapped[str] = mapped_column(
         String(36), nullable=False, index=True
@@ -62,11 +62,11 @@ class Topic(Base):
     
     __tablename__ = "topics"
 
-    id: Mapped[uuid.UUID] = mapped_column(
-        UUID(as_uuid=True), primary_key=True, default=uuid.uuid4
+    id: Mapped[str] = mapped_column(
+        String(36), primary_key=True, default=lambda: str(uuid.uuid4())
     )
-    subject_id: Mapped[uuid.UUID] = mapped_column(
-        UUID(as_uuid=True), ForeignKey("subjects.id", ondelete="CASCADE"), nullable=False
+    subject_id: Mapped[str] = mapped_column(
+        String(36), ForeignKey("subjects.id", ondelete="CASCADE"), nullable=False
     )
     
     # Topic info

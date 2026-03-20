@@ -7,7 +7,6 @@ import io
 import logging
 import re
 from typing import Optional, List
-import uuid
 
 from fastapi import APIRouter, Depends, HTTPException, status, Query, UploadFile, File, BackgroundTasks
 from sqlalchemy import select, func
@@ -128,7 +127,7 @@ async def list_subjects(
 
 @router.get("/{subject_id}", response_model=SubjectDetailResponse)
 async def get_subject(
-    subject_id: uuid.UUID,
+    subject_id: str,
     current_user: User = Depends(get_current_user),
     db: AsyncSession = Depends(get_db),
 ):
@@ -189,7 +188,7 @@ async def get_subject(
 
 @router.put("/{subject_id}", response_model=SubjectResponse)
 async def update_subject(
-    subject_id: uuid.UUID,
+    subject_id: str,
     subject_data: SubjectUpdate,
     current_user: User = Depends(get_current_user),
     db: AsyncSession = Depends(get_db),
@@ -226,7 +225,7 @@ async def update_subject(
 
 @router.delete("/{subject_id}", status_code=status.HTTP_204_NO_CONTENT)
 async def delete_subject(
-    subject_id: uuid.UUID,
+    subject_id: str,
     current_user: User = Depends(get_current_user),
     db: AsyncSession = Depends(get_db),
 ):
@@ -253,7 +252,7 @@ async def delete_subject(
 
 @router.post("/{subject_id}/topics", response_model=TopicResponse, status_code=status.HTTP_201_CREATED)
 async def create_topic(
-    subject_id: uuid.UUID,
+    subject_id: str,
     topic_data: TopicCreate,
     background_tasks: BackgroundTasks,
     current_user: User = Depends(get_current_user),
@@ -301,7 +300,7 @@ async def create_topic(
 
 @router.get("/{subject_id}/topics", response_model=TopicListResponse)
 async def list_topics(
-    subject_id: uuid.UUID,
+    subject_id: str,
     page: int = Query(1, ge=1),
     limit: int = Query(50, ge=1, le=100),
     current_user: User = Depends(get_current_user),
@@ -369,8 +368,8 @@ async def list_topics(
 
 @router.put("/{subject_id}/topics/{topic_id}", response_model=TopicResponse)
 async def update_topic(
-    subject_id: uuid.UUID,
-    topic_id: uuid.UUID,
+    subject_id: str,
+    topic_id: str,
     topic_data: TopicUpdate,
     current_user: User = Depends(get_current_user),
     db: AsyncSession = Depends(get_db),
@@ -414,8 +413,8 @@ async def update_topic(
 
 @router.delete("/{subject_id}/topics/{topic_id}", status_code=status.HTTP_204_NO_CONTENT)
 async def delete_topic(
-    subject_id: uuid.UUID,
-    topic_id: uuid.UUID,
+    subject_id: str,
+    topic_id: str,
     current_user: User = Depends(get_current_user),
     db: AsyncSession = Depends(get_db),
 ):
@@ -455,8 +454,8 @@ async def delete_topic(
 
 @router.post("/{subject_id}/topics/{topic_id}/upload-syllabus", response_model=TopicResponse)
 async def upload_topic_syllabus(
-    subject_id: uuid.UUID,
-    topic_id: uuid.UUID,
+    subject_id: str,
+    topic_id: str,
     file: UploadFile = File(...),
     background_tasks: BackgroundTasks = BackgroundTasks(),
     current_user: User = Depends(get_current_user),
@@ -563,7 +562,7 @@ async def upload_topic_syllabus(
     return TopicResponse.model_validate(topic)
 
 
-async def _bg_generate_los(subject_id: uuid.UUID, user_id: uuid.UUID) -> None:
+async def _bg_generate_los(subject_id: str, user_id: str) -> None:
     """Background task: regenerate LOs for a subject after new syllabus content is added."""
     from app.core.database import AsyncSessionLocal
     try:
@@ -618,7 +617,7 @@ async def _bg_generate_los(subject_id: uuid.UUID, user_id: uuid.UUID) -> None:
         logger.error(f"Background LO generation failed for subject {subject_id}: {e}")
 
 
-async def _bg_generate_cos(subject_id: uuid.UUID, user_id: uuid.UUID) -> None:
+async def _bg_generate_cos(subject_id: str, user_id: str) -> None:
     """Background task: regenerate COs for a subject after new syllabus content is added."""
     from app.core.database import AsyncSessionLocal
     try:
@@ -922,7 +921,7 @@ Return as a JSON array."""
 
 @router.post("/{subject_id}/extract-chapters")
 async def extract_chapters_from_syllabus(
-    subject_id: uuid.UUID,
+    subject_id: str,
     file: UploadFile = File(...),
     current_user: User = Depends(get_current_user),
     db: AsyncSession = Depends(get_db),
@@ -1123,7 +1122,7 @@ async def _generate_los_with_llm(subject_name: str, subject_code: str, syllabus_
 
 @router.post("/{subject_id}/generate-learning-outcomes", response_model=SubjectResponse)
 async def generate_learning_outcomes(
-    subject_id: uuid.UUID,
+    subject_id: str,
     current_user: User = Depends(get_current_user),
     db: AsyncSession = Depends(get_db),
 ):

@@ -393,7 +393,7 @@ class AdaptiveLearningService:
             "topic_difficulty_mapping": profile.topic_difficulty_map
         }
     
-    async def learn_from_vetting(self, question_id: uuid.UUID, vetting_log: VettingLog):
+    async def learn_from_vetting(self, question_id: str, vetting_log: VettingLog):
         """
         Update learning profiles based on new vetting feedback.
         """

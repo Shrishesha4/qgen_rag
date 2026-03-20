@@ -683,7 +683,7 @@ class TrainingService:
         pairs = result.scalars().all()
 
         dpo_records: list[dict[str, Any]] = []
-        pair_ids: list[uuid.UUID] = []
+        pair_ids: list[str] = []
         excluded_question_ids: set[uuid.UUID] = set()
         for pair in pairs:
             prompt = self._normalize_dpo_prompt(pair.prompt)
@@ -991,7 +991,7 @@ class TrainingService:
             "hyperparameters": default_hp,
         }
 
-    async def run_training_job(self, job_id: uuid.UUID, db: AsyncSession) -> dict:
+    async def run_training_job(self, job_id: str, db: AsyncSession) -> dict:
         """
         Execute a training job (SFT or DPO with LoRA).
 
@@ -1094,7 +1094,7 @@ class TrainingService:
             await db.commit()
             return {"status": "failed", "error": str(e)}
 
-    async def process_dataset_build_job(self, dataset_id: uuid.UUID, db: AsyncSession) -> dict[str, Any]:
+    async def process_dataset_build_job(self, dataset_id: str, db: AsyncSession) -> dict[str, Any]:
         """Finalize dataset snapshot manifest and verify checksum for worker execution."""
         result = await db.execute(select(TrainingDataset).where(TrainingDataset.id == dataset_id))
         dataset = result.scalar_one_or_none()
@@ -1138,7 +1138,7 @@ class TrainingService:
             "checksum": checksum,
         }
 
-    async def process_evaluation_job(self, evaluation_id: uuid.UUID, db: AsyncSession) -> dict[str, Any]:
+    async def process_evaluation_job(self, evaluation_id: str, db: AsyncSession) -> dict[str, Any]:
         """
         Execute evaluation: compute quality metrics from held-out approved questions,
         run quality gate checks, select spot-check samples, and persist results.
@@ -1373,7 +1373,7 @@ class TrainingService:
     async def complete_spot_check(
         self,
         db: AsyncSession,
-        evaluation_id: uuid.UUID,
+        evaluation_id: str,
         decision: str,
         reviewed_by: str,
         notes: Optional[str] = None,
@@ -1410,7 +1410,7 @@ class TrainingService:
             "pass_fail": evaluation.pass_fail,
         }
 
-    async def get_evaluation(self, db: AsyncSession, evaluation_id: uuid.UUID) -> Optional[dict[str, Any]]:
+    async def get_evaluation(self, db: AsyncSession, evaluation_id: str) -> Optional[dict[str, Any]]:
         """Get a single model evaluation by ID."""
         result = await db.execute(select(ModelEvaluation).where(ModelEvaluation.id == evaluation_id))
         evaluation = result.scalar_one_or_none()
@@ -1436,7 +1436,7 @@ class TrainingService:
         }
 
     async def list_evaluations(
-        self, db: AsyncSession, version_id: Optional[uuid.UUID] = None, limit: int = 50,
+        self, db: AsyncSession, version_id: Optional[str] = None, limit: int = 50,
     ) -> list[dict[str, Any]]:
         """List model evaluations, optionally filtered by version."""
         query = select(ModelEvaluation).order_by(desc(ModelEvaluation.created_at)).limit(limit)
@@ -1815,7 +1815,7 @@ class TrainingService:
     # ═══════════════════════════════════════════
 
     async def activate_version(
-        self, version_id: uuid.UUID, db: AsyncSession
+        self, version_id: str, db: AsyncSession
     ) -> dict:
         """
         Activate a model version — deactivate all others, set this one active.
@@ -2120,7 +2120,7 @@ class TrainingService:
             "queue": queue_result,
         }
 
-    async def get_training_job(self, db: AsyncSession, job_id: uuid.UUID) -> Optional[dict[str, Any]]:
+    async def get_training_job(self, db: AsyncSession, job_id: str) -> Optional[dict[str, Any]]:
         result = await db.execute(select(TrainingJob).where(TrainingJob.id == job_id))
         job = result.scalar_one_or_none()
         if not job:
@@ -2150,7 +2150,7 @@ class TrainingService:
     async def replay_training_job(
         self,
         db: AsyncSession,
-        job_id: uuid.UUID,
+        job_id: str,
         replayed_by: str,
         idempotency_key: Optional[str] = None,
     ) -> dict[str, Any]:
@@ -2250,7 +2250,7 @@ class TrainingService:
             for ds in rows
         ]
 
-    async def get_dataset(self, db: AsyncSession, dataset_id: uuid.UUID) -> Optional[dict[str, Any]]:
+    async def get_dataset(self, db: AsyncSession, dataset_id: str) -> Optional[dict[str, Any]]:
         result = await db.execute(select(TrainingDataset).where(TrainingDataset.id == dataset_id))
         ds = result.scalar_one_or_none()
         if not ds:
@@ -2269,7 +2269,7 @@ class TrainingService:
     async def evaluate_version(
         self,
         db: AsyncSession,
-        version_id: uuid.UUID,
+        version_id: str,
         dataset_tag: Optional[str],
         eval_type: str = "offline",
         evaluated_by: Optional[str] = None,
@@ -2319,7 +2319,7 @@ class TrainingService:
             "eval_status": "pending",
         }
 
-    async def canary_version(self, db: AsyncSession, version_id: uuid.UUID) -> dict[str, Any]:
+    async def canary_version(self, db: AsyncSession, version_id: str) -> dict[str, Any]:
         result = await db.execute(select(ModelVersion).where(ModelVersion.id == version_id))
         candidate = result.scalar_one_or_none()
         if not candidate:
@@ -2356,7 +2356,7 @@ class TrainingService:
             "approve_rate_delta": win_rate,
         }
 
-    async def promote_version(self, db: AsyncSession, version_id: uuid.UUID, promoted_by: str) -> dict[str, Any]:
+    async def promote_version(self, db: AsyncSession, version_id: str, promoted_by: str) -> dict[str, Any]:
         result = await db.execute(select(ModelVersion).where(ModelVersion.id == version_id))
         candidate = result.scalar_one_or_none()
         if not candidate:
@@ -2397,7 +2397,7 @@ class TrainingService:
             "checks": gate["checks"],
         }
 
-    async def rollback_to_version(self, db: AsyncSession, version_id: uuid.UUID) -> dict[str, Any]:
+    async def rollback_to_version(self, db: AsyncSession, version_id: str) -> dict[str, Any]:
         result = await db.execute(select(ModelVersion).where(ModelVersion.id == version_id))
         target = result.scalar_one_or_none()
         if not target:
@@ -2593,8 +2593,8 @@ class TrainingService:
     async def get_rejection_patterns(
         self,
         db: AsyncSession,
-        subject_id: Optional[uuid.UUID] = None,
-        topic_id: Optional[uuid.UUID] = None,
+        subject_id: Optional[str] = None,
+        topic_id: Optional[str] = None,
         limit: int = 50,
     ) -> dict:
         """
@@ -2668,8 +2668,8 @@ class TrainingService:
     async def build_rejection_avoidance_prompt(
         self,
         db: AsyncSession,
-        subject_id: Optional[uuid.UUID] = None,
-        topic_id: Optional[uuid.UUID] = None,
+        subject_id: Optional[str] = None,
+        topic_id: Optional[str] = None,
     ) -> str:
         """
         Build a prompt supplement that teaches the LLM to avoid previously

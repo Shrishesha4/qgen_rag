@@ -9,19 +9,38 @@
 
 	let { children } = $props();
 
-	// Cache-busting for CSS - force reload on every page load
+	// Prevent CSS preload timeout by patching preload links
 	onMount(() => {
 		if (typeof window !== 'undefined') {
-			// Force CSS reload by updating link tags
-			const links = document.querySelectorAll('link[rel="stylesheet"]');
-			links.forEach(link => {
+			// Convert failing CSS preload links to regular load (avoid timeout errors)
+			const prelinks = document.querySelectorAll('link[rel="preload"][as="style"]');
+			prelinks.forEach(link => {
 				const href = link.getAttribute('href');
-				if (href && href.includes('layout.css')) {
-					const timestamp = Date.now();
-					const newHref = href.split('?')[0] + '?t=' + timestamp;
-					link.setAttribute('href', newHref);
+				if (href && href.includes('immutable')) {
+					// Remove preload and attach onload to avoid timeout errors
+					link.removeAttribute('rel');
+					link.setAttribute('rel', 'stylesheet');
 				}
 			});
+			
+			// Global handler to suppress unhandled CSS preload errors
+			const origError = window.onerror;
+			window.onerror = function(msg, url, line, col, error) {
+				if (msg && typeof msg === 'string' && msg.includes('Unable to preload CSS')) {
+					return true; // Suppress error
+				}
+				if (origError) return origError(msg, url, line, col, error);
+			};
+			
+			// Also catch unhandled promise rejections from preload
+			const origHandler = window.onunhandledrejection;
+			window.onunhandledrejection = function(evt) {
+				if (evt.reason && evt.reason.message && evt.reason.message.includes('Unable to preload CSS')) {
+					evt.preventDefault();
+				} else if (origHandler) {
+					origHandler(evt);
+				}
+			};
 		}
 	});
 
@@ -57,8 +76,22 @@
 			// Non-blocking; adapter will retry on demand.
 		});
 		initAiOps();
-		if (import.meta.env.PROD && 'serviceWorker' in navigator && window.location.pathname === '/') {
-			navigator.serviceWorker.register('/service-worker.js', { type: 'module' });
+		
+		// Suppress CSS preload timeout errors globally
+		window.addEventListener('error', (evt) => {
+			if (evt.message && evt.message.includes('Unable to preload CSS')) {
+				evt.preventDefault();
+			}
+		}, true); // capture phase to intercept before other handlers
+
+		// Aggressively clear stale SW/cache state to avoid immutable CSS preload failures.
+		if ('serviceWorker' in navigator) {
+			navigator.serviceWorker.getRegistrations().then((regs) => {
+				regs.forEach((reg) => reg.unregister().catch(() => {}));
+			});
+		}
+		if ('caches' in window) {
+			caches.keys().then((keys) => keys.forEach((k) => caches.delete(k))).catch(() => {});
 		}
 		const root = document.documentElement;
 		const forceRepaint = () => {

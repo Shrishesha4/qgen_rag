@@ -29,14 +29,28 @@ class DocumentService:
         self.db = db
         self.embedding_service = embedding_service or EmbeddingService()
 
+    def _resolve_storage_dir(self, user_id: str) -> Path:
+        """Return a writable storage directory for a given user.
+
+        Falls back to `./.data/uploads` if the configured upload directory is not writable.
+        """
+        primary_dir = Path(settings.UPLOAD_DIR) / str(user_id)
+        try:
+            primary_dir.mkdir(parents=True, exist_ok=True)
+            return primary_dir
+        except PermissionError:
+            fallback_dir = Path("./.data/uploads") / str(user_id)
+            fallback_dir.mkdir(parents=True, exist_ok=True)
+            return fallback_dir
+
     async def upload_document(
         self,
-        user_id: uuid.UUID,
+        user_id: str,
         filename: str,
         file_content: bytes,
         mime_type: str,
         index_type: str = "primary",
-        subject_id: Optional[uuid.UUID] = None,
+        subject_id: Optional[str] = None,
     ) -> Document:
         """Upload and process a document."""
         # Calculate file hash
@@ -54,8 +68,7 @@ class DocumentService:
             raise ValueError("Document already uploaded")
 
         # Create storage path
-        storage_dir = Path(settings.UPLOAD_DIR) / str(user_id)
-        storage_dir.mkdir(parents=True, exist_ok=True)
+        storage_dir = self._resolve_storage_dir(str(user_id))
         
         unique_filename = f"{uuid.uuid4()}_{filename}"
         storage_path = storage_dir / unique_filename
@@ -87,11 +100,11 @@ class DocumentService:
 
     async def upload_reference_document(
         self,
-        user_id: uuid.UUID,
+        user_id: str,
         filename: str,
         file_content: bytes,
         mime_type: str,
-        subject_id: uuid.UUID,
+        subject_id: str,
         index_type: str,  # reference_book or template_paper
     ) -> Document:
         """
@@ -181,8 +194,7 @@ class DocumentService:
             return document
 
         # Create storage path
-        storage_dir = Path(settings.UPLOAD_DIR) / str(user_id)
-        storage_dir.mkdir(parents=True, exist_ok=True)
+        storage_dir = self._resolve_storage_dir(str(user_id))
         
         unique_filename = f"{uuid.uuid4()}_{filename}"
         storage_path = storage_dir / unique_filename
@@ -211,12 +223,12 @@ class DocumentService:
 
     async def upload_and_process_document(
         self,
-        user_id: uuid.UUID,
+        user_id: str,
         filename: str,
         file_content: bytes,
         mime_type: str,
         context: Optional[str] = None,
-        subject_id: Optional[uuid.UUID] = None,
+        subject_id: Optional[str] = None,
     ) -> Document:
         """
         Upload and synchronously process a document.
@@ -241,8 +253,7 @@ class DocumentService:
             raise ValueError("Document already uploaded and is processing")
 
         # Create storage path
-        storage_dir = Path(settings.UPLOAD_DIR) / str(user_id)
-        storage_dir.mkdir(parents=True, exist_ok=True)
+        storage_dir = self._resolve_storage_dir(str(user_id))
         
         unique_filename = f"{uuid.uuid4()}_{filename}"
         storage_path = storage_dir / unique_filename
@@ -350,7 +361,7 @@ class DocumentService:
         await db.commit()
         logger.info(f"[{document.filename}] {step}: {progress}% - {detail}")
 
-    async def _process_document(self, document_id: uuid.UUID):
+    async def _process_document(self, document_id: str):
         """Process document: extract text with page info, chunk, and create embeddings.
         
         Uses batched embedding generation and progress tracking for large files.
@@ -1169,7 +1180,7 @@ class DocumentService:
         else:
             return "low"
 
-    async def get_document(self, document_id: uuid.UUID, user_id: uuid.UUID) -> Optional[Document]:
+    async def get_document(self, document_id: str, user_id: str) -> Optional[Document]:
         """Get document by ID (user-scoped)."""
         result = await self.db.execute(
             select(Document).where(
@@ -1181,7 +1192,7 @@ class DocumentService:
 
     async def get_documents(
         self,
-        user_id: uuid.UUID,
+        user_id: str,
         page: int = 1,
         limit: int = 20,
         status: Optional[str] = None,
@@ -1219,7 +1230,7 @@ class DocumentService:
 
         return documents, pagination
 
-    async def delete_document(self, document_id: uuid.UUID, user_id: uuid.UUID) -> bool:
+    async def delete_document(self, document_id: str, user_id: str) -> bool:
         """Delete a document and all related data."""
         document = await self.get_document(document_id, user_id)
         if not document:
@@ -1243,8 +1254,8 @@ class DocumentService:
 
     async def get_document_chunks(
         self,
-        document_id: uuid.UUID,
-        user_id: uuid.UUID,
+        document_id: str,
+        user_id: str,
     ) -> List[DocumentChunk]:
         """Get all chunks for a document."""
         # Verify ownership
@@ -1261,7 +1272,7 @@ class DocumentService:
 
     async def search_chunks(
         self,
-        document_id: uuid.UUID,
+        document_id: str,
         query_embedding: List[float],
         top_k: int = 5,
     ) -> List[DocumentChunk]:
@@ -1306,7 +1317,7 @@ class DocumentService:
 
     async def hybrid_search(
         self,
-        document_id: uuid.UUID,
+        document_id: str,
         query: str,
         query_embedding: List[float],
         top_k: int = 5,
@@ -1398,7 +1409,7 @@ class DocumentService:
 
     async def hybrid_search_multi_document(
         self,
-        document_ids: List[uuid.UUID],
+        document_ids: List[str],
         query: str,
         query_embedding: List[float],
         top_k: int = 5,
@@ -1526,10 +1537,10 @@ class DocumentService:
 
     async def get_reference_document_ids(
         self,
-        user_id: uuid.UUID,
-        subject_id: uuid.UUID,
+        user_id: str,
+        subject_id: str,
         index_type: str = "reference_book",
-    ) -> List[uuid.UUID]:
+    ) -> List[str]:
         """
         Get IDs of all completed reference documents for a subject.
         Used to include reference book chunks in question generation searches.
@@ -1546,8 +1557,8 @@ class DocumentService:
 
     async def get_reference_documents(
         self,
-        user_id: uuid.UUID,
-        subject_id: Optional[uuid.UUID] = None,
+        user_id: str,
+        subject_id: Optional[str] = None,
         index_type: Optional[str] = None,
     ) -> List[Document]:
         """
@@ -1572,8 +1583,8 @@ class DocumentService:
 
     async def get_reference_chunks(
         self,
-        user_id: uuid.UUID,
-        subject_id: Optional[uuid.UUID] = None,
+        user_id: str,
+        subject_id: Optional[str] = None,
         index_type: Optional[str] = None,
         query_embedding: Optional[List[float]] = None,
         top_k: int = 10,
@@ -1623,8 +1634,8 @@ class DocumentService:
 
     async def get_primary_chunks_excluding_used(
         self,
-        document_id: uuid.UUID,
-        used_chunk_ids: List[uuid.UUID],
+        document_id: str,
+        used_chunk_ids: List[str],
         query_embedding: Optional[List[float]] = None,
         top_k: int = 5,
     ) -> List[DocumentChunk]:
@@ -1667,8 +1678,8 @@ class DocumentService:
 
     async def get_reference_questions(
         self,
-        user_id: uuid.UUID,
-        subject_id: uuid.UUID,
+        user_id: str,
+        subject_id: str,
         question_type: Optional[str] = None,
         limit: int = 10,
     ) -> List[Dict[str, Any]]:
