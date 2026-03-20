@@ -72,7 +72,8 @@
 	let speechRestartTimer: ReturnType<typeof setTimeout> | null = null;
 	let audioContext: AudioContext | null = null;
 	let mediaSourceNode: MediaStreamAudioSourceNode | null = null;
-	let scriptProcessorNode: ScriptProcessorNode | null = null;
+	let audioWorkletNode: AudioWorkletNode | null = null;
+	let scriptProcessorNode: ScriptProcessorNode | null = null; // Fallback for older browsers
 	let silenceGainNode: GainNode | null = null;
 	let recordedPcmChunks: Float32Array[] = [];
 	let recordingSampleRate = 16000;
@@ -130,7 +131,7 @@
 		try {
 			mediaStream = await requestMicrophoneStream();
 
-			await setupAudioCapture(mediaStream);
+			await startAudioCapture(mediaStream);
 			startSpeechRecognition();
 			isCaptureActive = true;
 			isRecording = true;
@@ -184,40 +185,72 @@
 		throw new Error('This browser does not expose microphone APIs (navigator.mediaDevices/getUserMedia).');
 	}
 
-	async function setupAudioCapture(stream: MediaStream) {
-		const AudioContextCtor =
-			window.AudioContext ||
-			(window as Window & { webkitAudioContext?: typeof AudioContext }).webkitAudioContext;
+	async function startAudioCapture(stream: MediaStream) {
+		if (typeof window === 'undefined') return;
+		
+		const AudioContextCtor = 
+			(window as any).AudioContext || 
+			(window as any).webkitAudioContext;
 
 		if (!AudioContextCtor) {
 			throw new Error('This browser does not expose AudioContext.');
 		}
 
 		audioContext = new AudioContextCtor();
+		if (!audioContext) throw new Error('Failed to create AudioContext');
+		
 		recordingSampleRate = audioContext.sampleRate;
 		mediaSourceNode = audioContext.createMediaStreamSource(stream);
-		scriptProcessorNode = audioContext.createScriptProcessor(4096, 1, 1);
 		silenceGainNode = audioContext.createGain();
 		silenceGainNode.gain.value = 0;
 		recordedPcmChunks = [];
 
-		scriptProcessorNode.onaudioprocess = (event: AudioProcessingEvent) => {
-			if (!isCaptureActive) {
-				return;
+		// Load and create the AudioWorklet
+		try {
+			await audioContext.audioWorklet.addModule('/lib/worklets/audio-capture-worklet.ts');
+			audioWorkletNode = new AudioWorkletNode(audioContext, 'audio-capture-worklet');
+			
+			// Handle messages from the worklet
+			audioWorkletNode.port.onmessage = (event) => {
+				if (event.data.type === 'audio-data' && isCaptureActive) {
+					recordedPcmChunks = [...recordedPcmChunks, event.data.data];
+				}
+			};
+
+			// Tell the worklet to start capturing
+			audioWorkletNode.port.postMessage({ type: 'start-capture' });
+			
+			// Connect the audio nodes
+			mediaSourceNode.connect(audioWorkletNode);
+			audioWorkletNode.connect(silenceGainNode);
+			silenceGainNode.connect(audioContext.destination);
+
+			if (audioContext.state === 'suspended') {
+				await audioContext.resume();
 			}
+		} catch (error) {
+			console.warn('AudioWorklet not supported, falling back to ScriptProcessorNode:', error);
+			// Fallback to ScriptProcessorNode for older browsers
+			scriptProcessorNode = audioContext.createScriptProcessor(4096, 1, 1);
+			
+			scriptProcessorNode.onaudioprocess = (event: AudioProcessingEvent) => {
+				if (!isCaptureActive) {
+					return;
+				}
 
-			const input = event.inputBuffer.getChannelData(0);
-			const copy = new Float32Array(input.length);
-			copy.set(input);
-			recordedPcmChunks = [...recordedPcmChunks, copy];
-		};
+				const input = event.inputBuffer.getChannelData(0);
+				const copy = new Float32Array(input.length);
+				copy.set(input);
+				recordedPcmChunks = [...recordedPcmChunks, copy];
+			};
 
-		mediaSourceNode.connect(scriptProcessorNode);
-		scriptProcessorNode.connect(silenceGainNode);
-		silenceGainNode.connect(audioContext.destination);
+			mediaSourceNode.connect(scriptProcessorNode);
+			scriptProcessorNode.connect(silenceGainNode);
+			silenceGainNode.connect(audioContext.destination);
 
-		if (audioContext.state === 'suspended') {
-			await audioContext.resume();
+			if (audioContext.state === 'suspended') {
+				await audioContext.resume();
+			}
 		}
 	}
 
@@ -476,9 +509,17 @@
 	}
 
 	async function stopAudioContext() {
+		// Tell the worklet to stop capturing before disconnecting
+		if (audioWorkletNode) {
+			audioWorkletNode.port.postMessage({ type: 'stop-capture' });
+		}
+		
+		// Disconnect both AudioWorkletNode and ScriptProcessorNode
+		audioWorkletNode?.disconnect();
 		scriptProcessorNode?.disconnect();
 		mediaSourceNode?.disconnect();
 		silenceGainNode?.disconnect();
+		audioWorkletNode = null;
 		scriptProcessorNode = null;
 		mediaSourceNode = null;
 		silenceGainNode = null;
@@ -494,9 +535,12 @@
 			timer = null;
 		}
 		isCaptureActive = false;
+		// Disconnect both AudioWorkletNode and ScriptProcessorNode
+		audioWorkletNode?.disconnect();
 		scriptProcessorNode?.disconnect();
 		mediaSourceNode?.disconnect();
 		silenceGainNode?.disconnect();
+		audioWorkletNode = null;
 		scriptProcessorNode = null;
 		mediaSourceNode = null;
 		silenceGainNode = null;
