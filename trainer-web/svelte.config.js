@@ -7,6 +7,7 @@ const config = {
 			pages: 'dist',
 			assets: 'dist',
 			fallback: 'index.html',
+			precompress: false,
 			strict: false
 		})
 	}
