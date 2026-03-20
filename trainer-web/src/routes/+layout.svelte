@@ -34,11 +34,11 @@
 			
 			// Also catch unhandled promise rejections from preload
 			const origHandler = window.onunhandledrejection;
-			window.onunhandledrejection = function(evt) {
+			window.onunhandledrejection = (evt: PromiseRejectionEvent) => {
 				if (evt.reason && evt.reason.message && evt.reason.message.includes('Unable to preload CSS')) {
 					evt.preventDefault();
 				} else if (origHandler) {
-					origHandler(evt);
+					origHandler.call(window, evt);
 				}
 			};
 		}
