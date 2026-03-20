@@ -207,7 +207,7 @@
 
 		// Load and create the AudioWorklet
 		try {
-			await audioContext.audioWorklet.addModule('/lib/worklets/audio-capture-worklet.ts');
+			await audioContext.audioWorklet.addModule('/worklets/audio-capture-worklet.js');
 			audioWorkletNode = new AudioWorkletNode(audioContext, 'audio-capture-worklet');
 			
 			// Handle messages from the worklet
@@ -230,6 +230,7 @@
 			}
 		} catch (error) {
 			console.warn('AudioWorklet not supported, falling back to ScriptProcessorNode:', error);
+			console.debug('AudioWorklet loading failed, using legacy ScriptProcessorNode for compatibility');
 			// Fallback to ScriptProcessorNode for older browsers
 			scriptProcessorNode = audioContext.createScriptProcessor(4096, 1, 1);
 			

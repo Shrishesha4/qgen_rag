@@ -1,4 +1,4 @@
-// @ts-nocheck - This is an AudioWorklet file that runs in a separate context
+// AudioWorklet file that runs in a separate context
 class AudioCaptureWorklet extends AudioWorkletProcessor {
   constructor() {
     super();
