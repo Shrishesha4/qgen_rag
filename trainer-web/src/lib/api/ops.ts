@@ -29,7 +29,8 @@ function startLiveMetricsPolling(): void {
 	if (typeof window === 'undefined' || metricsTimer !== null) return;
 
 	// Check if user is authenticated before starting polling
-	const unsubscribe = session.subscribe(($session) => {
+	let unsubscribe: (() => void) | null = null;
+	const stop = session.subscribe(($session) => {
 		if (!$session) {
 			// User not authenticated, don't start polling
 			return;
@@ -41,8 +42,8 @@ function startLiveMetricsPolling(): void {
 					getLiveModelMetrics(),
 					getTrainingQueueStatus(),
 				]);
-				console.debug('[aiOps] live-metrics', metrics);
-				console.debug('[aiOps] queue-status', queue);
+				// console.debug('[aiOps] live-metrics', metrics);
+				// console.debug('[aiOps] queue-status', queue);
 			} catch (error) {
 				console.warn('[aiOps] metrics polling failed', error);
 			}
@@ -50,8 +51,9 @@ function startLiveMetricsPolling(): void {
 
 		poll();
 		metricsTimer = window.setInterval(poll, 30_000);
-		unsubscribe(); // Unsubscribe after starting polling
+		unsubscribe?.(); // Unsubscribe after starting polling
 	});
+	unsubscribe = stop;
 }
 
 export function initAiOps(): void {

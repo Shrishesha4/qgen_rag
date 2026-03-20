@@ -325,11 +325,11 @@
 			const live = res.statuses || {};
 			const subjectTotalById = Object.fromEntries(subjects.map((s) => [s.id, s.total_questions]));
 
-			console.log('[bg-gen] Polling statuses', {
-				subjectCount: subjectIds.length,
-				wasInProgressCount: Object.keys(bgStatusBySubject).filter(id => bgStatusBySubject[id]?.in_progress).length,
-				liveStatusCount: Object.keys(live).length,
-			});
+			// console.log('[bg-gen] Polling statuses', {
+			// 	subjectCount: subjectIds.length,
+			// 	wasInProgressCount: Object.keys(bgStatusBySubject).filter(id => bgStatusBySubject[id]?.in_progress).length,
+			// 	liveStatusCount: Object.keys(live).length,
+			// });
 
 			// Simple, robust state update strategy
 			const updated: Record<string, BackgroundGenerationStatusItem> = { ...bgStatusBySubject };
@@ -376,7 +376,7 @@
 					
 					// Remove if it's completed (no longer in_progress on server) and old enough
 					if (!optimisticUpdates[subjectId] && ageMs > 30000) { // 30 seconds for non-optimistic
-						console.log('[bg-gen] Removing old in-progress status', { subjectId, ageMs });
+						// console.log('[bg-gen] Removing old in-progress status', { subjectId, ageMs });
 						delete updated[subjectId];
 					}
 					// Keep optimistic updates for longer (5 minutes)
@@ -394,15 +394,15 @@
 			writeCachedBgStatuses(updated);
 
 			const nowInProgressCount = Object.keys(updated).filter(id => updated[id]?.in_progress).length;
-			console.log('[bg-gen] Status update complete', {
-				nowInProgressCount,
-				wasInProgressCount,
-				optimisticRemaining: Object.keys(optimisticUpdates).length,
-			});
+			// console.log('[bg-gen] Status update complete', {
+			// 	nowInProgressCount,
+			// 	wasInProgressCount,
+			// 	optimisticRemaining: Object.keys(optimisticUpdates).length,
+			// });
 
 			// Restart polling if state changed significantly (e.g., new in-progress started)
 			if (nowInProgressCount !== wasInProgressCount) {
-				console.log('[bg-gen] State changed, restarting polling');
+				// console.log('[bg-gen] State changed, restarting polling');
 				ensureBackgroundStatusPolling();
 			}
 
@@ -440,7 +440,7 @@
 			}
 		}, subjectRefreshInterval);
 		
-		console.log('[bg-gen] Started polling', { pollInterval, hasInProgress, isMobile });
+		// console.log('[bg-gen] Started polling', { pollInterval, hasInProgress, isMobile });
 	}
 
 	function allReferenceDocs() {

@@ -75,7 +75,8 @@
 		initTheme();
 		
 		// Only initialize authenticated API calls when user is logged in
-		const unsubscribe = session.subscribe(($session) => {
+		let unsubscribe: (() => void) | null = null;
+		const stop = session.subscribe(($session) => {
 			if ($session) {
 				// User is authenticated, initialize API calls
 				warmVettingTaxonomy().catch(() => {
@@ -83,9 +84,10 @@
 				});
 				initAiOps();
 				// Unsubscribe after initialization to avoid repeated calls
-				unsubscribe();
+				unsubscribe?.();
 			}
 		});
+		unsubscribe = stop;
 		
 		// Suppress CSS preload timeout errors globally
 		window.addEventListener('error', (evt) => {
@@ -117,7 +119,10 @@
 			if (!document.hidden) forceRepaint();
 		};
 		document.addEventListener('visibilitychange', onVisibility);
-		return () => document.removeEventListener('visibilitychange', onVisibility);
+		return () => {
+			document.removeEventListener('visibilitychange', onVisibility);
+			unsubscribe?.();
+		};
 	});
 </script>
 
