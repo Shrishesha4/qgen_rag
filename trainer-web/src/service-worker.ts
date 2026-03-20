@@ -10,7 +10,22 @@ const ASSETS = [...build, ...files];
 self.addEventListener('install', (event: ExtendableEvent) => {
 	self.skipWaiting();
 	event.waitUntil(
-		caches.open(CACHE).then((cache) => cache.addAll(ASSETS))
+		caches.open(CACHE).then((cache) => {
+			// Try to cache assets, but skip ones that fail (e.g., 400/404)
+			return Promise.all(
+				ASSETS.map((url) =>
+					fetch(url)
+						.then((response) => {
+							if (response.ok) {
+								return cache.put(url, response);
+							}
+						})
+						.catch(() => {
+							// Skip assets that fail to fetch
+						})
+				)
+			);
+		})
 	);
 });
 
