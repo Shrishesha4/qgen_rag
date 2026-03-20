@@ -6,6 +6,7 @@
 	import { initTheme } from '$lib/theme';
 	import { warmVettingTaxonomy } from '$lib/api/vetting';
 	import { initAiOps } from '$lib/api/ops';
+	import { session } from '$lib/session';
 
 	let { children } = $props();
 
@@ -72,10 +73,19 @@
 
 	onMount(() => {
 		initTheme();
-		warmVettingTaxonomy().catch(() => {
-			// Non-blocking; adapter will retry on demand.
+		
+		// Only initialize authenticated API calls when user is logged in
+		const unsubscribe = session.subscribe(($session) => {
+			if ($session) {
+				// User is authenticated, initialize API calls
+				warmVettingTaxonomy().catch(() => {
+					// Non-blocking; adapter will retry on demand.
+				});
+				initAiOps();
+				// Unsubscribe after initialization to avoid repeated calls
+				unsubscribe();
+			}
 		});
-		initAiOps();
 		
 		// Suppress CSS preload timeout errors globally
 		window.addEventListener('error', (evt) => {

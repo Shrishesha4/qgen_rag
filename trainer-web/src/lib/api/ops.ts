@@ -7,6 +7,7 @@ import {
 	getLiveModelMetrics,
 	getTrainingQueueStatus,
 } from './training';
+import { session } from '../session';
 
 declare global {
 	interface Window {
@@ -27,21 +28,30 @@ let metricsTimer: number | null = null;
 function startLiveMetricsPolling(): void {
 	if (typeof window === 'undefined' || metricsTimer !== null) return;
 
-	const poll = async () => {
-		try {
-			const [metrics, queue] = await Promise.all([
-				getLiveModelMetrics(),
-				getTrainingQueueStatus(),
-			]);
-			console.debug('[aiOps] live-metrics', metrics);
-			console.debug('[aiOps] queue-status', queue);
-		} catch (error) {
-			console.warn('[aiOps] metrics polling failed', error);
+	// Check if user is authenticated before starting polling
+	const unsubscribe = session.subscribe(($session) => {
+		if (!$session) {
+			// User not authenticated, don't start polling
+			return;
 		}
-	};
 
-	poll();
-	metricsTimer = window.setInterval(poll, 30_000);
+		const poll = async () => {
+			try {
+				const [metrics, queue] = await Promise.all([
+					getLiveModelMetrics(),
+					getTrainingQueueStatus(),
+				]);
+				console.debug('[aiOps] live-metrics', metrics);
+				console.debug('[aiOps] queue-status', queue);
+			} catch (error) {
+				console.warn('[aiOps] metrics polling failed', error);
+			}
+		};
+
+		poll();
+		metricsTimer = window.setInterval(poll, 30_000);
+		unsubscribe(); // Unsubscribe after starting polling
+	});
 }
 
 export function initAiOps(): void {

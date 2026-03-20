@@ -1,5 +1,6 @@
 /** Vetting API — fetch questions for review, submit decisions. */
 import { apiFetch } from './client';
+import { session } from '../session';
 
 // ── Types ──
 
@@ -138,6 +139,18 @@ function toCandidateCode(label: string): string {
 export async function warmVettingTaxonomy(force = false): Promise<void> {
 	const now = Date.now();
 	if (!force && now - taxonomyLoadedAt < TAXONOMY_CACHE_TTL_MS && reasonCodeEntries.length > 0) {
+		return;
+	}
+
+	// Check if user is authenticated before making API call
+	let currentSession: any = null;
+	const unsubscribe = session.subscribe((s) => {
+		currentSession = s;
+		unsubscribe();
+	});
+	
+	if (!currentSession) {
+		// User not authenticated, don't fetch taxonomy
 		return;
 	}
 
