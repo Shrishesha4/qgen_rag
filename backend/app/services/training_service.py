@@ -114,6 +114,32 @@ class TrainingService:
             return fallback
 
     @staticmethod
+    def _resolve_model_source(model_ref: str) -> str:
+        """Resolve a model reference to a local directory when available."""
+        normalized = (model_ref or "").strip()
+        if not normalized:
+            return model_ref
+
+        direct_path = Path(normalized).expanduser()
+        if direct_path.exists():
+            return str(direct_path.resolve())
+
+        repo_key = normalized.replace("/", "__")
+        backend_root = Path(__file__).resolve().parents[2]
+        candidates = [
+            backend_root / "models" / repo_key,
+            backend_root / "models" / normalized,
+            Path.cwd() / "models" / repo_key,
+            Path.cwd() / "models" / normalized,
+        ]
+
+        for candidate in candidates:
+            if candidate.exists():
+                return str(candidate.resolve())
+
+        return model_ref
+
+    @staticmethod
     def _normalize_dpo_prompt(prompt: Optional[str]) -> str:
         prompt_text = (prompt or "").replace("\r\n", "\n").strip()
         if prompt_text.endswith("### Response:"):
@@ -1511,12 +1537,13 @@ class TrainingService:
 
         hp = version.hyperparameters or {}
         data_path = job.training_data_path
+        model_source = self._resolve_model_source(version.base_model)
 
         logger.info("Loading SFT dataset from %s", data_path)
         dataset = load_dataset("json", data_files=data_path, split="train")
 
-        logger.info("Loading base model: %s", version.base_model)
-        tokenizer = AutoTokenizer.from_pretrained(version.base_model)
+        logger.info("Loading base model: %s", model_source)
+        tokenizer = AutoTokenizer.from_pretrained(model_source)
         if tokenizer.pad_token is None:
             tokenizer.pad_token = tokenizer.eos_token
 
@@ -1576,7 +1603,7 @@ class TrainingService:
         if self._has_adapter_checkpoint(parent_adapter_path):
             logger.info("Warm-starting SFT from adapter %s", parent_adapter_path)
             base_model = AutoModelForCausalLM.from_pretrained(
-                version.base_model,
+                model_source,
                 **model_load_kwargs,
             )
             model = PeftModel.from_pretrained(
@@ -1587,7 +1614,7 @@ class TrainingService:
             trainer_peft_config = None
         else:
             model = AutoModelForCausalLM.from_pretrained(
-                version.base_model,
+                model_source,
                 **model_load_kwargs,
             )
         model.config.use_cache = False
@@ -1677,6 +1704,7 @@ class TrainingService:
         from datasets import load_dataset  # type: ignore
 
         hp = version.hyperparameters or {}
+        model_source = self._resolve_model_source(version.base_model)
 
         # Find DPO data file
         dpo_files = sorted(self.training_data_dir.glob("dpo_*.jsonl"), reverse=True)
@@ -1696,8 +1724,8 @@ class TrainingService:
             }
         )
 
-        logger.info("Loading model for DPO: %s", version.base_model)
-        tokenizer = AutoTokenizer.from_pretrained(version.base_model)
+        logger.info("Loading model for DPO: %s", model_source)
+        tokenizer = AutoTokenizer.from_pretrained(model_source)
         if tokenizer.pad_token is None:
             tokenizer.pad_token = tokenizer.eos_token
 
@@ -1754,7 +1782,7 @@ class TrainingService:
         if warm_start_adapter_path:
             logger.info("Warm-starting DPO from adapter %s", warm_start_adapter_path)
             base_model = AutoModelForCausalLM.from_pretrained(
-                version.base_model, **model_load_kwargs
+                model_source, **model_load_kwargs
             )
             model = PeftModel.from_pretrained(
                 base_model,
@@ -1764,14 +1792,14 @@ class TrainingService:
             trainer_peft_config = None
         else:
             model = AutoModelForCausalLM.from_pretrained(
-                version.base_model, **model_load_kwargs
+                model_source, **model_load_kwargs
             )
             trainer_peft_config = lora_config
         model.config.use_cache = False
 
         # Reference model (frozen copy for DPO)
         ref_model = AutoModelForCausalLM.from_pretrained(
-            version.base_model, **model_load_kwargs
+            model_source, **model_load_kwargs
         )
         ref_model.config.use_cache = False
 
