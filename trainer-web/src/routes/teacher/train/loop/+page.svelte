@@ -1202,7 +1202,7 @@
 			</div>
 		{/if}
 
-		{#if !editing && !generating && !batchComplete && subjectId}
+		{#if !editing && !generating && !regenerating && !batchComplete && subjectId}
 			<button class="complete-batch-fab" onclick={completeBatch}>
 				✓ Complete Batch
 			</button>
