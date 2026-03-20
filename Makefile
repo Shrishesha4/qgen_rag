@@ -67,8 +67,7 @@ db-reset:
 # Run database migrations
 db-migrate:
 	@echo "🔄 Setting up database schema..."
-	@cd backend && .venv/bin/python scripts/reset_database.py --confirm
-	@cd backend && .venv/bin/alembic stamp head
+	@cd backend && .venv/bin/alembic upgrade head
 	@cd backend && .venv/bin/python scripts/check_database.py
 	@echo "✅ Database setup complete"
 

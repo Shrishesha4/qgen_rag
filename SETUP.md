@@ -57,15 +57,14 @@ Edit `backend/.env.local` and set:
 # Reset database to clean state (recommended for fresh setup)
 python scripts/reset_database.py --confirm
 
-# Mark database as migrated (migrations have conflicts, use stamp instead)
-alembic stamp head
+# Apply full schema migrations
+alembic upgrade head
 
 # Verify database health (includes auth database permission check)
 python scripts/check_database.py
 ```
 
 **Note**: 
-- Due to migration history conflicts, we use `alembic stamp head` instead of `alembic upgrade head` for fresh installations
 - The auth database (SQLite) permissions are automatically set during setup
 - If you ever run the app with `sudo`, fix permissions with: `sudo chown $USER:$USER auth.db && sudo chmod 664 auth.db`
 
@@ -281,9 +280,9 @@ docker compose restart db
 
 **Migration errors:**
 ```bash
-# Reset and re-stamp
+# Reset and re-run migrations
 python scripts/reset_database.py --confirm
-alembic stamp head
+alembic upgrade head
 ```
 
 ### General Troubleshooting

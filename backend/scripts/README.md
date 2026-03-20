@@ -96,8 +96,8 @@ docker compose up -d db redis
 # 2. Reset database and create functions
 python scripts/reset_database.py --confirm
 
-# 3. Mark as migrated
-alembic stamp head
+# 3. Apply migrations
+alembic upgrade head
 
 # 4. Check database health
 python scripts/check_database.py

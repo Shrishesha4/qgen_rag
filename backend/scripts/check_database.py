@@ -1,12 +1,11 @@
 #!/usr/bin/env python3
-"""
-Database Health Check Script
+"""Database health check script.
 
-Checks for common database issues before running migrations.
-Detects type conflicts, missing extensions, and other problems.
-
-Usage:
-    python scripts/check_database.py
+Validates:
+- PostgreSQL connectivity
+- Required extensions
+- Alembic migration table presence
+- Required application tables for first-run safety
 """
 
 import asyncio
@@ -17,170 +16,122 @@ from pathlib import Path
 sys.path.insert(0, str(Path(__file__).parent.parent))
 
 from sqlalchemy import text
+
 from app.core.database import engine
 from app.core.config import settings
 
 
-async def check_database():
-    """Check database for common issues."""
-    
+REQUIRED_TABLES = {
+    "subjects",
+    "topics",
+    "documents",
+    "document_chunks",
+    "questions",
+    "generation_sessions",
+    "rubrics",
+    "vetting_logs",
+    "training_pairs",
+    "model_versions",
+    "training_jobs",
+}
+
+
+async def check_database() -> tuple[list[str], list[str]]:
+    """Check database for setup issues and return (issues, warnings)."""
     print("\n🔍 Checking database health...\n")
-    
-    issues = []
-    warnings = []
-    
+
+    issues: list[str] = []
+    warnings: list[str] = []
+
     # Check auth database permissions first
     print("0. Checking auth database permissions...")
     try:
         from app.core.auth_database import auth_db_path
         import os
-        
-        # Check directory exists and is accessible
-        if not auth_db_path.parent.exists():
-            auth_db_path.parent.mkdir(parents=True, exist_ok=True)
-            print("   Created auth database directory")
-        
-        # Set directory permissions
+
+        auth_db_path.parent.mkdir(parents=True, exist_ok=True)
         os.chmod(auth_db_path.parent, 0o755)
-        
-        # If file exists, check permissions
         if auth_db_path.exists():
             os.chmod(auth_db_path, 0o664)
             print("✅ Auth database permissions verified")
         else:
             print("ℹ️  Auth database will be created on startup")
     except Exception as e:
-        print(f"⚠️  Auth database permission check failed: {e}")
-    
-    # Test main database connection
+        warnings.append(f"Auth DB permission check failed: {e}")
+
     print("\n1. Testing PostgreSQL connection...")
     try:
         async with engine.begin() as conn:
-            result = await conn.execute(text("SELECT 1"))
+            await conn.execute(text("SELECT 1"))
             print("✅ Database connection successful")
-    except Exception as e:
-        print(f"❌ Database connection failed: {e}")
-        return False, issues, warnings
-    
-    # Check 2: Required extensions
-    result = await conn.execute(text("""
-        SELECT extname FROM pg_extension 
-        WHERE extname IN ('vector', 'pg_trgm')
-    """))
-    extensions = {row[0] for row in result}
-    
-    if 'vector' not in extensions:
-        warnings.append("pgvector extension not installed (will be created on startup)")
-    else:
-        print("✅ pgvector extension installed")
-    
-    if 'pg_trgm' not in extensions:
-        warnings.append("pg_trgm extension not installed")
-    else:
-        print("✅ pg_trgm extension installed")
-    
-    # Check 3: Type name conflicts
-    result = await conn.execute(text("""
-        SELECT typname 
-        FROM pg_type 
-        WHERE typnamespace = (SELECT oid FROM pg_namespace WHERE nspname = 'public')
-        AND typname IN ('subjects', 'topics', 'questions', 'users', 'training_jobs', 
-                       'training_pairs', 'model_versions', 'model_evaluations')
-    """))
-    conflicting_types = [row[0] for row in result]
-    
-    if conflicting_types:
-        issues.append(
-            f"Type name conflicts detected: {', '.join(conflicting_types)}\n"
-            f"   These type names conflict with table names.\n"
-            f"   Run: python scripts/reset_database.py"
-        )
-    else:
-        print("✅ No type name conflicts")
-    
-    # Check 4: Existing tables
-    result = await conn.execute(text("""
-        SELECT tablename 
-        FROM pg_tables 
-        WHERE schemaname = 'public'
-        ORDER BY tablename
-    """))
-    tables = [row[0] for row in result]
-    
-    if tables:
-        print(f"ℹ️  Found {len(tables)} existing tables")
-        if 'alembic_version' in tables:
-            # Check migration version
-            result = await conn.execute(text("SELECT version_num FROM alembic_version"))
-            version = result.scalar_one_or_none()
-            if version:
-                print(f"✅ Alembic version: {version}")
-        extensions = {row[0] for row in result}
-        
-        if 'vector' not in extensions:
-            warnings.append("pgvector extension not installed (will be created on startup)")
-        else:
-            print("✅ pgvector extension installed")
-        
-        if 'pg_trgm' not in extensions:
-            warnings.append("pg_trgm extension not installed")
-        else:
-            print("✅ pg_trgm extension installed")
-        
-        # Check 3: Type name conflicts
-        result = await conn.execute(text("""
-            SELECT typname 
-            FROM pg_type 
-            WHERE typnamespace = (SELECT oid FROM pg_namespace WHERE nspname = 'public')
-            AND typname IN ('subjects', 'topics', 'questions', 'users', 'training_jobs', 
-                           'training_pairs', 'model_versions', 'model_evaluations')
-        """))
-        conflicting_types = [row[0] for row in result]
-        
-        if conflicting_types:
-            issues.append(
-                f"Type name conflicts detected: {', '.join(conflicting_types)}\n"
-                f"   These type names conflict with table names.\n"
-                f"   Run: python scripts/reset_database.py"
+
+            print("\n2. Checking required extensions...")
+            ext_result = await conn.execute(
+                text(
+                    """
+                    SELECT extname
+                    FROM pg_extension
+                    WHERE extname IN ('vector', 'pg_trgm')
+                    """
+                )
             )
-        else:
-            print("✅ No type name conflicts")
-        
-        # Check 4: Existing tables
-        result = await conn.execute(text("""
-            SELECT tablename 
-            FROM pg_tables 
-            WHERE schemaname = 'public'
-            ORDER BY tablename
-        """))
-        tables = [row[0] for row in result]
-        
-        if tables:
-            print(f"ℹ️  Found {len(tables)} existing tables")
-            if 'alembic_version' in tables:
-                # Check migration version
-                result = await conn.execute(text("SELECT version_num FROM alembic_version"))
-                version = result.scalar_one_or_none()
+            extensions = {row[0] for row in ext_result}
+            if "vector" in extensions:
+                print("✅ pgvector extension installed")
+            else:
+                warnings.append("pgvector extension not installed (will be created on startup)")
+
+            if "pg_trgm" in extensions:
+                print("✅ pg_trgm extension installed")
+            else:
+                warnings.append("pg_trgm extension not installed")
+
+            print("\n3. Checking migration state...")
+            tables_result = await conn.execute(
+                text(
+                    """
+                    SELECT tablename
+                    FROM pg_tables
+                    WHERE schemaname = 'public'
+                    ORDER BY tablename
+                    """
+                )
+            )
+            tables = {row[0] for row in tables_result}
+
+            if "alembic_version" not in tables:
+                issues.append(
+                    "No alembic_version table found. Run: alembic upgrade head"
+                )
+            else:
+                version_result = await conn.execute(text("SELECT version_num FROM alembic_version"))
+                version = version_result.scalar_one_or_none()
                 if version:
                     print(f"✅ Alembic version: {version}")
                 else:
-                    warnings.append("Alembic version table exists but is empty")
-            else:
-                warnings.append(
-                    "No alembic_version table found. "
-                    "Run 'alembic upgrade head' to initialize migrations."
+                    issues.append("alembic_version table exists but is empty. Run: alembic upgrade head")
+
+            print("\n4. Checking required tables...")
+            missing_tables = sorted(REQUIRED_TABLES - tables)
+            if missing_tables:
+                issues.append(
+                    "Missing required tables: "
+                    + ", ".join(missing_tables)
+                    + "\n   Run: alembic upgrade head"
                 )
-        else:
-            print("ℹ️  No tables found (fresh database)")
-            print("   Run: alembic upgrade head")
-        
-        # Check 5: Database size
-        result = await conn.execute(text("""
-            SELECT pg_size_pretty(pg_database_size(current_database()))
-        """))
-        db_size = result.scalar_one()
-        print(f"ℹ️  Database size: {db_size}")
-    
+            else:
+                print(f"✅ Required tables present ({len(REQUIRED_TABLES)})")
+
+            print("\n5. Checking database size...")
+            size_result = await conn.execute(
+                text("SELECT pg_size_pretty(pg_database_size(current_database()))")
+            )
+            db_size = size_result.scalar_one()
+            print(f"ℹ️  Database size: {db_size}")
+
+    except Exception as e:
+        issues.append(f"Database connection failed: {e}")
+
     return issues, warnings
 
 
@@ -188,29 +139,29 @@ async def main():
     print(f"Database: {settings.POSTGRES_DB}")
     print(f"Host: {settings.POSTGRES_HOST}:{settings.POSTGRES_PORT}")
     print(f"User: {settings.POSTGRES_USER}\n")
-    
+
     try:
         issues, warnings = await check_database()
-        
-        print("\n" + "="*60)
-        
+
+        print("\n" + "=" * 60)
+
         if issues:
             print("\n❌ ISSUES FOUND:")
             for issue in issues:
                 print(f"\n{issue}")
-            print("\n" + "="*60)
+            print("\n" + "=" * 60)
             sys.exit(1)
-        
+
         if warnings:
             print("\n⚠️  WARNINGS:")
             for warning in warnings:
                 print(f"   • {warning}")
-        
+
         print("\n✅ Database health check passed!")
-        print("\nYou can safely run: alembic upgrade head")
-        print("="*60)
+        print("\nDatabase schema is ready for application startup.")
+        print("=" * 60)
         sys.exit(0)
-        
+
     except Exception as e:
         print(f"\n❌ Error during health check: {e}")
         sys.exit(1)
