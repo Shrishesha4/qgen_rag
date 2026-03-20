@@ -53,11 +53,9 @@ from app.services.metrics_service import (
 logger = logging.getLogger(__name__)
 
 # ── Configurable paths ──
-TRAINING_DATA_DIR = Path(os.environ.get("TRAINING_DATA_DIR", "./training_data"))
-LORA_ADAPTERS_DIR = Path(os.environ.get("LORA_ADAPTERS_DIR", "./lora_adapters"))
-BASE_MODEL_NAME = os.environ.get(
-    "TRAINING_BASE_MODEL", "deepseek-ai/DeepSeek-R1-Distill-Llama-8B"
-)
+TRAINING_DATA_DIR = Path(settings.TRAINING_DATA_DIR)
+LORA_ADAPTERS_DIR = Path(settings.LORA_ADAPTERS_DIR)
+BASE_MODEL_NAME = settings.TRAINING_BASE_MODEL
 
 SYNTHETIC_DPO_MIN_CONFIDENCE = float(
     os.environ.get("SYNTHETIC_DPO_MIN_CONFIDENCE", "0.85")
@@ -84,9 +82,36 @@ class TrainingService:
     """
 
     def __init__(self):
-        TRAINING_DATA_DIR.mkdir(parents=True, exist_ok=True)
-        LORA_ADAPTERS_DIR.mkdir(parents=True, exist_ok=True)
+        self.training_data_dir = self._resolve_writable_dir(
+            TRAINING_DATA_DIR,
+            Path("./.data/training_data"),
+            "training data",
+        )
+        self.lora_adapters_dir = self._resolve_writable_dir(
+            LORA_ADAPTERS_DIR,
+            Path("./.data/lora_adapters"),
+            "lora adapters",
+        )
         self.queue_service = QueueService()
+
+    @staticmethod
+    def _resolve_writable_dir(primary: Path, fallback: Path, label: str) -> Path:
+        """Resolve a writable directory, falling back if the primary path is not writable."""
+        try:
+            primary.mkdir(parents=True, exist_ok=True)
+            probe_file = primary / ".write_probe"
+            with open(probe_file, "w") as f:
+                f.write("ok")
+            probe_file.unlink(missing_ok=True)
+            return primary
+        except (PermissionError, OSError):
+            logger.warning("Primary %s directory not writable (%s). Using fallback: %s", label, primary, fallback)
+            fallback.mkdir(parents=True, exist_ok=True)
+            probe_file = fallback / ".write_probe"
+            with open(probe_file, "w") as f:
+                f.write("ok")
+            probe_file.unlink(missing_ok=True)
+            return fallback
 
     @staticmethod
     def _normalize_dpo_prompt(prompt: Optional[str]) -> str:
@@ -533,7 +558,7 @@ class TrainingService:
             return ("", 0)
 
         timestamp = datetime.now(timezone.utc).strftime("%Y%m%d_%H%M%S")
-        output_path = TRAINING_DATA_DIR / f"sft_{timestamp}.jsonl"
+        output_path = self.training_data_dir / f"sft_{timestamp}.jsonl"
 
         count = 0
         skipped_no_context = 0
@@ -684,7 +709,7 @@ class TrainingService:
 
         dpo_records: list[dict[str, Any]] = []
         pair_ids: list[str] = []
-        excluded_question_ids: set[uuid.UUID] = set()
+        excluded_question_ids: set[str] = set()
         for pair in pairs:
             prompt = self._normalize_dpo_prompt(pair.prompt)
             chosen = self._normalize_dpo_completion(pair.chosen_response)
@@ -733,7 +758,7 @@ class TrainingService:
             return ("", 0)
 
         timestamp = datetime.now(timezone.utc).strftime("%Y%m%d_%H%M%S")
-        output_path = TRAINING_DATA_DIR / f"dpo_{timestamp}.jsonl"
+        output_path = self.training_data_dir / f"dpo_{timestamp}.jsonl"
 
         with open(output_path, "w") as f:
             for record in dpo_records:
@@ -1119,8 +1144,14 @@ class TrainingService:
         checksum = hashlib.sha256(manifest_json.encode("utf-8")).hexdigest()
 
         if dataset.manifest_path:
-            with open(dataset.manifest_path, "w") as f:
-                f.write(manifest_json)
+            try:
+                with open(dataset.manifest_path, "w") as f:
+                    f.write(manifest_json)
+            except PermissionError:
+                fallback_manifest_path = self.training_data_dir / Path(dataset.manifest_path).name
+                with open(fallback_manifest_path, "w") as f:
+                    f.write(manifest_json)
+                dataset.manifest_path = str(fallback_manifest_path)
 
         dataset.checksum = checksum
         await db.commit()
@@ -1648,7 +1679,7 @@ class TrainingService:
         hp = version.hyperparameters or {}
 
         # Find DPO data file
-        dpo_files = sorted(TRAINING_DATA_DIR.glob("dpo_*.jsonl"), reverse=True)
+        dpo_files = sorted(self.training_data_dir.glob("dpo_*.jsonl"), reverse=True)
         if not dpo_files:
             logger.warning("No DPO data files found — skipping DPO phase.")
             return
@@ -2082,7 +2113,8 @@ class TrainingService:
         )
         manifest_json = json.dumps(manifest, sort_keys=True)
         checksum = hashlib.sha256(manifest_json.encode("utf-8")).hexdigest()
-        manifest_path = str(TRAINING_DATA_DIR / f"{dataset_tag}.manifest.json")
+        manifest_path = str(self.training_data_dir / f"{dataset_tag}.manifest.json")
+        self.training_data_dir.mkdir(parents=True, exist_ok=True)
         with open(manifest_path, "w") as f:
             f.write(manifest_json)
 
