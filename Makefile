@@ -81,14 +81,11 @@ start:
 	@echo "Terminal 1 (API):"
 	@echo "  cd backend && source .venv/bin/activate && python -m uvicorn app.main:app --host 0.0.0.0 --port 8000 --workers 6 --env-file .env.local"
 	@echo ""
-	@echo "Terminal 2 (Celery Worker):"
-	@echo "  cd backend && source .venv/bin/activate && celery -A app.workers.celery_app worker --loglevel=info --concurrency=2 --env-file .env.local"
+	@echo "Terminal 2 (Training Worker):"
+	@echo "  cd backend && source .venv/bin/activate && python -m app.workers.runner"
 	@echo ""
 	@echo "Terminal 3 (Frontend):"
 	@echo "  cd trainer-web && npm run dev"
-	@echo ""
-	@echo "Optional - Terminal 4 (Flower Monitor):"
-	@echo "  cd backend && source .venv/bin/activate && celery -A app.workers.celery_app flower --port=5555 --env-file .env.local"
 	@echo ""
 
 # Stop all services
@@ -96,8 +93,7 @@ stop:
 	@echo "🛑 Stopping services..."
 	@docker compose --env-file .env.local down
 	@pkill -f "uvicorn app.main" || true
-	@pkill -f "celery.*worker" || true
-	@pkill -f "celery.*flower" || true
+	@pkill -f "python -m app.workers.runner" || true
 	@pkill -f "vite dev" || true
 	@echo "✅ All services stopped"
 
