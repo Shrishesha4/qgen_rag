@@ -5,7 +5,13 @@
 	import { session } from '$lib/session';
 	import FileUploadZone from '$lib/components/FileUploadZone.svelte';
 	import { createSubject, createTopic, extractChapters, getSubject, updateTopic, type TopicResponse } from '$lib/api/subjects';
-	import { getDocumentStatus, listReferenceDocuments, scheduleBackgroundGeneration, uploadDocument } from '$lib/api/documents';
+	import {
+		deleteDocumentById,
+		getDocumentStatus,
+		listReferenceDocuments,
+		scheduleBackgroundGeneration,
+		uploadDocument,
+	} from '$lib/api/documents';
 
 	const DRAFT_STORAGE_KEY = 'qgen:new-topic-wizard:draft:v1';
 	const MIN_QUESTION_COUNT = 1;
@@ -532,24 +538,105 @@
 		}, 3000);
 	}
 
+	function fileKey(file: File) {
+		return `${file.name}::${file.size}`;
+	}
+
+	function docKey(doc: { filename: string; file_size_bytes: number }) {
+		return `${doc.filename}::${doc.file_size_bytes}`;
+	}
+
+	function subtractFiles(base: File[], subtract: File[]) {
+		const counts = new Map<string, number>();
+		for (const file of subtract) {
+			const key = fileKey(file);
+			counts.set(key, (counts.get(key) || 0) + 1);
+		}
+
+		const remaining: File[] = [];
+		for (const file of base) {
+			const key = fileKey(file);
+			const count = counts.get(key) || 0;
+			if (count > 0) {
+				counts.set(key, count - 1);
+			} else {
+				remaining.push(file);
+			}
+		}
+
+		return remaining;
+	}
+
+	async function deleteMatchingDocs(
+		removedFiles: File[],
+		docs: Array<{ id: string; filename: string; file_size_bytes: number }>,
+	) {
+		if (!removedFiles.length || !docs.length) return;
+
+		const remainingDocs = [...docs];
+		const idsToDelete: string[] = [];
+
+		for (const file of removedFiles) {
+			const exactIndex = remainingDocs.findIndex((doc) => docKey(doc) === fileKey(file));
+			const nameOnlyIndex = exactIndex === -1
+				? remainingDocs.findIndex((doc) => doc.filename === file.name)
+				: -1;
+
+			const matchedIndex = exactIndex !== -1 ? exactIndex : nameOnlyIndex;
+			if (matchedIndex !== -1) {
+				idsToDelete.push(remainingDocs[matchedIndex].id);
+				remainingDocs.splice(matchedIndex, 1);
+			}
+		}
+
+		for (const id of idsToDelete) {
+			await deleteDocumentById(id);
+		}
+	}
+
 	async function handleMaterialsSelected(files: File[]) {
-		if (!files.length || uploadingMaterials) return;
+		if (uploadingMaterials) return;
+		if (!files.length && materials.length === 0) return;
+
+		materialsStatusError = '';
+
+		const isRemovalUpdate = files.length <= materials.length
+			&& files.every((file) => materials.some((existing) => fileKey(existing) === fileKey(file)));
+
+		if (isRemovalUpdate) {
+			const removedFiles = subtractFiles(materials, files);
+			materials = files;
+			try {
+				await deleteMatchingDocs(removedFiles, materialDocs);
+				await refreshMaterialStatuses();
+				if (materialDocs.length > 0) {
+					startMaterialPolling();
+				} else {
+					clearMaterialPolling();
+				}
+			} catch (e: unknown) {
+				materialsStatusError = e instanceof Error ? e.message : 'Failed to remove reference material';
+			}
+			return;
+		}
+
+		const newFiles = subtractFiles(files, materials);
+		if (!newFiles.length) return;
 
 		uploadingMaterials = true;
-		materialsStatusError = '';
 		skipReferencePdf = false;
-		materials = [...materials, ...files];
-		uploadTotal = files.length;
+		materials = [...materials, ...newFiles];
+		uploadTotal = newFiles.length;
 		uploadCurrent = 0;
 		uploadProgress = 0;
 
 		try {
 			const subjectId = await ensureSubjectId();
-			for (let i = 0; i < files.length; i++) {
+			for (let i = 0; i < newFiles.length; i++) {
 				uploadCurrent = i + 1;
-				uploadProgress = Math.round(((i + 0.5) / files.length) * 100);
-				await uploadDocument(files[i], subjectId, 'reference_book');
-				uploadProgress = Math.round(((i + 1) / files.length) * 100);
+				uploadProgress = Math.round(((i + 0.5) / newFiles.length) * 100);
+				await uploadDocument(newFiles[i], subjectId, 'reference_book');
+				uploadProgress = Math.round(((i + 1) / newFiles.length) * 100);
 			}
 			await refreshMaterialStatuses();
 			startMaterialPolling();
@@ -564,15 +651,40 @@
 	}
 
 	async function handleRefQuestionsSelected(files: File[]) {
-		if (!files.length || uploadingRefQuestions) return;
+		if (uploadingRefQuestions) return;
+		if (!files.length && refQuestions.length === 0) return;
+
+		refQuestionsStatusError = '';
+
+		const isRemovalUpdate = files.length <= refQuestions.length
+			&& files.every((file) => refQuestions.some((existing) => fileKey(existing) === fileKey(file)));
+
+		if (isRemovalUpdate) {
+			const removedFiles = subtractFiles(refQuestions, files);
+			refQuestions = files;
+			try {
+				await deleteMatchingDocs(removedFiles, refQuestionDocs);
+				await refreshMaterialStatuses();
+				if (materialDocs.length > 0 || refQuestionDocs.length > 0) {
+					startMaterialPolling();
+				} else {
+					clearMaterialPolling();
+				}
+			} catch (e: unknown) {
+				refQuestionsStatusError = e instanceof Error ? e.message : 'Failed to remove reference question file';
+			}
+			return;
+		}
+
+		const newFiles = subtractFiles(files, refQuestions);
+		if (!newFiles.length) return;
 
 		uploadingRefQuestions = true;
-		refQuestionsStatusError = '';
-		refQuestions = [...refQuestions, ...files];
+		refQuestions = [...refQuestions, ...newFiles];
 
 		try {
 			const subjectId = await ensureSubjectId();
-			for (const file of files) {
+			for (const file of newFiles) {
 				await uploadDocument(file, subjectId, 'reference_questions');
 			}
 			await refreshMaterialStatuses();
