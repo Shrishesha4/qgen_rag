@@ -14,6 +14,7 @@ from fastapi import APIRouter, Depends, HTTPException, status, Query
 from sqlalchemy import select, func, and_, or_
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import selectinload, joinedload
+from sqlalchemy.exc import ProgrammingError
 from pydantic import BaseModel, Field
 
 from app.core.database import get_db
@@ -832,21 +833,27 @@ async def submit_vetting(
 
         rubric_snapshot = data.rubric_snapshot
         if rubric_snapshot is None and question.subject_id:
-            latest_rubric_result = await db.execute(
-                select(Rubric)
-                .where(Rubric.subject_id == question.subject_id)
-                .order_by(Rubric.updated_at.desc())
-                .limit(1)
-            )
-            latest_rubric = latest_rubric_result.scalar_one_or_none()
-            if latest_rubric:
-                rubric_snapshot = {
-                    "rubric_id": str(latest_rubric.id),
-                    "name": latest_rubric.name,
-                    "exam_type": latest_rubric.exam_type,
-                    "question_type_distribution": latest_rubric.question_type_distribution,
-                    "learning_outcomes_distribution": latest_rubric.learning_outcomes_distribution,
-                }
+            try:
+                latest_rubric_result = await db.execute(
+                    select(Rubric)
+                    .where(Rubric.subject_id == question.subject_id)
+                    .order_by(Rubric.updated_at.desc())
+                    .limit(1)
+                )
+                latest_rubric = latest_rubric_result.scalar_one_or_none()
+                if latest_rubric:
+                    rubric_snapshot = {
+                        "rubric_id": str(latest_rubric.id),
+                        "name": latest_rubric.name,
+                        "exam_type": latest_rubric.exam_type,
+                        "question_type_distribution": latest_rubric.question_type_distribution,
+                        "learning_outcomes_distribution": latest_rubric.learning_outcomes_distribution,
+                    }
+            except ProgrammingError as e:
+                # Older environments may not have the rubrics table yet.
+                if "relation \"rubrics\" does not exist" not in str(e):
+                    raise
+                await db.rollback()
 
         # 2. Build the edit diff (for 'edit' decisions)
         edit_diff = None
