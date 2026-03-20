@@ -13,8 +13,11 @@
 	export let onAction: (() => Promise<void>) | null = null;
 
 	async function handleAction() {
+		console.log('StepCard.handleAction called', { onAction: !!onAction, isBusy, canProceed, buttonText });
 		if (onAction && !isBusy && canProceed) {
 			await onAction();
+		} else {
+			console.log('Action blocked', { onAction: !!onAction, isBusy, canProceed });
 		}
 	}
 
