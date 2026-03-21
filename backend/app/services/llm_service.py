@@ -328,16 +328,37 @@ class OllamaLLMService:
             s = match.group(0)
             # Preserve the quotes, process the content
             content = s[1:-1]  # Remove surrounding quotes
+            valid_escapes = {'"', '\\', '/', 'b', 'f', 'n', 'r', 't'}
+            hexdigits = set('0123456789abcdefABCDEF')
             
             # Replace unescaped control characters with their escaped forms
             result = []
             i = 0
             while i < len(content):
                 char = content[i]
-                if char == '\\' and i + 1 < len(content):
-                    # This is an escape sequence, keep it as-is
-                    result.append(content[i:i+2])
-                    i += 2
+                if char == '\\':
+                    # Keep valid JSON escapes as-is; convert invalid ones into literal backslash sequences.
+                    if i + 1 >= len(content):
+                        result.append('\\\\')
+                        i += 1
+                    else:
+                        nxt = content[i + 1]
+                        if nxt in valid_escapes:
+                            result.append('\\' + nxt)
+                            i += 2
+                        elif nxt == 'u':
+                            hex_part = content[i + 2:i + 6]
+                            if len(hex_part) == 4 and all(ch in hexdigits for ch in hex_part):
+                                result.append('\\u' + hex_part)
+                                i += 6
+                            else:
+                                # Invalid unicode escape like \u12 or \uXXXX -> preserve literally.
+                                result.append('\\\\u')
+                                i += 2
+                        else:
+                            # Invalid escape like \l, \m, \( from model output.
+                            result.append('\\\\' + nxt)
+                            i += 2
                 elif ord(char) < 32:  # Control character
                     # Escape it properly
                     if char == '\n':

@@ -2772,6 +2772,15 @@ Output valid JSON only."""
                     logger.warning(f"quick_generate: Could not load rejection patterns: {rp_err}")
 
             parallel_workers = max(1, min(count, int(settings.QUICK_GENERATE_PARALLEL_WORKERS or 1)))
+            llm_provider = (getattr(settings, "LLM_PROVIDER", "") or "").lower()
+            ollama_model = (getattr(settings, "OLLAMA_MODEL", "") or "").lower()
+            if llm_provider == "ollama":
+                # Local Ollama models can saturate quickly with many concurrent calls.
+                parallel_workers = min(parallel_workers, 2)
+                if "qwen" in ollama_model:
+                    # Reasoning-heavy Qwen models are especially sensitive to parallel load.
+                    parallel_workers = 1
+            worker_timeout_seconds = 180 if (llm_provider == "ollama" and "qwen" in ollama_model) else 90
             max_attempts_per_slot = 4
             slot_queue = []
             slot_id_seq = 0
@@ -2878,13 +2887,30 @@ Output valid JSON only."""
                 )
 
                 exclusion_snapshot = list(generated_questions_text[-20:])
+                async def _run_candidate_with_timeout(slot: dict, idx: int) -> dict:
+                    try:
+                        return await asyncio.wait_for(
+                            _build_candidate(
+                                slot,
+                                total_question_index + idx,
+                                exclusion_snapshot,
+                            ),
+                            timeout=worker_timeout_seconds,
+                        )
+                    except asyncio.TimeoutError:
+                        logger.warning(
+                            f"quick_generate: worker timeout for slot={slot.get('id')} "
+                            f"type={slot.get('q_type')} after {worker_timeout_seconds}s"
+                        )
+                        return {
+                            "ok": False,
+                            "slot": slot,
+                            "reason": "worker_timeout",
+                        }
+
                 batch_results = await asyncio.gather(
                     *[
-                        _build_candidate(
-                            slot,
-                            total_question_index + idx,
-                            exclusion_snapshot,
-                        )
+                        _run_candidate_with_timeout(slot, idx)
                         for idx, slot in enumerate(batch_slots)
                     ]
                 )
@@ -3554,6 +3580,13 @@ Output valid JSON only."""
                     logger.warning(f"quick_generate_from_subject: Could not load rejection patterns: {rp_err}")
 
             parallel_workers = max(1, min(count, int(settings.QUICK_GENERATE_PARALLEL_WORKERS or 1)))
+            llm_provider = (getattr(settings, "LLM_PROVIDER", "") or "").lower()
+            ollama_model = (getattr(settings, "OLLAMA_MODEL", "") or "").lower()
+            if llm_provider == "ollama":
+                parallel_workers = min(parallel_workers, 2)
+                if "qwen" in ollama_model:
+                    parallel_workers = 1
+            worker_timeout_seconds = 180 if (llm_provider == "ollama" and "qwen" in ollama_model) else 90
             max_attempts_per_slot = 4
             slot_queue = []
             slot_id_seq = 0
@@ -3658,13 +3691,30 @@ Output valid JSON only."""
 
                 exclusion_snapshot = list(generated_questions_text[-20:])
                 import asyncio
+                async def _run_candidate_with_timeout(slot: dict, idx: int) -> dict:
+                    try:
+                        return await asyncio.wait_for(
+                            _build_candidate(
+                                slot,
+                                total_question_index + idx,
+                                exclusion_snapshot,
+                            ),
+                            timeout=worker_timeout_seconds,
+                        )
+                    except asyncio.TimeoutError:
+                        logger.warning(
+                            f"quick_generate_from_subject: worker timeout for slot={slot.get('id')} "
+                            f"type={slot.get('q_type')} after {worker_timeout_seconds}s"
+                        )
+                        return {
+                            "ok": False,
+                            "slot": slot,
+                            "reason": "worker_timeout",
+                        }
+
                 batch_results = await asyncio.gather(
                     *[
-                        _build_candidate(
-                            slot,
-                            total_question_index + idx,
-                            exclusion_snapshot,
-                        )
+                        _run_candidate_with_timeout(slot, idx)
                         for idx, slot in enumerate(batch_slots)
                     ]
                 )

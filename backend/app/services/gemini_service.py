@@ -486,14 +486,33 @@ class GeminiService:
             """Escape control chars inside a matched JSON string."""
             s = match.group(0)
             content = s[1:-1]  # Remove surrounding quotes
+            valid_escapes = {'"', '\\', '/', 'b', 'f', 'n', 'r', 't'}
+            hexdigits = set('0123456789abcdefABCDEF')
             
             result = []
             i = 0
             while i < len(content):
                 char = content[i]
-                if char == '\\' and i + 1 < len(content):
-                    result.append(content[i:i+2])
-                    i += 2
+                if char == '\\':
+                    if i + 1 >= len(content):
+                        result.append('\\\\')
+                        i += 1
+                    else:
+                        nxt = content[i + 1]
+                        if nxt in valid_escapes:
+                            result.append('\\' + nxt)
+                            i += 2
+                        elif nxt == 'u':
+                            hex_part = content[i + 2:i + 6]
+                            if len(hex_part) == 4 and all(ch in hexdigits for ch in hex_part):
+                                result.append('\\u' + hex_part)
+                                i += 6
+                            else:
+                                result.append('\\\\u')
+                                i += 2
+                        else:
+                            result.append('\\\\' + nxt)
+                            i += 2
                 elif ord(char) < 32:  # Control character
                     if char == '\n':
                         result.append('\\n')
