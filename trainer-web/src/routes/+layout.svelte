@@ -4,6 +4,7 @@
 	import { goto } from '$app/navigation';
 	import { page } from '$app/stores';
 	import { initTheme } from '$lib/theme';
+	import ThemePicker from '$lib/components/ThemePicker.svelte';
 	import { warmVettingTaxonomy } from '$lib/api/vetting';
 	import { initAiOps } from '$lib/api/ops';
 	import { session } from '$lib/session';
@@ -47,7 +48,46 @@
 
 	let pathname = $derived($page.url.pathname);
 	const hideGlobalBackPrefixes = ['/teacher/train/loop'];
+	let showDesktopChrome = $derived.by(() => {
+		if (pathname.includes('/login')) return false;
+		return pathname.startsWith('/teacher') || pathname.startsWith('/vetter') || pathname.startsWith('/admin');
+	});
+	let navItems = $derived.by(() => {
+		if (pathname.startsWith('/teacher')) {
+			return [
+				{ href: '/teacher/dashboard', label: 'Home', icon: '🏠' },
+				{ href: '/teacher/train/new', label: 'Train Topic', icon: '📚' },
+				{ href: '/teacher/train/loop', label: 'Training Loop', icon: '🪟' },
+				{ href: '/teacher/verify', label: 'Verify', icon: '🎙️' },
+				{ href: '/teacher/profile', label: 'Profile', icon: '👤' }
+			];
+		}
+		if (pathname.startsWith('/vetter')) {
+			return [
+				{ href: '/vetter/dashboard', label: 'Home', icon: '🏠' },
+				{ href: '/vetter/subjects', label: 'Subjects', icon: '📚' },
+				{ href: '/vetter/loop', label: 'Vetting Loop', icon: '🎙️' }
+			];
+		}
+		if (pathname.startsWith('/admin')) {
+			return [
+				{ href: '/admin/dashboard', label: 'Dashboard', icon: '📊' },
+				{ href: '/admin/subjects', label: 'Subjects', icon: '🧾' }
+			];
+		}
+		return [];
+	});
+	let routeTitle = $derived.by(() => {
+		if (!pathname || pathname === '/') return 'VQuest Trainer';
+		if (pathname.includes('/login')) return 'Welcome';
+		const chunks = pathname.split('/').filter(Boolean);
+		const last = chunks[chunks.length - 1] ?? 'workspace';
+		return last
+			.replace(/[-_]/g, ' ')
+			.replace(/\b\w/g, (char) => char.toUpperCase());
+	});
 	let showGlobalBack = $derived.by(() => {
+		if (showDesktopChrome) return false;
 		if (
 			pathname === '/' ||
 			pathname.includes('/login') ||
@@ -148,7 +188,53 @@
 {/if}
 
 <div class="app-shell">
-	{@render children()}
+	{#if showDesktopChrome}
+		<aside class="desktop-sidebar glass-panel">
+			<div class="sidebar-brand">
+				<div class="brand-icon">🧠</div>
+				<div>
+					<p class="brand-title">VQuest</p>
+					<p class="brand-subtitle">Trainer Shell</p>
+				</div>
+			</div>
+			<nav class="sidebar-nav">
+				{#each navItems as item}
+					<a
+						href={item.href}
+						class="sidebar-link"
+						class:active={pathname === item.href || pathname.startsWith(`${item.href}/`)}
+					>
+						<span class="sidebar-link-icon">{item.icon}</span>
+						<span>{item.label}</span>
+					</a>
+				{/each}
+			</nav>
+			<div class="sidebar-footer">
+				<div class="theme-row">
+					<span class="theme-label">Theme</span>
+					<ThemePicker />
+				</div>
+			</div>
+		</aside>
+
+		<section class="desktop-window-wrap">
+			<div class="desktop-window glass-panel">
+				<div class="desktop-window-titlebar" style:background="var(--theme-nav-glass)">
+					<div class="window-dots" aria-hidden="true">
+						<span class="dot dot-red"></span>
+						<span class="dot dot-yellow"></span>
+						<span class="dot dot-green"></span>
+					</div>
+					<h1>{routeTitle}</h1>
+				</div>
+				<div class="desktop-window-content">
+					{@render children()}
+				</div>
+			</div>
+		</section>
+	{:else}
+		{@render children()}
+	{/if}
 </div>
 
 <style>
@@ -246,6 +332,175 @@
 		padding-right: env(safe-area-inset-right);
 		padding-bottom: env(safe-area-inset-bottom);
 		padding-left: env(safe-area-inset-left);
+	}
+
+	.desktop-sidebar {
+		display: none;
+	}
+
+	@media (min-width: 960px) {
+		.app-shell {
+			display: grid;
+			grid-template-columns: 280px minmax(0, 1fr);
+			gap: 1.5rem;
+			padding: calc(env(safe-area-inset-top) + 1.5rem) 1.5rem 1.5rem;
+			height: 100dvh;
+			max-width: 1400px;
+			margin: 0 auto;
+		}
+
+		.desktop-sidebar {
+			display: flex;
+			flex-direction: column;
+			padding: 1rem;
+			border-radius: 1.25rem;
+			overflow: hidden;
+		}
+
+		.sidebar-brand {
+			display: flex;
+			align-items: center;
+			gap: 0.75rem;
+			padding: 0.4rem 0.4rem 1rem;
+			border-bottom: 1px solid rgba(255, 255, 255, 0.35);
+		}
+
+		.brand-icon {
+			width: 42px;
+			height: 42px;
+			border-radius: 12px;
+			display: grid;
+			place-items: center;
+			background: rgba(255, 255, 255, 0.62);
+			border: 1px solid rgba(255, 255, 255, 0.74);
+		}
+
+		.brand-title {
+			margin: 0;
+			font-size: 1rem;
+			font-weight: 700;
+			color: var(--theme-text-primary);
+		}
+
+		.brand-subtitle {
+			margin: 0.1rem 0 0;
+			font-size: 0.75rem;
+			color: var(--theme-text-secondary);
+			text-transform: uppercase;
+			letter-spacing: 0.06em;
+		}
+
+		.sidebar-nav {
+			padding: 0.75rem 0;
+			display: flex;
+			flex-direction: column;
+			gap: 0.35rem;
+			flex: 1;
+		}
+
+		.sidebar-link {
+			display: flex;
+			align-items: center;
+			gap: 0.65rem;
+			padding: 0.7rem 0.8rem;
+			border-radius: 0.8rem;
+			text-decoration: none;
+			font-weight: 600;
+			color: var(--theme-text-secondary);
+			transition: all 0.18s ease;
+		}
+
+		.sidebar-link:hover {
+			background: rgba(255, 255, 255, 0.42);
+			color: var(--theme-text-primary);
+		}
+
+		.sidebar-link.active {
+			background: rgba(255, 255, 255, 0.62);
+			color: var(--theme-text-primary);
+			box-shadow: inset 0 1px 1px rgba(255, 255, 255, 0.7);
+		}
+
+		.sidebar-link-icon {
+			font-size: 1.05rem;
+		}
+
+		.sidebar-footer {
+			padding-top: 0.75rem;
+			border-top: 1px solid rgba(255, 255, 255, 0.35);
+		}
+
+		.theme-row {
+			display: flex;
+			align-items: center;
+			justify-content: space-between;
+		}
+
+		.theme-label {
+			font-size: 0.76rem;
+			font-weight: 700;
+			letter-spacing: 0.08em;
+			text-transform: uppercase;
+			color: var(--theme-text-secondary);
+		}
+
+		.desktop-window-wrap {
+			min-width: 0;
+			display: flex;
+		}
+
+		.desktop-window {
+			display: flex;
+			flex-direction: column;
+			min-width: 0;
+			width: 100%;
+			height: calc(100dvh - env(safe-area-inset-top) - 3rem);
+			border-radius: 1.25rem;
+			overflow: hidden;
+		}
+
+		.desktop-window-titlebar {
+			height: 46px;
+			display: grid;
+			grid-template-columns: auto 1fr auto;
+			align-items: center;
+			padding: 0 0.9rem;
+			border-bottom: 1px solid rgba(255, 255, 255, 0.38);
+		}
+
+		.window-dots {
+			display: flex;
+			gap: 0.35rem;
+		}
+
+		.dot {
+			width: 11px;
+			height: 11px;
+			border-radius: 999px;
+			display: inline-block;
+		}
+
+		.dot-red { background: #ff5f56; border: 1px solid #e0443e; }
+		.dot-yellow { background: #ffbd2e; border: 1px solid #dea123; }
+		.dot-green { background: #27c93f; border: 1px solid #1aab29; }
+
+		.desktop-window-titlebar h1 {
+			margin: 0;
+			text-align: center;
+			font-size: 0.92rem;
+			font-weight: 700;
+			color: var(--theme-text-primary);
+		}
+
+		.desktop-window-content {
+			flex: 1;
+			min-height: 0;
+			overflow: auto;
+		}
+
+		.global-back-btn {
+			display: none;
+		}
 	}
 
 	@media (max-width: 640px) {

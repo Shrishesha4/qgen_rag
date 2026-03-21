@@ -30,11 +30,18 @@ function applyTheme(config: ThemeConfig) {
 	root.style.setProperty('--theme-bg', config.bg);
 	root.style.setProperty('--theme-bg-color', config.bgColor);
 	root.style.setProperty('--theme-bg-image', `url(${config.bgImage})`);
+	root.style.setProperty('--theme-wallpaper-overlay', config.wallpaperOverlay);
 	root.style.setProperty('--theme-primary', config.primary);
 	root.style.setProperty('--theme-primary-hover', config.primaryHover);
+	root.style.setProperty('--theme-accent-gradient', config.accentGradient);
 	root.style.setProperty('--theme-primary-rgb', config.primaryRgb);
 	root.style.setProperty('--theme-text', config.text);
 	root.style.setProperty('--theme-text-muted', config.textMuted);
+	root.style.setProperty('--theme-text-primary', config.textPrimary);
+	root.style.setProperty('--theme-text-secondary', config.textSecondary);
+	root.style.setProperty('--theme-glass-bg', config.glassBg);
+	root.style.setProperty('--theme-glass-border', config.glassBorder);
+	root.style.setProperty('--theme-nav-glass', config.navGlass);
 	root.style.setProperty('--theme-border', config.border);
 	root.style.setProperty('--theme-glow', config.glow);
 	root.setAttribute('data-theme', config.name);

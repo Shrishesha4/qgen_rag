@@ -6,7 +6,7 @@ uploads/
 training_data/
 lora_adapters/
 backend/models/
-
+mockui/
 # Distribution / packaging
 .Python
 build/

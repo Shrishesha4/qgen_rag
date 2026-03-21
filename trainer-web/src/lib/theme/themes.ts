@@ -11,6 +11,8 @@ export interface ThemeConfig {
 	icon: string;
 	/** Background image URL (Unsplash) */
 	bgImage: string;
+	/** Overlay painted on top of wallpaper */
+	wallpaperOverlay: string;
 	/** Rich atmospheric gradient fallback */
 	bg: string;
 	/** Solid fallback */
@@ -18,11 +20,17 @@ export interface ThemeConfig {
 	/** Accent */
 	primary: string;
 	primaryHover: string;
+	accentGradient: string;
 	/** "R, G, B" for rgba usage */
 	primaryRgb: string;
 	/** Light text for dark backgrounds */
 	text: string;
 	textMuted: string;
+	textPrimary: string;
+	textSecondary: string;
+	glassBg: string;
+	glassBorder: string;
+	navGlass: string;
 	/** Glass border tint */
 	border: string;
 	/** Accent glow */
@@ -35,6 +43,8 @@ export const themes: Record<ThemeName, ThemeConfig> = {
 		label: 'Aurora',
 		icon: '❄️',
 		bgImage: '/theme-pictures/aurora.webp',
+		wallpaperOverlay:
+			'linear-gradient(180deg, rgba(0,0,0,0.08) 0%, rgba(0,0,0,0.04) 48%, rgba(0,0,0,0.14) 100%)',
 		bg: [
 			'radial-gradient(ellipse at 25% 70%, rgba(180,200,230,0.25) 0%, transparent 50%)',
 			'radial-gradient(ellipse at 75% 30%, rgba(150,185,220,0.2) 0%, transparent 40%)',
@@ -44,9 +54,15 @@ export const themes: Record<ThemeName, ThemeConfig> = {
 		bgColor: '#7a94ac',
 		primary: '#48b8e8',
 		primaryHover: '#32a8dc',
+		accentGradient: '#6b7280',
 		primaryRgb: '72, 184, 232',
 		text: '#eaf0f6',
 		textMuted: '#a8bccf',
+		textPrimary: '#1a1a2e',
+		textSecondary: 'rgba(0,0,0,0.55)',
+		glassBg: 'rgba(255, 255, 255, 0.55)',
+		glassBorder: 'rgba(255, 255, 255, 0.7)',
+		navGlass: 'rgba(255, 255, 255, 0.5)',
 		border: 'rgba(255,255,255,0.18)',
 		glow: 'rgba(72,184,232,0.35)'
 	},
@@ -55,6 +71,8 @@ export const themes: Record<ThemeName, ThemeConfig> = {
 		label: 'Deep Ocean',
 		icon: '🌊',
 		bgImage: '/theme-pictures/deep-ocean.webp',
+		wallpaperOverlay:
+			'linear-gradient(180deg, rgba(0,0,0,0.1) 0%, rgba(0,0,0,0.0) 50%, rgba(0,0,0,0.15) 100%)',
 		bg: [
 			'radial-gradient(ellipse at 30% 80%, rgba(20,80,160,0.35) 0%, transparent 50%)',
 			'radial-gradient(ellipse at 70% 20%, rgba(30,100,180,0.25) 0%, transparent 45%)',
@@ -63,9 +81,15 @@ export const themes: Record<ThemeName, ThemeConfig> = {
 		bgColor: '#1f4268',
 		primary: '#3898e0',
 		primaryHover: '#2888d4',
+		accentGradient: '#2dd4bf',
 		primaryRgb: '56, 152, 224',
 		text: '#e0e8f4',
 		textMuted: '#8aa8c8',
+		textPrimary: '#1a1a2e',
+		textSecondary: 'rgba(0,0,0,0.55)',
+		glassBg: 'rgba(255, 255, 255, 0.55)',
+		glassBorder: 'rgba(255, 255, 255, 0.7)',
+		navGlass: 'rgba(255, 255, 255, 0.5)',
 		border: 'rgba(255,255,255,0.14)',
 		glow: 'rgba(56,152,224,0.35)'
 	},
@@ -74,6 +98,8 @@ export const themes: Record<ThemeName, ThemeConfig> = {
 		label: 'Landscape',
 		icon: '🌄',
 		bgImage: '/theme-pictures/landscape.webp',
+		wallpaperOverlay:
+			'linear-gradient(180deg, rgba(0,0,0,0.1) 0%, rgba(0,0,0,0.05) 50%, rgba(0,0,0,0.15) 100%)',
 		bg: [
 			'radial-gradient(ellipse at 40% 80%, rgba(200,60,20,0.2) 0%, transparent 50%)',
 			'radial-gradient(ellipse at 60% 20%, rgba(220,100,40,0.15) 0%, transparent 45%)',
@@ -82,9 +108,15 @@ export const themes: Record<ThemeName, ThemeConfig> = {
 		bgColor: '#5c3224',
 		primary: '#f07030',
 		primaryHover: '#e06020',
+		accentGradient: '#f48c06',
 		primaryRgb: '240, 112, 48',
 		text: '#f4ece4',
 		textMuted: '#ffffff',
+		textPrimary: '#2d1810',
+		textSecondary: 'rgba(0,0,0,0.55)',
+		glassBg: 'rgba(255, 255, 255, 0.55)',
+		glassBorder: 'rgba(255, 255, 255, 0.7)',
+		navGlass: 'rgba(255, 255, 255, 0.5)',
 		border: 'rgba(255,255,255,0.14)',
 		glow: 'rgba(240,112,48,0.35)'
 	},
@@ -93,6 +125,8 @@ export const themes: Record<ThemeName, ThemeConfig> = {
 		label: 'Dark Forest',
 		icon: '🌿',
 		bgImage: '/theme-pictures/dark-forest.webp',
+		wallpaperOverlay:
+			'linear-gradient(180deg, rgba(0,0,0,0.1) 0%, rgba(0,0,0,0.05) 50%, rgba(0,0,0,0.15) 100%)',
 		bg: [
 			'radial-gradient(ellipse at 25% 75%, rgba(40,120,50,0.25) 0%, transparent 50%)',
 			'radial-gradient(ellipse at 75% 25%, rgba(50,140,60,0.2) 0%, transparent 40%)',
@@ -101,9 +135,15 @@ export const themes: Record<ThemeName, ThemeConfig> = {
 		bgColor: '#325c30',
 		primary: '#48c050',
 		primaryHover: '#38b040',
+		accentGradient: '#40916c',
 		primaryRgb: '72, 192, 80',
 		text: '#e4f4e6',
 		textMuted: '#90b894',
+		textPrimary: '#1b2e1b',
+		textSecondary: 'rgba(0,0,0,0.55)',
+		glassBg: 'rgba(255, 255, 255, 0.55)',
+		glassBorder: 'rgba(255, 255, 255, 0.7)',
+		navGlass: 'rgba(255, 255, 255, 0.5)',
 		border: 'rgba(255,255,255,0.14)',
 		glow: 'rgba(72,192,80,0.35)'
 	},
@@ -112,6 +152,8 @@ export const themes: Record<ThemeName, ThemeConfig> = {
 		label: 'Midnight',
 		icon: '🌙',
 		bgImage: '/theme-pictures/midnight.webp',
+		wallpaperOverlay:
+			'linear-gradient(180deg, rgba(0,0,0,0.15) 0%, rgba(0,0,0,0.1) 50%, rgba(0,0,0,0.2) 100%)',
 		bg: [
 			'radial-gradient(ellipse at 20% 60%, rgba(80,40,140,0.25) 0%, transparent 50%)',
 			'radial-gradient(ellipse at 80% 80%, rgba(40,20,100,0.2) 0%, transparent 45%)',
@@ -120,9 +162,15 @@ export const themes: Record<ThemeName, ThemeConfig> = {
 		bgColor: '#14143a',
 		primary: '#e94560',
 		primaryHover: '#d83550',
+		accentGradient: '#560bad',
 		primaryRgb: '233, 69, 96',
 		text: '#e8e8f4',
 		textMuted: '#9a9ac0',
+		textPrimary: '#1a1a2e',
+		textSecondary: 'rgba(0,0,0,0.5)',
+		glassBg: 'rgba(255, 255, 255, 0.45)',
+		glassBorder: 'rgba(255, 255, 255, 0.6)',
+		navGlass: 'rgba(255, 255, 255, 0.4)',
 		border: 'rgba(255,255,255,0.12)',
 		glow: 'rgba(233,69,96,0.35)'
 	}
