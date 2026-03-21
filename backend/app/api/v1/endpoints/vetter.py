@@ -1526,17 +1526,41 @@ For non-MCQ questions, omit the "options" field.
 Return ONLY the JSON, no other text."""
 
     try:
+        import ast
         import json as json_module
-        llm_response = await llm.generate(improve_prompt, temperature=0.3)
-        # Parse the JSON response
-        cleaned = llm_response.strip()
-        # Extract JSON from potential markdown code blocks
-        if "```json" in cleaned:
-            cleaned = cleaned.split("```json")[1].split("```")[0].strip()
-        elif "```" in cleaned:
-            cleaned = cleaned.split("```")[1].split("```")[0].strip()
 
-        improved = json_module.loads(cleaned)
+        try:
+            # Use provider-level structured parsing first (more robust across models).
+            improved = await llm.generate_json(improve_prompt, temperature=0.3)
+        except Exception as parse_err:
+            logger.warning(f"reject-with-feedback improve: generate_json failed, trying fallback parse: {parse_err}")
+            llm_response = await llm.generate(improve_prompt, temperature=0.3)
+            cleaned = llm_response.strip()
+            # Extract JSON from potential markdown code blocks
+            if "```json" in cleaned:
+                cleaned = cleaned.split("```json", 1)[1].split("```", 1)[0].strip()
+            elif "```" in cleaned:
+                cleaned = cleaned.split("```", 1)[1].split("```", 1)[0].strip()
+
+            # Try direct parse first.
+            try:
+                improved = json_module.loads(cleaned)
+            except Exception:
+                # Fallback: parse first JSON-like object from mixed output.
+                start = cleaned.find("{")
+                end = cleaned.rfind("}")
+                if start == -1 or end == -1 or end <= start:
+                    raise parse_err
+                candidate = cleaned[start : end + 1]
+                candidate = re.sub(r",\s*([}\]])", r"\1", candidate)
+                try:
+                    improved = json_module.loads(candidate)
+                except Exception:
+                    # Last-resort parser for single-quoted dict-like output.
+                    improved = ast.literal_eval(candidate)
+
+            if not isinstance(improved, dict):
+                raise ValueError("Improvement payload is not a JSON object")
 
         improved_text = improved.get("question_text", original_text)
         improved_options = improved.get("options", original_options)

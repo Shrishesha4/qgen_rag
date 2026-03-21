@@ -4856,6 +4856,38 @@ async def generate_chapter(
 
             ref_count = len(ref_chunk_pool)
 
+            # Resolve a stable document_id for all generated questions in this chapter session.
+            # Some deployments enforce questions.document_id as NOT NULL at the DB level.
+            chapter_question_document_id = None
+            try:
+                if ref_chunk_pool:
+                    chapter_question_document_id = next(
+                        (str(getattr(c, "document_id", "")) for c in ref_chunk_pool if getattr(c, "document_id", None)),
+                        None,
+                    )
+                if not chapter_question_document_id and ref_doc_ids:
+                    chapter_question_document_id = str(ref_doc_ids[0])
+                if not chapter_question_document_id:
+                    fallback_doc_res = await db.execute(
+                        select(Document.id)
+                        .where(
+                            Document.user_id == user_id,
+                            Document.subject_id == str(subject_id_str),
+                            Document.processing_status == "completed",
+                        )
+                        .order_by(Document.upload_timestamp.desc())
+                        .limit(1)
+                    )
+                    fallback_doc_id = fallback_doc_res.scalar_one_or_none()
+                    if fallback_doc_id:
+                        chapter_question_document_id = str(fallback_doc_id)
+            except Exception as e:
+                logger.warning(f"[{request_id}] Failed to resolve chapter document_id: {e}")
+
+            if not chapter_question_document_id:
+                yield f"data: {json.dumps({'status': 'error', 'progress': 0, 'message': 'No processed document found for this subject. Upload at least one processed document before chapter generation.'})}\n\n"
+                return
+
             # Helper: build reference_context string for a specific pool slice
             def _ref_context_for_index(q_index: int, window: int = 4) -> str:
                 if not ref_chunk_pool:
@@ -5140,6 +5172,7 @@ Output valid JSON only."""
 
                             question = Question(
                                 session_id=chapter_session_id,
+                                document_id=chapter_question_document_id,
                                 subject_id=str(subject_id_str),
                                 topic_id=str(topic_id_str),
                                 question_text=candidate_text,
