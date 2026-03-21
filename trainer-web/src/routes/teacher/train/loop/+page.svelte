@@ -59,11 +59,14 @@
 	let selectedMixedTopicIds = $state<string[]>([]);
 	let resumeMode = $state<'auto' | 'force' | 'skip'>('auto');
 	let resumeProgressKey = $state('');
-	let progressSaveTimer = $state<ReturnType<typeof setTimeout> | null>(null);
-	let remoteProgressSaveTimer = $state<ReturnType<typeof setTimeout> | null>(null);
+	let progressSaveTimer: ReturnType<typeof setTimeout> | null = null;
+	let remoteSaveTimer: ReturnType<typeof setTimeout> | null = null;
+	let isSavingProgress = false;
+	let verifyMode = $state(false);
 
 	// Confirm + cleanup before any SvelteKit navigation
 	beforeNavigate(({ cancel }) => {
+		if (verifyMode) return; // Skip all progress handling in verify mode
 		const hasProgress = questions.length > 0 && (totalReviewed > 0 || currentIndex > 0 || batchComplete);
 		const isActive = generating || submitting || hasProgress;
 		if (isActive) {
@@ -100,6 +103,7 @@
 			const resumeParam = p.url.searchParams.get('resume');
 			const nextResumeMode = resumeParam === '1' ? 'force' : resumeParam === '0' ? 'skip' : 'auto';
 			const nextResumeProgressKey = p.url.searchParams.get('resume_key') ?? '';
+			const nextVerifyMode = p.url.searchParams.get('verify_mode') === 'true';
 
 			if (nextSubjectId !== subjectId || nextMixedTopicsMode !== mixedTopicsMode || nextProvisionalSubject !== provisionalSubject || nextAllowNoPdfGeneration !== allowNoPdfGeneration) {
 				topicCycleIds = [];
@@ -120,11 +124,13 @@
 			targetStartIndex = nextTargetStartIndex;
 			resumeMode = nextResumeMode;
 			resumeProgressKey = nextResumeProgressKey;
+			verifyMode = nextVerifyMode;
 		});
 		loadAndStream();
 
 		// Block browser reload / tab close during active work
 		function handleBeforeUnload(e: BeforeUnloadEvent) {
+			if (verifyMode) return; // Skip progress handling in verify mode
 			const hasProgress = questions.length > 0 && (totalReviewed > 0 || currentIndex > 0 || batchComplete);
 			if (generating || submitting || hasProgress) {
 				e.preventDefault();
@@ -142,12 +148,14 @@
 				clearTimeout(progressSaveTimer);
 				progressSaveTimer = null;
 			}
-			if (remoteProgressSaveTimer) {
-				clearTimeout(remoteProgressSaveTimer);
-				remoteProgressSaveTimer = null;
+			if (remoteSaveTimer) {
+				clearTimeout(remoteSaveTimer);
+				remoteSaveTimer = null;
 			}
 			stopBackgroundGen();
-			persistProgressNow(true);
+			if (!verifyMode) {
+				persistProgressNow(true);
+			}
 		};
 	});
 
@@ -248,20 +256,23 @@
 		});
 	}
 
-	function persistProgressNow(syncRemote = false) {
-		if (!browser || !subjectId || loading) return;
-		const key = currentProgressKey();
-		if (!key) return;
+	async function persistProgressNow(remote: boolean) {
+		if (!browser || !subjectId || loading || isSavingProgress) return;
+		isSavingProgress = true;
+		try {
+			const key = currentProgressKey();
+			if (!key) return;
 
-		const hasProgress =
-			questions.length > 0 &&
-			(currentIndex > 0 || approved.size > 0 || rejected.size > 0 || batchComplete);
+			const hasProgress =
+				questions.length > 0 &&
+				(currentIndex > 0 || approved.size > 0 || rejected.size > 0 || batchComplete);
 
 		if (!hasProgress) {
 			removeTeacherVettingProgress(key);
-			if (syncRemote) {
+			if (remote) {
 				void removeTeacherVettingProgressRemoteSnapshot(key);
 			}
+			isSavingProgress = false;
 			return;
 		}
 
@@ -280,24 +291,27 @@
 			batchComplete,
 		});
 
-		if (syncRemote) {
+		if (remote) {
 			void upsertTeacherVettingProgressRemoteSnapshot(snapshot);
+		}
+		} finally {
+			isSavingProgress = false;
 		}
 	}
 
 	function queueRemoteProgressSave() {
 		if (!browser) return;
-		if (remoteProgressSaveTimer) {
-			clearTimeout(remoteProgressSaveTimer);
+		if (remoteSaveTimer) {
+			clearTimeout(remoteSaveTimer);
 		}
-		remoteProgressSaveTimer = setTimeout(() => {
-			remoteProgressSaveTimer = null;
+		remoteSaveTimer = setTimeout(() => {
+			remoteSaveTimer = null;
 			persistProgressNow(true);
 		}, 1200);
 	}
 
 	function queueProgressSave() {
-		if (!browser) return;
+		if (!browser || isSavingProgress || verifyMode) return;
 		if (progressSaveTimer) {
 			clearTimeout(progressSaveTimer);
 		}
@@ -676,7 +690,19 @@
 		generating = false;
 		genMessage = '';
 		showBatchCompleteNotice = true;
-		persistProgressNow(true);
+		
+		// Always clear progress when completing batch
+		const key = currentProgressKey();
+		if (key) {
+			removeTeacherVettingProgress(key);
+			void removeTeacherVettingProgressRemoteSnapshot(key);
+		}
+		
+		// Reset local state
+		currentIndex = 0;
+		approved.clear();
+		rejected.clear();
+		batchComplete = true;
 	}
 
 	function resetDocumentProcessingState() {
@@ -877,6 +903,26 @@
 		} finally {
 			submitting = false;
 			regenerating = false;
+		}
+	}
+
+	async function submitRejectOnly() {
+		if (!currentQuestion || submitting) return;
+		submitting = true;
+		error = '';
+		voiceAction = null;
+		try {
+			await submitVetting({
+				question_id: currentQuestion.id,
+				decision: 'reject',
+				notes: 'Rejected without voice feedback.',
+			});
+			rejected = new Set([...rejected, currentQuestion.id]);
+			advance();
+		} catch (e: unknown) {
+			error = e instanceof Error ? e.message : 'Failed to reject question';
+		} finally {
+			submitting = false;
 		}
 	}
 
@@ -1398,6 +1444,8 @@
 		title={voiceRecorderTitle}
 		accent={voiceRecorderAccent}
 		submitLabel={voiceRecorderSubmitLabel}
+		secondaryActionLabel={voiceAction?.kind === 'reject' ? 'Just Reject' : ''}
+		onSecondaryAction={voiceAction?.kind === 'reject' ? submitRejectOnly : undefined}
 		onSubmit={handleVoiceRecorderSubmit}
 		onCancel={closeVoiceRecorder}
 	/>

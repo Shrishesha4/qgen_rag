@@ -56,7 +56,7 @@
 			<span class="card-cta">Sign in as Vetter →</span>
 		</a>
 
-		<a href="/admin/login" class="role-card glass-panel">
+		<!-- <a href="/admin/login" class="role-card glass-panel">
 			<div class="role-icon admin-icon">
 				<svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
 					<path d="M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10z"></path>
@@ -67,7 +67,7 @@
 				Monitor platform stats, users, and vetting activity at a glance.
 			</p>
 			<span class="card-cta">Sign in as Admin →</span>
-		</a>
+		</a> -->
 	</div>
 </div>
 
@@ -121,16 +121,16 @@
 	}
 
 	.cards {
-		display: grid;
-		grid-template-columns: 1fr;
+		display: flex;
 		gap: 1rem;
 		width: 100%;
 		max-width: 56rem;
+		flex-direction: column;
 	}
 
 	@media (min-width: 640px) {
 		.cards {
-			grid-template-columns: 1fr 1fr 1fr;
+			flex-direction: row;
 		}
 	}
 
@@ -201,11 +201,11 @@
 		border: 1px solid rgba(16, 185, 129, 0.3);
 	}
 
-	.admin-icon {
+	/* .admin-icon {
 		background: rgba(245, 158, 11, 0.2);
 		color: #fbbf24;
 		border: 1px solid rgba(245, 158, 11, 0.3);
-	}
+	} */
 
 	.card-title {
 		font-size: 1.4rem;

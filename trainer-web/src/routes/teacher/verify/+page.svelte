@@ -166,6 +166,8 @@
 		if (q.topic_id) params.set('topic', q.topic_id);
 		params.set('question_id', q.id);
 		params.set('start_index', String(questionIndex));
+		params.set('resume', 'skip'); // Don't save/load progress from verify page
+		params.set('verify_mode', 'true'); // Flag that we're from verify page
 		goto(`/teacher/train/loop?${params.toString()}`);
 	}
 
@@ -220,22 +222,22 @@
 	</div>
 
 	<div class="stats-row animate-slide-up">
-		<div class="stat glass-panel-frosted">
+		<div class="stat glass-panel">
 			<span class="stat-value">{stats?.total_pending ?? '—'}</span>
 			<span class="stat-label">Pending</span>
 		</div>
-		<div class="stat glass-panel-frosted">
+		<div class="stat glass-panel">
 			<span class="stat-value">{stats?.total_approved ?? '—'}</span>
 			<span class="stat-label">Approved</span>
 		</div>
-		<div class="stat glass-panel-frosted">
+		<div class="stat glass-panel">
 			<span class="stat-value">{stats?.total_rejected ?? '—'}</span>
 			<span class="stat-label">Rejected</span>
 		</div>
 	</div>
 
 	<!-- Search and Filters -->
-	<div class="search-section glass-panel-frosted animate-fade-in">
+	<div class="search-section glass-panel animate-fade-in">
 		<div class="search-row">
 			<div class="search-field">
 				<input
@@ -303,7 +305,7 @@
 			<h2 class="section-title">Review Queue</h2>
 			<div class="queue-list">
 				{#each queue as item}
-					<button class="queue-item glass-panel-frosted" onclick={() => startVerifying(item)}>
+					<button class="queue-item glass-panel" onclick={() => startVerifying(item)}>
 						<div class="qi-top">
 							<span class="qi-type">{typeLabel(item.question_type)}</span>
 							{#if item.topic_name}
@@ -373,6 +375,7 @@
 		align-items: center;
 		padding: 1rem;
 		gap: 0.25rem;
+		border-radius: 1rem;
 	}
 
 	.stat-value {
@@ -405,7 +408,7 @@
 		margin-top: 0.75rem;
 	}
 
-	/* Queue item - dark/black blur effect */
+	/* Queue item - glass panel effect */
 	.queue-item {
 		text-align: left;
 		cursor: pointer;
@@ -413,59 +416,38 @@
 		width: 100%;
 		color: inherit;
 		transition: all 0.2s ease;
-		/* Subtle dark blur effect */
-		background: 
-			linear-gradient(
-				145deg,
-				rgba(0,0,0,0.15) 0%,
-				rgba(0,0,0,0.1) 50%,
-				rgba(0,0,0,0.12) 100%
-			),
-			repeating-conic-gradient(
-				from 0deg at 50% 50%,
-				rgba(0,0,0,0.02) 0deg,
-				transparent 1deg,
-				rgba(0,0,0,0.02) 2deg,
-				transparent 3deg
-			) !important;
-		border: 1px solid rgba(0, 0, 0, 0.15) !important;
+		border-radius: 1rem;
+		/* Glass panel effect */
+		backdrop-filter: blur(10px) saturate(150%) brightness(1.02) !important;
+		-webkit-backdrop-filter: blur(10px) saturate(150%) brightness(1.02) !important;
+		background: linear-gradient(
+			145deg,
+			rgba(255,255,255,0.08) 0%,
+			rgba(255,255,255,0.05) 50%,
+			rgba(255,255,255,0.06) 100%
+		) !important;
+		border: 1px solid rgba(255, 255, 255, 0.12) !important;
 		box-shadow:
-			0 8px 32px rgba(0, 0, 0, 0.25),
-			inset 0 1px 1px rgba(0, 0, 0, 0.1),
-			inset 0 -1px 1px rgba(0, 0, 0, 0.05),
-			0 0 0 1px rgba(0, 0, 0, 0.2) !important;
-		backdrop-filter: blur(20px) saturate(90%) brightness(0.95) !important;
-		-webkit-backdrop-filter: blur(20px) saturate(90%) brightness(0.95) !important;
+			0 4px 20px rgba(0, 0, 0, 0.15),
+			inset 0 1px 1px rgba(255, 255, 255, 0.25),
+			inset 0 -1px 1px rgba(255, 255, 255, 0.08),
+			0 0 0 1px rgba(255, 255, 255, 0.12) !important;
 	}
 
-	.queue-item::before {
-		opacity: 0.3 !important;
-		background: 
-			radial-gradient(circle at 20% 80%, rgba(0,0,0,0.08) 0%, transparent 50%),
-			radial-gradient(circle at 80% 20%, rgba(0,0,0,0.06) 0%, transparent 50%),
-			radial-gradient(circle at 40% 40%, rgba(0,0,0,0.04) 0%, transparent 40%) !important;
-	}
-
-	.queue-item::after {
-		background: 
-			repeating-linear-gradient(
-				45deg,
-				transparent,
-				transparent 1px,
-				rgba(0,0,0,0.01) 1px,
-				rgba(0,0,0,0.01) 2px
-			),
-			linear-gradient(
-				145deg,
-				rgba(0,0,0,0.04) 0%,
-				rgba(0,0,0,0.02) 50%,
-				rgba(0,0,0,0.03) 100%
-			) !important;
-	}
 
 	.queue-item:hover {
 		transform: translateY(-2px);
-		border-color: rgba(255, 255, 255, 0.18);
+		background: linear-gradient(
+			145deg,
+			rgba(255,255,255,0.12) 0%,
+			rgba(255,255,255,0.08) 50%,
+			rgba(255,255,255,0.09) 100%
+		) !important;
+		box-shadow:
+			0 6px 24px rgba(0, 0, 0, 0.2),
+			inset 0 1px 1px rgba(255, 255, 255, 0.3),
+			inset 0 -1px 1px rgba(255, 255, 255, 0.12),
+			0 0 0 1px rgba(255, 255, 255, 0.18) !important;
 	}
 
 	.qi-top {
@@ -668,6 +650,7 @@
 	/* Search and Filters */
 	.search-section {
 		padding: 1rem;
+		border-radius: 1rem;
 	}
 
 	.search-row {

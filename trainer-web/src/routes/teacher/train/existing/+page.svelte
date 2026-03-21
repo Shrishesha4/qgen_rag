@@ -1593,6 +1593,7 @@
 		width: 100%;
 		overflow: hidden;
 		transition: all 0.2s;
+		border-radius: 1.5rem;
 		/* Performance optimizations */
 		contain: layout style paint;
 		transform: translateZ(0); /* Hardware acceleration without will-change */
@@ -1601,12 +1602,12 @@
 		-webkit-backdrop-filter: blur(10px) saturate(150%) brightness(1.02) !important;
 		background: linear-gradient(
 			145deg,
-			rgba(255,255,255,0.1) 0%,
-			rgba(255,255,255,0.05) 50%,
-			rgba(255,255,255,0.08) 100%
+			rgba(255,255,255,0.15) 0%,
+			rgba(255,255,255,0.08) 50%,
+			rgba(255,255,255,0.12) 100%
 		) !important;
 		box-shadow:
-			0 8px 40px rgba(0, 0, 0, 0.25),
+			0 4px 20px rgba(0, 0, 0, 0),
 			inset 0 1px 1px rgba(255, 255, 255, 0.25),
 			inset 0 -1px 1px rgba(255, 255, 255, 0.08),
 			0 0 0 1px rgba(255, 255, 255, 0.12) !important;

@@ -41,13 +41,25 @@
 		accent?: string;
 		/** Label shown on the final action button */
 		submitLabel?: string;
+		/** Optional label for secondary transcript action */
+		secondaryActionLabel?: string;
 		/** Called when user submits with transcript */
 		onSubmit: (transcript: string) => void;
+		/** Optional secondary action callback */
+		onSecondaryAction?: () => void;
 		/** Called when user cancels */
 		onCancel: () => void;
 	}
 
-	let { title, accent = 'blue', submitLabel = 'Submit', onSubmit, onCancel }: Props = $props();
+	let {
+		title,
+		accent = 'blue',
+		submitLabel = 'Submit',
+		secondaryActionLabel = '',
+		onSubmit,
+		onSecondaryAction,
+		onCancel,
+	}: Props = $props();
 
 	let phase: 'recording' | 'transcript' = $state('recording');
 	let transcript = $state('');
@@ -64,6 +76,7 @@
 	let audioPreviewSize = $state('');
 	let finalTranscript = $state('');
 	let interimTranscript = $state('');
+	let transcriptMicActive = $state(false);
 
 	let mediaStream: MediaStream | null = null;
 	let speechRecognition: SpeechRecognitionLike | null = null;
@@ -300,6 +313,7 @@
 
 		speechRecognition.onerror = (event) => {
 			speechRecognitionActive = false;
+			transcriptMicActive = false;
 			const err = event.error ?? 'unknown';
 			if (err === 'aborted' || err === 'no-speech') return;
 
@@ -320,7 +334,7 @@
 
 		speechRecognition.onend = () => {
 			speechRecognitionActive = false;
-			if (isRecording && !isStopping && transcriptionReady) {
+			if ((isRecording || transcriptMicActive) && !isStopping && transcriptionReady) {
 				scheduleSpeechRecognitionRestart('ended');
 			}
 		};
@@ -358,7 +372,8 @@
 	}
 
 	function scheduleSpeechRecognitionRestart(reason: 'network' | 'ended' | 'start-threw') {
-		if (!speechRecognition || !isRecording || isStopping || !transcriptionReady) return;
+		if (!speechRecognition || isStopping || !transcriptionReady) return;
+		if (!isRecording && !transcriptMicActive) return;
 
 		speechNetworkRetryCount += 1;
 		if (speechNetworkRetryCount > MAX_SPEECH_NETWORK_RETRIES) {
@@ -373,7 +388,7 @@
 		const retryDelay = Math.min(2500, 300 + speechNetworkRetryCount * 350);
 		speechRestartTimer = setTimeout(() => {
 			speechRestartTimer = null;
-			if (!isRecording || isStopping || !transcriptionReady || speechRecognitionActive) return;
+			if ((!isRecording && !transcriptMicActive) || isStopping || !transcriptionReady || speechRecognitionActive) return;
 			startSpeechRecognition();
 		}, retryDelay);
 
@@ -536,6 +551,8 @@
 			timer = null;
 		}
 		isCaptureActive = false;
+		transcriptMicActive = false;
+		stopSpeechRecognition();
 		// Disconnect both AudioWorkletNode and ScriptProcessorNode
 		audioWorkletNode?.disconnect();
 		scriptProcessorNode?.disconnect();
@@ -574,8 +591,27 @@
 
 	async function rerecordFromTranscript() {
 		if (isRequestingPermission || isStopping) return;
+		transcriptMicActive = false;
+		stopSpeechRecognition();
 		await retryRecording();
 		await startCapture();
+	}
+
+	function toggleTranscriptMic() {
+		if (!speechRecognition || !transcriptionReady || isStopping || isRecording) return;
+
+		if (transcriptMicActive) {
+			transcriptMicActive = false;
+			stopSpeechRecognition();
+			transcriptionStatus = 'Dictation paused. You can continue typing.';
+			return;
+		}
+
+		finalTranscript = normalizeTranscript(transcript);
+		interimTranscript = '';
+		transcriptMicActive = true;
+		startSpeechRecognition();
+		transcriptionStatus = 'Dictation active. Speak to fill the transcript box.';
 	}
 
 	function normalizeTranscript(value: string): string {
@@ -612,6 +648,10 @@
 
 	function handleSubmit() {
 		onSubmit(transcript);
+	}
+
+	function handleSecondaryAction() {
+		onSecondaryAction?.();
 	}
 
 	function handleKeydown(e: KeyboardEvent) {
@@ -754,13 +794,31 @@
 				{/if}
 
 				<label class="transcript-label" for="voice-recorder-transcript">Transcript</label>
-				<textarea
-					id="voice-recorder-transcript"
-					class="transcript-input"
-					bind:value={transcript}
-					rows="4"
-					placeholder="Edit or type your feedback..."
-				></textarea>
+				<div class="transcript-input-wrap">
+					<textarea
+						id="voice-recorder-transcript"
+						class="transcript-input"
+						bind:value={transcript}
+						rows="4"
+						placeholder="Edit or type your feedback..."
+					></textarea>
+					<button
+						type="button"
+						class="transcript-mic-btn"
+						class:active={transcriptMicActive}
+						onclick={toggleTranscriptMic}
+						disabled={!transcriptionReady || isStopping || isRecording}
+						aria-label={transcriptMicActive ? 'Stop dictation' : 'Start dictation'}
+						title={transcriptMicActive ? 'Stop dictation' : 'Start dictation'}
+					>
+						<svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+							<path d="M12 3a3 3 0 0 0-3 3v6a3 3 0 0 0 6 0V6a3 3 0 0 0-3-3Z"></path>
+							<path d="M19 10v2a7 7 0 0 1-14 0v-2"></path>
+							<line x1="12" y1="19" x2="12" y2="22"></line>
+							<line x1="8" y1="22" x2="16" y2="22"></line>
+						</svg>
+					</button>
+				</div>
 				<p class="transcript-hint">
 					Review the transcription above before submitting. You can edit it if needed.
 				</p>
@@ -770,6 +828,9 @@
 			</div>
 
 			<div class="recorder-actions">
+				{#if secondaryActionLabel && onSecondaryAction}
+					<button class="recorder-secondary-btn" onclick={handleSecondaryAction}>{secondaryActionLabel}</button>
+				{/if}
 				<button class="recorder-cancel-btn" onclick={onCancel}>Cancel</button>
 				<button
 					class="recorder-submit-btn"
@@ -1054,6 +1115,7 @@
 	.transcript-input {
 		width: 100%;
 		padding: 0.75rem;
+		padding-right: 2.8rem;
 		background: rgba(255, 255, 255, 0.08);
 		border: 1px solid rgba(255, 255, 255, 0.15);
 		border-radius: 12px;
@@ -1068,6 +1130,42 @@
 		outline: none;
 		border-color: rgba(255, 255, 255, 0.3);
 		box-shadow: 0 0 0 2px rgba(255, 255, 255, 0.1);
+	}
+
+	.transcript-input-wrap {
+		position: relative;
+	}
+
+	.transcript-mic-btn {
+		position: absolute;
+		top: 0.5rem;
+		right: 0.5rem;
+		width: 32px;
+		height: 32px;
+		display: inline-flex;
+		align-items: center;
+		justify-content: center;
+		border-radius: 999px;
+		border: 1px solid rgba(255, 255, 255, 0.2);
+		background: rgba(255, 255, 255, 0.07);
+		color: rgba(255, 255, 255, 0.82);
+		cursor: pointer;
+		transition: all 0.2s ease;
+	}
+
+	.transcript-mic-btn:hover {
+		background: rgba(255, 255, 255, 0.14);
+	}
+
+	.transcript-mic-btn.active {
+		color: #ffffff;
+		background: rgba(16, 185, 129, 0.28);
+		border-color: rgba(16, 185, 129, 0.5);
+	}
+
+	.transcript-mic-btn:disabled {
+		opacity: 0.5;
+		cursor: not-allowed;
 	}
 
 	.transcript-hint {
@@ -1098,6 +1196,24 @@
 
 	.recorder-cancel-btn:hover {
 		background: rgba(255, 255, 255, 0.1);
+	}
+
+	.recorder-secondary-btn {
+		flex: 1;
+		padding: 0.75rem;
+		border-radius: 12px;
+		border: 1px solid rgba(244, 63, 94, 0.3);
+		background: rgba(244, 63, 94, 0.14);
+		color: rgba(254, 205, 211, 0.92);
+		font-size: 0.95rem;
+		font-weight: 600;
+		cursor: pointer;
+		transition: all 0.2s;
+		font-family: inherit;
+	}
+
+	.recorder-secondary-btn:hover {
+		background: rgba(244, 63, 94, 0.24);
 	}
 
 	.recorder-submit-btn {
@@ -1226,8 +1342,16 @@
 
 		.transcript-input {
 			padding: 0.65rem;
+			padding-right: 2.5rem;
 			font-size: 0.88rem;
 			border-radius: 10px;
+		}
+
+		.transcript-mic-btn {
+			width: 30px;
+			height: 30px;
+			top: 0.42rem;
+			right: 0.42rem;
 		}
 
 		.transcript-hint {
@@ -1239,6 +1363,7 @@
 		}
 
 		.recorder-cancel-btn,
+		.recorder-secondary-btn,
 		.recorder-submit-btn {
 			padding: 0.65rem;
 			font-size: 0.88rem;

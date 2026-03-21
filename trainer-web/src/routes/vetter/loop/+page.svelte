@@ -345,6 +345,26 @@
 		}
 	}
 
+	async function submitRejectOnly() {
+		if (!currentQuestion || submitting) return;
+		submitting = true;
+		error = '';
+		voiceAction = null;
+		try {
+			await submitVetting({
+				question_id: currentQuestion.id,
+				decision: 'reject',
+				notes: 'Rejected without voice feedback.',
+			});
+			rejected = new Set([...rejected, currentQuestion.id]);
+			advance();
+		} catch (e: unknown) {
+			error = e instanceof Error ? e.message : 'Failed to reject question';
+		} finally {
+			submitting = false;
+		}
+	}
+
 	async function handleVoiceRecorderSubmit(transcript: string) {
 		if (!voiceAction) return;
 		const action = voiceAction;
@@ -766,6 +786,8 @@
 		title={voiceRecorderTitle}
 		accent={voiceRecorderAccent}
 		submitLabel={voiceRecorderSubmitLabel}
+		secondaryActionLabel={voiceAction?.kind === 'reject' ? 'Just Reject' : ''}
+		onSecondaryAction={voiceAction?.kind === 'reject' ? submitRejectOnly : undefined}
 		onSubmit={handleVoiceRecorderSubmit}
 		onCancel={closeVoiceRecorder}
 	/>

@@ -76,7 +76,7 @@
 			</svg>
 		</a>
 
-		<a href="/teacher/ab-test" class="mode-card glass-panel">
+		<!-- <a href="/teacher/ab-test" class="mode-card glass-panel">
 			<div class="mode-icon amber">
 				<svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
 					<path d="M12 20V10"></path>
@@ -91,7 +91,7 @@
 			<svg class="mode-arrow" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
 				<polyline points="9 18 15 12 9 6"></polyline>
 			</svg>
-		</a>
+		</a> -->
 	</div>
 
 	{#if $currentUser}
@@ -204,9 +204,9 @@
 		-webkit-backdrop-filter: blur(10px) saturate(150%) brightness(1.02) !important;
 		background: linear-gradient(
 			145deg,
-			rgba(255,255,255,0.03) 0%,
-			rgba(255,255,255,0.02) 50%,
-			rgba(255,255,255,0.025) 100%
+			rgba(255,255,255,0.08) 0%,
+			rgba(255,255,255,0.05) 50%,
+			rgba(255,255,255,0.06) 100%
 		) !important;
 		box-shadow:
 			0 8px 40px rgba(0, 0, 0, 0.25),
@@ -223,9 +223,9 @@
 	.mode-card:hover {
 		background: linear-gradient(
 			145deg,
-			rgba(255,255,255,0.05) 0%,
-			rgba(255,255,255,0.04) 50%,
-			rgba(255,255,255,0.045) 100%
+			rgba(255,255,255,0.12) 0%,
+			rgba(255,255,255,0.08) 50%,
+			rgba(255,255,255,0.09) 100%
 		) !important;
 		transform: translateY(-2px) translateZ(0);
 		box-shadow: 
@@ -260,11 +260,11 @@
 		border: 1px solid rgba(16, 185, 129, 0.3);
 	}
 
-	.mode-icon.amber {
+	/* .mode-icon.amber {
 		background: rgba(245, 158, 11, 0.2);
 		color: #fcd34d;
 		border: 1px solid rgba(245, 158, 11, 0.3);
-	}
+	} */
 
 	.mode-info {
 		flex: 1;
