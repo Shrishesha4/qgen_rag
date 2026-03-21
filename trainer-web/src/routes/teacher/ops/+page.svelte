@@ -186,6 +186,7 @@
 		} else if (selectedVersion?.eval_metrics) {
 			nextStepStatuses[2] = 'completed';
 			nextStepSummaries[2] = `Quality check completed. ${metricCount(selectedVersion.eval_metrics)} evaluation signals were recorded.`;
+			console.log('Evaluation step marked as completed based on eval_metrics');
 		} else if (nextStepStatuses[1] === 'completed') {
 			nextStepSummaries[2] = `Training is done. You can now run a quality check for ${selectedVersionTag ?? 'this version'}.`;
 		} else if (previousStatuses[2] !== 'waiting') {
@@ -201,6 +202,7 @@
 			nextStepSummaries[3] = previousSummaries[3];
 		} else if (nextStepStatuses[2] === 'completed') {
 			nextStepSummaries[3] = 'Optional: try this AI with a smaller group before deciding on full rollout.';
+			console.log('Canary step ready - evaluation completed');
 		}
 
 		if ((selectedVersion?.is_active ?? false) || (selectedVersionTag && activeVersionTag === selectedVersionTag)) {
@@ -227,6 +229,13 @@
 		} else {
 			currentWorkflowStep = 3;
 		}
+		
+		console.log('Workflow state updated', { 
+			currentWorkflowStep, 
+			stepStatuses: nextStepStatuses, 
+			selectedVersionId, 
+			hasVersions: versions.length > 0 
+		});
 	}
 
 	async function runOpWithStepUpdate(fn: () => Promise<Record<string, unknown>>, stepIndex: number) {
@@ -279,10 +288,12 @@
 	}
 
 	async function handleCanary() {
+		console.log('handleCanary called', { selectedVersionId, stepStatuses, currentWorkflowStep });
 		if (!selectedVersionId) {
 			error = 'Please select a model version for classroom trial';
 			return;
 		}
+		console.log('Starting canary deployment for version:', selectedVersionId);
 		await runOpWithStepUpdate(() => canaryModelVersion(selectedVersionId), 3);
 	}
 
