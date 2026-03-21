@@ -304,6 +304,36 @@ export async function updateVettedQuestion(questionId: string, data: VetterQuest
 	});
 }
 
+export async function listTeacherVettingProgressRemote(opts: {
+	subject_id?: string;
+	topic_id?: string;
+} = {}): Promise<TeacherVettingProgressRecord[]> {
+	const params = new URLSearchParams();
+	if (opts.subject_id) params.set('subject_id', opts.subject_id);
+	if (opts.topic_id) params.set('topic_id', opts.topic_id);
+	const query = params.toString();
+	return apiFetch<TeacherVettingProgressRecord[]>(
+		query ? `/vetter/progress?${query}` : '/vetter/progress'
+	);
+}
+
+export async function upsertTeacherVettingProgressRemote(
+	payload: TeacherVettingProgressUpsertPayload
+): Promise<TeacherVettingProgressRecord> {
+	return apiFetch<TeacherVettingProgressRecord>('/vetter/progress', {
+		method: 'POST',
+		body: JSON.stringify(payload),
+	});
+}
+
+export async function deleteTeacherVettingProgressRemote(key: string): Promise<void> {
+	const params = new URLSearchParams();
+	params.set('key', key);
+	await apiFetch<void>(`/vetter/progress?${params.toString()}`, {
+		method: 'DELETE',
+	});
+}
+
 export async function vetQuestion(
 	questionId: string,
 	data: { status: 'approved' | 'rejected'; notes?: string; rejection_reasons?: string[] }
@@ -344,6 +374,39 @@ export interface RejectWithFeedbackResponse {
 	improved_explanation?: string;
 	changes?: Record<string, { old: string; new: string }>;
 	error?: string;
+}
+
+export interface TeacherVettingProgressRecord {
+	key: string;
+	subject_id: string;
+	topic_id: string | null;
+	mixed_topics_mode: boolean;
+	selected_mixed_topic_ids: string[];
+	generation_batch_size: number;
+	allow_no_pdf_generation: boolean;
+	questions: QuestionForVetting[];
+	current_index: number;
+	approved_question_ids: string[];
+	rejected_question_ids: string[];
+	batch_complete: boolean;
+	updated_at: string;
+	created_at: string;
+}
+
+export interface TeacherVettingProgressUpsertPayload {
+	key: string;
+	subject_id: string;
+	topic_id?: string | null;
+	mixed_topics_mode: boolean;
+	selected_mixed_topic_ids: string[];
+	generation_batch_size: number;
+	allow_no_pdf_generation: boolean;
+	questions: QuestionForVetting[];
+	current_index: number;
+	approved_question_ids: string[];
+	rejected_question_ids: string[];
+	batch_complete: boolean;
+	updated_at?: string;
 }
 
 export async function rejectWithFeedback(

@@ -21,13 +21,34 @@
 		type ReferenceDocumentItem,
 	} from '$lib/api/documents';
 	import { estimateQuestionCapacity } from '$lib/api/question-capacity';
+	import {
+		createTeacherVettingLoopUrl,
+		findTeacherVettingProgressForSubject,
+		hydrateTeacherVettingProgressStoreFromRemote,
+		latestTeacherVettingProgressBySubject,
+		type TeacherVettingProgressSnapshot,
+		type TeacherVettingProgressStore,
+	} from '$lib/vetting-progress';
 
 	onMount(() => {
 		const unsub = session.subscribe((s) => {
 			if (!s) goto('/teacher/login');
 		});
 		loadSubjects();
-		return unsub;
+		void refreshTeacherVettingProgress();
+
+		function handleProgressRefresh() {
+			void refreshTeacherVettingProgress();
+		}
+
+		window.addEventListener('focus', handleProgressRefresh);
+		window.addEventListener('storage', handleProgressRefresh);
+
+		return () => {
+			unsub();
+			window.removeEventListener('focus', handleProgressRefresh);
+			window.removeEventListener('storage', handleProgressRefresh);
+		};
 	});
 
 	let subjects = $state<SubjectResponse[]>([]);
@@ -93,6 +114,8 @@
 	discovery_strategy: string;
 } | null>(null);
 	let loadingCapacity = $state(false);
+	let teacherVettingProgressStore = $state<TeacherVettingProgressStore>({});
+	let latestVettingProgressBySubject = $state<Record<string, TeacherVettingProgressSnapshot>>({});
 
 	const BG_STATUS_CACHE_KEY = 'trainer.bgGenerationStatusCache.v1';
 	const BG_STATUS_CACHE_TTL_MS = 2 * 60 * 60 * 1000;
@@ -191,6 +214,35 @@
 
 	function clearGenerateTopics() {
 		generateSelectedTopicIds = [];
+	}
+
+	async function refreshTeacherVettingProgress() {
+		const store = await hydrateTeacherVettingProgressStoreFromRemote();
+		teacherVettingProgressStore = store;
+		latestVettingProgressBySubject = latestTeacherVettingProgressBySubject(store);
+	}
+
+	function getSavedProgressForSubject(subjectId: string): TeacherVettingProgressSnapshot | null {
+		return latestVettingProgressBySubject[subjectId] ?? null;
+	}
+
+	function formatSavedProgressCounter(snapshot: TeacherVettingProgressSnapshot): string {
+		const total = snapshot.questions.length;
+		if (total <= 0) return '0/0';
+		const current = Math.min(total, Math.max(1, snapshot.currentIndex + 1));
+		return `${current}/${total}`;
+	}
+
+	function continueSavedProgress(snapshot: TeacherVettingProgressSnapshot) {
+		goto(createTeacherVettingLoopUrl(snapshot, { resume: true, resumeKey: snapshot.key }));
+	}
+
+	function buildVetNowUrl(subjectId: string, topicId: string | null, resume: boolean): string {
+		const params = new URLSearchParams();
+		params.set('subject', subjectId);
+		if (topicId) params.set('topic', topicId);
+		params.set('resume', resume ? '1' : '0');
+		return `/teacher/train/loop?${params.toString()}`;
 	}
 
 	onDestroy(() => {
@@ -638,13 +690,24 @@
 
 	function chooseVetNow() {
 		if (!generateTargetSubject) return;
-		// Navigate directly to the vetting loop — no generation API call
 		const topicScoped = generateTargetMode === 'topic' ? generateTargetTopicId : null;
-		if (topicScoped) {
-			goto(`/teacher/train/loop?subject=${generateTargetSubject.id}&topic=${topicScoped}`);
-		} else {
-			goto(`/teacher/train/loop?subject=${generateTargetSubject.id}`);
+		const existingProgress = findTeacherVettingProgressForSubject(
+			teacherVettingProgressStore,
+			generateTargetSubject.id,
+			topicScoped
+		);
+
+		if (existingProgress) {
+			const shouldResume = confirm(
+				'There is an existing vetting progress for this subject or topic. Would you like to resume?'
+			);
+			if (shouldResume) {
+				goto(createTeacherVettingLoopUrl(existingProgress, { resume: true, resumeKey: existingProgress.key }));
+				return;
+			}
 		}
+
+		goto(buildVetNowUrl(generateTargetSubject.id, topicScoped, false));
 	}
 
 	function chooseVetLater() {
@@ -995,6 +1058,7 @@
 		{:else}
 			<div class="subject-list">
 				{#each filteredSubjects as { subject: s, filteredTopics, subjectMatches }}
+					{@const savedProgress = getSavedProgressForSubject(s.id)}
 				<div class="subject-card glass-card" class:expanded={expandedId === s.id}>
 					<div class="subject-card-row">
 						<button class="sc-header" onclick={() => toggleSubject(s.id)}>
@@ -1018,6 +1082,16 @@
 						</button>
 
 						<div class="subject-quick-actions">
+							{#if savedProgress}
+								<button
+									type="button"
+									class="quick-continue-btn"
+									onclick={() => continueSavedProgress(savedProgress)}
+									title={`Continue vetting (${formatSavedProgressCounter(savedProgress)})`}
+								>
+									Continue {formatSavedProgressCounter(savedProgress)}
+								</button>
+							{/if}
 							<button
 								type="button"
 								class="quick-generate-btn"
@@ -1039,13 +1113,13 @@
 							<div class="subject-actions">
 								<button class="glass-btn small-btn" onclick={() => openAddTopicModal(s)}>Add Topic</button>
 								<button class="glass-btn small-btn" onclick={() => openReferenceModal(s)}>Reference</button>
-								<button
+								<!-- <button
 									class="danger-btn subject-delete-btn"
 									disabled={deletingSubjectId === s.id}
 									onclick={() => deleteSubjectCard(s)}
 								>
 									{deletingSubjectId === s.id ? 'Deleting...' : 'Delete Subject'}
-								</button>
+								</button> -->
 							</div>
 
 							{#if loadingTopics === s.id}
@@ -1557,6 +1631,32 @@
 		display: flex;
 		align-items: center;
 		justify-content: center;
+		gap: 0.45rem;
+	}
+
+	.quick-continue-btn {
+		min-height: 3.5rem;
+		padding: 0 0.9rem;
+		border-radius: 999px;
+		border: 1px solid rgba(var(--theme-primary-rgb), 0.35);
+		background: rgba(var(--theme-primary-rgb), 0.15);
+		color: var(--theme-text);
+		cursor: pointer;
+		font-size: 0.74rem;
+		font-weight: 700;
+		white-space: nowrap;
+		transition: transform 0.15s ease, border-color 0.15s ease, background 0.15s ease;
+	}
+
+	.quick-continue-btn:hover {
+		background: rgba(var(--theme-primary-rgb), 0.23);
+		border-color: rgba(var(--theme-primary-rgb), 0.52);
+		transform: translateY(-1px);
+	}
+
+	.quick-continue-btn:focus-visible {
+		outline: 2px solid rgba(var(--theme-primary-rgb), 0.55);
+		outline-offset: 1px;
 	}
 
 	.quick-generate-btn {
@@ -2343,6 +2443,12 @@
 		.quick-generate-btn {
 			width: 3.25rem;
 			height: 3.25rem;
+		}
+
+		.quick-continue-btn {
+			min-height: 3.25rem;
+			padding: 0 0.7rem;
+			font-size: 0.7rem;
 		}
 
 		.sc-header {

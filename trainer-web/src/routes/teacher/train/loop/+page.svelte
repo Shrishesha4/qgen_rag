@@ -1,5 +1,6 @@
 <script lang="ts">
 	import { onMount, onDestroy, tick } from 'svelte';
+	import { browser } from '$app/environment';
 	import { goto, beforeNavigate } from '$app/navigation';
 	import { page } from '$app/stores';
 	import { session } from '$lib/session';
@@ -19,6 +20,15 @@
 		type GenerationEvent,
 	} from '$lib/api/documents';
 	import { deleteSubject, getSubject, type SubjectDetailResponse } from '$lib/api/subjects';
+	import {
+		buildTeacherVettingProgressKey,
+		findTeacherVettingProgressMatch,
+		hydrateTeacherVettingProgressStoreFromRemote,
+		removeTeacherVettingProgress,
+		removeTeacherVettingProgressRemoteSnapshot,
+		upsertTeacherVettingProgress,
+		upsertTeacherVettingProgressRemoteSnapshot,
+	} from '$lib/vetting-progress';
 
 	const READY_DOC_STATUSES = new Set(['completed', 'complete', 'processed', 'ready', 'indexed']);
 	const FAILED_DOC_STATUSES = new Set(['failed', 'error']);
@@ -47,20 +57,26 @@
 	let targetQuestionId = $state('');
 	let targetStartIndex = $state(0);
 	let selectedMixedTopicIds = $state<string[]>([]);
+	let resumeMode = $state<'auto' | 'force' | 'skip'>('auto');
+	let resumeProgressKey = $state('');
+	let progressSaveTimer = $state<ReturnType<typeof setTimeout> | null>(null);
+	let remoteProgressSaveTimer = $state<ReturnType<typeof setTimeout> | null>(null);
 
 	// Confirm + cleanup before any SvelteKit navigation
-	beforeNavigate(({ cancel, to }) => {
-		const isActive = generating || submitting || (totalReviewed > 0 && !batchComplete);
+	beforeNavigate(({ cancel }) => {
+		const hasProgress = questions.length > 0 && (totalReviewed > 0 || currentIndex > 0 || batchComplete);
+		const isActive = generating || submitting || hasProgress;
 		if (isActive) {
 			const msg = generating
-				? 'Generation is still running. Leave and stop generation?'
-				: 'You have unsaved vetting progress. Leave and discard?';
+				? 'Generation is still running. Leave and save your vetting progress?'
+				: 'You have existing vetting progress. Leave and save it for later?';
 			if (!confirm(msg)) {
 				cancel();
 				return;
 			}
 			// User confirmed — stop generation cleanly
 			stopBackgroundGen();
+			persistProgressNow(true);
 		}
 	});
 
@@ -81,6 +97,9 @@
 			const nextGenerationBatchSize = parseBatchSizeParam(p.url.searchParams.get('count'));
 			const nextTargetQuestionId = p.url.searchParams.get('question_id') ?? '';
 			const nextTargetStartIndex = parseInt(p.url.searchParams.get('start_index') ?? '0', 10);
+			const resumeParam = p.url.searchParams.get('resume');
+			const nextResumeMode = resumeParam === '1' ? 'force' : resumeParam === '0' ? 'skip' : 'auto';
+			const nextResumeProgressKey = p.url.searchParams.get('resume_key') ?? '';
 
 			if (nextSubjectId !== subjectId || nextMixedTopicsMode !== mixedTopicsMode || nextProvisionalSubject !== provisionalSubject || nextAllowNoPdfGeneration !== allowNoPdfGeneration) {
 				topicCycleIds = [];
@@ -99,14 +118,18 @@
 			generationBatchSize = nextGenerationBatchSize;
 			targetQuestionId = nextTargetQuestionId;
 			targetStartIndex = nextTargetStartIndex;
+			resumeMode = nextResumeMode;
+			resumeProgressKey = nextResumeProgressKey;
 		});
 		loadAndStream();
 
 		// Block browser reload / tab close during active work
 		function handleBeforeUnload(e: BeforeUnloadEvent) {
-			if (generating || submitting || (totalReviewed > 0 && !batchComplete)) {
+			const hasProgress = questions.length > 0 && (totalReviewed > 0 || currentIndex > 0 || batchComplete);
+			if (generating || submitting || hasProgress) {
 				e.preventDefault();
 				stopBackgroundGen();
+				persistProgressNow(true);
 			}
 		}
 		window.addEventListener('beforeunload', handleBeforeUnload);
@@ -115,7 +138,16 @@
 			unsub();
 			unsubPage();
 			window.removeEventListener('beforeunload', handleBeforeUnload);
+			if (progressSaveTimer) {
+				clearTimeout(progressSaveTimer);
+				progressSaveTimer = null;
+			}
+			if (remoteProgressSaveTimer) {
+				clearTimeout(remoteProgressSaveTimer);
+				remoteProgressSaveTimer = null;
+			}
 			stopBackgroundGen();
+			persistProgressNow(true);
 		};
 	});
 
@@ -206,11 +238,142 @@
 	});
 	let voiceRecorderSubmitLabel = $derived(voiceAction?.kind === 'reject' ? 'Reject & Regenerate' : 'Approve & Next');
 
+	function currentProgressKey(): string {
+		if (!subjectId) return '';
+		return buildTeacherVettingProgressKey({
+			subjectId,
+			topicId: topicId || null,
+			mixedTopicsMode,
+			selectedMixedTopicIds,
+		});
+	}
+
+	function persistProgressNow(syncRemote = false) {
+		if (!browser || !subjectId || loading) return;
+		const key = currentProgressKey();
+		if (!key) return;
+
+		const hasProgress =
+			questions.length > 0 &&
+			(currentIndex > 0 || approved.size > 0 || rejected.size > 0 || batchComplete);
+
+		if (!hasProgress) {
+			removeTeacherVettingProgress(key);
+			if (syncRemote) {
+				void removeTeacherVettingProgressRemoteSnapshot(key);
+			}
+			return;
+		}
+
+		const snapshot = upsertTeacherVettingProgress({
+			key,
+			subjectId,
+			topicId: topicId || null,
+			mixedTopicsMode,
+			selectedMixedTopicIds,
+			generationBatchSize,
+			allowNoPdfGeneration,
+			questions,
+			currentIndex,
+			approvedQuestionIds: [...approved],
+			rejectedQuestionIds: [...rejected],
+			batchComplete,
+		});
+
+		if (syncRemote) {
+			void upsertTeacherVettingProgressRemoteSnapshot(snapshot);
+		}
+	}
+
+	function queueRemoteProgressSave() {
+		if (!browser) return;
+		if (remoteProgressSaveTimer) {
+			clearTimeout(remoteProgressSaveTimer);
+		}
+		remoteProgressSaveTimer = setTimeout(() => {
+			remoteProgressSaveTimer = null;
+			persistProgressNow(true);
+		}, 1200);
+	}
+
+	function queueProgressSave() {
+		if (!browser) return;
+		if (progressSaveTimer) {
+			clearTimeout(progressSaveTimer);
+		}
+		progressSaveTimer = setTimeout(() => {
+			progressSaveTimer = null;
+			persistProgressNow(false);
+		}, 120);
+		queueRemoteProgressSave();
+	}
+
+	async function restoreSavedProgress(): Promise<boolean> {
+		if (!browser || !subjectId || resumeMode === 'skip') return false;
+		if (targetQuestionId && resumeMode !== 'force') return false;
+
+		const store = await hydrateTeacherVettingProgressStoreFromRemote();
+		let snapshot = resumeProgressKey ? store[resumeProgressKey] : null;
+
+		if (!snapshot) {
+			snapshot = findTeacherVettingProgressMatch(store, {
+				subjectId,
+				topicId: topicId || null,
+				mixedTopicsMode,
+				selectedMixedTopicIds,
+			});
+		}
+
+		if (!snapshot || snapshot.questions.length === 0) {
+			return false;
+		}
+
+		const availableIds = new Set(snapshot.questions.map((q) => q.id));
+		const approvedIds = snapshot.approvedQuestionIds.filter((id) => availableIds.has(id));
+		const rejectedIds = snapshot.rejectedQuestionIds.filter((id) => availableIds.has(id));
+
+		questions = snapshot.questions;
+		currentIndex = Math.max(0, Math.min(snapshot.currentIndex, snapshot.questions.length - 1));
+		approved = new Set(approvedIds);
+		rejected = new Set(rejectedIds);
+		batchComplete = snapshot.batchComplete;
+		showBatchCompleteNotice = false;
+		firstQuestionGenerated = snapshot.questions.length > 0;
+		return true;
+	}
+
+	$effect(() => {
+		if (!browser || !subjectId || loading) return;
+		questions;
+		currentIndex;
+		approved;
+		rejected;
+		batchComplete;
+		generationBatchSize;
+		allowNoPdfGeneration;
+		mixedTopicsMode;
+		selectedMixedTopicIds;
+		queueProgressSave();
+	});
+
 	// Load existing pending questions, then start background generation
 	async function loadAndStream() {
 		loading = true;
 		error = '';
 		showBatchCompleteNotice = false;
+
+		if (await restoreSavedProgress()) {
+			loading = false;
+			if (subjectId && !batchComplete) {
+				if (questions.length === 0) {
+					startBackgroundGeneration();
+				} else {
+					armNextGen();
+				}
+			}
+			return;
+		}
+
 		try {
 			const res = await getQuestionsForVetting({
 				status: 'pending',
@@ -513,6 +676,7 @@
 		generating = false;
 		genMessage = '';
 		showBatchCompleteNotice = true;
+		persistProgressNow(true);
 	}
 
 	function resetDocumentProcessingState() {
@@ -766,6 +930,7 @@
 
 	function finish() {
 		stopBackgroundGen();
+		persistProgressNow(true);
 		goto('/teacher/dashboard');
 	}
 
@@ -821,6 +986,7 @@
 		error = '';
 		try {
 			stopBackgroundGen();
+			persistProgressNow(true);
 			await scheduleBackgroundGeneration({
 				subjectId,
 				count: generationBatchSize,

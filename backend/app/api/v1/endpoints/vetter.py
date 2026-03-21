@@ -25,6 +25,7 @@ from app.models.question import Question
 from app.models.subject import Subject, Topic
 from app.models.rubric import Rubric
 from app.models.training import VettingReasonCode
+from app.models.vetting_progress import TeacherVettingProgress
 from app.services.question_service import QuestionGenerationService
 from app.services.embedding_service import EmbeddingService
 from app.api.v1.deps import get_current_superuser
@@ -200,6 +201,95 @@ class BulkVetRequest(BaseModel):
     notes: Optional[str] = None
 
 
+class TeacherVettingProgressUpsertRequest(BaseModel):
+    key: str = Field(..., min_length=1, max_length=255)
+    subject_id: str = Field(..., min_length=1, max_length=36)
+    topic_id: Optional[str] = Field(default=None, max_length=36)
+    mixed_topics_mode: bool = False
+    selected_mixed_topic_ids: List[str] = Field(default_factory=list)
+    generation_batch_size: int = Field(default=30, ge=1, le=200)
+    allow_no_pdf_generation: bool = False
+    questions: List[dict] = Field(default_factory=list)
+    current_index: int = Field(default=0, ge=0)
+    approved_question_ids: List[str] = Field(default_factory=list)
+    rejected_question_ids: List[str] = Field(default_factory=list)
+    batch_complete: bool = False
+    updated_at: Optional[datetime] = None
+
+
+class TeacherVettingProgressResponse(BaseModel):
+    key: str
+    subject_id: str
+    topic_id: Optional[str] = None
+    mixed_topics_mode: bool
+    selected_mixed_topic_ids: List[str]
+    generation_batch_size: int
+    allow_no_pdf_generation: bool
+    questions: List[dict]
+    current_index: int
+    approved_question_ids: List[str]
+    rejected_question_ids: List[str]
+    batch_complete: bool
+    updated_at: datetime
+    created_at: datetime
+
+
+def _normalize_progress_ids(values: Optional[List[str]]) -> List[str]:
+    if not values:
+        return []
+    normalized: List[str] = []
+    seen = set()
+    for value in values:
+        clean = (value or "").strip()
+        if not clean or clean in seen:
+            continue
+        seen.add(clean)
+        normalized.append(clean)
+    return normalized
+
+
+def _progress_to_response(progress: TeacherVettingProgress) -> TeacherVettingProgressResponse:
+    return TeacherVettingProgressResponse(
+        key=progress.progress_key,
+        subject_id=progress.subject_id,
+        topic_id=progress.topic_id,
+        mixed_topics_mode=progress.mixed_topics_mode,
+        selected_mixed_topic_ids=progress.selected_mixed_topic_ids or [],
+        generation_batch_size=progress.generation_batch_size,
+        allow_no_pdf_generation=progress.allow_no_pdf_generation,
+        questions=progress.questions_snapshot or [],
+        current_index=progress.current_index,
+        approved_question_ids=progress.approved_question_ids or [],
+        rejected_question_ids=progress.rejected_question_ids or [],
+        batch_complete=progress.batch_complete,
+        updated_at=progress.updated_at,
+        created_at=progress.created_at,
+    )
+
+
+async def _validate_progress_scope(
+    db: AsyncSession,
+    current_user: User,
+    subject_id: str,
+    topic_id: Optional[str],
+) -> None:
+    subject_result = await db.execute(select(Subject.id, Subject.user_id).where(Subject.id == subject_id))
+    subject_row = subject_result.first()
+    if not subject_row:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Subject not found")
+
+    _, subject_owner_id = subject_row
+    if current_user.role == "teacher" and not current_user.is_superuser and subject_owner_id != current_user.id:
+        raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Subject access denied")
+
+    if topic_id:
+        topic_result = await db.execute(
+            select(Topic.id).where(Topic.id == topic_id, Topic.subject_id == subject_id)
+        )
+        if not topic_result.scalar_one_or_none():
+            raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Topic not found for subject")
+
+
 @router.get("/reason-codes", response_model=List[ReasonCodeResponse])
 async def list_reason_codes(
     include_inactive: bool = Query(False),
@@ -238,6 +328,126 @@ async def create_reason_code(
     await db.commit()
     await db.refresh(reason_code)
     return reason_code
+
+
+@router.get("/progress", response_model=List[TeacherVettingProgressResponse])
+async def list_teacher_vetting_progress(
+    subject_id: Optional[str] = Query(None),
+    topic_id: Optional[str] = Query(None),
+    current_user: User = Depends(get_current_vetter),
+    db: AsyncSession = Depends(get_db),
+):
+    """List saved vetting progress snapshots for the current user."""
+    query = select(TeacherVettingProgress).where(TeacherVettingProgress.user_id == current_user.id)
+
+    clean_subject_id = (subject_id or "").strip() or None
+    clean_topic_id = (topic_id or "").strip() or None
+
+    if clean_subject_id:
+        query = query.where(TeacherVettingProgress.subject_id == clean_subject_id)
+    if clean_topic_id:
+        query = query.where(TeacherVettingProgress.topic_id == clean_topic_id)
+
+    query = query.order_by(TeacherVettingProgress.updated_at.desc())
+    result = await db.execute(query)
+    snapshots = result.scalars().all()
+
+    return [_progress_to_response(snapshot) for snapshot in snapshots]
+
+
+@router.post("/progress", response_model=TeacherVettingProgressResponse)
+async def upsert_teacher_vetting_progress(
+    payload: TeacherVettingProgressUpsertRequest,
+    current_user: User = Depends(get_current_vetter),
+    db: AsyncSession = Depends(get_db),
+):
+    """Create or update a vetting progress snapshot for the current user."""
+    clean_key = payload.key.strip()
+    clean_subject_id = payload.subject_id.strip()
+    clean_topic_id = (payload.topic_id or "").strip() or None
+
+    if not clean_key:
+        raise HTTPException(status_code=status.HTTP_422_UNPROCESSABLE_ENTITY, detail="Progress key is required")
+    if not clean_subject_id:
+        raise HTTPException(status_code=status.HTTP_422_UNPROCESSABLE_ENTITY, detail="Subject id is required")
+    if len(payload.questions) == 0:
+        raise HTTPException(status_code=status.HTTP_422_UNPROCESSABLE_ENTITY, detail="Questions snapshot cannot be empty")
+
+    await _validate_progress_scope(db, current_user, clean_subject_id, clean_topic_id)
+
+    selected_topic_ids = _normalize_progress_ids(payload.selected_mixed_topic_ids)
+    approved_ids = _normalize_progress_ids(payload.approved_question_ids)
+    rejected_ids = _normalize_progress_ids(payload.rejected_question_ids)
+    safe_current_index = max(0, min(payload.current_index, len(payload.questions) - 1))
+
+    existing_result = await db.execute(
+        select(TeacherVettingProgress).where(
+            TeacherVettingProgress.user_id == current_user.id,
+            TeacherVettingProgress.progress_key == clean_key,
+        )
+    )
+    snapshot = existing_result.scalar_one_or_none()
+
+    if snapshot is None:
+        snapshot = TeacherVettingProgress(
+            user_id=current_user.id,
+            progress_key=clean_key,
+            subject_id=clean_subject_id,
+            topic_id=clean_topic_id,
+            mixed_topics_mode=payload.mixed_topics_mode,
+            selected_mixed_topic_ids=selected_topic_ids,
+            generation_batch_size=payload.generation_batch_size,
+            allow_no_pdf_generation=payload.allow_no_pdf_generation,
+            questions_snapshot=payload.questions,
+            current_index=safe_current_index,
+            approved_question_ids=approved_ids,
+            rejected_question_ids=rejected_ids,
+            batch_complete=payload.batch_complete,
+        )
+        db.add(snapshot)
+    else:
+        snapshot.subject_id = clean_subject_id
+        snapshot.topic_id = clean_topic_id
+        snapshot.mixed_topics_mode = payload.mixed_topics_mode
+        snapshot.selected_mixed_topic_ids = selected_topic_ids
+        snapshot.generation_batch_size = payload.generation_batch_size
+        snapshot.allow_no_pdf_generation = payload.allow_no_pdf_generation
+        snapshot.questions_snapshot = payload.questions
+        snapshot.current_index = safe_current_index
+        snapshot.approved_question_ids = approved_ids
+        snapshot.rejected_question_ids = rejected_ids
+        snapshot.batch_complete = payload.batch_complete
+        snapshot.updated_at = datetime.now(timezone.utc)
+
+    await db.flush()
+    await db.commit()
+    await db.refresh(snapshot)
+    return _progress_to_response(snapshot)
+
+
+@router.delete("/progress", status_code=status.HTTP_204_NO_CONTENT)
+async def delete_teacher_vetting_progress(
+    key: str = Query(..., min_length=1, max_length=255),
+    current_user: User = Depends(get_current_vetter),
+    db: AsyncSession = Depends(get_db),
+):
+    """Delete a saved vetting progress snapshot for the current user."""
+    clean_key = key.strip()
+    if not clean_key:
+        return None
+
+    existing_result = await db.execute(
+        select(TeacherVettingProgress).where(
+            TeacherVettingProgress.user_id == current_user.id,
+            TeacherVettingProgress.progress_key == clean_key,
+        )
+    )
+    snapshot = existing_result.scalar_one_or_none()
+    if snapshot:
+        await db.delete(snapshot)
+        await db.commit()
+
+    return None
 
 
 # ============== Dashboard ==============

@@ -32,6 +32,7 @@ from app.models.subject import Subject
 from app.models.document import Document, DocumentChunk
 from app.models.question import Question, GenerationSession
 from app.models.rubric import Rubric
+from app.models.vetting_progress import TeacherVettingProgress
 
 # this is the Alembic Config object, which provides
 # access to the values within the .ini file in use.

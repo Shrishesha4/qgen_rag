@@ -167,7 +167,7 @@
 		gap: 1rem;
 	}
 
-	.back-btn {
+	/* .back-btn {
 		align-self: flex-start;
 		padding: 0.8rem 1rem;
 		border-radius: 999px;
@@ -177,7 +177,7 @@
 		font: inherit;
 		font-weight: 700;
 		cursor: pointer;
-	}
+	} */
 
 	.hero,
 	.topic-section,
@@ -222,14 +222,14 @@
 		color: var(--theme-text);
 	}
 
-	.summary-chip {
+	/* .summary-chip {
 		padding: 0.45rem 0.8rem;
 		border-radius: 999px;
 		background: rgba(245, 158, 11, 0.15);
 		color: #fbbf24;
 		font-size: 0.8rem;
 		font-weight: 700;
-	}
+	} */
 
 	.description {
 		margin: 0.85rem 0 0;
