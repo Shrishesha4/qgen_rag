@@ -6,7 +6,7 @@
 	onMount(() => {
 		const unsub = session.subscribe((s) => {
 			if (s) {
-				goto(s.user.role === 'vetter' ? '/vetter/dashboard' : '/teacher/dashboard');
+				goto(s.user.role === 'admin' ? '/admin/dashboard' : s.user.role === 'vetter' ? '/vetter/dashboard' : '/teacher/dashboard');
 			}
 		});
 		return unsub;
@@ -54,6 +54,19 @@
 				Review, approve, and improve AI-generated questions to train the model.
 			</p>
 			<span class="card-cta">Sign in as Vetter →</span>
+		</a>
+
+		<a href="/admin/login" class="role-card glass-panel">
+			<div class="role-icon admin-icon">
+				<svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+					<path d="M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10z"></path>
+				</svg>
+			</div>
+			<h2 class="card-title">Admin</h2>
+			<p class="card-desc">
+				Monitor platform stats, users, and vetting activity at a glance.
+			</p>
+			<span class="card-cta">Sign in as Admin →</span>
 		</a>
 	</div>
 </div>
@@ -112,12 +125,12 @@
 		grid-template-columns: 1fr;
 		gap: 1rem;
 		width: 100%;
-		max-width: 42rem;
+		max-width: 56rem;
 	}
 
 	@media (min-width: 640px) {
 		.cards {
-			grid-template-columns: 1fr 1fr;
+			grid-template-columns: 1fr 1fr 1fr;
 		}
 	}
 
@@ -186,6 +199,12 @@
 		background: rgba(16, 185, 129, 0.2);
 		color: #6ee7b7;
 		border: 1px solid rgba(16, 185, 129, 0.3);
+	}
+
+	.admin-icon {
+		background: rgba(245, 158, 11, 0.2);
+		color: #fbbf24;
+		border: 1px solid rgba(245, 158, 11, 0.3);
 	}
 
 	.card-title {

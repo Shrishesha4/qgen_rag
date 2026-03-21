@@ -7,7 +7,7 @@
 	import { session } from '$lib/session';
 
 	interface Props {
-		role: 'teacher' | 'vetter';
+		role: 'teacher' | 'vetter' | 'admin';
 	}
 
 	let { role }: Props = $props();
@@ -20,8 +20,8 @@
 	let error = $state('');
 	let loading = $state(false);
 
-	const roleLabel = $derived(role === 'teacher' ? 'Teacher' : 'Vetter');
-	const dashboardPath = $derived(role === 'teacher' ? '/teacher/dashboard' : '/vetter/dashboard');
+	const roleLabel = $derived(role === 'teacher' ? 'Teacher' : role === 'admin' ? 'Admin' : 'Vetter');
+	const dashboardPath = $derived(role === 'teacher' ? '/teacher/dashboard' : role === 'admin' ? '/admin/dashboard' : '/vetter/dashboard');
 
 	async function handleSubmit() {
 		error = '';
@@ -68,23 +68,29 @@
 		</a>
 
 		<div class="auth-header">
-			<div class="auth-icon" class:teacher={role === 'teacher'} class:vetter={role === 'vetter'}>
-				{#if role === 'teacher'}
-					<svg width="28" height="28" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
-						<path d="M12 20h9"></path>
-						<path d="M16.5 3.5a 2.12 2.12 0 0 1 3 3L7 19l-4 1 1-4Z"></path>
-					</svg>
-				{:else}
-					<svg width="28" height="28" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
-						<circle cx="11" cy="11" r="8"></circle>
-						<path d="m21 21-4.3-4.3"></path>
-					</svg>
-				{/if}
+			<div class="auth-icon" class:teacher={role === 'teacher'} class:vetter={role === 'vetter'} class:admin={role === 'admin'}>
+			{#if role === 'teacher'}
+				<svg width="28" height="28" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+					<path d="M12 20h9"></path>
+					<path d="M16.5 3.5a 2.12 2.12 0 0 1 3 3L7 19l-4 1 1-4Z"></path>
+				</svg>
+			{:else if role === 'admin'}
+				<svg width="28" height="28" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+					<path d="M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10z"></path>
+				</svg>
+			{:else}
+				<svg width="28" height="28" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+					<circle cx="11" cy="11" r="8"></circle>
+					<path d="m21 21-4.3-4.3"></path>
+				</svg>
+			{/if}
 			</div>
 			<h1 class="auth-title font-serif">{roleLabel} {mode === 'login' ? 'Sign In' : 'Sign Up'}</h1>
 			<p class="auth-subtitle">
 				{#if role === 'teacher'}
 					Generate AI-powered assessments from your materials.
+				{:else if role === 'admin'}
+					Monitor platform activity and manage users.
 				{:else}
 					Review and improve AI-generated questions.
 				{/if}
@@ -244,6 +250,12 @@
 		background: rgba(16, 185, 129, 0.2);
 		color: #6ee7b7;
 		border: 1px solid rgba(16, 185, 129, 0.3);
+	}
+
+	.auth-icon.admin {
+		background: rgba(245, 158, 11, 0.2);
+		color: #fbbf24;
+		border: 1px solid rgba(245, 158, 11, 0.3);
 	}
 
 	.auth-title {

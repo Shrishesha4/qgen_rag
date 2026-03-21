@@ -132,6 +132,20 @@ async def get_current_vetter(
     return current_user
 
 
+async def get_current_admin(
+    current_user: User = Depends(get_current_user),
+) -> User:
+    """
+    Dependency to get current user with admin role.
+    """
+    if current_user.role != "admin" and not current_user.is_superuser:
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="Admin access required",
+        )
+    return current_user
+
+
 async def get_current_teacher_or_admin(
     current_user: User = Depends(get_current_user),
 ) -> User:
