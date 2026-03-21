@@ -75,6 +75,23 @@
 				<polyline points="9 18 15 12 9 6"></polyline>
 			</svg>
 		</a>
+
+		<a href="/teacher/ab-test" class="mode-card glass-panel">
+			<div class="mode-icon amber">
+				<svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+					<path d="M12 20V10"></path>
+					<path d="M18 20V4"></path>
+					<path d="M6 20v-4"></path>
+				</svg>
+			</div>
+			<div class="mode-info">
+				<h2 class="mode-title">A/B Testing</h2>
+				<p class="mode-desc">Compare model versions and review finetuned quality</p>
+			</div>
+			<svg class="mode-arrow" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+				<polyline points="9 18 15 12 9 6"></polyline>
+			</svg>
+		</a>
 	</div>
 
 	{#if $currentUser}
@@ -241,6 +258,12 @@
 		background: rgba(16, 185, 129, 0.2);
 		color: #6ee7b7;
 		border: 1px solid rgba(16, 185, 129, 0.3);
+	}
+
+	.mode-icon.amber {
+		background: rgba(245, 158, 11, 0.2);
+		color: #fcd34d;
+		border: 1px solid rgba(245, 158, 11, 0.3);
 	}
 
 	.mode-info {

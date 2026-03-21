@@ -17,6 +17,15 @@ export function apiUrl(path: string): string {
 	return `${API_BASE}${path.startsWith('/') ? path : '/' + path}`;
 }
 
+/** Safely parse JSON, returning undefined for empty bodies (e.g. 204 No Content). */
+async function safeJson<T>(res: Response): Promise<T> {
+	const contentLength = res.headers.get('content-length');
+	if (res.status === 204 || contentLength === '0') return undefined as unknown as T;
+	const text = await res.text();
+	if (!text || !text.trim()) return undefined as unknown as T;
+	return JSON.parse(text) as T;
+}
+
 /** Typed fetch wrapper with auth header injection. */
 export async function apiFetch<T>(
 	path: string,
@@ -40,12 +49,12 @@ export async function apiFetch<T>(
 			headers.set('Authorization', `Bearer ${refreshed.access_token}`);
 			const retry = await fetch(apiUrl(path), { ...options, headers });
 			if (!retry.ok) throw await parseError(retry);
-			return retry.json() as Promise<T>;
+			return safeJson<T>(retry);
 		}
 	}
 
 	if (!res.ok) throw await parseError(res);
-	return res.json() as Promise<T>;
+	return safeJson<T>(res);
 }
 
 // ── Auth helpers ──

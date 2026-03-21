@@ -77,6 +77,56 @@ export interface TrainingDatasetResponse {
 	checksum: string | null;
 }
 
+export interface EvaluationResponse {
+	id: string;
+	model_version_id: string;
+	eval_type: string;
+	eval_status: string;
+	dataset_tag: string | null;
+	metrics: Record<string, unknown> | null;
+	gate_checks: Record<string, unknown> | null;
+	spot_check_status: string | null;
+	spot_check_samples: Array<Record<string, unknown>> | null;
+	spot_check_reviewed_by: string | null;
+	spot_check_reviewed_at: string | null;
+	spot_check_notes: string | null;
+	evaluated_by: string | null;
+	error_message: string | null;
+	created_at: string | null;
+	completed_at: string | null;
+}
+
+export interface TrainingPairResponse {
+	id: string;
+	prompt: string;
+	chosen_response: string;
+	rejected_response: string;
+	pair_type: string;
+	status: string;
+	confidence: number | null;
+	created_at: string | null;
+}
+
+export interface TrainingPairsListResponse {
+	pairs: TrainingPairResponse[];
+	total: number;
+	page: number;
+	limit: number;
+}
+
+export interface TrainingDataSummary {
+	total_questions: number;
+	approved_questions: number;
+	pending_questions: number;
+	dpo_pairs: number;
+	subjects: number;
+	bloom_distribution: Record<string, number>;
+	difficulty_distribution: Record<string, number>;
+	answer_distribution: Record<string, number>;
+	sft_ready: boolean;
+	dpo_ready: boolean;
+}
+
 // ── API calls ──
 
 export async function getTrainingStatus(): Promise<TrainingStatus> {
@@ -154,4 +204,44 @@ export async function getTrainingQueueStatus(): Promise<Record<string, unknown>>
 
 export async function getLiveModelMetrics(): Promise<Record<string, unknown>> {
 	return apiFetch('/models/live-metrics');
+}
+
+export async function listEvaluations(versionId?: string, limit = 50): Promise<EvaluationResponse[]> {
+	const params = new URLSearchParams();
+	if (versionId) params.set('version_id', versionId);
+	params.set('limit', String(limit));
+	return apiFetch<EvaluationResponse[]>(`/training/evaluations?${params.toString()}`);
+}
+
+export async function getEvaluation(id: string): Promise<EvaluationResponse> {
+	return apiFetch<EvaluationResponse>(`/training/evaluations/${id}`);
+}
+
+export async function completeSpotCheck(
+	evaluationId: string,
+	decision: 'approved' | 'rejected',
+	notes?: string,
+): Promise<Record<string, unknown>> {
+	return apiFetch(`/training/evaluations/${evaluationId}/spot-check`, {
+		method: 'POST',
+		body: JSON.stringify({ decision, notes }),
+	});
+}
+
+export async function listTrainingPairs(opts: {
+	page?: number;
+	limit?: number;
+	pair_type?: string;
+	pair_status?: string;
+} = {}): Promise<TrainingPairsListResponse> {
+	const params = new URLSearchParams();
+	if (opts.page) params.set('page', String(opts.page));
+	if (opts.limit) params.set('limit', String(opts.limit));
+	if (opts.pair_type) params.set('pair_type', opts.pair_type);
+	if (opts.pair_status) params.set('pair_status', opts.pair_status);
+	return apiFetch<TrainingPairsListResponse>(`/training/pairs?${params.toString()}`);
+}
+
+export async function getTrainingDataSummary(): Promise<TrainingDataSummary> {
+	return apiFetch<TrainingDataSummary>('/training/export/stats');
 }

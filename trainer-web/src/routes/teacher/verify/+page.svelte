@@ -30,6 +30,9 @@
 	let topics = $state<{id: string, name: string, subject_id: string}[]>([]);
 	let loadingSubjects = $state(false);
 	let loadingTopics = $state(false);
+	
+	// Filter toggle state
+	let filtersExpanded = $state(false);
 
 	async function loadData() {
 		loading = true;
@@ -60,6 +63,7 @@
 				status: 'pending',
 				subject_id: selectedSubjectId || undefined,
 				topic_id: selectedTopicId || undefined,
+				search: searchQuery || undefined,
 				limit: 20,
 				page: currentPage,
 			});
@@ -141,25 +145,28 @@
 		const input = e.target as HTMLInputElement;
 		searchQuery = input.value;
 		
-
-		if (searchQuery.includes(' ')) {
-			// Clear existing timeout
-			if (searchTimeout) {
-				clearTimeout(searchTimeout);
-			}
-			
-			// Set new timeout to search after 500ms of no typing
-			searchTimeout = setTimeout(() => {
-				applyFilters();
-			}, 500);
+		// Clear existing timeout
+		if (searchTimeout) {
+			clearTimeout(searchTimeout);
 		}
+		
+		// Set new timeout to search after 500ms of no typing
+		searchTimeout = setTimeout(() => {
+			applyFilters();
+		}, 500);
 	}
 
 	let searchTimeout: ReturnType<typeof setTimeout> | null = null;
 
 	function startVerifying(q: QuestionForVetting) {
-		const params = q.subject_id ? `?subject=${q.subject_id}` : '';
-		goto(`/teacher/train/loop${params}`);
+		// Find the position of this question in the current filtered list
+		const questionIndex = displayedQuestions.findIndex(question => question.id === q.id);
+		const params = new URLSearchParams();
+		if (q.subject_id) params.set('subject', q.subject_id);
+		if (q.topic_id) params.set('topic', q.topic_id);
+		params.set('question_id', q.id);
+		params.set('start_index', String(questionIndex));
+		goto(`/teacher/train/loop?${params.toString()}`);
 	}
 
 	// Use displayedQuestions as the queue
@@ -228,8 +235,8 @@
 	</div>
 
 	<!-- Search and Filters -->
-	<div class="filters-section glass-panel animate-fade-in">
-		<div class="filters-row">
+	<div class="search-section glass-panel animate-fade-in">
+		<div class="search-row">
 			<div class="search-field">
 				<input
 					type="text"
@@ -239,23 +246,38 @@
 					oninput={handleSearchInput}
 				/>
 			</div>
-			
-			<div class="filter-field">
-				<select bind:value={selectedSubjectId} onchange={(e) => handleSubjectChange((e.target as HTMLSelectElement).value)} class="filter-select">
-					<option value="">All Subjects</option>
-					{#each subjects as subject}
-						<option value={subject.id}>{subject.name}</option>
-					{/each}
-				</select>
-			</div>
-			
-			<div class="filter-field">
-				<select bind:value={selectedTopicId} onchange={(e) => handleTopicChange((e.target as HTMLSelectElement).value)} class="filter-select" disabled={!selectedSubjectId}>
-					<option value="">All Topics</option>
-					{#each topics as topic}
-						<option value={topic.id}>{topic.name}</option>
-					{/each}
-				</select>
+			<button 
+				class="filter-toggle-btn" 
+				class:active={filtersExpanded}
+				onclick={() => filtersExpanded = !filtersExpanded}
+				aria-label="Toggle filters"
+			>
+				<svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+					<polygon points="22 3 2 3 10 12.46 10 19 14 21 14 12.46 22 3"></polygon>
+				</svg>
+			</button>
+		</div>
+		
+		<!-- Expandable Filters -->
+		<div class="filters-panel" class:expanded={filtersExpanded}>
+			<div class="filters-row">
+				<div class="filter-field">
+					<select bind:value={selectedSubjectId} onchange={(e) => handleSubjectChange((e.target as HTMLSelectElement).value)} class="filter-select">
+						<option value="">All Subjects</option>
+						{#each subjects as subject}
+							<option value={subject.id}>{subject.name}</option>
+						{/each}
+					</select>
+				</div>
+				
+				<div class="filter-field">
+					<select bind:value={selectedTopicId} onchange={(e) => handleTopicChange((e.target as HTMLSelectElement).value)} class="filter-select" disabled={!selectedSubjectId}>
+						<option value="">All Topics</option>
+						{#each topics as topic}
+							<option value={topic.id}>{topic.name}</option>
+						{/each}
+					</select>
+				</div>
 			</div>
 		</div>
 	</div>
@@ -281,7 +303,7 @@
 			<h2 class="section-title">Review Queue</h2>
 			<div class="queue-list">
 				{#each queue as item}
-					<button class="queue-item glass-panel" onclick={() => startVerifying(item)}>
+					<button class="queue-item" onclick={() => startVerifying(item)}>
 						<div class="qi-top">
 							<span class="qi-type">{typeLabel(item.question_type)}</span>
 							{#if item.topic_name}
@@ -351,18 +373,18 @@
 		align-items: center;
 		padding: 1rem;
 		gap: 0.25rem;
-		/* Enhanced blur effect - force override */
-		backdrop-filter: blur(10px) saturate(150%) brightness(1.02) !important;
-		-webkit-backdrop-filter: blur(10px) saturate(150%) brightness(1.02) !important;
+		/* Enhanced frosted glass effect - force override */
+		backdrop-filter: blur(18px) saturate(160%) brightness(1.02) !important;
+		-webkit-backdrop-filter: blur(18px) saturate(160%) brightness(1.02) !important;
 		background: linear-gradient(
 			145deg,
-			rgba(255,255,255,0.03) 0%,
-			rgba(255,255,255,0.02) 50%,
-			rgba(255,255,255,0.025) 100%
+			rgba(255,255,255,0.08) 0%,
+			rgba(255,255,255,0.05) 50%,
+			rgba(255,255,255,0.07) 100%
 		) !important;
 		box-shadow:
-			0 8px 40px rgba(0, 0, 0, 0.25),
-			inset 0 1px 1px rgba(255, 255, 255, 0.25),
+			0 12px 48px rgba(0, 0, 0, 0.32),
+			inset 0 1px 2px rgba(255, 255, 255, 0.25),
 			inset 0 -1px 1px rgba(255, 255, 255, 0.08),
 			0 0 0 1px rgba(255, 255, 255, 0.12) !important;
 	}
@@ -397,29 +419,40 @@
 		margin-top: 0.75rem;
 	}
 
+	/* Queue item - frosted glass effect matching vetting loop */
 	.queue-item {
 		text-align: left;
 		cursor: pointer;
 		padding: 1rem 1.25rem;
 		width: 100%;
-		border: 1px solid rgba(255, 255, 255, 0.1);
-		border-radius: var(--glass-radius);
+		border-radius: 1.75rem;
+		border: 1px solid rgba(255, 255, 255, 0.12);
 		color: inherit;
-		transition: all 0.2s;
-		/* Enhanced blur effect - force override */
-		backdrop-filter: blur(10px) saturate(150%) brightness(1.02) !important;
-		-webkit-backdrop-filter: blur(10px) saturate(150%) brightness(1.02) !important;
+		transition: all 0.2s ease;
+		/* Frosted glass effect - exact copy from vetting loop */
+		backdrop-filter: blur(18px) saturate(160%) brightness(1.02) !important;
+		-webkit-backdrop-filter: blur(18px) saturate(160%) brightness(1.02) !important;
 		background: linear-gradient(
 			145deg,
-			rgba(255,255,255,0.03) 0%,
-			rgba(255,255,255,0.02) 50%,
-			rgba(255,255,255,0.025) 100%
+			rgba(255,255,255,0.08) 0%,
+			rgba(255,255,255,0.05) 50%,
+			rgba(255,255,255,0.07) 100%
 		) !important;
 		box-shadow:
-			0 8px 40px rgba(0, 0, 0, 0.25),
-			inset 0 1px 1px rgba(255, 255, 255, 0.25),
+			0 12px 48px rgba(0, 0, 0, 0.32),
+			inset 0 1px 2px rgba(255, 255, 255, 0.25),
 			inset 0 -1px 1px rgba(255, 255, 255, 0.08),
 			0 0 0 1px rgba(255, 255, 255, 0.12) !important;
+	}
+
+	.queue-item:hover {
+		transform: translateY(-2px);
+		box-shadow:
+			0 16px 56px rgba(0, 0, 0, 0.38),
+			inset 0 1px 2px rgba(255, 255, 255, 0.25),
+			inset 0 -1px 1px rgba(255, 255, 255, 0.08),
+			0 0 0 1px rgba(255, 255, 255, 0.15) !important;
+		border-color: rgba(255, 255, 255, 0.18);
 	}
 
 	.qi-top {
@@ -447,6 +480,7 @@
 		border-radius: 4px;
 	}
 
+	
 	.qi-text {
 		font-size: 0.92rem;
 		color: var(--theme-text);
@@ -619,20 +653,80 @@
 	}
 
 	/* Search and Filters */
-	.filters-section {
+	.search-section {
 		padding: 1rem;
+		/* Enhanced frosted glass effect - force override */
+		backdrop-filter: blur(18px) saturate(160%) brightness(1.02) !important;
+		-webkit-backdrop-filter: blur(18px) saturate(160%) brightness(1.02) !important;
+		background: linear-gradient(
+			145deg,
+			rgba(255,255,255,0.08) 0%,
+			rgba(255,255,255,0.05) 50%,
+			rgba(255,255,255,0.07) 100%
+		) !important;
+		box-shadow:
+			0 12px 48px rgba(0, 0, 0, 0.32),
+			inset 0 1px 2px rgba(255, 255, 255, 0.25),
+			inset 0 -1px 1px rgba(255, 255, 255, 0.08),
+			0 0 0 1px rgba(255, 255, 255, 0.12) !important;
 	}
 
-	.filters-row {
+	.search-row {
 		display: flex;
-		gap: 1rem;
+		gap: 0.75rem;
 		align-items: center;
-		flex-wrap: wrap;
 	}
 
 	.search-field {
 		flex: 1;
 		min-width: 200px;
+	}
+
+	.filter-toggle-btn {
+		width: 44px;
+		height: 44px;
+		border: none;
+		border-radius: 12px;
+		background: rgba(255, 255, 255, 0.08);
+		color: var(--theme-text-muted);
+		cursor: pointer;
+		display: flex;
+		align-items: center;
+		justify-content: center;
+		transition: all 0.3s ease;
+		flex-shrink: 0;
+	}
+
+	.filter-toggle-btn:hover {
+		background: rgba(255, 255, 255, 0.12);
+		color: var(--theme-text);
+		transform: translateY(-1px);
+	}
+
+	.filter-toggle-btn.active {
+		background: rgba(var(--theme-primary-rgb), 0.2);
+		color: var(--theme-primary);
+	}
+
+	/* Expandable Filters Panel */
+	.filters-panel {
+		max-height: 0;
+		overflow: hidden;
+		transition: max-height 0.4s cubic-bezier(0.4, 0, 0.2, 1), opacity 0.3s ease;
+		opacity: 0;
+		margin-top: 0;
+	}
+
+	.filters-panel.expanded {
+		max-height: 120px;
+		opacity: 1;
+		margin-top: 1rem;
+	}
+
+	.filters-panel .filters-row {
+		display: flex;
+		gap: 1rem;
+		align-items: center;
 	}
 
 	.search-input {
@@ -712,32 +806,44 @@
 
 	/* Mobile optimizations */
 	@media (max-width: 768px) {
-		.filters-row {
-			flex-direction: column;
-			gap: 0.75rem;
+		.search-row {
+			flex-direction: row;
+			gap: 0.5rem;
 		}
 
 		.search-field {
-			min-width: 100%;
+			min-width: 0;
+		}
+
+		.filter-toggle-btn {
+			width: 40px;
+			height: 40px;
+		}
+
+		.filters-panel .filters-row {
+			flex-direction: column;
+			gap: 0.75rem;
 		}
 
 		.filter-field {
 			min-width: 100%;
 		}
 
-		.search-input,
-		.filter-select {
-			padding: 0.8rem 1rem;
-			font-size: 16px; /* Prevents zoom on iOS */
+		.queue-list {
+			gap: 0.75rem;
+		}
+
+		.qi-text {
+			font-size: 0.9rem;
 		}
 	}
 
 	@media (max-width: 480px) {
-		.filters-section {
+		.search-section {
 			padding: 0.75rem;
 		}
 
-		.filters-row {
+		.search-row {
 			gap: 0.5rem;
 		}
 	}

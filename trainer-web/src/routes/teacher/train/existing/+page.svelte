@@ -967,13 +967,13 @@
 							<div class="subject-actions">
 								<button class="glass-btn small-btn" onclick={() => openAddTopicModal(s)}>Add Topic</button>
 								<button class="glass-btn small-btn" onclick={() => openReferenceModal(s)}>Reference</button>
-								<!-- <button
+								<button
 									class="danger-btn subject-delete-btn"
 									disabled={deletingSubjectId === s.id}
 									onclick={() => deleteSubjectCard(s)}
 								>
 									{deletingSubjectId === s.id ? 'Deleting...' : 'Delete Subject'}
-								</button> -->
+								</button>
 							</div>
 
 							{#if loadingTopics === s.id}

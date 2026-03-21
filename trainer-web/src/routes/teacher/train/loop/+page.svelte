@@ -24,7 +24,7 @@
 	const FAILED_DOC_STATUSES = new Set(['failed', 'error']);
 	const WAIT_POLL_MS = 1500;
 	const WAIT_DOCS_TIMEOUT_MS = 3 * 60 * 1000;
-	const DEFAULT_BATCH_SIZE = 10;
+	const DEFAULT_BATCH_SIZE = 30;
 	const MIN_BATCH_SIZE = 5;
 	const MAX_BATCH_SIZE = 100;
 
@@ -42,6 +42,10 @@
 	let allowNoPdfGeneration = $state(false);
 	let firstQuestionGenerated = $state(false);
 	let generationBatchSize = $state(DEFAULT_BATCH_SIZE);
+	
+	// Navigation from verify page
+	let targetQuestionId = $state('');
+	let targetStartIndex = $state(0);
 	let selectedMixedTopicIds = $state<string[]>([]);
 
 	// Confirm + cleanup before any SvelteKit navigation
@@ -75,6 +79,8 @@
 			const nextProvisionalSubject = p.url.searchParams.get('provisional') === '1';
 			const nextAllowNoPdfGeneration = p.url.searchParams.get('noPdf') === '1';
 			const nextGenerationBatchSize = parseBatchSizeParam(p.url.searchParams.get('count'));
+			const nextTargetQuestionId = p.url.searchParams.get('question_id') ?? '';
+			const nextTargetStartIndex = parseInt(p.url.searchParams.get('start_index') ?? '0', 10);
 
 			if (nextSubjectId !== subjectId || nextMixedTopicsMode !== mixedTopicsMode || nextProvisionalSubject !== provisionalSubject || nextAllowNoPdfGeneration !== allowNoPdfGeneration) {
 				topicCycleIds = [];
@@ -91,6 +97,8 @@
 			provisionalSubject = nextProvisionalSubject;
 			allowNoPdfGeneration = nextAllowNoPdfGeneration;
 			generationBatchSize = nextGenerationBatchSize;
+			targetQuestionId = nextTargetQuestionId;
+			targetStartIndex = nextTargetStartIndex;
 		});
 		loadAndStream();
 
@@ -211,7 +219,16 @@
 				limit: 100,
 			});
 			questions = res.questions;
-			currentIndex = 0;
+			
+			// Set starting position if coming from verify page
+			if (targetQuestionId && targetStartIndex >= 0) {
+				// Try to find the target question by ID first
+				const targetIndex = questions.findIndex(q => q.id === targetQuestionId);
+				currentIndex = targetIndex >= 0 ? targetIndex : Math.min(targetStartIndex, questions.length - 1);
+			} else {
+				currentIndex = 0;
+			}
+			
 			approved = new Set();
 			rejected = new Set();
 			if (questions.length > 0) {
@@ -906,12 +923,12 @@
 			</div>
 			{#if docProcessingProgress !== null}
 				<div class="gen-progress-head">
-					<span class="gen-progress-label">
+					<!-- <span class="gen-progress-label">
 						{docProcessingDocument || 'Document processing'}
 						{#if docProcessingDocumentsTotal > 1}
 							({docProcessingDocumentsTotal} docs)
 						{/if}
-					</span>
+					</span> -->
 					<span class="gen-progress-value">{docProcessingProgress}%</span>
 				</div>
 				<div class="gen-progress-track">
@@ -1231,21 +1248,20 @@
 		padding-bottom: 12rem;
 	}
 
-	/* Question card */
+	/* Question card - more opaque white frost */
 	.question-card {
 		padding: 1.5rem;
-		/* Enhanced blur effect - force override */
-		backdrop-filter: blur(10px) saturate(150%) brightness(1.02) !important;
-		-webkit-backdrop-filter: blur(10px) saturate(150%) brightness(1.02) !important;
+		backdrop-filter: blur(18px) saturate(160%) brightness(1.02) !important;
+		-webkit-backdrop-filter: blur(18px) saturate(160%) brightness(1.02) !important;
 		background: linear-gradient(
 			145deg,
-			rgba(255,255,255,0.03) 0%,
-			rgba(255,255,255,0.02) 50%,
-			rgba(255,255,255,0.025) 100%
+			rgba(255,255,255,0.08) 0%,
+			rgba(255,255,255,0.05) 50%,
+			rgba(255,255,255,0.07) 100%
 		) !important;
 		box-shadow:
-			0 8px 40px rgba(0, 0, 0, 0.25),
-			inset 0 1px 1px rgba(255, 255, 255, 0.25),
+			0 12px 48px rgba(0, 0, 0, 0.32),
+			inset 0 1px 2px rgba(255, 255, 255, 0.25),
 			inset 0 -1px 1px rgba(255, 255, 255, 0.08),
 			0 0 0 1px rgba(255, 255, 255, 0.12) !important;
 	}
@@ -1426,7 +1442,7 @@
 	.explanation {
 		margin-top: 1rem;
 		padding: 0.75rem 1rem;
-		background: rgba(255, 255, 255, 0.04);
+		background: rgba(255, 255, 255, 0.02);
 		border-radius: 10px;
 		border-left: 3px solid rgba(var(--theme-primary-rgb), 0.4);
 	}
@@ -1519,6 +1535,19 @@
 		align-items: center;
 		gap: 1rem;
 		text-align: center;
+		backdrop-filter: blur(18px) saturate(160%) brightness(1.08) !important;
+		-webkit-backdrop-filter: blur(18px) saturate(160%) brightness(1.08) !important;
+		background: linear-gradient(
+			145deg,
+			rgba(255,255,255,0.04) 0%,
+			rgba(255,255,255,0.02) 50%,
+			rgba(255,255,255,0.03) 100%
+		) !important;
+		box-shadow:
+			0 8px 40px rgba(0, 0, 0, 0.38),
+			inset 0 1px 2px rgba(255, 255, 255, 0.15),
+			inset 0 -1px 1px rgba(255, 255, 255, 0.04),
+			0 0 0 1px rgba(255, 255, 255, 0.08) !important;
 	}
 
 	.caught-up-kicker {
@@ -2120,14 +2149,18 @@
 	}
 
 	.regen-overlay {
+		position: fixed;
+		top: 0;
+		left: 0;
+		right: 0;
+		bottom: 0;
+		background: rgba(0, 0, 0, 0.72);
+		backdrop-filter: blur(10px);
+		-webkit-backdrop-filter: blur(10px);
+		z-index: 9999;
 		display: flex;
-		flex-direction: column;
 		align-items: center;
 		justify-content: center;
-		gap: 1rem;
-		padding: 3rem 2rem;
-		border-radius: 2rem;
-		text-align: center;
 	}
 
 	.regen-spinner {
@@ -2287,6 +2320,10 @@
 		padding: 1.25rem;
 		border-radius: 1.75rem;
 		background: rgba(255, 255, 255, 0.08);
+		backdrop-filter: blur(18px) saturate(160%) brightness(1.02) !important;
+		-webkit-backdrop-filter: blur(18px) saturate(160%) brightness(1.02) !important;
+		border: 1px solid rgba(255, 255, 255, 0.12);
+		box-shadow: 0 12px 48px rgba(0, 0, 0, 0.32), inset 0 1px 2px rgba(255, 255, 255, 0.25), inset 0 -1px 1px rgba(255, 255, 255, 0.08) !important;
 	}
 
 	.answer-panel-head {
@@ -2371,6 +2408,9 @@
 		border-radius: 1.4rem;
 		border: 1px solid rgba(255, 255, 255, 0.12);
 		background: rgba(255, 255, 255, 0.08);
+		backdrop-filter: blur(18px) saturate(160%) brightness(1.02) !important;
+		-webkit-backdrop-filter: blur(18px) saturate(160%) brightness(1.02) !important;
+		box-shadow: 0 12px 48px rgba(0, 0, 0, 0.32), inset 0 1px 2px rgba(255, 255, 255, 0.25), inset 0 -1px 1px rgba(255, 255, 255, 0.08) !important;
 		color: var(--theme-text);
 		display: flex;
 		flex-direction: column;

@@ -588,6 +588,7 @@ async def get_questions_for_vetting(
     subject_id: Optional[str] = Query(None),
     topic_id: Optional[str] = Query(None),
     question_type: Optional[str] = Query(None),
+    search: Optional[str] = Query(None, description="Search by question text"),
     status: str = Query("pending", pattern="^(pending|approved|rejected|all)$"),
     current_user: User = Depends(get_current_vetter),
     db: AsyncSession = Depends(get_db),
@@ -620,6 +621,10 @@ async def get_questions_for_vetting(
     
     if question_type:
         query = query.where(Question.question_type == question_type)
+    
+    # Search by question text
+    if search:
+        query = query.where(Question.question_text.ilike(f"%{search}%"))
     
     # Filter by teacher (via subject ownership)
     if teacher_id:

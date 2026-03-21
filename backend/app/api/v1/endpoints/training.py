@@ -700,11 +700,11 @@ async def export_stats(
     from app.models.question import Question
     from app.models.subject import Subject
 
-    total_q = await db.execute(select(func.count(Question.id)).where(Question.is_archived == False))
-    approved_q = await db.execute(select(func.count(Question.id)).where(Question.is_archived == False, Question.vetting_status == "approved"))
-    pending_q = await db.execute(select(func.count(Question.id)).where(Question.is_archived == False, Question.vetting_status == "pending"))
-    total_pairs = await db.execute(select(func.count(TrainingPair.id)))
-    total_subjects = await db.execute(select(func.count(Subject.id)))
+    total_q = await db.scalar(select(func.count(Question.id)).where(Question.is_archived == False))
+    approved_q = await db.scalar(select(func.count(Question.id)).where(Question.is_archived == False, Question.vetting_status == "approved"))
+    pending_q = await db.scalar(select(func.count(Question.id)).where(Question.is_archived == False, Question.vetting_status == "pending"))
+    total_pairs = await db.scalar(select(func.count(TrainingPair.id)))
+    total_subjects = await db.scalar(select(func.count(Subject.id)))
 
     # Bloom distribution
     bloom_result = await db.execute(
@@ -731,14 +731,14 @@ async def export_stats(
     ans_dist = {row[0]: row[1] for row in ans_result.all()}
 
     return {
-        "total_questions": total_q.scalar(),
-        "approved_questions": approved_q.scalar(),
-        "pending_questions": pending_q.scalar(),
-        "dpo_pairs": total_pairs.scalar(),
-        "subjects": total_subjects.scalar(),
+        "total_questions": total_q,
+        "approved_questions": approved_q,
+        "pending_questions": pending_q,
+        "dpo_pairs": total_pairs,
+        "subjects": total_subjects,
         "bloom_distribution": bloom_dist,
         "difficulty_distribution": diff_dist,
         "answer_distribution": ans_dist,
-        "sft_ready": total_q.scalar() > 0,
-        "dpo_ready": total_pairs.scalar() >= 10,
+        "sft_ready": total_q > 0,
+        "dpo_ready": total_pairs >= 10,
     }

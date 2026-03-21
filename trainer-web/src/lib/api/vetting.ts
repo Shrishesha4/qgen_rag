@@ -267,6 +267,7 @@ export async function getQuestionsForVetting(opts: {
 	status?: string;
 	subject_id?: string;
 	topic_id?: string;
+	search?: string;
 } = {}): Promise<QuestionListResult> {
 	const params = new URLSearchParams();
 	params.set('page', String(opts.page ?? 1));
@@ -274,6 +275,7 @@ export async function getQuestionsForVetting(opts: {
 	if (opts.status) params.set('status', opts.status);
 	if (opts.subject_id) params.set('subject_id', opts.subject_id);
 	if (opts.topic_id) params.set('topic_id', opts.topic_id);
+	if (opts.search) params.set('search', opts.search);
 	return apiFetch<QuestionListResult>(`/vetter/questions?${params}`);
 }
 

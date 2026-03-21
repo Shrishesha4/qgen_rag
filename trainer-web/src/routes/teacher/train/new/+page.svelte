@@ -1,6 +1,7 @@
 <script lang="ts">
 	import { onDestroy, onMount } from 'svelte';
 	import { browser } from '$app/environment';
+	import { beforeNavigate } from '$app/navigation';
 	import { goto } from '$app/navigation';
 	import { session } from '$lib/session';
 	import FileUploadZone from '$lib/components/FileUploadZone.svelte';
@@ -23,7 +24,7 @@
 	}
 
 	function clampQuestionCount(value: number) {
-		if (!Number.isFinite(value)) return 10;
+		if (!Number.isFinite(value)) return 30;
 		return Math.max(MIN_QUESTION_COUNT, Math.min(MAX_QUESTION_COUNT, Math.trunc(value)));
 	}
 
@@ -36,9 +37,17 @@
 		return unsub;
 	});
 
+	beforeNavigate(({ to }) => {
+		const staying = to?.url?.pathname?.startsWith('/teacher/train/new');
+		const goingToLoop = to?.url?.pathname?.startsWith('/teacher/train/loop');
+		if (!staying && !goingToLoop) {
+			clearDraft();
+		}
+	});
+
 	// ── Wizard state ──
 	let step = $state(1);
-	const totalSteps = 6;
+	const totalSteps = 5;
 
 	// Step 1: Subject/Discipline
 	const presetDisciplines = [
@@ -76,6 +85,11 @@
 		docs: TopicDocItem[];
 		uploading: boolean;
 		uploadError: string;
+		refFiles: File[];
+		refDocs: TopicDocItem[];
+		uploadingRef: boolean;
+		refUploadError: string;
+		activeTab: 'book' | 'questions';
 	}
 	let topics = $state<TopicItem[]>([]);
 	let topicInput = $state('');
@@ -89,42 +103,11 @@
 	let expandedTopic = $state(0);
 	let topicDocPollTimer: ReturnType<typeof setInterval> | null = null;
 
-	// Step 4: Reference materials
-	let materials = $state<File[]>([]);
-	let materialDocs = $state<Array<{
-		id: string;
-		filename: string;
-		file_size_bytes: number;
-		processing_status: string;
-		processing_progress: number;
-		processing_step?: string;
-		processing_detail?: string;
-	}>>([]);
-	let uploadingMaterials = $state(false);
-	let uploadProgress = $state(0);
-	let uploadTotal = $state(0);
-	let uploadCurrent = $state(0);
-	let materialsStatusError = $state('');
-	let materialsStatusMessage = $state('');
+	// Reference state (now per-topic, kept minimal for setup flow)
 	let skipReferencePdf = $state(false);
 	let materialPollTimer: ReturnType<typeof setInterval> | null = null;
 
-	// Optional reference questions (shown in Step 4)
-	let refQuestions = $state<File[]>([]);
-	let refQuestionDocs = $state<Array<{
-		id: string;
-		filename: string;
-		file_size_bytes: number;
-		processing_status: string;
-		processing_progress: number;
-		processing_step?: string;
-		processing_detail?: string;
-	}>>([]);
-	let uploadingRefQuestions = $state(false);
-	let refQuestionsStatusError = $state('');
-	let refQuestionsStatusMessage = $state('');
-
-	// Step 5/6: Setup & generation
+	// Step 4/5: Setup & generation
 	let isSettingUp = $state(false);
 	let setupProgress = $state(0);
 	let setupStatus = $state('');
@@ -132,23 +115,44 @@
 	let completeOnlyMode = $state(false);
 	let backgroundGenerationScheduled = $state(false);
 	let backgroundGenerationMessage = $state('');
-	let desiredQuestionCount = $state(10);
+	let desiredQuestionCount = $state(30);
 	let draftHydrated = $state(false);
 
 	// ── Derived ──
+	let allTopicDocs = $derived(topics.flatMap(t => t.docs));
+	let allTopicRefDocs = $derived(topics.flatMap(t => t.refDocs));
+	let totalBookDocs = $derived(allTopicDocs.length);
+	let totalRefDocs = $derived(allTopicRefDocs.length);
+	let hasAnyDocs = $derived(totalBookDocs > 0 || totalRefDocs > 0);
+
+	function isDocProcessing(doc: TopicDocItem) {
+		const s = doc.processing_status.toLowerCase();
+		return s === 'pending' || s === 'processing';
+	}
+	function isDocFailed(doc: TopicDocItem) {
+		const s = doc.processing_status.toLowerCase();
+		return s === 'failed' || s === 'error';
+	}
+	function isDocComplete(doc: TopicDocItem) {
+		const s = doc.processing_status.toLowerCase();
+		return s === 'completed' || s === 'complete' || s === 'processed';
+	}
+
+	let anyDocsProcessing = $derived([...allTopicDocs, ...allTopicRefDocs].some(isDocProcessing));
+	let anyDocsFailed = $derived([...allTopicDocs, ...allTopicRefDocs].some(isDocFailed));
+	let allDocsReady = $derived(hasAnyDocs && !anyDocsProcessing && !anyDocsFailed);
+
 	let canProceed = $derived.by(() => {
 		switch (step) {
 			case 1: return disciplineName.trim().length > 0;
 			case 2: return topics.length > 0;
-			case 3: return true; // syllabus is optional per topic
-			case 4:
-				return (skipReferencePdf || materialDocs.length > 0) &&
+			case 3:
+				return (skipReferencePdf || totalBookDocs > 0) &&
 					desiredQuestionCount >= MIN_QUESTION_COUNT &&
 					desiredQuestionCount <= MAX_QUESTION_COUNT &&
-					(skipReferencePdf || materialsFailedCount === 0) &&
-					refQuestionsReadyForNext;
-			case 5: return true; // review
-			case 6: return true;
+					!anyDocsFailed;
+			case 4: return true; // review
+			case 5: return true;
 			default: return false;
 		}
 	});
@@ -157,66 +161,14 @@
 		switch (step) {
 			case 1: return 'Discipline';
 			case 2: return 'Topics';
-			case 3: return 'Syllabus Content';
-			case 4: return 'References';
-			case 5: return 'Review';
-			case 6: return 'Setting Up';
+			case 3: return 'Topic Content & References';
+			case 4: return 'Review';
+			case 5: return 'Setting Up';
 			default: return '';
 		}
 	});
 
 	let topicsWithSyllabus = $derived(topics.filter(t => t.syllabusContent.trim().length > 0).length);
-	let materialsProcessingCount = $derived(
-		materialDocs.filter((doc) => {
-			const status = doc.processing_status.toLowerCase();
-			return status === 'pending' || status === 'processing';
-		}).length
-	);
-	let materialsFailedCount = $derived(
-		materialDocs.filter((doc) => {
-			const status = doc.processing_status.toLowerCase();
-			return status === 'failed' || status === 'error';
-		}).length
-	);
-	let materialsReadyForNext = $derived(
-		materialDocs.length > 0 && materialsProcessingCount === 0 && materialsFailedCount === 0
-	);
-	let materialsAverageProgress = $derived.by(() => {
-		if (materialDocs.length === 0) return 0;
-		const total = materialDocs.reduce((sum, doc) => {
-			const status = doc.processing_status.toLowerCase();
-			if (status === 'completed' || status === 'complete' || status === 'processed') return sum + 100;
-			if (status === 'failed' || status === 'error') return sum + 100;
-			return sum + Math.max(0, Math.min(100, doc.processing_progress || 0));
-		}, 0);
-		return Math.round(total / materialDocs.length);
-	});
-
-	let refQuestionsProcessingCount = $derived(
-		refQuestionDocs.filter((doc) => {
-			const status = doc.processing_status.toLowerCase();
-			return status === 'pending' || status === 'processing';
-		}).length
-	);
-	let refQuestionsFailedCount = $derived(
-		refQuestionDocs.filter((doc) => {
-			const status = doc.processing_status.toLowerCase();
-			return status === 'failed' || status === 'error';
-		}).length
-	);
-	let refQuestionsReadyForNext = $derived(
-		refQuestionDocs.length === 0 || (refQuestionsProcessingCount === 0 && refQuestionsFailedCount === 0)
-	);
-	let refQuestionsAverageProgress = $derived.by(() => {
-		if (refQuestionDocs.length === 0) return 0;
-		const total = refQuestionDocs.reduce((sum, doc) => {
-			const status = doc.processing_status.toLowerCase();
-			if (status === 'completed' || status === 'complete' || status === 'processed') return sum + 100;
-			if (status === 'failed' || status === 'error') return sum + 100;
-			return sum + Math.max(0, Math.min(100, doc.processing_progress || 0));
-		}, 0);
-		return Math.round(total / refQuestionDocs.length);
-	});
 
 	function saveDraft() {
 		if (!browser || !draftHydrated) return;
@@ -276,17 +228,13 @@
 			tempSubjectId = parsed.tempSubjectId ?? '';
 			backgroundGenerationScheduled = parsed.backgroundGenerationScheduled ?? false;
 			backgroundGenerationMessage = parsed.backgroundGenerationMessage ?? '';
-			desiredQuestionCount = clampQuestionCount(parsed.desiredQuestionCount ?? 10);
+			desiredQuestionCount = clampQuestionCount(parsed.desiredQuestionCount ?? 30);
 			skipReferencePdf = parsed.skipReferencePdf ?? false;
 
 			if (tempSubjectId) {
-				await refreshMaterialStatuses();
-				const hasPending = materialDocs.some((doc) => {
-					const status = doc.processing_status.toLowerCase();
-					return status === 'pending' || status === 'processing';
-				});
-				if (hasPending) {
-					startMaterialPolling();
+				await refreshAllTopicDocStatuses();
+				if (anyDocsProcessing) {
+					startTopicDocPolling();
 				}
 			}
 		} catch {
@@ -380,6 +328,11 @@
 			docs: [],
 			uploading: false,
 			uploadError: '',
+			refFiles: [],
+			refDocs: [],
+			uploadingRef: false,
+			refUploadError: '',
+			activeTab: 'book',
 		}];
 		topicInput = '';
 		topicError = '';
@@ -392,13 +345,6 @@
 
 	function handleTopicKeydown(e: KeyboardEvent) {
 		if (e.key === 'Enter') { e.preventDefault(); addTopic(); }
-	}
-
-	function clearMaterialPolling() {
-		if (materialPollTimer) {
-			clearInterval(materialPollTimer);
-			materialPollTimer = null;
-		}
 	}
 
 	function clearTopicDocPolling() {
@@ -415,7 +361,6 @@
 	}
 
 	onDestroy(() => {
-		clearMaterialPolling();
 		clearTopicDocPolling();
 	});
 
@@ -425,15 +370,7 @@
 				await getSubject(tempSubjectId);
 				return tempSubjectId;
 			} catch {
-				// Stale/deleted id from draft restore; recreate lazily.
 				tempSubjectId = '';
-				materialDocs = [];
-				refQuestionDocs = [];
-				materialsStatusMessage = '';
-				refQuestionsStatusMessage = '';
-				materialsStatusError = '';
-				refQuestionsStatusError = '';
-				clearMaterialPolling();
 			}
 		}
 
@@ -446,130 +383,6 @@
 		});
 		tempSubjectId = subj.id;
 		return subj.id;
-	}
-
-	async function refreshMaterialStatuses() {
-		if (!tempSubjectId) return;
-
-		const res = await listReferenceDocuments(tempSubjectId);
-		const baseDocs = (res.reference_books || []).map((doc) => ({
-			id: doc.id,
-			filename: doc.filename,
-			file_size_bytes: doc.file_size_bytes,
-			processing_status: doc.processing_status,
-			processing_progress: doc.processing_status.toLowerCase() === 'completed' ? 100 : 0,
-			processing_step: '',
-			processing_detail: '',
-		}));
-		const baseRefQuestionDocs = (res.reference_questions || []).map((doc) => ({
-			id: doc.id,
-			filename: doc.filename,
-			file_size_bytes: doc.file_size_bytes,
-			processing_status: doc.processing_status,
-			processing_progress: doc.processing_status.toLowerCase() === 'completed' ? 100 : 0,
-			processing_step: '',
-			processing_detail: '',
-		}));
-
-		const withStatus = await Promise.all(
-			baseDocs.map(async (doc) => {
-				const status = doc.processing_status.toLowerCase();
-				if (status === 'completed' || status === 'complete' || status === 'processed') {
-					return { ...doc, processing_progress: 100, processing_step: 'completed', processing_detail: 'Processing complete' };
-				}
-				if (status === 'failed' || status === 'error') {
-					return { ...doc, processing_progress: 100, processing_step: 'failed', processing_detail: 'Processing failed' };
-				}
-				try {
-					const statusRes = await getDocumentStatus(doc.id);
-					return {
-						...doc,
-						processing_progress: statusRes.processing_progress ?? doc.processing_progress,
-						processing_step: statusRes.processing_step ?? '',
-						processing_detail: statusRes.processing_detail ?? '',
-					};
-				} catch {
-					return doc;
-				}
-			})
-		);
-		const withRefQuestionStatus = await Promise.all(
-			baseRefQuestionDocs.map(async (doc) => {
-				const status = doc.processing_status.toLowerCase();
-				if (status === 'completed' || status === 'complete' || status === 'processed') {
-					return { ...doc, processing_progress: 100, processing_step: 'completed', processing_detail: 'Processing complete' };
-				}
-				if (status === 'failed' || status === 'error') {
-					return { ...doc, processing_progress: 100, processing_step: 'failed', processing_detail: 'Processing failed' };
-				}
-				try {
-					const statusRes = await getDocumentStatus(doc.id);
-					return {
-						...doc,
-						processing_progress: statusRes.processing_progress ?? doc.processing_progress,
-						processing_step: statusRes.processing_step ?? '',
-						processing_detail: statusRes.processing_detail ?? '',
-					};
-				} catch {
-					return doc;
-				}
-			})
-		);
-
-		materialDocs = withStatus;
-		refQuestionDocs = withRefQuestionStatus;
-
-		const processingCount = materialDocs.filter((doc) => {
-			const status = doc.processing_status.toLowerCase();
-			return status === 'pending' || status === 'processing';
-		}).length;
-
-		const failedCount = materialDocs.filter((doc) => {
-			const status = doc.processing_status.toLowerCase();
-			return status === 'failed' || status === 'error';
-		}).length;
-
-		if (materialDocs.length === 0) {
-			materialsStatusMessage = 'Upload at least one reference material.';
-		} else if (processingCount > 0) {
-			materialsStatusMessage = `${processingCount} file${processingCount > 1 ? 's are' : ' is'} still processing in background...`;
-		} else if (failedCount > 0) {
-			materialsStatusMessage = `${failedCount} file${failedCount > 1 ? 's failed' : ' failed'}. Re-upload failed files to continue.`;
-		} else {
-			materialsStatusMessage = 'All reference materials are processed. You can continue.';
-		}
-
-		const refProcessingCount = refQuestionDocs.filter((doc) => {
-			const status = doc.processing_status.toLowerCase();
-			return status === 'pending' || status === 'processing';
-		}).length;
-		const refFailedCount = refQuestionDocs.filter((doc) => {
-			const status = doc.processing_status.toLowerCase();
-			return status === 'failed' || status === 'error';
-		}).length;
-
-		if (refQuestionDocs.length === 0) {
-			refQuestionsStatusMessage = 'Reference questions are optional.';
-		} else if (refProcessingCount > 0) {
-			refQuestionsStatusMessage = `${refProcessingCount} reference question file${refProcessingCount > 1 ? 's are' : ' is'} still processing...`;
-		} else if (refFailedCount > 0) {
-			refQuestionsStatusMessage = `${refFailedCount} reference question file${refFailedCount > 1 ? 's failed' : ' failed'}. Re-upload failed files to continue.`;
-		} else {
-			refQuestionsStatusMessage = 'All reference questions are processed.';
-		}
-
-		if (processingCount === 0 && refProcessingCount === 0) {
-			clearMaterialPolling();
-		}
-	}
-
-	function startMaterialPolling() {
-		clearMaterialPolling();
-		materialPollTimer = setInterval(() => {
-			void refreshMaterialStatuses().catch(() => {
-				materialsStatusError = 'Failed to refresh material processing status';
-			});
-		}, 3000);
 	}
 
 	function fileKey(file: File) {
@@ -628,117 +441,8 @@
 		}
 	}
 
-	async function handleMaterialsSelected(files: File[]) {
-		if (uploadingMaterials) return;
-		if (!files.length && materials.length === 0) return;
-
-		materialsStatusError = '';
-
-		const isRemovalUpdate = files.length <= materials.length
-			&& files.every((file) => materials.some((existing) => fileKey(existing) === fileKey(file)));
-
-		if (isRemovalUpdate) {
-			const removedFiles = subtractFiles(materials, files);
-			materials = files;
-			try {
-				await deleteMatchingDocs(removedFiles, materialDocs);
-				await refreshMaterialStatuses();
-				if (materialDocs.length > 0) {
-					startMaterialPolling();
-				} else {
-					clearMaterialPolling();
-				}
-			} catch (e: unknown) {
-				materialsStatusError = e instanceof Error ? e.message : 'Failed to remove reference material';
-			}
-			return;
-		}
-
-		const newFiles = subtractFiles(files, materials);
-		if (!newFiles.length) return;
-
-		uploadingMaterials = true;
-		skipReferencePdf = false;
-		materials = [...materials, ...newFiles];
-		uploadTotal = newFiles.length;
-		uploadCurrent = 0;
-		uploadProgress = 0;
-
-		try {
-			const subjectId = await ensureSubjectId();
-			for (let i = 0; i < newFiles.length; i++) {
-				uploadCurrent = i + 1;
-				uploadProgress = Math.round(((i + 0.5) / newFiles.length) * 100);
-				await uploadDocument(newFiles[i], subjectId, 'reference_book');
-				uploadProgress = Math.round(((i + 1) / newFiles.length) * 100);
-			}
-			await refreshMaterialStatuses();
-			startMaterialPolling();
-		} catch (e: unknown) {
-			materialsStatusError = e instanceof Error ? e.message : 'Failed to upload reference materials';
-		} finally {
-			uploadingMaterials = false;
-			uploadProgress = 0;
-			uploadTotal = 0;
-			uploadCurrent = 0;
-		}
-	}
-
-	async function handleRefQuestionsSelected(files: File[]) {
-		if (uploadingRefQuestions) return;
-		if (!files.length && refQuestions.length === 0) return;
-
-		refQuestionsStatusError = '';
-
-		const isRemovalUpdate = files.length <= refQuestions.length
-			&& files.every((file) => refQuestions.some((existing) => fileKey(existing) === fileKey(file)));
-
-		if (isRemovalUpdate) {
-			const removedFiles = subtractFiles(refQuestions, files);
-			refQuestions = files;
-			try {
-				await deleteMatchingDocs(removedFiles, refQuestionDocs);
-				await refreshMaterialStatuses();
-				if (materialDocs.length > 0 || refQuestionDocs.length > 0) {
-					startMaterialPolling();
-				} else {
-					clearMaterialPolling();
-				}
-			} catch (e: unknown) {
-				refQuestionsStatusError = e instanceof Error ? e.message : 'Failed to remove reference question file';
-			}
-			return;
-		}
-
-		const newFiles = subtractFiles(files, refQuestions);
-		if (!newFiles.length) return;
-
-		uploadingRefQuestions = true;
-		refQuestions = [...refQuestions, ...newFiles];
-
-		try {
-			const subjectId = await ensureSubjectId();
-			for (const file of newFiles) {
-				await uploadDocument(file, subjectId, 'reference_questions');
-			}
-			await refreshMaterialStatuses();
-			startMaterialPolling();
-		} catch (e: unknown) {
-			refQuestionsStatusError = e instanceof Error ? e.message : 'Failed to upload reference questions';
-		} finally {
-			uploadingRefQuestions = false;
-		}
-	}
-
 	function toggleSkipReferencePdf() {
 		skipReferencePdf = !skipReferencePdf;
-		materialsStatusError = '';
-		if (skipReferencePdf) {
-			clearMaterialPolling();
-			materialsStatusMessage = 'PDF upload skipped for this subject. You can continue to the next step.';
-		} else if (materialDocs.length === 0) {
-			materialsStatusMessage = 'Upload at least one reference material.';
-		}
 	}
 
 	async function ensureTopicOnServer(topicIndex: number): Promise<string> {
@@ -798,22 +502,50 @@
 		}
 	}
 
-	async function refreshTopicDocStatuses(topicIndex: number) {
+	async function handleTopicRefQuestionsSelected(topicIndex: number, files: File[]) {
 		const topic = topics[topicIndex];
-		if (!topic.serverId || !tempSubjectId) return;
+		if (topic.uploadingRef) return;
+		if (!files.length && topic.refFiles.length === 0) return;
 
-		const res = await listReferenceDocuments(tempSubjectId, topic.serverId);
-		const baseDocs = (res.reference_books || []).map((doc) => ({
-			id: doc.id,
-			filename: doc.filename,
-			file_size_bytes: doc.file_size_bytes,
-			processing_status: doc.processing_status,
-			processing_progress: doc.processing_status.toLowerCase() === 'completed' ? 100 : 0,
-			processing_step: '',
-			processing_detail: '',
-		}));
+		topics[topicIndex] = { ...topic, refUploadError: '' };
 
-		const withStatus = await Promise.all(
+		const isRemovalUpdate = files.length <= topic.refFiles.length
+			&& files.every((file) => topic.refFiles.some((existing) => fileKey(existing) === fileKey(file)));
+
+		if (isRemovalUpdate) {
+			const removedFiles = subtractFiles(topic.refFiles, files);
+			topics[topicIndex] = { ...topics[topicIndex], refFiles: files };
+			try {
+				await deleteMatchingDocs(removedFiles, topic.refDocs);
+				await refreshTopicDocStatuses(topicIndex);
+			} catch (e: unknown) {
+				topics[topicIndex] = { ...topics[topicIndex], refUploadError: e instanceof Error ? e.message : 'Failed to remove file' };
+			}
+			return;
+		}
+
+		const newFiles = subtractFiles(files, topic.refFiles);
+		if (!newFiles.length) return;
+
+		topics[topicIndex] = { ...topics[topicIndex], uploadingRef: true, refFiles: [...topic.refFiles, ...newFiles] };
+
+		try {
+			const subjectId = await ensureSubjectId();
+			const topicId = await ensureTopicOnServer(topicIndex);
+			for (const file of newFiles) {
+				await uploadDocument(file, subjectId, 'reference_questions', topicId);
+			}
+			await refreshTopicDocStatuses(topicIndex);
+			startTopicDocPolling();
+		} catch (e: unknown) {
+			topics[topicIndex] = { ...topics[topicIndex], refUploadError: e instanceof Error ? e.message : 'Failed to upload file' };
+		} finally {
+			topics[topicIndex] = { ...topics[topicIndex], uploadingRef: false };
+		}
+	}
+
+	async function enrichDocStatuses(baseDocs: TopicDocItem[]): Promise<TopicDocItem[]> {
+		return Promise.all(
 			baseDocs.map(async (doc) => {
 				const status = doc.processing_status.toLowerCase();
 				if (status === 'completed' || status === 'complete' || status === 'processed') {
@@ -835,8 +567,29 @@
 				}
 			})
 		);
+	}
 
-		topics[topicIndex] = { ...topics[topicIndex], docs: withStatus };
+	function toBaseDocItems(docs: Array<{ id: string; filename: string; file_size_bytes: number; processing_status: string }>): TopicDocItem[] {
+		return docs.map((doc) => ({
+			id: doc.id,
+			filename: doc.filename,
+			file_size_bytes: doc.file_size_bytes,
+			processing_status: doc.processing_status,
+			processing_progress: doc.processing_status.toLowerCase() === 'completed' ? 100 : 0,
+			processing_step: '',
+			processing_detail: '',
+		}));
+	}
+
+	async function refreshTopicDocStatuses(topicIndex: number) {
+		const topic = topics[topicIndex];
+		if (!topic.serverId || !tempSubjectId) return;
+
+		const res = await listReferenceDocuments(tempSubjectId, topic.serverId);
+		const bookDocs = await enrichDocStatuses(toBaseDocItems(res.reference_books || []));
+		const refDocs = await enrichDocStatuses(toBaseDocItems(res.reference_questions || []));
+
+		topics[topicIndex] = { ...topics[topicIndex], docs: bookDocs, refDocs };
 	}
 
 	async function refreshAllTopicDocStatuses() {
@@ -845,11 +598,10 @@
 				await refreshTopicDocStatuses(i);
 			}
 		}
-		const anyProcessing = topics.some(t => t.docs.some(d => {
-			const s = d.processing_status.toLowerCase();
-			return s === 'pending' || s === 'processing';
-		}));
-		if (!anyProcessing) {
+		const stillProcessing = topics.some(t =>
+			[...t.docs, ...t.refDocs].some(isDocProcessing)
+		);
+		if (!stillProcessing) {
 			clearTopicDocPolling();
 		}
 	}
@@ -862,6 +614,7 @@
 	}
 
 	let topicsWithDocs = $derived(topics.filter(t => t.docs.length > 0).length);
+	let topicsWithRefDocs = $derived(topics.filter(t => t.refDocs.length > 0).length);
 
 	async function importFromPdf() {
 		const input = document.createElement('input');
@@ -897,6 +650,11 @@
 							docs: [] as TopicDocItem[],
 							uploading: false,
 							uploadError: '',
+							refFiles: [] as File[],
+							refDocs: [] as TopicDocItem[],
+							uploadingRef: false,
+							refUploadError: '',
+							activeTab: 'book' as const,
 						}));
 					topics = [...topics, ...newTopics];
 				}
@@ -968,10 +726,7 @@
 			}
 			setupProgress = 30;
 
-			// 3. Reference materials are uploaded/processed in Step 4 itself.
-			setupProgress = 55;
-
-			// 4. Reference questions are uploaded/processed in Step 4 itself.
+			// 3. Reference materials are already uploaded per-topic in Step 3.
 			setupProgress = 80;
 
 			if (completeOnlyMode) {
@@ -981,7 +736,7 @@
 					count: desiredQuestionCount,
 					types: 'mcq',
 					difficulty: 'medium',
-					allowWithoutReference: skipReferencePdf && materialDocs.length === 0,
+					allowWithoutReference: skipReferencePdf && totalBookDocs === 0,
 				});
 				backgroundGenerationScheduled = true;
 				backgroundGenerationMessage = scheduleRes.message;
@@ -991,10 +746,10 @@
 			setupStatus = completeOnlyMode ? 'Setup completed. Redirecting to dashboard...' : 'Setup complete! Redirecting...';
 			await new Promise(r => setTimeout(r, 600));
 			clearDraft();
-			if (completeOnlyMode || !materialsReadyForNext) {
+			if (completeOnlyMode || !allDocsReady) {
 				goto('/teacher/dashboard');
 			} else {
-				const noPdfParam = skipReferencePdf && materialDocs.length === 0 ? '&noPdf=1' : '';
+				const noPdfParam = skipReferencePdf && totalBookDocs === 0 ? '&noPdf=1' : '';
 				goto(`/teacher/train/loop?subject=${subjectId}&provisional=1&count=${encodeURIComponent(String(desiredQuestionCount))}${noPdfParam}`);
 			}
 		} catch (e: unknown) {
@@ -1117,9 +872,9 @@
 				</div>
 			{/if}
 
-		<!-- Step 3: Syllabus per topic -->
+		<!-- Step 3: Topic Content & References -->
 		{:else if step === 3}
-			<p class="step-desc">Add syllabus content and reference PDFs for each topic</p>
+			<p class="step-desc">Add syllabus, reference books, and optional reference questions for each topic</p>
 			{#if topics.length === 0}
 				<div class="center-msg">
 					<span>📭</span>
@@ -1136,7 +891,10 @@
 								</div>
 								<div class="sh-right">
 									{#if topic.docs.length > 0}
-										<span class="sh-badge docs">📎 {topic.docs.length}</span>
+										<span class="sh-badge docs">� {topic.docs.length}</span>
+									{/if}
+									{#if topic.refDocs.length > 0}
+										<span class="sh-badge docs">📝 {topic.refDocs.length}</span>
 									{/if}
 									{#if topic.syllabusContent.trim()}
 										<span class="sh-badge filled">✓ Content</span>
@@ -1154,44 +912,98 @@
 											class="glass-input syl-textarea"
 											placeholder="Paste or type the syllabus content for this topic..."
 											bind:value={topics[i].syllabusContent}
-											rows="6"
+											rows="4"
 										></textarea>
 									</div>
 
-									<div class="topic-section topic-pdf-section">
-										<span class="topic-section-label">📚 Reference PDFs for this Topic</span>
-										<p class="topic-section-hint">Upload textbooks or notes specific to "{topic.name}"</p>
-										<FileUploadZone
-											accept=".pdf,.doc,.docx,.txt,.pptx"
-											label="Drop files or click to upload"
-											hint="PDF, Word, PowerPoint, or Text"
-											files={topic.files}
-											onfilesSelected={(files) => handleTopicFilesSelected(i, files)}
-										/>
-										{#if topic.uploading}
-											<p class="topic-upload-status">📤 Uploading...</p>
-										{/if}
-										{#if topic.uploadError}
-											<p class="inline-error">⚠️ {topic.uploadError}</p>
-										{/if}
-										{#if topic.docs.length > 0}
-											<div class="topic-doc-list">
-												{#each topic.docs as doc}
-													<div class="topic-doc-item">
-														<span class="topic-doc-icon">📄</span>
-														<span class="topic-doc-name">{doc.filename}</span>
-														<span class="topic-doc-status" class:completed={['completed', 'complete', 'processed'].includes(doc.processing_status.toLowerCase())} class:failed={['failed', 'error'].includes(doc.processing_status.toLowerCase())}>
-															{#if ['completed', 'complete', 'processed'].includes(doc.processing_status.toLowerCase())}
-																✓ Ready
-															{:else if ['failed', 'error'].includes(doc.processing_status.toLowerCase())}
-																✗ Failed
-															{:else}
-																{doc.processing_progress}%
-															{/if}
-														</span>
-													</div>
-												{/each}
-											</div>
+									<!-- Tabbed reference uploads -->
+									<div class="topic-ref-tabs">
+										<button
+											class="topic-tab" class:active={topic.activeTab === 'book'}
+											onclick={() => topics[i] = { ...topics[i], activeTab: 'book' }}
+										>
+											📚 Reference Books
+											{#if topic.docs.length > 0}<span class="tab-count">{topic.docs.length}</span>{/if}
+										</button>
+										<button
+											class="topic-tab" class:active={topic.activeTab === 'questions'}
+											onclick={() => topics[i] = { ...topics[i], activeTab: 'questions' }}
+										>
+											� Reference Questions
+											{#if topic.refDocs.length > 0}<span class="tab-count">{topic.refDocs.length}</span>{/if}
+											<span class="tab-optional">optional</span>
+										</button>
+									</div>
+
+									<div class="topic-tab-content">
+										{#if topic.activeTab === 'book'}
+											<p class="topic-section-hint">Upload textbooks or notes for "{topic.name}"</p>
+											<FileUploadZone
+												accept=".pdf,.doc,.docx,.txt,.pptx"
+												label="Drop files or click to upload"
+												hint="PDF, Word, PowerPoint, or Text"
+												files={topic.files}
+												onfilesSelected={(files) => handleTopicFilesSelected(i, files)}
+											/>
+											{#if topic.uploading}
+												<p class="topic-upload-status">📤 Uploading...</p>
+											{/if}
+											{#if topic.uploadError}
+												<p class="inline-error">⚠️ {topic.uploadError}</p>
+											{/if}
+											{#if topic.docs.length > 0}
+												<div class="topic-doc-list">
+													{#each topic.docs as doc}
+														<div class="topic-doc-item">
+															<span class="topic-doc-icon">📄</span>
+															<span class="topic-doc-name">{doc.filename}</span>
+															<span class="topic-doc-status" class:completed={isDocComplete(doc)} class:failed={isDocFailed(doc)}>
+																{#if isDocComplete(doc)}
+																	✓ Ready
+																{:else if isDocFailed(doc)}
+																	✗ Failed
+																{:else}
+																	{doc.processing_progress}%
+																{/if}
+															</span>
+														</div>
+													{/each}
+												</div>
+											{/if}
+										{:else}
+											<p class="topic-section-hint">Upload past papers or question banks for "{topic.name}"</p>
+											<FileUploadZone
+												accept=".pdf,.doc,.docx,.txt,.csv,.xlsx,.xls"
+												label="Drop files or click to upload"
+												hint="PDF, Word, Excel, or CSV"
+												files={topic.refFiles}
+												onfilesSelected={(files) => handleTopicRefQuestionsSelected(i, files)}
+											/>
+											{#if topic.uploadingRef}
+												<p class="topic-upload-status">📤 Uploading...</p>
+											{/if}
+											{#if topic.refUploadError}
+												<p class="inline-error">⚠️ {topic.refUploadError}</p>
+											{/if}
+											{#if topic.refDocs.length > 0}
+												<div class="topic-doc-list">
+													{#each topic.refDocs as doc}
+														<div class="topic-doc-item">
+															<span class="topic-doc-icon">📝</span>
+															<span class="topic-doc-name">{doc.filename}</span>
+															<span class="topic-doc-status" class:completed={isDocComplete(doc)} class:failed={isDocFailed(doc)}>
+																{#if isDocComplete(doc)}
+																	✓ Ready
+																{:else if isDocFailed(doc)}
+																	✗ Failed
+																{:else}
+																	{doc.processing_progress}%
+																{/if}
+															</span>
+														</div>
+													{/each}
+												</div>
+											{/if}
 										{/if}
 									</div>
 								</div>
@@ -1199,220 +1011,60 @@
 						</div>
 					{/each}
 				</div>
-				<p class="step-hint">{topicsWithSyllabus} of {topics.length} topics have syllabus content • {topicsWithDocs} have reference PDFs</p>
-			{/if}
 
-		<!-- Step 4: References -->
-		{:else if step === 4}
-			<!-- Reference Materials Section -->
-			<div class="upload-section">
-				<div class="upload-section-header">
-					<h3 class="upload-section-title">📚 Reference Materials</h3>
-					<span class="upload-section-badge">{materialDocs.length > 0 ? `${materialDocs.length} file${materialDocs.length !== 1 ? 's' : ''}` : 'Required'}</span>
-				</div>
-				<p class="upload-section-desc">Upload textbooks, notes, or study materials to generate questions from.</p>
-				
-				<FileUploadZone
-					accept=".pdf,.doc,.docx,.txt,.pptx"
-					label="Drop files here or click to browse"
-					hint="PDF, Word, PowerPoint, or Text"
-					files={materials}
-					onfilesSelected={handleMaterialsSelected}
-				/>
+				<!-- Generation settings below the accordion -->
+				<div class="step3-footer">
+					<p class="step-hint">{topicsWithSyllabus}/{topics.length} topics have syllabus • {topicsWithDocs} have books • {topicsWithRefDocs} have ref questions</p>
 
-				{#if uploadingMaterials}
-					<div class="upload-progress-card">
-						<div class="upload-progress-header">
-							<span class="upload-progress-label">📤 Uploading {uploadCurrent} of {uploadTotal}...</span>
-							<span class="upload-progress-pct">{uploadProgress}%</span>
+					<div class="step3-settings-row">
+						<div class="question-count-card">
+							<label class="field-label" for="question-count-input">Questions To Generate</label>
+							<div class="question-count-row">
+								<input
+									id="question-count-input"
+									class="glass-input question-count-input"
+									type="number"
+									min={MIN_QUESTION_COUNT}
+									max={MAX_QUESTION_COUNT}
+									bind:value={desiredQuestionCount}
+									oninput={handleQuestionCountInput}
+								/>
+								<span class="question-count-unit">questions</span>
+							</div>
 						</div>
-						<div class="upload-progress-track">
-							<div class="upload-progress-fill" style:width="{uploadProgress}%"></div>
-						</div>
+
+						<button
+							type="button"
+							class="glass-btn skip-pdf-btn"
+							class:active={skipReferencePdf}
+							onclick={toggleSkipReferencePdf}
+						>
+							{skipReferencePdf ? '✓ ' : ''}Generate without reference materials
+						</button>
 					</div>
-				{/if}
 
-				<button
-					type="button"
-					class="glass-btn skip-pdf-btn"
-					class:active={skipReferencePdf}
-					onclick={toggleSkipReferencePdf}
-				>
 					{#if skipReferencePdf}
-						✓ Generate without reference materials
-					{:else}
-						Generate without reference materials
+						<p class="step-hint success-hint">✓ Will use topic and syllabus content only.</p>
 					{/if}
-				</button>
-
-				{#if skipReferencePdf}
-					<p class="step-hint success-hint">✓ Will use topic and syllabus content only.</p>
-				{:else if materialsStatusMessage && !uploadingMaterials}
-					<p class="step-hint">{materialsStatusMessage}</p>
-				{/if}
-			</div>
-
-			<!-- Reference Questions Section -->
-			<div class="upload-section">
-				<div class="upload-section-header">
-					<h3 class="upload-section-title">📝 Reference Questions</h3>
-					<span class="upload-section-badge optional">Optional</span>
-				</div>
-				<p class="upload-section-desc">Upload past papers or question banks to help match question style.</p>
-				
-				<FileUploadZone
-					accept=".pdf,.doc,.docx,.txt,.csv,.xlsx,.xls"
-					label="Drop files here or click to browse"
-					hint="PDF, Word, Excel, or CSV"
-					files={refQuestions}
-					onfilesSelected={handleRefQuestionsSelected}
-				/>
-
-				{#if uploadingRefQuestions}
-					<p class="step-hint">📤 Uploading reference questions...</p>
-				{/if}
-				{#if refQuestionsStatusMessage && !uploadingRefQuestions}
-					<p class="step-hint">{refQuestionsStatusMessage}</p>
-				{/if}
-			</div>
-
-			<!-- Generation Settings -->
-			<div class="upload-section settings-section">
-				<div class="upload-section-header">
-					<h3 class="upload-section-title">⚙️ Generation Settings</h3>
-				</div>
-				<div class="question-count-card">
-					<label class="field-label" for="question-count-input">Questions To Generate</label>
-					<div class="question-count-row">
-						<input
-							id="question-count-input"
-							class="glass-input question-count-input"
-							type="number"
-							min={MIN_QUESTION_COUNT}
-							max={MAX_QUESTION_COUNT}
-							bind:value={desiredQuestionCount}
-							oninput={handleQuestionCountInput}
-						/>
-						<span class="question-count-unit">questions</span>
-					</div>
-					<p class="question-count-hint">This count will be used when training starts.</p>
-				</div>
-			</div>
-
-			{#if tempSubjectId}
-				<p class="step-hint resume-note">💾 Progress saved. You can leave and return later.</p>
-			{/if}
-			{#if materialDocs.length > 0 && !materialsReadyForNext}
-				<div class="material-progress-wrap">
-					<div class="material-progress-head">
-						<span>Processing Progress</span>
-						<span>{materialsAverageProgress}%</span>
-					</div>
-					<div class="material-progress-track">
-						<div class="material-progress-fill" style:width="{materialsAverageProgress}%"></div>
-					</div>
-				</div>
-			{:else if materialDocs.length > 0 && materialsReadyForNext}
-				<div class="material-progress-wrap material-progress-complete">
-					<div class="material-progress-head">
-						<span>Processing Completed</span>
-						<span>100%</span>
-					</div>
-				</div>
-			{/if}
-			{#if refQuestionDocs.length > 0 && !refQuestionsReadyForNext}
-				<div class="material-progress-wrap">
-					<div class="material-progress-head">
-						<span>Reference Questions Progress</span>
-						<span>{refQuestionsAverageProgress}%</span>
-					</div>
-					<div class="material-progress-track">
-						<div class="material-progress-fill" style:width="{refQuestionsAverageProgress}%"></div>
-					</div>
-				</div>
-			{:else if refQuestionDocs.length > 0 && refQuestionsReadyForNext}
-				<div class="material-progress-wrap material-progress-complete">
-					<div class="material-progress-head">
-						<span>Reference Questions Completed</span>
-						<span>100%</span>
-					</div>
-				</div>
-			{/if}
-			{#if materialsStatusError}
-				<p class="inline-error">⚠️ {materialsStatusError}</p>
-			{/if}
-			{#if refQuestionsStatusError}
-				<p class="inline-error">⚠️ {refQuestionsStatusError}</p>
-			{/if}
-			{#if materialDocs.length > 0}
-				<div class="file-list">
-					{#each materialDocs as doc}
-						<div class="file-item">
-							<span class="file-icon">📁</span>
-							<span class="file-name">{doc.filename}</span>
-							<span class="file-size">{(doc.file_size_bytes / 1024 / 1024).toFixed(1)} MB</span>
-							<span class="file-status">
-								{#if ['completed', 'complete', 'processed'].includes(doc.processing_status.toLowerCase())}
-									Completed
-								{:else if ['failed', 'error'].includes(doc.processing_status.toLowerCase())}
-									Failed
-								{:else}
-									{doc.processing_status} ({doc.processing_progress}%)
-								{/if}
-							</span>
-						</div>
-						{#if doc.processing_detail}
-							<p class="file-progress-detail">{doc.processing_detail}</p>
-						{/if}
-					{/each}
-				</div>
-			{/if}
-			{#if refQuestionDocs.length > 0}
-				<div class="file-list">
-					{#each refQuestionDocs as doc}
-						<div class="file-item">
-							<span class="file-icon">📝</span>
-							<span class="file-name">{doc.filename}</span>
-							<span class="file-size">{(doc.file_size_bytes / 1024 / 1024).toFixed(1)} MB</span>
-							<span class="file-status">
-								{#if ['completed', 'complete', 'processed'].includes(doc.processing_status.toLowerCase())}
-									Completed
-								{:else if ['failed', 'error'].includes(doc.processing_status.toLowerCase())}
-									Failed
-								{:else}
-									{doc.processing_status} ({doc.processing_progress}%)
-								{/if}
-							</span>
-						</div>
-						{#if doc.processing_detail}
-							<p class="file-progress-detail">{doc.processing_detail}</p>
-						{/if}
-					{/each}
-				</div>
-			{/if}
-			{#if refQuestions.length > 0}
-				<div class="file-list">
-					{#each refQuestions as file, i}
-						<div class="file-item">
-							<span class="file-icon">📋</span>
-							<span class="file-name">{file.name}</span>
-							<span class="file-size">{(file.size / 1024 / 1024).toFixed(1)} MB</span>
-							<button class="file-remove" onclick={() => refQuestions = refQuestions.filter((_, j) => j !== i)}>×</button>
-						</div>
-					{/each}
+					{#if anyDocsProcessing}
+						<p class="step-hint">Some documents are still processing in the background...</p>
+					{/if}
+					{#if tempSubjectId}
+						<p class="step-hint resume-note">💾 Progress saved. You can leave and return later.</p>
+					{/if}
 				</div>
 			{/if}
 
-		<!-- Step 5: Review -->
-		{:else if step === 5}
+		<!-- Step 4: Review -->
+		{:else if step === 4}
 			<div class="review-card glass">
 				<h2 class="review-title">Review Setup</h2>
-				{#if skipReferencePdf && materialDocs.length === 0}
+				{#if skipReferencePdf && totalBookDocs === 0}
 					<p class="step-hint">Reference PDF is marked as not required for this subject.</p>
-				{:else if completeOnlyMode || !materialsReadyForNext}
+				{:else if completeOnlyMode || !allDocsReady}
 					<p class="step-hint">Reference materials are still processing. You can complete setup now and continue from dashboard later.</p>
 				{/if}
-				{#if !skipReferencePdf && !materialsReadyForNext}
+				{#if !skipReferencePdf && !allDocsReady && hasAnyDocs}
 					<p class="step-hint">On Complete, background generation for {desiredQuestionCount} question{desiredQuestionCount !== 1 ? 's' : ''} will run automatically once processing is ready.</p>
 				{/if}
 				{#if backgroundGenerationMessage}
@@ -1441,16 +1093,16 @@
 					<div class="review-section">
 						<span class="rs-label">Reference Materials</span>
 						<span class="rs-value">
-							{#if skipReferencePdf && materialDocs.length === 0}
+							{#if skipReferencePdf && totalBookDocs === 0}
 								Not required for this subject
 							{:else}
-								{materialDocs.length} file{materialDocs.length !== 1 ? 's' : ''}
+								{totalBookDocs} book{totalBookDocs !== 1 ? 's' : ''} across {topicsWithDocs} topic{topicsWithDocs !== 1 ? 's' : ''}
 							{/if}
 						</span>
 					</div>
 					<div class="review-section">
 						<span class="rs-label">Reference Questions</span>
-						<span class="rs-value">{refQuestions.length} file{refQuestions.length !== 1 ? 's' : ''}</span>
+						<span class="rs-value">{totalRefDocs} file{totalRefDocs !== 1 ? 's' : ''} across {topicsWithRefDocs} topic{topicsWithRefDocs !== 1 ? 's' : ''}</span>
 					</div>
 					<div class="review-section">
 						<span class="rs-label">Questions To Generate</span>
@@ -1465,8 +1117,8 @@
 						<button class="glass-btn step-back-btn" onclick={prevStep}>
 							← Back
 						</button>
-						<button class="glass-btn step-next-btn step-train-btn" onclick={() => { step = 6; startSetup(!completeOnlyMode && materialsReadyForNext); }}>
-							{#if !completeOnlyMode && materialsReadyForNext}
+						<button class="glass-btn step-next-btn step-train-btn" onclick={() => { step = 5; startSetup(!completeOnlyMode && allDocsReady); }}>
+							{#if !completeOnlyMode && allDocsReady}
 								⚡ Start Training
 							{:else}
 								✓ Complete
@@ -1476,8 +1128,8 @@
 				{/if}
 			</div>
 
-		<!-- Step 6: Setting up -->
-		{:else if step === 6}
+		<!-- Step 5: Setting up -->
+		{:else if step === 5}
 			<div class="progress-section">
 				<div class="progress-icon">⚡</div>
 				<h2 class="progress-title">{completeOnlyMode ? 'Completing Setup' : 'Setting Up'}</h2>
@@ -1488,23 +1140,19 @@
 				<span class="progress-pct">{setupProgress}%</span>
 				{#if setupError}
 					<p class="gen-error">⚠️ {setupError}</p>
-					<button class="glass-btn" onclick={() => { step = 5; }}>← Back to Review</button>
+					<button class="glass-btn" onclick={() => { step = 4; }}>← Back to Review</button>
 				{/if}
 			</div>
 		{/if}
 	</div>
 
-	{#if step >= 2 && step <= 4}
+	{#if step >= 2 && step <= 3}
 		<div class="step-actions">
 			<button class="glass-btn step-back-btn" onclick={prevStep}>← Back</button>
 			{#if step === 2}
-				<button class="glass-btn step-next-btn" onclick={nextStep} disabled={!canProceed}>Next: Add Content →</button>
+				<button class="glass-btn step-next-btn" onclick={nextStep} disabled={!canProceed}>Next: Content & References →</button>
 			{:else if step === 3}
-				<button class="glass-btn step-next-btn" onclick={nextStep}>Next: Add References →</button>
-			{:else if step === 4}
 				<button class="glass-btn step-next-btn" onclick={nextStep} disabled={!canProceed}>Next: Review →</button>
-			{:else}
-				<button class="glass-btn step-next-btn" onclick={nextStep}>Next: Review →</button>
 			{/if}
 		</div>
 	{/if}
@@ -2180,130 +1828,91 @@
 		line-height: 1.5;
 	}
 
-	/* Step 4/5: File list */
-	.file-list {
+	/* Topic tab styles */
+	.topic-ref-tabs {
 		display: flex;
-		flex-direction: column;
-		gap: 0.4rem;
+		gap: 0;
 		margin-top: 1rem;
+		border-bottom: 1px solid rgba(255, 255, 255, 0.1);
 	}
 
-	.file-item {
-		display: flex;
-		align-items: center;
-		gap: 0.5rem;
-		padding: 0.5rem 0.75rem;
-		border-radius: var(--glass-radius-sm, 8px);
-		background: rgba(255, 255, 255, 0.04);
-		border: 0.5px solid rgba(255, 255, 255, 0.08);
-		font-size: 0.85rem;
-		/* Enhanced blur effect - force override */
-		backdrop-filter: blur(10px) saturate(150%) brightness(1.02) !important;
-		-webkit-backdrop-filter: blur(10px) saturate(150%) brightness(1.02) !important;
-		background: linear-gradient(
-			145deg,
-			rgba(255,255,255,0.03) 0%,
-			rgba(255,255,255,0.02) 50%,
-			rgba(255,255,255,0.025) 100%
-		) !important;
-		box-shadow:
-			0 8px 40px rgba(0, 0, 0, 0.25),
-			inset 0 1px 1px rgba(255, 255, 255, 0.25),
-			inset 0 -1px 1px rgba(255, 255, 255, 0.08),
-			0 0 0 1px rgba(255, 255, 255, 0.12) !important;
-	}
-
-	.file-icon {
-		font-size: 1rem;
-	}
-
-	.file-name {
+	.topic-tab {
 		flex: 1;
-		overflow: hidden;
-		text-overflow: ellipsis;
-		white-space: nowrap;
-		color: var(--theme-text);
-	}
-
-	.file-size {
-		color: var(--theme-text-muted);
-		font-size: 0.75rem;
-		flex-shrink: 0;
-	}
-
-	.file-remove {
 		display: flex;
 		align-items: center;
 		justify-content: center;
-		width: 20px;
-		height: 20px;
+		gap: 0.4rem;
+		padding: 0.65rem 0.75rem;
+		background: none;
 		border: none;
-		border-radius: 50%;
-		background: rgba(255, 255, 255, 0.1);
+		border-bottom: 2px solid transparent;
 		color: var(--theme-text-muted);
 		font-size: 0.85rem;
-		cursor: pointer;
-		padding: 0;
-		flex-shrink: 0;
-	}
-
-	.file-remove:hover {
-		background: rgba(233, 69, 96, 0.35);
-		color: #fff;
-	}
-
-	.file-status {
-		font-size: 0.75rem;
-		color: var(--theme-text-muted);
-		text-transform: capitalize;
-		flex-shrink: 0;
-	}
-
-	.file-progress-detail {
-		margin: -0.2rem 0 0.35rem 2.2rem;
-		font-size: 0.75rem;
-		color: var(--theme-text-muted);
-	}
-
-	.material-progress-wrap {
-		margin-top: 0.85rem;
-		padding: 0.75rem;
-		border: 1px solid rgba(255, 255, 255, 0.12);
-		border-radius: 10px;
-		background: rgba(255, 255, 255, 0.05);
-	}
-
-	.material-progress-head {
-		display: flex;
-		justify-content: space-between;
-		align-items: center;
-		font-size: 0.8rem;
-		color: var(--theme-text-muted);
-		margin-bottom: 0.4rem;
-	}
-
-	.material-progress-track {
-		height: 7px;
-		border-radius: 999px;
-		background: rgba(255, 255, 255, 0.1);
-		overflow: hidden;
-	}
-
-	.material-progress-fill {
-		height: 100%;
-		background: linear-gradient(90deg, var(--theme-primary), var(--theme-primary-hover));
-		transition: width 0.3s ease;
-	}
-
-	.material-progress-complete {
-		border-color: rgba(95, 212, 152, 0.35);
-		background: rgba(95, 212, 152, 0.08);
-	}
-
-	.material-progress-complete .material-progress-head {
-		margin-bottom: 0;
-		color: #9be4b9;
 		font-weight: 600;
+		cursor: pointer;
+		transition: color 0.15s, border-color 0.15s, background 0.15s;
+	}
+
+	.topic-tab:hover {
+		color: var(--theme-text);
+		background: rgba(255, 255, 255, 0.03);
+	}
+
+	.topic-tab.active {
+		color: var(--theme-primary);
+		border-bottom-color: var(--theme-primary);
+		background: rgba(var(--theme-primary-rgb), 0.06);
+	}
+
+	.tab-count {
+		display: inline-flex;
+		align-items: center;
+		justify-content: center;
+		min-width: 18px;
+		height: 18px;
+		padding: 0 5px;
+		border-radius: 9px;
+		background: rgba(var(--theme-primary-rgb), 0.2);
+		color: var(--theme-primary);
+		font-size: 0.7rem;
+		font-weight: 700;
+		line-height: 1;
+	}
+
+	.tab-optional {
+		font-size: 0.65rem;
+		font-weight: 400;
+		color: var(--theme-text-muted);
+		opacity: 0.7;
+		font-style: italic;
+	}
+
+	.topic-tab-content {
+		padding: 0.85rem 0 0;
+	}
+
+	.step3-footer {
+		margin-top: 1.25rem;
+		display: flex;
+		flex-direction: column;
+		gap: 0.75rem;
+	}
+
+	.step3-settings-row {
+		display: flex;
+		align-items: flex-end;
+		gap: 1rem;
+		flex-wrap: wrap;
+	}
+
+	.step3-settings-row .question-count-card {
+		flex: 0 0 auto;
+	}
+
+	.step3-settings-row .skip-pdf-btn {
+		flex: 1;
+		margin-top: 0;
+		min-width: 220px;
 	}
 
 	.question-count-card {
@@ -2328,105 +1937,6 @@
 			0 0 0 1px rgba(255, 255, 255, 0.12) !important;
 	}
 
-	/* Upload section styles */
-	.upload-section {
-		margin-bottom: 1.5rem;
-		padding: 1rem;
-		border-radius: var(--glass-radius);
-		background: rgba(255, 255, 255, 0.03);
-		border: 1px solid rgba(255, 255, 255, 0.08);
-	}
-
-	.upload-section-header {
-		display: flex;
-		align-items: center;
-		justify-content: space-between;
-		margin-bottom: 0.5rem;
-	}
-
-	.upload-section-title {
-		font-size: 1rem;
-		font-weight: 700;
-		margin: 0;
-		color: var(--theme-text);
-	}
-
-	.upload-section-badge {
-		font-size: 0.7rem;
-		font-weight: 600;
-		padding: 0.2rem 0.6rem;
-		border-radius: 12px;
-		background: rgba(var(--theme-primary-rgb), 0.2);
-		color: var(--theme-primary);
-		text-transform: uppercase;
-		letter-spacing: 0.03em;
-	}
-
-	.upload-section-badge.optional {
-		background: rgba(255, 255, 255, 0.1);
-		color: var(--theme-text-muted);
-	}
-
-	.upload-section-desc {
-		font-size: 0.85rem;
-		color: var(--theme-text-muted);
-		margin: 0 0 0.75rem;
-	}
-
-	.settings-section {
-		background: rgba(var(--theme-primary-rgb), 0.05);
-		border-color: rgba(var(--theme-primary-rgb), 0.15);
-	}
-
-	.settings-section .question-count-card {
-		margin-top: 0;
-		padding: 0;
-		border: none;
-		background: none;
-		box-shadow: none !important;
-	}
-
-	/* Upload progress card */
-	.upload-progress-card {
-		margin-top: 0.75rem;
-		padding: 0.75rem 1rem;
-		border-radius: 10px;
-		background: rgba(var(--theme-primary-rgb), 0.1);
-		border: 1px solid rgba(var(--theme-primary-rgb), 0.25);
-	}
-
-	.upload-progress-header {
-		display: flex;
-		justify-content: space-between;
-		align-items: center;
-		margin-bottom: 0.5rem;
-	}
-
-	.upload-progress-label {
-		font-size: 0.85rem;
-		font-weight: 600;
-		color: var(--theme-text);
-	}
-
-	.upload-progress-pct {
-		font-size: 0.85rem;
-		font-weight: 700;
-		color: var(--theme-primary);
-	}
-
-	.upload-progress-track {
-		height: 6px;
-		border-radius: 3px;
-		background: rgba(255, 255, 255, 0.1);
-		overflow: hidden;
-	}
-
-	.upload-progress-fill {
-		height: 100%;
-		background: linear-gradient(90deg, var(--theme-primary), var(--theme-primary-hover));
-		border-radius: 3px;
-		transition: width 0.3s ease;
-	}
 
 	.success-hint {
 		color: #9be4b9 !important;
@@ -2482,13 +1992,7 @@
 		color: var(--theme-text);
 	}
 
-	.question-count-hint {
-		margin: 0.5rem 0 0;
-		font-size: 0.78rem;
-		color: var(--theme-text-muted);
-	}
-
-	/* Step 6: Review */
+	/* Step 4: Review */
 	.review-card {
 		padding: 1.5rem;
 		/* Enhanced blur effect - force override */
@@ -2799,12 +2303,6 @@
 		font-size: 0.8rem;
 		color: var(--theme-text-secondary, #94a3b8);
 		margin: 0 0 0.5rem 0;
-	}
-
-	.topic-pdf-section {
-		margin-top: 1.25rem;
-		padding-top: 1rem;
-		border-top: 1px solid rgba(255, 255, 255, 0.08);
 	}
 
 	.topic-upload-status {
