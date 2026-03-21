@@ -96,6 +96,7 @@ class Topic(Base):
     # Relationships
     subject = relationship("Subject", back_populates="topics")
     questions = relationship("Question", back_populates="topic")
+    documents = relationship("Document", back_populates="topic", cascade="all, delete-orphan")
     
     def __repr__(self) -> str:
         return f"<Topic {self.name}>"

@@ -59,7 +59,24 @@
 	let customDisciplineInput = $state('');
 
 	// Step 2: Topics
-	interface TopicItem { name: string; syllabusContent: string; }
+	interface TopicDocItem {
+		id: string;
+		filename: string;
+		file_size_bytes: number;
+		processing_status: string;
+		processing_progress: number;
+		processing_step?: string;
+		processing_detail?: string;
+	}
+	interface TopicItem {
+		name: string;
+		syllabusContent: string;
+		serverId?: string;
+		files: File[];
+		docs: TopicDocItem[];
+		uploading: boolean;
+		uploadError: string;
+	}
 	let topics = $state<TopicItem[]>([]);
 	let topicInput = $state('');
 	let topicError = $state('');
@@ -68,8 +85,9 @@
 	// We need a temp subject to use extractChapters — we'll create it lazily
 	let tempSubjectId = $state('');
 
-	// Step 3: Syllabus per topic
+	// Step 3: Syllabus per topic (with per-topic PDF uploads)
 	let expandedTopic = $state(0);
+	let topicDocPollTimer: ReturnType<typeof setInterval> | null = null;
 
 	// Step 4: Reference materials
 	let materials = $state<File[]>([]);
@@ -354,7 +372,15 @@
 			return;
 		}
 
-		topics = [...topics, { name: normalized, syllabusContent: '' }];
+		topics = [...topics, {
+			name: normalized,
+			syllabusContent: '',
+			serverId: undefined,
+			files: [],
+			docs: [],
+			uploading: false,
+			uploadError: '',
+		}];
 		topicInput = '';
 		topicError = '';
 	}
@@ -375,6 +401,13 @@
 		}
 	}
 
+	function clearTopicDocPolling() {
+		if (topicDocPollTimer) {
+			clearInterval(topicDocPollTimer);
+			topicDocPollTimer = null;
+		}
+	}
+
 	function isSubjectNotFoundError(error: unknown) {
 		if (!(error instanceof Error)) return false;
 		const msg = error.message.toLowerCase();
@@ -383,6 +416,7 @@
 
 	onDestroy(() => {
 		clearMaterialPolling();
+		clearTopicDocPolling();
 	});
 
 	async function ensureSubjectId(): Promise<string> {
@@ -707,6 +741,128 @@
 		}
 	}
 
+	async function ensureTopicOnServer(topicIndex: number): Promise<string> {
+		const topic = topics[topicIndex];
+		if (topic.serverId) return topic.serverId;
+
+		const subjectId = await ensureSubjectId();
+		const created = await createTopic(subjectId, {
+			name: topic.name,
+			order_index: topicIndex,
+			subject_id: subjectId,
+			syllabus_content: topic.syllabusContent || undefined,
+		});
+		topics[topicIndex] = { ...topic, serverId: created.id };
+		return created.id;
+	}
+
+	async function handleTopicFilesSelected(topicIndex: number, files: File[]) {
+		const topic = topics[topicIndex];
+		if (topic.uploading) return;
+		if (!files.length && topic.files.length === 0) return;
+
+		topics[topicIndex] = { ...topic, uploadError: '' };
+
+		const isRemovalUpdate = files.length <= topic.files.length
+			&& files.every((file) => topic.files.some((existing) => fileKey(existing) === fileKey(file)));
+
+		if (isRemovalUpdate) {
+			const removedFiles = subtractFiles(topic.files, files);
+			topics[topicIndex] = { ...topics[topicIndex], files };
+			try {
+				await deleteMatchingDocs(removedFiles, topic.docs);
+				await refreshTopicDocStatuses(topicIndex);
+			} catch (e: unknown) {
+				topics[topicIndex] = { ...topics[topicIndex], uploadError: e instanceof Error ? e.message : 'Failed to remove file' };
+			}
+			return;
+		}
+
+		const newFiles = subtractFiles(files, topic.files);
+		if (!newFiles.length) return;
+
+		topics[topicIndex] = { ...topics[topicIndex], uploading: true, files: [...topic.files, ...newFiles] };
+
+		try {
+			const subjectId = await ensureSubjectId();
+			const topicId = await ensureTopicOnServer(topicIndex);
+			for (const file of newFiles) {
+				await uploadDocument(file, subjectId, 'reference_book', topicId);
+			}
+			await refreshTopicDocStatuses(topicIndex);
+			startTopicDocPolling();
+		} catch (e: unknown) {
+			topics[topicIndex] = { ...topics[topicIndex], uploadError: e instanceof Error ? e.message : 'Failed to upload file' };
+		} finally {
+			topics[topicIndex] = { ...topics[topicIndex], uploading: false };
+		}
+	}
+
+	async function refreshTopicDocStatuses(topicIndex: number) {
+		const topic = topics[topicIndex];
+		if (!topic.serverId || !tempSubjectId) return;
+
+		const res = await listReferenceDocuments(tempSubjectId, topic.serverId);
+		const baseDocs = (res.reference_books || []).map((doc) => ({
+			id: doc.id,
+			filename: doc.filename,
+			file_size_bytes: doc.file_size_bytes,
+			processing_status: doc.processing_status,
+			processing_progress: doc.processing_status.toLowerCase() === 'completed' ? 100 : 0,
+			processing_step: '',
+			processing_detail: '',
+		}));
+
+		const withStatus = await Promise.all(
+			baseDocs.map(async (doc) => {
+				const status = doc.processing_status.toLowerCase();
+				if (status === 'completed' || status === 'complete' || status === 'processed') {
+					return { ...doc, processing_progress: 100, processing_step: 'completed', processing_detail: 'Processing complete' };
+				}
+				if (status === 'failed' || status === 'error') {
+					return { ...doc, processing_progress: 100, processing_step: 'failed', processing_detail: 'Processing failed' };
+				}
+				try {
+					const statusRes = await getDocumentStatus(doc.id);
+					return {
+						...doc,
+						processing_progress: statusRes.processing_progress ?? doc.processing_progress,
+						processing_step: statusRes.processing_step ?? '',
+						processing_detail: statusRes.processing_detail ?? '',
+					};
+				} catch {
+					return doc;
+				}
+			})
+		);
+
+		topics[topicIndex] = { ...topics[topicIndex], docs: withStatus };
+	}
+
+	async function refreshAllTopicDocStatuses() {
+		for (let i = 0; i < topics.length; i++) {
+			if (topics[i].serverId) {
+				await refreshTopicDocStatuses(i);
+			}
+		}
+		const anyProcessing = topics.some(t => t.docs.some(d => {
+			const s = d.processing_status.toLowerCase();
+			return s === 'pending' || s === 'processing';
+		}));
+		if (!anyProcessing) {
+			clearTopicDocPolling();
+		}
+	}
+
+	function startTopicDocPolling() {
+		clearTopicDocPolling();
+		topicDocPollTimer = setInterval(() => {
+			void refreshAllTopicDocStatuses().catch(() => {});
+		}, 3000);
+	}
+
+	let topicsWithDocs = $derived(topics.filter(t => t.docs.length > 0).length);
+
 	async function importFromPdf() {
 		const input = document.createElement('input');
 		input.type = 'file';
@@ -736,6 +892,11 @@
 						.map(t => ({
 							name: normalizeTopicName(t.name),
 							syllabusContent: t.syllabus_content || '',
+							serverId: t.id,
+							files: [] as File[],
+							docs: [] as TopicDocItem[],
+							uploading: false,
+							uploadError: '',
 						}));
 					topics = [...topics, ...newTopics];
 				}
@@ -958,7 +1119,7 @@
 
 		<!-- Step 3: Syllabus per topic -->
 		{:else if step === 3}
-			<p class="step-desc">Review and edit syllabus content for each topic</p>
+			<p class="step-desc">Add syllabus content and reference PDFs for each topic</p>
 			{#if topics.length === 0}
 				<div class="center-msg">
 					<span>📭</span>
@@ -974,6 +1135,9 @@
 									<span class="sh-name">{topic.name}</span>
 								</div>
 								<div class="sh-right">
+									{#if topic.docs.length > 0}
+										<span class="sh-badge docs">📎 {topic.docs.length}</span>
+									{/if}
 									{#if topic.syllabusContent.trim()}
 										<span class="sh-badge filled">✓ Content</span>
 									{:else}
@@ -984,18 +1148,58 @@
 							</button>
 							{#if expandedTopic === i}
 								<div class="syllabus-body">
-									<textarea
-										class="glass-input syl-textarea"
-										placeholder="Paste or type the syllabus content for this topic..."
-										bind:value={topics[i].syllabusContent}
-										rows="8"
-									></textarea>
+									<div class="topic-section">
+										<span class="topic-section-label">Syllabus Content</span>
+										<textarea
+											class="glass-input syl-textarea"
+											placeholder="Paste or type the syllabus content for this topic..."
+											bind:value={topics[i].syllabusContent}
+											rows="6"
+										></textarea>
+									</div>
+
+									<div class="topic-section topic-pdf-section">
+										<span class="topic-section-label">📚 Reference PDFs for this Topic</span>
+										<p class="topic-section-hint">Upload textbooks or notes specific to "{topic.name}"</p>
+										<FileUploadZone
+											accept=".pdf,.doc,.docx,.txt,.pptx"
+											label="Drop files or click to upload"
+											hint="PDF, Word, PowerPoint, or Text"
+											files={topic.files}
+											onfilesSelected={(files) => handleTopicFilesSelected(i, files)}
+										/>
+										{#if topic.uploading}
+											<p class="topic-upload-status">📤 Uploading...</p>
+										{/if}
+										{#if topic.uploadError}
+											<p class="inline-error">⚠️ {topic.uploadError}</p>
+										{/if}
+										{#if topic.docs.length > 0}
+											<div class="topic-doc-list">
+												{#each topic.docs as doc}
+													<div class="topic-doc-item">
+														<span class="topic-doc-icon">📄</span>
+														<span class="topic-doc-name">{doc.filename}</span>
+														<span class="topic-doc-status" class:completed={['completed', 'complete', 'processed'].includes(doc.processing_status.toLowerCase())} class:failed={['failed', 'error'].includes(doc.processing_status.toLowerCase())}>
+															{#if ['completed', 'complete', 'processed'].includes(doc.processing_status.toLowerCase())}
+																✓ Ready
+															{:else if ['failed', 'error'].includes(doc.processing_status.toLowerCase())}
+																✗ Failed
+															{:else}
+																{doc.processing_progress}%
+															{/if}
+														</span>
+													</div>
+												{/each}
+											</div>
+										{/if}
+									</div>
 								</div>
 							{/if}
 						</div>
 					{/each}
 				</div>
-				<p class="step-hint">{topicsWithSyllabus} of {topics.length} topics have syllabus content</p>
+				<p class="step-hint">{topicsWithSyllabus} of {topics.length} topics have syllabus content • {topicsWithDocs} have reference PDFs</p>
 			{/if}
 
 		<!-- Step 4: References -->
@@ -2576,5 +2780,89 @@
 			min-width: unset;
 			padding: 0.85rem 1rem;
 		}
+	}
+
+	/* Per-topic PDF upload styles */
+	.topic-section {
+		margin-bottom: 1rem;
+	}
+
+	.topic-section-label {
+		display: block;
+		font-weight: 600;
+		font-size: 0.9rem;
+		color: var(--theme-text-primary, #e2e8f0);
+		margin-bottom: 0.5rem;
+	}
+
+	.topic-section-hint {
+		font-size: 0.8rem;
+		color: var(--theme-text-secondary, #94a3b8);
+		margin: 0 0 0.5rem 0;
+	}
+
+	.topic-pdf-section {
+		margin-top: 1.25rem;
+		padding-top: 1rem;
+		border-top: 1px solid rgba(255, 255, 255, 0.08);
+	}
+
+	.topic-upload-status {
+		font-size: 0.85rem;
+		color: var(--theme-accent, #60a5fa);
+		margin: 0.5rem 0 0 0;
+	}
+
+	.topic-doc-list {
+		display: flex;
+		flex-direction: column;
+		gap: 0.4rem;
+		margin-top: 0.75rem;
+	}
+
+	.topic-doc-item {
+		display: flex;
+		align-items: center;
+		gap: 0.5rem;
+		padding: 0.5rem 0.75rem;
+		background: rgba(255, 255, 255, 0.04);
+		border-radius: 8px;
+		font-size: 0.85rem;
+	}
+
+	.topic-doc-icon {
+		flex-shrink: 0;
+	}
+
+	.topic-doc-name {
+		flex: 1;
+		overflow: hidden;
+		text-overflow: ellipsis;
+		white-space: nowrap;
+		color: var(--theme-text-primary, #e2e8f0);
+	}
+
+	.topic-doc-status {
+		flex-shrink: 0;
+		font-size: 0.75rem;
+		padding: 0.2rem 0.5rem;
+		border-radius: 4px;
+		background: rgba(255, 255, 255, 0.08);
+		color: var(--theme-text-secondary, #94a3b8);
+	}
+
+	.topic-doc-status.completed {
+		background: rgba(34, 197, 94, 0.15);
+		color: #22c55e;
+	}
+
+	.topic-doc-status.failed {
+		background: rgba(239, 68, 68, 0.15);
+		color: #ef4444;
+	}
+
+	.sh-badge.docs {
+		background: rgba(96, 165, 250, 0.15);
+		color: #60a5fa;
 	}
 </style>

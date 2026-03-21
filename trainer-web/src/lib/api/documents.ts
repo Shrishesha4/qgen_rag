@@ -20,6 +20,7 @@ export interface ReferenceDocumentItem {
 	mime_type: string | null;
 	index_type: 'reference_book' | 'template_paper' | 'reference_questions' | string;
 	subject_id: string | null;
+	topic_id: string | null;
 	processing_status: string;
 	total_chunks: number | null;
 	upload_timestamp: string | null;
@@ -52,7 +53,8 @@ export interface DocumentStatusResponse {
 export async function uploadDocument(
 	file: File,
 	subjectId?: string,
-	indexType: string = 'primary'
+	indexType: string = 'primary',
+	topicId?: string
 ): Promise<DocumentResponse> {
 	const form = new FormData();
 	form.append('file', file);
@@ -62,6 +64,9 @@ export async function uploadDocument(
 	if (subjectId) {
 		form.append('subject_id', subjectId);
 		form.append('index_type', indexType);
+		if (topicId) {
+			form.append('topic_id', topicId);
+		}
 		return apiFetch<DocumentResponse>('/documents/reference/upload', {
 			method: 'POST',
 			body: form,
@@ -85,9 +90,10 @@ export async function listDocuments(
 	return apiFetch(`/documents?${params}`);
 }
 
-export async function listReferenceDocuments(subjectId?: string): Promise<ReferenceDocumentsResponse> {
+export async function listReferenceDocuments(subjectId?: string, topicId?: string): Promise<ReferenceDocumentsResponse> {
 	const params = new URLSearchParams();
 	if (subjectId) params.set('subject_id', subjectId);
+	if (topicId) params.set('topic_id', topicId);
 	const suffix = params.toString() ? `?${params.toString()}` : '';
 	return apiFetch<ReferenceDocumentsResponse>(`/documents/reference/list${suffix}`);
 }

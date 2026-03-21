@@ -31,6 +31,9 @@ class Document(Base):
     subject_id: Mapped[Optional[str]] = mapped_column(
         String(36), ForeignKey("subjects.id", ondelete="SET NULL"), nullable=True
     )
+    topic_id: Mapped[Optional[str]] = mapped_column(
+        String(36), ForeignKey("topics.id", ondelete="SET NULL"), nullable=True, index=True
+    )
     
     # File info
     filename: Mapped[str] = mapped_column(String(255), nullable=False)
@@ -67,6 +70,7 @@ class Document(Base):
     chunks = relationship("DocumentChunk", back_populates="document", cascade="all, delete-orphan")
     questions = relationship("Question", back_populates="document", cascade="all, delete-orphan")
     generation_sessions = relationship("GenerationSession", back_populates="document", cascade="all, delete-orphan")
+    topic = relationship("Topic", back_populates="documents")
     
     def __repr__(self) -> str:
         return f"<Document {self.filename}>"

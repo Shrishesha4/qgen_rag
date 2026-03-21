@@ -542,6 +542,7 @@ async def upload_reference_document(
     file: UploadFile = File(..., description="Reference book PDF, template paper PDF, or reference questions PDF/Excel/CSV"),
     subject_id: str = Form(..., description="Subject ID to associate the document with"),
     index_type: Literal["primary", "reference_book", "template_paper", "reference_questions"] = Form(..., description="Type of reference material"),
+    topic_id: Optional[str] = Form(None, description="Topic ID to associate the document with (for per-topic references)"),
     current_user: User = Depends(rate_limit(requests=20, window_seconds=3600)),
     db: AsyncSession = Depends(get_db),
 ):
@@ -591,6 +592,7 @@ async def upload_reference_document(
             mime_type=mime_type,
             subject_id=subject_id,
             index_type=index_type,
+            topic_id=topic_id,
         )
         linked_from = (document.document_metadata or {}).get("linked_from_document_id")
         if linked_from:
@@ -678,6 +680,7 @@ async def upload_reference_document(
 async def list_reference_documents(
     subject_id: Optional[str] = Query(None, description="Filter by subject"),
     index_type: Optional[str] = Query(None, description="Filter by type: reference_book, template_paper, reference_questions"),
+    topic_id: Optional[str] = Query(None, description="Filter by topic"),
     current_user: User = Depends(get_current_user),
     db: AsyncSession = Depends(get_db),
 ):
@@ -690,6 +693,7 @@ async def list_reference_documents(
         user_id=current_user.id,
         subject_id=subject_id,
         index_type=index_type,
+        topic_id=topic_id,
     )
     
     doc_responses = [
@@ -700,6 +704,7 @@ async def list_reference_documents(
             "mime_type": doc.mime_type,
             "index_type": doc.index_type,
             "subject_id": str(doc.subject_id) if doc.subject_id else None,
+            "topic_id": str(doc.topic_id) if doc.topic_id else None,
             "processing_status": doc.processing_status,
             "total_chunks": doc.total_chunks,
             "upload_timestamp": doc.upload_timestamp.isoformat() if doc.upload_timestamp else None,

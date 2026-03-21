@@ -106,6 +106,7 @@ class DocumentService:
         mime_type: str,
         subject_id: str,
         index_type: str,  # reference_book or template_paper
+        topic_id: str | None = None,
     ) -> Document:
         """
         Upload a reference document (book, template paper, or reference questions).
@@ -121,15 +122,16 @@ class DocumentService:
         file_hash = hashlib.sha256(file_content).hexdigest()
         file_size = len(file_content)
 
-        # If this user already linked the same file for this subject+type, return existing link.
-        existing_link = await self.db.execute(
-            select(Document).where(
-                Document.user_id == user_id,
-                Document.subject_id == subject_id,
-                Document.index_type == index_type,
-                Document.file_hash == file_hash,
-            )
+        # If this user already linked the same file for this subject+topic+type, return existing link.
+        existing_query = select(Document).where(
+            Document.user_id == user_id,
+            Document.subject_id == subject_id,
+            Document.index_type == index_type,
+            Document.file_hash == file_hash,
         )
+        if topic_id:
+            existing_query = existing_query.where(Document.topic_id == topic_id)
+        existing_link = await self.db.execute(existing_query)
         existing_doc = existing_link.scalar_one_or_none()
         if existing_doc:
             return existing_doc
@@ -158,6 +160,7 @@ class DocumentService:
                 processing_status="completed",
                 index_type=index_type,
                 subject_id=subject_id,
+                topic_id=topic_id,
                 total_chunks=source_doc.total_chunks,
                 total_tokens=source_doc.total_tokens,
                 processed_at=source_doc.processed_at,
@@ -214,6 +217,7 @@ class DocumentService:
             processing_status="pending",
             index_type=index_type,
             subject_id=subject_id,
+            topic_id=topic_id,
         )
         self.db.add(document)
         await self.db.commit()
@@ -1560,6 +1564,7 @@ class DocumentService:
         user_id: str,
         subject_id: Optional[str] = None,
         index_type: Optional[str] = None,
+        topic_id: Optional[str] = None,
     ) -> List[Document]:
         """
         Get reference documents (books, template papers, and reference questions) for a user.
@@ -1575,6 +1580,9 @@ class DocumentService:
         
         if index_type:
             query = query.where(Document.index_type == index_type)
+        
+        if topic_id:
+            query = query.where(Document.topic_id == topic_id)
         
         query = query.order_by(Document.upload_timestamp.desc())
         
