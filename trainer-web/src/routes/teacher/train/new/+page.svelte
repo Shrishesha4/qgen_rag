@@ -40,7 +40,7 @@
 	let step = $state(1);
 	const totalSteps = 6;
 
-	// Step 1: Discipline
+	// Step 1: Subject/Discipline
 	const presetDisciplines = [
 		{ name: 'Engineering', icon: '⚙️' },
 		{ name: 'Medicine', icon: '🩺' },
@@ -763,7 +763,7 @@
 		backgroundGenerationMessage = '';
 		setupProgress = 0;
 		setupError = '';
-		setupStatus = completeOnlyMode ? 'Completing setup...' : 'Creating discipline...';
+		setupStatus = completeOnlyMode ? 'Completing setup...' : 'Creating Subject...';
 
 		try {
 			// 1. Create subject (or reuse tempSubjectId)
@@ -878,8 +878,8 @@
 				<input id="disc-code" class="glass-input" type="text" placeholder="e.g., CS101" bind:value={disciplineCode} />
 			</div>
 			<div class="field-group">
-				<span class="field-label">Discipline Name *</span>
-				<div class="discipline-grid" role="list" aria-label="Choose a discipline">
+				<span class="field-label">Subject Name *</span>
+				<div class="discipline-grid" role="list" aria-label="Choose a Subject">
 					<button
 							type="button"
 							class="glass-panel discipline-card discipline-card-custom"
@@ -891,7 +891,7 @@
 							{#if useCustomDiscipline && disciplineName}
 								{disciplineName}
 							{:else}
-								Add Custom Discipline
+								Add Custom Subject
 							{/if}
 						</span>
 					</button>
@@ -1216,7 +1216,7 @@
 				{/if}
 				<div class="review-sections">
 					<div class="review-section">
-						<span class="rs-label">Discipline</span>
+						<span class="rs-label">Subject</span>
 						<span class="rs-value">{disciplineName}{disciplineCode ? ` (${disciplineCode})` : ''}</span>
 					</div>
 					<div class="review-section">
@@ -1320,7 +1320,7 @@
 		<div class="discipline-modal glass-panel animate-scale-in" onclick={(e) => e.stopPropagation()} role="dialog" aria-modal="true" tabindex="-1">
 			<!-- Header -->
 			<div class="modal-header">
-				<h3 class="modal-title">Add Custom Discipline</h3>
+				<h3 class="modal-title">Add Subject</h3>
 				<button class="modal-close" onclick={closeCustomDisciplineModal} aria-label="Close">
 					<svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
 						<line x1="18" y1="6" x2="6" y2="18"></line>
@@ -1331,7 +1331,7 @@
 
 			<!-- Content -->
 			<div class="modal-body">
-				<p class="modal-description">Enter the name of your custom discipline</p>
+				<p class="modal-description">Enter the name of your Subject</p>
 				<input
 					class="glass-input"
 					type="text"
@@ -1352,7 +1352,7 @@
 					onclick={submitCustomDiscipline}
 					disabled={!customDisciplineInput.trim()}
 				>
-					Add Discipline
+					Add Subject
 				</button>
 			</div>
 		</div>

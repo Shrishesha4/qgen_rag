@@ -6,6 +6,7 @@
 		listSubjects,
 		getSubject,
 		createTopic,
+		deleteSubject,
 		type SubjectResponse,
 		type TopicResponse,
 	} from '$lib/api/subjects';
@@ -43,6 +44,7 @@
 	let addTopicSubjectName = $state('');
 	let addTopicName = $state('');
 	let addTopicSyllabus = $state('');
+	let deletingSubjectId = $state('');
 
 	let showReferenceModal = $state(false);
 	let referenceSubjectId = $state('');
@@ -838,6 +840,34 @@
 			deletingRefId = '';
 		}
 	}
+
+	async function deleteSubjectCard(subject: SubjectResponse) {
+		if (deletingSubjectId) return;
+		const confirmed = window.confirm(
+			`Delete subject "${subject.name}"? This will remove its topics and cannot be undone.`
+		);
+		if (!confirmed) return;
+
+		deletingSubjectId = subject.id;
+		error = '';
+		try {
+			await deleteSubject(subject.id);
+			subjects = subjects.filter((s) => s.id !== subject.id);
+			const nextTopicsMap = { ...topicsMap };
+			delete nextTopicsMap[subject.id];
+			topicsMap = nextTopicsMap;
+			const nextBgStatus = { ...bgStatusBySubject };
+			delete nextBgStatus[subject.id];
+			bgStatusBySubject = nextBgStatus;
+			if (expandedId === subject.id) {
+				expandedId = '';
+			}
+		} catch (e: unknown) {
+			error = e instanceof Error ? e.message : 'Failed to delete subject';
+		} finally {
+			deletingSubjectId = '';
+		}
+	}
 </script>
 
 <svelte:head>
@@ -937,6 +967,13 @@
 							<div class="subject-actions">
 								<button class="glass-btn small-btn" onclick={() => openAddTopicModal(s)}>Add Topic</button>
 								<button class="glass-btn small-btn" onclick={() => openReferenceModal(s)}>Reference</button>
+								<!-- <button
+									class="danger-btn subject-delete-btn"
+									disabled={deletingSubjectId === s.id}
+									onclick={() => deleteSubjectCard(s)}
+								>
+									{deletingSubjectId === s.id ? 'Deleting...' : 'Delete Subject'}
+								</button> -->
 							</div>
 
 							{#if loadingTopics === s.id}
@@ -1248,9 +1285,9 @@
 				</div>
 
 				<div class="modal-actions">
-					<button class="glass-btn small-btn" onclick={closeAddTopicModal}>Cancel</button>
+					<button class="glass-btn small-btn modal-cancel-btn" onclick={closeAddTopicModal}>Cancel</button>
 					<button
-						class="glass-btn small-btn"
+						class="glass-btn small-btn modal-submit-btn"
 						disabled={addingTopicFor === addTopicSubjectId || !addTopicName.trim()}
 						onclick={() => addTopicRow(addTopicSubjectId)}
 					>
@@ -1535,14 +1572,26 @@
 		justify-content: space-evenly;
 		gap: 0.75rem;
 		padding: 0.5rem 1.5rem 0.25rem;
+		flex-wrap: wrap;
 	}
 
 	.subject-actions .small-btn {
-		flex: 1;
+		flex: 1 1 150px;
 		max-width: 220px;
 		text-align: center;
 		align-self: stretch;
 	}
+
+	/* .subject-delete-btn {
+		flex: 1 1 150px;
+		min-height: 36px;
+		max-width: 220px;
+	}
+
+	.subject-delete-btn:disabled {
+		opacity: 0.65;
+		cursor: not-allowed;
+	} */
 
 	.topic-create-fields {
 		flex: 1;
@@ -1555,17 +1604,36 @@
 		padding: 0.9rem 1rem 0.25rem;
 	}
 
-	/* .topic-input,
-	.syllabus-input,
-	.select-input {
+	.topic-input,
+	.syllabus-input {
 		width: 100%;
-		padding: 0.55rem 0.7rem;
+		padding: 0.75rem 0.9rem;
 		border-radius: 10px;
-		border: 1px solid rgba(255, 255, 255, 0.14);
-		background: rgba(255, 255, 255, 0.04);
+		border: 1px solid rgba(255, 255, 255, 0.2);
+		background: rgba(9, 16, 32, 0.7);
 		color: var(--theme-text);
 		font: inherit;
-	} */
+		transition: border-color 0.2s ease, box-shadow 0.2s ease, background 0.2s ease;
+	}
+
+	.topic-input::placeholder,
+	.syllabus-input::placeholder {
+		color: rgba(230, 235, 245, 0.5);
+	}
+
+	.topic-input:focus,
+	.syllabus-input:focus {
+		outline: none;
+		border-color: rgba(84, 160, 255, 0.7);
+		box-shadow: 0 0 0 2px rgba(84, 160, 255, 0.2);
+		background: rgba(12, 22, 42, 0.8);
+	}
+
+	.syllabus-input {
+		resize: vertical;
+		min-height: 140px;
+		line-height: 1.4;
+	}
 
 .topic-chip-btn {
 	padding: 0.4rem 0.8rem;
@@ -1685,6 +1753,55 @@
 
 	.add-topic-modal {
 		width: min(560px, 94vw);
+		border-radius: 20px;
+		border: 2px solid rgba(84, 160, 255, 0.85);
+		background:
+			radial-gradient(circle at 18% 12%, rgba(40, 88, 163, 0.28), transparent 46%),
+			radial-gradient(circle at 85% 88%, rgba(255, 126, 66, 0.18), transparent 42%),
+			linear-gradient(140deg, rgba(8, 16, 33, 0.96), rgba(18, 24, 40, 0.96));
+		box-shadow: 0 26px 55px rgba(0, 0, 0, 0.48), 0 0 0 1px rgba(255, 255, 255, 0.15) inset;
+	}
+
+	.add-topic-modal .modal-header {
+		padding: 1.05rem 1.15rem;
+		border-bottom: 1px solid rgba(255, 255, 255, 0.12);
+	}
+
+	.add-topic-modal .modal-header h3 {
+		font-size: 1.95rem;
+		font-weight: 700;
+		letter-spacing: 0.01em;
+	}
+
+	.add-topic-modal .close-btn {
+		color: rgba(255, 255, 255, 0.9);
+		font-size: 1.55rem;
+		line-height: 1;
+		padding: 0.1rem 0.3rem;
+	}
+
+	.add-topic-modal .close-btn:hover {
+		color: #ffffff;
+	}
+
+	.add-topic-modal .topic-create-modal-fields {
+		gap: 0.95rem;
+		padding: 1rem 1.1rem 0.35rem;
+	}
+
+	.modal-cancel-btn {
+		background: rgba(255, 255, 255, 0.1);
+		border-color: rgba(255, 255, 255, 0.25);
+	}
+
+	.modal-submit-btn {
+		background: linear-gradient(135deg, #f49e58, #d9642f);
+		color: #fff;
+		border-color: rgba(255, 190, 120, 0.9);
+	}
+
+	.modal-submit-btn:disabled {
+		opacity: 0.65;
 	}
 
 	.generate-choice-modal {
