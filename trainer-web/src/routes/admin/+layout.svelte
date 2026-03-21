@@ -13,13 +13,13 @@
 {#if isLoginPage}
 	{@render children()}
 {:else}
-	<div class="admin-shell-nav">
+	<!-- <div class="admin-shell-nav">
 		{#each navItems as item}
 			<a href={item.href} class="nav-link" class:active={$page.url.pathname === item.href || $page.url.pathname.startsWith(`${item.href}/`)}>
 				{item.label}
 			</a>
 		{/each}
-	</div>
+	</div> -->
 	{@render children()}
 {/if}
 

@@ -75,7 +75,8 @@
 
 	.picker-menu {
 		position: absolute;
-		top: calc(100% + 0.5rem);
+		bottom: calc(100% + 0.5rem);
+		top: auto;
 		right: 0;
 		background: var(--theme-surface);
 		border: 1px solid var(--theme-border);
@@ -87,6 +88,7 @@
 		box-shadow: 0 8px 32px rgba(0, 0, 0, 0.15);
 		min-width: 9rem;
 		z-index: 50;
+		transform-origin: bottom right;
 	}
 
 	.picker-option {

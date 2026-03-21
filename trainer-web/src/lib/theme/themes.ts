@@ -68,7 +68,7 @@ export const themes: Record<ThemeName, ThemeConfig> = {
 	},
 	water: {
 		name: 'water',
-		label: 'Deep Ocean',
+		label: 'Ocean',
 		icon: '🌊',
 		bgImage: '/theme-pictures/deep-ocean.webp',
 		wallpaperOverlay:
@@ -122,7 +122,7 @@ export const themes: Record<ThemeName, ThemeConfig> = {
 	},
 	earth: {
 		name: 'earth',
-		label: 'Dark Forest',
+		label: 'Forest',
 		icon: '🌿',
 		bgImage: '/theme-pictures/dark-forest.webp',
 		wallpaperOverlay:

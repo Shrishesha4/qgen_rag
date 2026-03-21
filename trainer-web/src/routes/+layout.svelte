@@ -76,6 +76,12 @@
 		}
 		return [];
 	});
+
+	let activeNavHref = $derived.by(() => {
+		const matches = navItems.filter((item) => pathname === item.href || pathname.startsWith(`${item.href}/`));
+		if (matches.length === 0) return '';
+		return matches.reduce((best, current) => (current.href.length > best.href.length ? current : best)).href;
+	});
 	
 	let showGlobalBack = $derived.by(() => {
 		if (showDesktopChrome) return false;
@@ -193,7 +199,7 @@
 					<a
 						href={item.href}
 						class="sidebar-link"
-						class:active={pathname === item.href || pathname.startsWith(`${item.href}/`)}
+						class:active={item.href === activeNavHref}
 					>
 						<span class="sidebar-link-icon">{item.icon}</span>
 						<span>{item.label}</span>

@@ -2504,6 +2504,11 @@
 	.question-card {
 		padding: 2rem;
 		border-radius: 2rem;
+		background: var(--theme-glass-bg) !important;
+		border: 1px solid var(--theme-glass-border) !important;
+		backdrop-filter: blur(18px) saturate(145%) !important;
+		-webkit-backdrop-filter: blur(18px) saturate(145%) !important;
+		box-shadow: 0 16px 36px rgba(15, 23, 42, 0.14), inset 0 1px 0 rgba(255, 255, 255, 0.45) !important;
 	}
 
 	.q-context {
@@ -2520,14 +2525,14 @@
 		align-items: center;
 		gap: 0.45rem;
 		font-size: 0.95rem;
-		color: rgba(255, 255, 255, 0.72);
+		color: var(--theme-text-secondary);
 	}
 
 	.q-pill {
 		padding: 0.7rem 1rem;
 		border-radius: 999px;
-		background: rgba(255, 255, 255, 0.12);
-		border: 1px solid rgba(255, 255, 255, 0.14);
+		background: rgba(255, 255, 255, 0.62);
+		border: 1px solid rgba(17, 24, 39, 0.14);
 	}
 
 	.q-topic-label {
@@ -2548,16 +2553,11 @@
 	.answer-panel {
 		padding: 1.25rem;
 		border-radius: 1.75rem;
-		background: linear-gradient(
-			145deg,
-			rgba(0,0,0,0.18) 0%,
-			rgba(0,0,0,0.12) 50%,
-			rgba(0,0,0,0.15) 100%
-		);
-		border: 1px solid rgba(0, 0, 0, 0.15);
-		box-shadow: 0 12px 48px rgba(0, 0, 0, 0.25), inset 0 1px 2px rgba(0, 0, 0, 0.08), inset 0 -1px 1px rgba(0, 0, 0, 0.04) !important;
-		backdrop-filter: blur(20px) saturate(95%) brightness(0.94) !important;
-		-webkit-backdrop-filter: blur(20px) saturate(95%) brightness(0.94) !important;
+		background: rgba(255, 255, 255, 0.52);
+		border: 1px solid rgba(17, 24, 39, 0.12);
+		box-shadow: 0 10px 28px rgba(15, 23, 42, 0.1), inset 0 1px 0 rgba(255, 255, 255, 0.55) !important;
+		backdrop-filter: blur(14px) saturate(140%) !important;
+		-webkit-backdrop-filter: blur(14px) saturate(140%) !important;
 	}
 
 	.answer-panel-head {
@@ -2573,7 +2573,7 @@
 		font-weight: 700;
 		letter-spacing: 0.12em;
 		text-transform: uppercase;
-		color: rgba(255, 255, 255, 0.65);
+		color: var(--theme-text-secondary);
 	}
 
 	.options {
@@ -2586,9 +2586,26 @@
 		min-height: 5.5rem;
 		padding: 1.2rem 1.35rem;
 		border-radius: 1rem;
-		border: 1px solid rgba(255, 255, 255, 0.12);
-		background: rgba(255, 255, 255, 0.05);
+		border: 1px solid rgba(17, 24, 39, 0.12);
+		background: rgba(255, 255, 255, 0.64);
 		font-size: 1.05rem;
+		color: var(--theme-text-primary);
+	}
+
+	.option:nth-child(4n + 1) {
+		background: linear-gradient(160deg, rgba(236, 253, 245, 0.9), rgba(255, 255, 255, 0.74));
+	}
+
+	.option:nth-child(4n + 2) {
+		background: linear-gradient(160deg, rgba(255, 251, 235, 0.92), rgba(255, 255, 255, 0.74));
+	}
+
+	.option:nth-child(4n + 3) {
+		background: linear-gradient(160deg, rgba(253, 242, 248, 0.92), rgba(255, 255, 255, 0.74));
+	}
+
+	.option:nth-child(4n + 4) {
+		background: linear-gradient(160deg, rgba(239, 246, 255, 0.92), rgba(255, 255, 255, 0.74));
 	}
 
 	.opt-marker {
@@ -2598,12 +2615,13 @@
 		align-items: center;
 		justify-content: center;
 		border-radius: 999px;
-		background: rgba(255, 255, 255, 0.406);
+		background: rgba(17, 24, 39, 0.08);
 	}
 
 	.option.selectable.selected {
 		background: rgba(var(--theme-primary-rgb), 0.2);
 		border-color: rgba(var(--theme-primary-rgb), 0.55);
+		box-shadow: 0 6px 16px rgba(var(--theme-primary-rgb), 0.18);
 	}
 
 	.floating-stack {
@@ -2640,12 +2658,12 @@
 	.grade-card {
 		min-height: 9rem;
 		border-radius: 1.4rem;
-		border: 1px solid rgba(255, 255, 255, 0.12);
-		background: rgba(255, 255, 255, 0.08);
-		backdrop-filter: blur(18px) saturate(160%) brightness(1.02) !important;
-		-webkit-backdrop-filter: blur(18px) saturate(160%) brightness(1.02) !important;
-		box-shadow: 0 12px 48px rgba(0, 0, 0, 0.32), inset 0 1px 2px rgba(255, 255, 255, 0.25), inset 0 -1px 1px rgba(255, 255, 255, 0.08) !important;
-		color: var(--theme-text);
+		border: 1px solid rgba(17, 24, 39, 0.12);
+		background: rgba(255, 255, 255, 0.72);
+		backdrop-filter: blur(14px) saturate(145%) !important;
+		-webkit-backdrop-filter: blur(14px) saturate(145%) !important;
+		box-shadow: 0 10px 26px rgba(15, 23, 42, 0.14), inset 0 1px 0 rgba(255, 255, 255, 0.6) !important;
+		color: var(--theme-text-primary);
 		display: flex;
 		flex-direction: column;
 		align-items: center;
@@ -2670,42 +2688,87 @@
 		justify-content: center;
 		font-size: 1.9rem;
 		font-weight: 800;
+		border: 1px solid rgba(17, 24, 39, 0.16);
+	}
+
+	.grade-label {
+		font-size: 1.25rem;
+		font-weight: 750;
+		letter-spacing: 0.01em;
 	}
 
 	.grade-card.easy .grade-badge,
 	.grade-card.easy {
-		color: #7df0ca;
+		color: #0f766e;
 	}
 
 	.grade-card.easy .grade-badge {
-		background: rgba(49, 208, 161, 0.2);
+		background: rgba(16, 185, 129, 0.24);
 	}
 
 	.grade-card.medium .grade-badge,
 	.grade-card.medium {
-		color: #ffd76b;
+		color: #a16207;
 	}
 
 	.grade-card.medium .grade-badge {
-		background: rgba(245, 179, 62, 0.2);
+		background: rgba(245, 158, 11, 0.24);
 	}
 
 	.grade-card.hard .grade-badge,
 	.grade-card.hard {
-		color: #ff899d;
+		color: #be185d;
 	}
 
 	.grade-card.hard .grade-badge {
-		background: rgba(244, 63, 94, 0.2);
+		background: rgba(244, 63, 94, 0.22);
 	}
 
 	.grade-card.reject .grade-badge,
 	.grade-card.reject {
-		color: #ff728f;
+		color: #b91c1c;
 	}
 
 	.grade-card.reject .grade-badge {
-		background: rgba(233, 69, 96, 0.18);
+		background: rgba(239, 68, 68, 0.22);
+	}
+
+	.sources-toggle {
+		background: rgba(255, 255, 255, 0.58);
+		border: 1px solid rgba(17, 24, 39, 0.12);
+		color: var(--theme-text-primary);
+	}
+
+	.sources-toggle:hover {
+		background: rgba(255, 255, 255, 0.72);
+	}
+
+	.source-reasoning,
+	.source-snippet,
+	.source-reason,
+	.source-page {
+		color: var(--theme-text-secondary);
+	}
+
+	.source-card {
+		background: rgba(255, 255, 255, 0.64);
+		border: 1px solid rgba(17, 24, 39, 0.12);
+	}
+
+	.source-doc {
+		color: var(--theme-text-primary);
+	}
+
+	.source-heading {
+		color: #0f4c81;
+		font-weight: 650;
+	}
+
+	.source-highlight {
+		color: #7c2d12;
+		background: rgba(245, 158, 11, 0.16);
+		padding: 0.2rem 0.35rem;
+		border-radius: 0.45rem;
 	}
 
 	@media (max-width: 1200px) {

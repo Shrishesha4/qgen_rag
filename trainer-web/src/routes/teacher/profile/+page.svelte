@@ -39,7 +39,7 @@
 
 <div class="profile-page">
 	<div class="profile-topbar animate-fade-in">
-		<button class="nav-btn glass-panel" onclick={() => goto('/teacher/dashboard')} aria-label="Back to dashboard">
+		<button class="nav-btn glass-panel" onclick={() => goto('/teacher/train')} aria-label="Back to train topics">
 			<svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
 				<polyline points="15 18 9 12 15 6"></polyline>
 			</svg>
@@ -69,7 +69,7 @@
 		</div>
 
 		<div class="profile-actions">
-			<button class="secondary-action glass-panel" onclick={() => goto('/teacher/dashboard')}>Back to Dashboard</button>
+			<button class="secondary-action glass-panel" onclick={() => goto('/teacher/train')}>Back to Train Topics</button>
 			<button class="primary-action" onclick={handleLogout}>Sign Out</button>
 		</div>
 	</div>
@@ -77,18 +77,18 @@
 
 <style>
 	.profile-page {
-		min-height: 100vh;
-		padding: 1.5rem;
+		min-height: 100%;
+		padding: 1.25rem;
 		display: flex;
 		flex-direction: column;
 		align-items: center;
-		justify-content: center;
+		justify-content: flex-start;
 		gap: 1.25rem;
 	}
 
 	.profile-topbar {
 		width: 100%;
-		max-width: 520px;
+		max-width: 760px;
 		display: flex;
 		justify-content: flex-start;
 	}
@@ -107,7 +107,7 @@
 	}
 
 	.profile-card {
-		width: min(100%, 520px);
+		width: min(100%, 760px);
 		padding: 2rem 1.5rem;
 		border-radius: 1.5rem;
 		display: flex;
@@ -115,20 +115,11 @@
 		align-items: center;
 		gap: 1.5rem;
 		text-align: center;
-		/* Enhanced blur effect */
-		backdrop-filter: blur(10px) saturate(150%) brightness(1.02);
-		-webkit-backdrop-filter: blur(10px) saturate(150%) brightness(1.02);
-		background: linear-gradient(
-			145deg,
-			rgba(255,255,255,0.1) 0%,
-			rgba(255,255,255,0.05) 50%,
-			rgba(255,255,255,0.08) 100%
-		);
-		box-shadow:
-			0 8px 40px rgba(0, 0, 0, 0.25),
-			inset 0 1px 1px rgba(255, 255, 255, 0.25),
-			inset 0 -1px 1px rgba(255, 255, 255, 0.08),
-			0 0 0 1px rgba(255, 255, 255, 0.12);
+		backdrop-filter: blur(16px) saturate(140%);
+		-webkit-backdrop-filter: blur(16px) saturate(140%);
+		background: rgba(255, 255, 255, 0.82);
+		border: 1px solid rgba(17, 24, 39, 0.12);
+		box-shadow: 0 18px 36px rgba(15, 23, 42, 0.12), inset 0 1px 0 rgba(255, 255, 255, 0.65);
 	}
 
 	.avatar-ring {
@@ -150,8 +141,8 @@
 		display: flex;
 		align-items: center;
 		justify-content: center;
-		background: rgba(10, 16, 30, 0.72);
-		color: var(--theme-text);
+		background: rgba(17, 24, 39, 0.78);
+		color: #f8fafc;
 		font-size: 2rem;
 		font-weight: 800;
 		letter-spacing: 0.08em;
@@ -195,8 +186,8 @@
 	.detail-item {
 		padding: 1rem;
 		border-radius: 1rem;
-		background: rgba(255, 255, 255, 0.08);
-		border: 1px solid rgba(255, 255, 255, 0.1);
+		background: rgba(255, 255, 255, 0.74);
+		border: 1px solid rgba(17, 24, 39, 0.12);
 		display: flex;
 		flex-direction: column;
 		align-items: flex-start;
@@ -240,15 +231,16 @@
 
 	.secondary-action {
 		border: none;
-		background: transparent;
-		color: var(--theme-text);
+		background: rgba(255, 255, 255, 0.74);
+		color: var(--theme-text-primary);
+		border: 1px solid rgba(17, 24, 39, 0.14);
 	}
 
 	.primary-action {
-		border: 1px solid rgba(244, 63, 94, 0.35);
-		background: rgba(244, 63, 94, 0.18);
-		color: #ffd6df;
-		box-shadow: 0 12px 32px rgba(244, 63, 94, 0.18);
+		border: 1px solid rgba(220, 38, 38, 0.4);
+		background: rgba(254, 226, 226, 0.94);
+		color: #7f1d1d;
+		box-shadow: 0 10px 24px rgba(127, 29, 29, 0.16);
 	}
 
 	@media (max-width: 768px) {

@@ -3,12 +3,13 @@
 	import { goto } from '$app/navigation';
 	import { session, currentUser } from '$lib/session';
 	import { logout } from '$lib/api/auth';
-	import { getAdminDashboard, type AdminDashboard, type UserStats, type VetterBreakdown } from '$lib/api/admin';
+	import { getAdminDashboard, listAdminSubjects, type AdminDashboard, type UserStats, type VetterBreakdown, type AdminSubjectSummary } from '$lib/api/admin';
 
 	let loading = $state(true);
 	let stats = $state<AdminDashboard | null>(null);
+	let adminSubjects = $state<AdminSubjectSummary[]>([]);
 	let error = $state('');
-	let activeTab: 'overview' | 'users' | 'vetters' = $state('overview');
+	let activeTab: 'overview' | 'users' | 'vetters' | 'teachers' = $state('overview');
 
 	onMount(() => {
 		const unsub = session.subscribe((s) => {
@@ -24,7 +25,9 @@
 		loading = true;
 		error = '';
 		try {
-			stats = await getAdminDashboard();
+			const [dashboard, subjects] = await Promise.all([getAdminDashboard(), listAdminSubjects()]);
+			stats = dashboard;
+			adminSubjects = subjects;
 		} catch (e: unknown) {
 			error = e instanceof Error ? e.message : 'Failed to load dashboard';
 		} finally {
@@ -44,6 +47,30 @@
 		const vetted = u.total_approved + u.total_rejected;
 		return Math.round((vetted / total) * 100) + '%';
 	}
+
+	let teacherViewRows = $derived.by(() => {
+		if (!stats) return [];
+		const teacherUsers = stats.users.filter((u) => u.role === 'teacher');
+		const grouped = new Map<string, AdminSubjectSummary[]>();
+		for (const subject of adminSubjects) {
+			const key = subject.teacher_id || 'unknown';
+			const current = grouped.get(key) || [];
+			current.push(subject);
+			grouped.set(key, current);
+		}
+
+		return teacherUsers.map((teacher) => {
+			const subjects = grouped.get(teacher.user_id) || [];
+			const totalTopics = subjects.reduce((sum, s) => sum + s.total_topics, 0);
+			const totalQuestions = subjects.reduce((sum, s) => sum + s.total_questions, 0);
+			const approved = subjects.reduce((sum, s) => sum + s.total_approved, 0);
+			const rejected = subjects.reduce((sum, s) => sum + s.total_rejected, 0);
+			const pending = subjects.reduce((sum, s) => sum + s.total_pending, 0);
+			const vetted = approved + rejected;
+			const progress = totalQuestions > 0 ? Math.round((vetted / totalQuestions) * 100) : 0;
+			return { teacher, subjects, totalTopics, totalQuestions, approved, rejected, pending, progress };
+		});
+	});
 </script>
 
 <svelte:head>
@@ -127,6 +154,7 @@
 		<button class="tab-btn" class:active={activeTab === 'overview'} onclick={() => activeTab = 'overview'}>Overview</button>
 		<button class="tab-btn" class:active={activeTab === 'users'} onclick={() => activeTab = 'users'}>All Users</button>
 		<button class="tab-btn" class:active={activeTab === 'vetters'} onclick={() => activeTab = 'vetters'}>Vetters</button>
+		<button class="tab-btn" class:active={activeTab === 'teachers'} onclick={() => activeTab = 'teachers'}>Teachers</button>
 	</div>
 
 	<!-- Tab content -->
@@ -272,6 +300,44 @@
 									{/each}
 								</tbody>
 							</table>
+						</div>
+					{/if}
+				</div>
+			{:else if activeTab === 'teachers'}
+				<div class="section glass-panel">
+					<h2 class="section-title">Teacher Subject Progress ({teacherViewRows.length})</h2>
+					{#if teacherViewRows.length === 0}
+						<p class="empty-msg">No teachers found.</p>
+					{:else}
+						<div class="teacher-grid">
+							{#each teacherViewRows as row}
+								<div class="teacher-card">
+									<div class="teacher-head">
+										<div>
+											<p class="teacher-name">{row.teacher.full_name || row.teacher.username}</p>
+											<p class="teacher-email">{row.teacher.email}</p>
+										</div>
+										<span class="teacher-progress">{row.progress}% progress</span>
+									</div>
+									<div class="teacher-metrics">
+										<span>Subjects: <strong>{row.subjects.length}</strong></span>
+										<span>Topics: <strong>{row.totalTopics}</strong></span>
+										<span>Questions: <strong>{row.totalQuestions}</strong></span>
+										<span class="green-text">Approved: <strong>{row.approved}</strong></span>
+										<span class="red-text">Rejected: <strong>{row.rejected}</strong></span>
+										<span class="orange-text">Pending: <strong>{row.pending}</strong></span>
+									</div>
+									{#if row.subjects.length > 0}
+										<div class="teacher-subjects">
+											{#each row.subjects as subject}
+												<span class="teacher-subject-chip">{subject.name} ({subject.total_topics})</span>
+											{/each}
+										</div>
+									{:else}
+										<p class="empty-msg">No subjects assigned.</p>
+									{/if}
+								</div>
+							{/each}
 						</div>
 					{/if}
 				</div>
@@ -519,6 +585,74 @@
 	/* Tab content / Sections */
 	.tab-content {
 		width: 100%;
+	}
+
+	.teacher-grid {
+		display: grid;
+		grid-template-columns: 1fr;
+		gap: 0.85rem;
+	}
+
+	.teacher-card {
+		padding: 0.95rem;
+		border-radius: 0.95rem;
+		border: 1px solid rgba(17, 24, 39, 0.12);
+		background: rgba(255, 255, 255, 0.7);
+	}
+
+	.teacher-head {
+		display: flex;
+		justify-content: space-between;
+		align-items: flex-start;
+		gap: 0.75rem;
+	}
+
+	.teacher-name {
+		margin: 0;
+		font-weight: 700;
+		font-size: 1rem;
+		color: var(--theme-text-primary);
+	}
+
+	.teacher-email {
+		margin: 0.2rem 0 0;
+		font-size: 0.82rem;
+		color: var(--theme-text-secondary);
+	}
+
+	.teacher-progress {
+		padding: 0.25rem 0.6rem;
+		border-radius: 999px;
+		background: rgba(59, 130, 246, 0.14);
+		color: #1d4ed8;
+		font-size: 0.78rem;
+		font-weight: 700;
+		white-space: nowrap;
+	}
+
+	.teacher-metrics {
+		margin-top: 0.65rem;
+		display: flex;
+		flex-wrap: wrap;
+		gap: 0.45rem 0.9rem;
+		font-size: 0.82rem;
+		color: var(--theme-text-secondary);
+	}
+
+	.teacher-subjects {
+		margin-top: 0.7rem;
+		display: flex;
+		flex-wrap: wrap;
+		gap: 0.45rem;
+	}
+
+	.teacher-subject-chip {
+		padding: 0.25rem 0.55rem;
+		border-radius: 999px;
+		background: rgba(245, 158, 11, 0.14);
+		color: #92400e;
+		font-size: 0.76rem;
+		font-weight: 700;
 	}
 
 	.section {
