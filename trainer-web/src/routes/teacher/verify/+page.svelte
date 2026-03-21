@@ -220,22 +220,22 @@
 	</div>
 
 	<div class="stats-row animate-slide-up">
-		<div class="stat glass-panel">
+		<div class="stat glass-panel-frosted">
 			<span class="stat-value">{stats?.total_pending ?? '—'}</span>
 			<span class="stat-label">Pending</span>
 		</div>
-		<div class="stat glass-panel">
+		<div class="stat glass-panel-frosted">
 			<span class="stat-value">{stats?.total_approved ?? '—'}</span>
 			<span class="stat-label">Approved</span>
 		</div>
-		<div class="stat glass-panel">
+		<div class="stat glass-panel-frosted">
 			<span class="stat-value">{stats?.total_rejected ?? '—'}</span>
 			<span class="stat-label">Rejected</span>
 		</div>
 	</div>
 
 	<!-- Search and Filters -->
-	<div class="search-section glass-panel animate-fade-in">
+	<div class="search-section glass-panel-frosted animate-fade-in">
 		<div class="search-row">
 			<div class="search-field">
 				<input
@@ -303,7 +303,7 @@
 			<h2 class="section-title">Review Queue</h2>
 			<div class="queue-list">
 				{#each queue as item}
-					<button class="queue-item" onclick={() => startVerifying(item)}>
+					<button class="queue-item glass-panel-frosted" onclick={() => startVerifying(item)}>
 						<div class="qi-top">
 							<span class="qi-type">{typeLabel(item.question_type)}</span>
 							{#if item.topic_name}
@@ -373,20 +373,6 @@
 		align-items: center;
 		padding: 1rem;
 		gap: 0.25rem;
-		/* Enhanced frosted glass effect - force override */
-		backdrop-filter: blur(18px) saturate(160%) brightness(1.02) !important;
-		-webkit-backdrop-filter: blur(18px) saturate(160%) brightness(1.02) !important;
-		background: linear-gradient(
-			145deg,
-			rgba(255,255,255,0.08) 0%,
-			rgba(255,255,255,0.05) 50%,
-			rgba(255,255,255,0.07) 100%
-		) !important;
-		box-shadow:
-			0 12px 48px rgba(0, 0, 0, 0.32),
-			inset 0 1px 2px rgba(255, 255, 255, 0.25),
-			inset 0 -1px 1px rgba(255, 255, 255, 0.08),
-			0 0 0 1px rgba(255, 255, 255, 0.12) !important;
 	}
 
 	.stat-value {
@@ -419,39 +405,66 @@
 		margin-top: 0.75rem;
 	}
 
-	/* Queue item - frosted glass effect matching vetting loop */
+	/* Queue item - dark/black blur effect */
 	.queue-item {
 		text-align: left;
 		cursor: pointer;
 		padding: 1rem 1.25rem;
 		width: 100%;
-		border-radius: 1.75rem;
-		border: 1px solid rgba(255, 255, 255, 0.12);
 		color: inherit;
 		transition: all 0.2s ease;
-		/* Frosted glass effect - exact copy from vetting loop */
-		backdrop-filter: blur(18px) saturate(160%) brightness(1.02) !important;
-		-webkit-backdrop-filter: blur(18px) saturate(160%) brightness(1.02) !important;
-		background: linear-gradient(
-			145deg,
-			rgba(255,255,255,0.08) 0%,
-			rgba(255,255,255,0.05) 50%,
-			rgba(255,255,255,0.07) 100%
-		) !important;
+		/* Subtle dark blur effect */
+		background: 
+			linear-gradient(
+				145deg,
+				rgba(0,0,0,0.15) 0%,
+				rgba(0,0,0,0.1) 50%,
+				rgba(0,0,0,0.12) 100%
+			),
+			repeating-conic-gradient(
+				from 0deg at 50% 50%,
+				rgba(0,0,0,0.02) 0deg,
+				transparent 1deg,
+				rgba(0,0,0,0.02) 2deg,
+				transparent 3deg
+			) !important;
+		border: 1px solid rgba(0, 0, 0, 0.15) !important;
 		box-shadow:
-			0 12px 48px rgba(0, 0, 0, 0.32),
-			inset 0 1px 2px rgba(255, 255, 255, 0.25),
-			inset 0 -1px 1px rgba(255, 255, 255, 0.08),
-			0 0 0 1px rgba(255, 255, 255, 0.12) !important;
+			0 8px 32px rgba(0, 0, 0, 0.25),
+			inset 0 1px 1px rgba(0, 0, 0, 0.1),
+			inset 0 -1px 1px rgba(0, 0, 0, 0.05),
+			0 0 0 1px rgba(0, 0, 0, 0.2) !important;
+		backdrop-filter: blur(20px) saturate(90%) brightness(0.95) !important;
+		-webkit-backdrop-filter: blur(20px) saturate(90%) brightness(0.95) !important;
+	}
+
+	.queue-item::before {
+		opacity: 0.3 !important;
+		background: 
+			radial-gradient(circle at 20% 80%, rgba(0,0,0,0.08) 0%, transparent 50%),
+			radial-gradient(circle at 80% 20%, rgba(0,0,0,0.06) 0%, transparent 50%),
+			radial-gradient(circle at 40% 40%, rgba(0,0,0,0.04) 0%, transparent 40%) !important;
+	}
+
+	.queue-item::after {
+		background: 
+			repeating-linear-gradient(
+				45deg,
+				transparent,
+				transparent 1px,
+				rgba(0,0,0,0.01) 1px,
+				rgba(0,0,0,0.01) 2px
+			),
+			linear-gradient(
+				145deg,
+				rgba(0,0,0,0.04) 0%,
+				rgba(0,0,0,0.02) 50%,
+				rgba(0,0,0,0.03) 100%
+			) !important;
 	}
 
 	.queue-item:hover {
 		transform: translateY(-2px);
-		box-shadow:
-			0 16px 56px rgba(0, 0, 0, 0.38),
-			inset 0 1px 2px rgba(255, 255, 255, 0.25),
-			inset 0 -1px 1px rgba(255, 255, 255, 0.08),
-			0 0 0 1px rgba(255, 255, 255, 0.15) !important;
 		border-color: rgba(255, 255, 255, 0.18);
 	}
 
@@ -655,20 +668,6 @@
 	/* Search and Filters */
 	.search-section {
 		padding: 1rem;
-		/* Enhanced frosted glass effect - force override */
-		backdrop-filter: blur(18px) saturate(160%) brightness(1.02) !important;
-		-webkit-backdrop-filter: blur(18px) saturate(160%) brightness(1.02) !important;
-		background: linear-gradient(
-			145deg,
-			rgba(255,255,255,0.08) 0%,
-			rgba(255,255,255,0.05) 50%,
-			rgba(255,255,255,0.07) 100%
-		) !important;
-		box-shadow:
-			0 12px 48px rgba(0, 0, 0, 0.32),
-			inset 0 1px 2px rgba(255, 255, 255, 0.25),
-			inset 0 -1px 1px rgba(255, 255, 255, 0.08),
-			0 0 0 1px rgba(255, 255, 255, 0.12) !important;
 	}
 
 	.search-row {

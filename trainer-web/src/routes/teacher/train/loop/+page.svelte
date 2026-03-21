@@ -1248,22 +1248,22 @@
 		padding-bottom: 12rem;
 	}
 
-	/* Question card - more opaque white frost */
+	/* Question card - subtle dark blur effect */
 	.question-card {
 		padding: 1.5rem;
-		backdrop-filter: blur(18px) saturate(160%) brightness(1.02) !important;
-		-webkit-backdrop-filter: blur(18px) saturate(160%) brightness(1.02) !important;
+		backdrop-filter: blur(28px) saturate(95%) brightness(0.92) !important;
+		-webkit-backdrop-filter: blur(28px) saturate(95%) brightness(0.92) !important;
 		background: linear-gradient(
 			145deg,
-			rgba(255,255,255,0.08) 0%,
-			rgba(255,255,255,0.05) 50%,
-			rgba(255,255,255,0.07) 100%
+			rgba(0,0,0,0.2) 0%,
+			rgba(0,0,0,0.15) 50%,
+			rgba(0,0,0,0.17) 100%
 		) !important;
 		box-shadow:
-			0 12px 48px rgba(0, 0, 0, 0.32),
-			inset 0 1px 2px rgba(255, 255, 255, 0.25),
-			inset 0 -1px 1px rgba(255, 255, 255, 0.08),
-			0 0 0 1px rgba(255, 255, 255, 0.12) !important;
+			0 12px 48px rgba(0, 0, 0, 0.3),
+			inset 0 1px 2px rgba(0, 0, 0, 0.1),
+			inset 0 -1px 1px rgba(0, 0, 0, 0.05),
+			0 0 0 1px rgba(0, 0, 0, 0.2) !important;
 	}
 
 	.q-text {
@@ -1286,11 +1286,19 @@
 		align-items: center;
 		gap: 0.6rem;
 		padding: 0.6rem 0.8rem;
-		background: rgba(255, 255, 255, 0.04);
+		background: linear-gradient(
+			145deg,
+			rgba(0,0,0,0.12) 0%,
+			rgba(0,0,0,0.08) 50%,
+			rgba(0,0,0,0.1) 100%
+		);
+		border: 1px solid rgba(0, 0, 0, 0.1);
 		border-radius: 10px;
 		font-size: 0.9rem;
 		color: var(--theme-text);
-		transition: background 0.15s;
+		transition: all 0.15s;
+		backdrop-filter: blur(16px) saturate(95%) brightness(0.96) !important;
+		-webkit-backdrop-filter: blur(16px) saturate(95%) brightness(0.96) !important;
 	}
 
 	.option.selectable {
@@ -1299,8 +1307,14 @@
 	}
 
 	.option.selectable.selected {
-		background: rgba(var(--theme-primary-rgb), 0.2);
-		border-color: rgba(var(--theme-primary-rgb), 0.45);
+		background: linear-gradient(
+			145deg,
+			rgba(var(--theme-primary-rgb), 0.18) 0%,
+			rgba(var(--theme-primary-rgb), 0.12) 50%,
+			rgba(var(--theme-primary-rgb), 0.15) 100%
+		);
+		border-color: rgba(var(--theme-primary-rgb), 0.4);
+		box-shadow: 0 4px 16px rgba(var(--theme-primary-rgb), 0.15);
 	}
 
 	.opt-marker {
@@ -1979,7 +1993,7 @@
 		gap: 0.75rem;
 	}
 
-	.gen-progress-label,
+	/* .gen-progress-label,
 	.gen-progress-value {
 		font-size: 0.78rem;
 		color: var(--theme-text-muted);
@@ -1988,7 +2002,7 @@
 	.gen-progress-label {
 		font-weight: 600;
 		word-break: break-word;
-	}
+	} */
 
 	.gen-progress-value {
 		font-variant-numeric: tabular-nums;
@@ -2319,11 +2333,16 @@
 	.answer-panel {
 		padding: 1.25rem;
 		border-radius: 1.75rem;
-		background: rgba(255, 255, 255, 0.08);
-		backdrop-filter: blur(18px) saturate(160%) brightness(1.02) !important;
-		-webkit-backdrop-filter: blur(18px) saturate(160%) brightness(1.02) !important;
-		border: 1px solid rgba(255, 255, 255, 0.12);
-		box-shadow: 0 12px 48px rgba(0, 0, 0, 0.32), inset 0 1px 2px rgba(255, 255, 255, 0.25), inset 0 -1px 1px rgba(255, 255, 255, 0.08) !important;
+		background: linear-gradient(
+			145deg,
+			rgba(0,0,0,0.18) 0%,
+			rgba(0,0,0,0.12) 50%,
+			rgba(0,0,0,0.15) 100%
+		);
+		border: 1px solid rgba(0, 0, 0, 0.15);
+		box-shadow: 0 12px 48px rgba(0, 0, 0, 0.25), inset 0 1px 2px rgba(0, 0, 0, 0.08), inset 0 -1px 1px rgba(0, 0, 0, 0.04) !important;
+		backdrop-filter: blur(20px) saturate(95%) brightness(0.94) !important;
+		-webkit-backdrop-filter: blur(20px) saturate(95%) brightness(0.94) !important;
 	}
 
 	.answer-panel-head {

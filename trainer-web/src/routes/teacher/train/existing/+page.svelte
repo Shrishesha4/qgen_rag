@@ -61,6 +61,12 @@
 	let referenceProgressByDoc = $state<Record<string, number>>({});
 	let referenceProgressDetailByDoc = $state<Record<string, string>>({});
 	let referencePollTimer: ReturnType<typeof setInterval> | null = null;
+	
+	// New state for per-topic PDF management
+	let selectedTopicId = $state('');
+	let selectedTopicName = $state('');
+	let topicDocuments = $state<Record<string, ReferenceDocumentItem[]>>({});
+	let loadingTopicDocuments = $state('');
 	let bgStatusBySubject = $state<Record<string, BackgroundGenerationStatusItem>>({});
 	let bgStatusPollTimer: ReturnType<typeof setInterval> | null = null;
 
@@ -771,7 +777,24 @@
 		referenceSubjectName = subject.name;
 		referenceTab = 'pdfs';
 		referenceError = '';
+		selectedTopicId = '';
+		selectedTopicName = '';
+		topicDocuments = {};
 		showReferenceModal = true;
+		
+		// Load topics for this subject
+		if (!topicsMap[subject.id]) {
+			loadingTopics = subject.id;
+			try {
+				const detail = await getSubject(subject.id);
+				topicsMap = { ...topicsMap, [subject.id]: detail.topics };
+			} catch {
+				topicsMap = { ...topicsMap, [subject.id]: [] };
+			} finally {
+				loadingTopics = '';
+			}
+		}
+		
 		await loadReferenceMaterials(subject.id);
 		await refreshBackgroundStatuses();
 	}
@@ -782,6 +805,9 @@
 		referenceSubjectId = '';
 		referenceSubjectName = '';
 		referenceError = '';
+		selectedTopicId = '';
+		selectedTopicName = '';
+		topicDocuments = {};
 		referenceBooks = [];
 		templatePapers = [];
 		referenceQuestions = [];
@@ -838,6 +864,52 @@
 			referenceError = e instanceof Error ? e.message : 'Delete failed';
 		} finally {
 			deletingRefId = '';
+		}
+	}
+
+	// New functions for per-topic PDF management
+	function selectTopic(topicId: string, topicName: string) {
+		selectedTopicId = topicId;
+		selectedTopicName = topicName;
+		loadTopicDocuments(topicId);
+	}
+
+	async function loadTopicDocuments(topicId: string) {
+		if (topicDocuments[topicId]) {
+			return; // Already loaded
+		}
+		
+		loadingTopicDocuments = topicId;
+		try {
+			// Filter documents from the main reference lists that belong to this topic
+			const topicDocs = [...referenceBooks, ...templatePapers].filter(doc => doc.topic_id === topicId);
+			topicDocuments = { ...topicDocuments, [topicId]: topicDocs };
+		} catch (e: unknown) {
+			console.error('Failed to load topic documents:', e);
+		} finally {
+			loadingTopicDocuments = '';
+		}
+	}
+
+	async function uploadTopicPdf(event: Event, indexType: 'reference_book' | 'template_paper' | 'reference_questions') {
+		const input = event.target as HTMLInputElement;
+		const file = input.files?.[0];
+		if (!file || !referenceSubjectId || !selectedTopicId || referenceUploading) return;
+
+		referenceUploading = true;
+		referenceError = '';
+		try {
+			await uploadDocument(file, referenceSubjectId, indexType, selectedTopicId);
+			await loadReferenceMaterials(referenceSubjectId);
+			topicDocuments = {};
+			await loadTopicDocuments(selectedTopicId);
+			await refreshSubject(referenceSubjectId);
+			await refreshBackgroundStatuses();
+		} catch (e: unknown) {
+			referenceError = e instanceof Error ? e.message : 'Upload failed';
+		} finally {
+			referenceUploading = false;
+			input.value = '';
 		}
 	}
 
@@ -1021,7 +1093,7 @@
 	{#if showReferenceModal}
 		<div class="modal-backdrop" role="button" tabindex="0" aria-label="Close" onclick={closeReferenceModal} onkeydown={(e) => (e.key === 'Enter' || e.key === ' ') && closeReferenceModal()}>
 			<div
-				class="modal"
+				class="modal reference-modal"
 				role="dialog"
 				aria-modal="true"
 				tabindex="0"
@@ -1033,87 +1105,151 @@
 					<button class="close-btn" onclick={closeReferenceModal}>✕</button>
 				</div>
 
-				<div class="tab-row">
-					<button class="tab-btn" class:active={referenceTab === 'pdfs'} onclick={() => (referenceTab = 'pdfs')}>Reference PDFs</button>
-					<button class="tab-btn" class:active={referenceTab === 'questions'} onclick={() => (referenceTab = 'questions')}>Reference Questions</button>
-				</div>
-
 				{#if referenceError}
 					<p class="modal-error">{referenceError}</p>
 				{/if}
 
 				{#if referenceLoading}
 					<div class="topics-loading"><div class="spinner-sm"></div><span>Loading materials…</span></div>
-				{:else if referenceTab === 'pdfs'}
-					<div class="upload-row">
-						<!-- <select bind:value={pdfUploadType} class="select-input">
-							<option value="reference_book">Reference Book PDF</option>
-							<option value="template_paper">Template Paper PDF</option>
-						</select> -->
-						<label class="glass-btn small-btn upload-btn">
-							{referenceUploading ? 'Uploading...' : 'Add PDF'}
-							<input type="file" accept=".pdf,.doc,.docx,.txt" oninput={(e) => uploadReferenceFile(e, pdfUploadType)} disabled={referenceUploading} />
-						</label>
-					</div>
-
-					<div class="doc-list">
-						{#each [...referenceBooks, ...templatePapers] as doc}
-							<div class="doc-row">
-								<div class="doc-main">
-									<div class="doc-name">{doc.filename}</div>
-									<div class="doc-meta">{doc.index_type.replace('_', ' ')} • {doc.processing_status}</div>
-									{#if isDocProcessing(doc.processing_status)}
-										<div class="doc-progress-track">
-											<div class="doc-progress-fill" style:width="{referenceProgressByDoc[doc.id] ?? 0}%"></div>
-										</div>
-										{#if referenceProgressDetailByDoc[doc.id]}
-											<div class="doc-progress-detail">{referenceProgressDetailByDoc[doc.id]}</div>
-										{/if}
-									{/if}
-								</div>
-								<button class="danger-btn" disabled={deletingRefId === doc.id} onclick={() => deleteReference(doc.id)}>
-									{deletingRefId === doc.id ? 'Deleting...' : 'Delete'}
-								</button>
-							</div>
-						{:else}
-							<p class="topics-empty">No reference PDFs uploaded yet.</p>
-						{/each}
-					</div>
 				{:else}
-					<div class="upload-row">
-						<label class="glass-btn small-btn upload-btn">
-							{referenceUploading ? 'Uploading...' : 'Add Question File'}
-							<input type="file" accept=".pdf,.xlsx,.csv" oninput={(e) => uploadReferenceFile(e, 'reference_questions')} disabled={referenceUploading} />
-						</label>
-					</div>
-
-					<div class="doc-list">
-						{#each referenceQuestions as doc}
-							<div class="doc-row">
-								<div class="doc-main">
-									<div class="doc-name">{doc.filename}</div>
-									<div class="doc-meta">
-										{doc.processing_status}
-										{#if doc.parsed_question_count !== null && doc.parsed_question_count !== undefined}
-											• {doc.parsed_question_count} parsed
-										{/if}
-									</div>
-									{#if isDocProcessing(doc.processing_status)}
-										<div class="doc-progress-track">
-											<div class="doc-progress-fill" style:width="{referenceProgressByDoc[doc.id] ?? 0}%"></div>
+					<div class="topic-accordion-list">
+						{#if topicsMap[referenceSubjectId]?.length}
+							{#each topicsMap[referenceSubjectId] as topic, index}
+								<div class="topic-accordion-panel glass-panel-frosted" class:expanded={selectedTopicId === topic.id}>
+									<button
+										type="button"
+										class="topic-accordion-header"
+										aria-expanded={selectedTopicId === topic.id}
+										onclick={() =>
+											selectedTopicId === topic.id
+												? ((selectedTopicId = ''), (selectedTopicName = ''))
+												: selectTopic(topic.id, topic.name)}
+									>
+										<div class="topic-accordion-title-wrap">
+											<span class="topic-accordion-index">{index + 1}</span>
+											<span class="topic-accordion-title">{topic.name}</span>
 										</div>
-										{#if referenceProgressDetailByDoc[doc.id]}
-											<div class="doc-progress-detail">{referenceProgressDetailByDoc[doc.id]}</div>
-										{/if}
+										<div class="topic-accordion-header-right">
+											<span class="topic-status-pill">
+												{#if ((topicDocuments[topic.id]?.length ?? 0) + referenceQuestions.filter((doc) => doc.topic_id === topic.id).length) > 0}
+													Ready
+												{:else}
+													Empty
+												{/if}
+											</span>
+											<span class="topic-accordion-chevron" class:expanded={selectedTopicId === topic.id}>
+												▾
+											</span>
+										</div>
+									</button>
+
+									{#if selectedTopicId === topic.id}
+										<div class="topic-accordion-body">
+											<div class="syllabus-block">
+												<h4>Syllabus Content</h4>
+												<div class="syllabus-preview">
+													{topic.syllabus_content || `Paste or type the syllabus content for this topic...`}
+												</div>
+											</div>
+
+											<div class="topic-material-tabs">
+												<button type="button" class="topic-material-tab" class:active={referenceTab === 'pdfs'} onclick={() => (referenceTab = 'pdfs')}>
+													📚 Reference Books
+												</button>
+												<button type="button" class="topic-material-tab" class:active={referenceTab === 'questions'} onclick={() => (referenceTab = 'questions')}>
+													❖ Reference Questions
+													<span class="optional-copy">optional</span>
+												</button>
+											</div>
+
+											{#if referenceTab === 'pdfs'}
+												<p class="topic-upload-copy">Upload textbooks or notes for &quot;{topic.name}&quot;</p>
+												<label class="upload-dropzone glass-panel-frosted">
+													<input type="file" accept=".pdf,.doc,.docx,.txt" oninput={(e) => uploadTopicPdf(e, pdfUploadType)} disabled={referenceUploading} />
+													<div class="upload-dropzone-icon">📁</div>
+													<div class="upload-dropzone-title">{referenceUploading ? 'Uploading…' : 'Drop files or click to upload'}</div>
+													<div class="upload-dropzone-subtitle">PDF, Word, PowerPoint, or Text</div>
+												</label>
+												<div class="upload-type-row">
+													<select bind:value={pdfUploadType} class="select-input topic-inline-select">
+														<option value="reference_book">Reference Book PDF</option>
+														<option value="template_paper">Template Paper PDF</option>
+													</select>
+												</div>
+												<div class="doc-list topic-doc-list">
+													{#if loadingTopicDocuments === topic.id}
+														<div class="topics-loading"><div class="spinner-sm"></div><span>Loading PDFs…</span></div>
+													{:else if topicDocuments[topic.id]?.length}
+														{#each topicDocuments[topic.id] as doc}
+															<div class="doc-row">
+																<div class="doc-main">
+																	<div class="doc-name">{doc.filename}</div>
+																	<div class="doc-meta">{doc.index_type.replace('_', ' ')} • {doc.processing_status}</div>
+																	{#if isDocProcessing(doc.processing_status)}
+																		<div class="doc-progress-track">
+																			<div class="doc-progress-fill" style:width="{referenceProgressByDoc[doc.id] ?? 0}%"></div>
+																		</div>
+																		{#if referenceProgressDetailByDoc[doc.id]}
+																			<div class="doc-progress-detail">{referenceProgressDetailByDoc[doc.id]}</div>
+																		{/if}
+																	{/if}
+																</div>
+																<button class="danger-btn" disabled={deletingRefId === doc.id} onclick={() => deleteReference(doc.id)}>
+																	{deletingRefId === doc.id ? 'Deleting...' : 'Delete'}
+																</button>
+															</div>
+														{/each}
+													{:else}
+														<p class="topics-empty">No reference books uploaded yet.</p>
+													{/if}
+												</div>
+											{:else}
+												<p class="topic-upload-copy">Upload question files for &quot;{topic.name}&quot;</p>
+												<label class="upload-dropzone glass-panel-frosted question-dropzone">
+													<input type="file" accept=".pdf,.xlsx,.csv" oninput={(e) => uploadTopicPdf(e, 'reference_questions')} disabled={referenceUploading} />
+													<div class="upload-dropzone-icon">❖</div>
+													<div class="upload-dropzone-title">{referenceUploading ? 'Uploading…' : 'Drop files or click to upload'}</div>
+													<div class="upload-dropzone-subtitle">PDF, XLSX, or CSV</div>
+												</label>
+												<div class="doc-list topic-doc-list">
+													{#each referenceQuestions.filter((doc) => doc.topic_id === topic.id) as doc}
+														<div class="doc-row">
+															<div class="doc-main">
+																<div class="doc-name">{doc.filename}</div>
+																<div class="doc-meta">
+																	{doc.processing_status}
+																	{#if doc.parsed_question_count !== null && doc.parsed_question_count !== undefined}
+																		• {doc.parsed_question_count} parsed
+																	{/if}
+																</div>
+																{#if isDocProcessing(doc.processing_status)}
+																	<div class="doc-progress-track">
+																		<div class="doc-progress-fill" style:width="{referenceProgressByDoc[doc.id] ?? 0}%"></div>
+																	</div>
+																	{#if referenceProgressDetailByDoc[doc.id]}
+																		<div class="doc-progress-detail">{referenceProgressDetailByDoc[doc.id]}</div>
+																	{/if}
+																{/if}
+															</div>
+															<button class="danger-btn" disabled={deletingRefId === doc.id} onclick={() => deleteReference(doc.id)}>
+																{deletingRefId === doc.id ? 'Deleting...' : 'Delete'}
+															</button>
+														</div>
+													{:else}
+														<p class="topics-empty">No reference question files uploaded yet.</p>
+													{/each}
+												</div>
+											{/if}
+										</div>
 									{/if}
 								</div>
-								<button class="danger-btn" disabled={deletingRefId === doc.id} onclick={() => deleteReference(doc.id)}>
-									{deletingRefId === doc.id ? 'Deleting...' : 'Delete'}
-								</button>
-							</div>
+							{/each}
 						{:else}
-							<p class="topics-empty">No reference question files uploaded yet.</p>
-						{/each}
+							<div class="empty-state">
+								<div class="empty-icon">📚</div>
+								<p>No topics found. Please add topics first.</p>
+							</div>
+						{/if}
 					</div>
 				{/if}
 			</div>
@@ -1751,6 +1887,21 @@
 		box-shadow: var(--theme-modal-shadow);
 	}
 
+	.reference-modal {
+		width: min(900px, 96vw);
+		max-height: 90vh;
+		border-radius: 20px;
+		border: 2px solid rgba(255, 255, 255, 0.15);
+		background:
+			radial-gradient(circle at 15% 15%, rgba(84, 160, 255, 0.12), transparent 40%),
+			radial-gradient(circle at 85% 85%, rgba(255, 126, 66, 0.08), transparent 35%),
+			linear-gradient(140deg, rgba(8, 16, 33, 0.98), rgba(18, 24, 40, 0.98));
+		box-shadow: 
+			0 30px 60px rgba(0, 0, 0, 0.4),
+			0 0 0 1px rgba(255, 255, 255, 0.1) inset,
+			inset 0 1px 0 rgba(255, 255, 255, 0.15);
+	}
+
 	.add-topic-modal {
 		width: min(560px, 94vw);
 		border-radius: 20px;
@@ -1880,18 +2031,42 @@
 	.generate-form-grid {
 		display: grid;
 		grid-template-columns: 1fr 1fr;
-		gap: 0.6rem;
+		gap: 1rem;
+		align-items: start;
 	}
 
 	.generate-field {
 		display: flex;
 		flex-direction: column;
-		gap: 0.35rem;
+		gap: 0.5rem;
 	}
 
 	.generate-field span {
-		font-size: 0.78rem;
+		font-size: 0.85rem;
 		color: var(--theme-text-muted);
+		font-weight: 500;
+		letter-spacing: 0.01em;
+	}
+
+	.generate-field input,
+	.generate-field select {
+		width: 100%;
+		min-height: 44px;
+		padding: 0.75rem 1rem;
+		border-radius: 12px;
+		border: 1px solid rgba(255, 255, 255, 0.15);
+		background: rgba(255, 255, 255, 0.08);
+		color: var(--theme-text);
+		font-size: 0.95rem;
+		transition: all 0.2s ease;
+	}
+
+	.generate-field input:focus,
+	.generate-field select:focus {
+		outline: none;
+		border-color: rgba(var(--theme-primary-rgb), 0.5);
+		background: rgba(255, 255, 255, 0.12);
+		box-shadow: 0 0 0 3px rgba(var(--theme-primary-rgb), 0.1);
 	}
 
 	.generate-field-full {
@@ -1994,47 +2169,6 @@
 		border: none;
 		color: var(--theme-text-muted);
 		font-size: 1rem;
-		cursor: pointer;
-	}
-
-	.tab-row {
-		display: flex;
-		gap: 0.5rem;
-		padding: 0.75rem 1rem;
-	}
-
-	.tab-btn {
-		padding: 0.48rem 0.85rem;
-		border-radius: 999px;
-		border: 1px solid rgba(255, 255, 255, 0.14);
-		background: rgba(255, 255, 255, 0.04);
-		color: var(--theme-text-muted);
-		cursor: pointer;
-		font: inherit;
-	}
-
-	.tab-btn.active {
-		background: rgba(var(--theme-primary-rgb), 0.2);
-		color: var(--theme-text);
-		border-color: rgba(var(--theme-primary-rgb), 0.5);
-	}
-
-	.upload-row {
-		display: flex;
-		align-items: center;
-		gap: 0.6rem;
-		padding: 0 1rem 0.75rem;
-	}
-
-	.upload-btn {
-		position: relative;
-		overflow: hidden;
-	}
-
-	.upload-btn input[type='file'] {
-		position: absolute;
-		inset: 0;
-		opacity: 0;
 		cursor: pointer;
 	}
 
@@ -2216,25 +2350,6 @@
 			padding: 0.75rem 0.85rem;
 		}
 
-		.small-btn {
-			align-self: stretch;
-			text-align: center;
-		}
-
-		.tr-right {
-			min-width: 72px;
-			justify-content: flex-end;
-		}
-
-		.upload-row {
-			flex-direction: column;
-			align-items: stretch;
-		}
-
-		.generate-form-grid {
-			grid-template-columns: 1fr;
-		}
-
 		.generate-choice-actions {
 			position: sticky;
 			bottom: -1px;
@@ -2253,6 +2368,313 @@
 
 		.topic-chip-btn {
 			flex: 1;
+		}
+
+		.generate-form-grid {
+			grid-template-columns: 1fr;
+			gap: 0.75rem;
+		}
+
+		.generate-field input,
+		.generate-field select {
+			min-height: 40px;
+			padding: 0.6rem 0.8rem;
+		}
+	}
+
+	/* Reference modal accordion redesign */
+	.topic-accordion-list {
+		display: flex;
+		flex-direction: column;
+		gap: 0.9rem;
+		padding: 0.5rem 0 0.25rem;
+	}
+
+	.topic-accordion-panel {
+		padding: 0;
+		border-radius: 1.5rem;
+		overflow: hidden;
+		border: 1px solid rgba(255, 255, 255, 0.14);
+		background: linear-gradient(145deg, rgba(255, 255, 255, 0.08), rgba(255, 255, 255, 0.04));
+	}
+
+	.topic-accordion-panel.expanded {
+		border-color: rgba(255, 146, 76, 0.55);
+		box-shadow:
+			0 16px 44px rgba(0, 0, 0, 0.26),
+			0 0 0 1px rgba(255, 146, 76, 0.18),
+			inset 0 1px 0 rgba(255, 255, 255, 0.18);
+	}
+
+	.topic-accordion-header {
+		width: 100%;
+		padding: 1.15rem 1.35rem;
+		border: 0;
+		background: transparent;
+		display: flex;
+		align-items: center;
+		justify-content: space-between;
+		gap: 1rem;
+		color: inherit;
+		font: inherit;
+		text-align: left;
+		cursor: pointer;
+	}
+
+	.topic-accordion-title-wrap {
+		display: flex;
+		align-items: center;
+		gap: 0.95rem;
+		min-width: 0;
+	}
+
+	.topic-accordion-index {
+		font-size: 1.65rem;
+		font-weight: 800;
+		color: #ff8a3d;
+		line-height: 1;
+	}
+
+	.topic-accordion-title {
+		font-size: 1.15rem;
+		font-weight: 700;
+		color: var(--theme-text);
+		white-space: nowrap;
+		overflow: hidden;
+		text-overflow: ellipsis;
+	}
+
+	.topic-accordion-header-right {
+		display: flex;
+		align-items: center;
+		gap: 0.85rem;
+		flex-shrink: 0;
+	}
+
+	.topic-status-pill {
+		padding: 0.42rem 0.9rem;
+		border-radius: 999px;
+		background: rgba(255, 255, 255, 0.12);
+		color: rgba(255, 255, 255, 0.92);
+		font-size: 0.85rem;
+		font-weight: 700;
+	}
+
+	.topic-accordion-chevron {
+		font-size: 1rem;
+		color: rgba(255, 255, 255, 0.92);
+		transition: transform 0.2s ease;
+	}
+
+	.topic-accordion-chevron.expanded {
+		transform: rotate(180deg);
+	}
+
+	.topic-accordion-body {
+		padding: 0 1.35rem 1.35rem;
+		display: flex;
+		flex-direction: column;
+		gap: 1.2rem;
+	}
+
+	.syllabus-block h4 {
+		margin: 0 0 0.8rem;
+		font-size: 1.1rem;
+		font-weight: 800;
+		color: var(--theme-text);
+	}
+
+	.syllabus-preview {
+		min-height: 140px;
+		padding: 1.2rem 1.3rem;
+		border-radius: 1.3rem;
+		background: linear-gradient(180deg, rgba(76, 116, 140, 0.22), rgba(42, 74, 92, 0.18));
+		border: 1px solid rgba(255, 255, 255, 0.12);
+		box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.08);
+		font-size: 1rem;
+		line-height: 1.65;
+		color: rgba(255, 255, 255, 0.78);
+		white-space: pre-wrap;
+	}
+
+	.topic-material-tabs {
+		display: grid;
+		grid-template-columns: 1fr 1fr;
+		align-items: end;
+		border-bottom: 1px solid rgba(255, 255, 255, 0.14);
+	}
+
+	.topic-material-tab {
+		border: 0;
+		background: transparent;
+		padding: 1rem 1rem 0.9rem;
+		color: rgba(255, 255, 255, 0.95);
+		font: inherit;
+		font-size: 1rem;
+		font-weight: 800;
+		text-align: left;
+		cursor: pointer;
+		border-bottom: 3px solid transparent;
+		opacity: 0.7;
+	}
+
+	.topic-material-tab.active {
+		background: rgba(23, 37, 42, 0.38);
+		border-bottom-color: #ff8a3d;
+		opacity: 1;
+		color: #ff8a3d;
+	}
+
+	.optional-copy {
+		margin-left: 0.55rem;
+		font-size: 0.9rem;
+		font-style: italic;
+		font-weight: 400;
+		color: rgba(255, 255, 255, 0.68);
+	}
+
+	.topic-upload-copy {
+		margin: 0;
+		font-size: 0.98rem;
+		color: rgba(255, 255, 255, 0.72);
+	}
+
+	.upload-dropzone {
+		position: relative;
+		display: flex;
+		flex-direction: column;
+		align-items: center;
+		justify-content: center;
+		gap: 0.7rem;
+		min-height: 230px;
+		padding: 1.75rem;
+		border-radius: 1.7rem;
+		border: 2px dashed rgba(255, 255, 255, 0.28);
+		background: linear-gradient(180deg, rgba(112, 138, 145, 0.15), rgba(183, 203, 208, 0.12));
+		text-align: center;
+		cursor: pointer;
+		overflow: hidden;
+	}
+
+	.upload-dropzone input {
+		position: absolute;
+		inset: 0;
+		opacity: 0;
+		cursor: pointer;
+	}
+
+	.upload-dropzone-icon {
+		font-size: 2.8rem;
+		line-height: 1;
+	}
+
+	.upload-dropzone-title {
+		font-size: 1.1rem;
+		font-weight: 800;
+		color: rgba(255, 255, 255, 0.96);
+	}
+
+	.upload-dropzone-subtitle {
+		font-size: 0.95rem;
+		color: rgba(255, 255, 255, 0.76);
+	}
+
+	.upload-type-row {
+		display: flex;
+		justify-content: flex-start;
+	}
+
+	.topic-inline-select {
+		width: min(280px, 100%);
+	}
+
+	.topic-doc-list {
+		margin-top: 0.25rem;
+	}
+
+	.empty-state {
+		text-align: center;
+		padding: 3rem 2rem;
+		color: var(--theme-text-muted);
+	}
+
+	.empty-icon {
+		font-size: 2.5rem;
+		margin-bottom: 1rem;
+		opacity: 0.6;
+	}
+
+	.empty-state p {
+		margin: 0;
+		font-size: 0.95rem;
+		font-style: italic;
+	}
+
+	/* Mobile responsive */
+	@media (max-width: 768px) {
+		.topic-accordion-header {
+			padding: 1rem 1rem 0.95rem;
+		}
+
+		.topic-accordion-title-wrap {
+			gap: 0.75rem;
+		}
+
+		.topic-accordion-index {
+			font-size: 1.35rem;
+		}
+
+		.topic-accordion-title {
+			font-size: 1rem;
+		}
+
+		.topic-status-pill {
+			padding: 0.34rem 0.72rem;
+			font-size: 0.78rem;
+		}
+
+		.topic-accordion-body {
+			padding: 0 1rem 1rem;
+		}
+
+		.syllabus-preview {
+			min-height: 120px;
+			padding: 1rem;
+			font-size: 0.95rem;
+		}
+
+		.topic-material-tabs {
+			grid-template-columns: 1fr;
+		}
+
+		.topic-material-tab {
+			padding: 0.85rem 0.85rem 0.75rem;
+			font-size: 0.95rem;
+		}
+
+		.upload-dropzone {
+			min-height: 190px;
+			padding: 1.2rem;
+		}
+
+		.upload-dropzone-title {
+			font-size: 1rem;
+		}
+
+		.upload-dropzone-subtitle {
+			font-size: 0.85rem;
+		}
+
+		.empty-state {
+			padding: 2rem 1rem;
+		}
+
+		.empty-icon {
+			font-size: 2rem;
+		}
+
+		.empty-state p {
+			font-size: 0.85rem;
 		}
 	}
 </style>

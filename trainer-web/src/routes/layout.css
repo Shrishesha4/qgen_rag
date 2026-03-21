@@ -877,6 +877,82 @@ a:hover {
   opacity: 0.6;
 }
 
+/* ── Frosted glass panel — stable self-contained effect ── */
+.glass-panel-frosted {
+  position: relative;
+  background: 
+    /* Base frosted background - subtle white */
+    linear-gradient(
+      145deg,
+      rgba(255,255,255,0.12) 0%,
+      rgba(255,255,255,0.08) 50%,
+      rgba(255,255,255,0.10) 100%
+    ),
+    /* Fine noise texture */
+    repeating-conic-gradient(
+      from 0deg at 50% 50%,
+      rgba(255,255,255,0.01) 0deg,
+      transparent 1deg,
+      rgba(255,255,255,0.01) 2deg,
+      transparent 3deg
+    );
+  /* Remove backdrop-filter to avoid dependency on background content */
+  transform: translateZ(0);
+  border-radius: var(--glass-radius);
+  border: 1px solid rgba(255, 255, 255, 0.18);
+  box-shadow:
+    0 8px 32px rgba(0, 0, 0, 0.25),
+    inset 0 1px 1px rgba(255, 255, 255, 0.3),
+    inset 0 -1px 1px rgba(255, 255, 255, 0.1),
+    0 0 0 1px rgba(255, 255, 255, 0.15);
+  overflow: hidden;
+  z-index: 10;
+}
+
+.glass-panel-frosted::before {
+  content: '';
+  position: absolute;
+  top: 0;
+  left: 0;
+  right: 0;
+  bottom: 0;
+  background: 
+    /* Subtle light sources */
+    radial-gradient(circle at 20% 80%, rgba(255,255,255,0.15) 0%, transparent 50%),
+    radial-gradient(circle at 80% 20%, rgba(255,255,255,0.12) 0%, transparent 50%),
+    radial-gradient(circle at 40% 40%, rgba(255,255,255,0.08) 0%, transparent 40%);
+  border-radius: inherit;
+  z-index: 1;
+  pointer-events: none;
+  opacity: 0.8;
+}
+
+.glass-panel-frosted::after {
+  content: '';
+  position: absolute;
+  inset: 0;
+  background: 
+    /* Very fine grain texture */
+    repeating-linear-gradient(
+      45deg,
+      transparent,
+      transparent 1px,
+      rgba(255,255,255,0.02) 1px,
+      rgba(255,255,255,0.02) 2px
+    ),
+    /* Subtle overlay */
+    linear-gradient(
+      145deg,
+      rgba(255,255,255,0.06) 0%,
+      rgba(255,255,255,0.02) 50%,
+      rgba(255,255,255,0.04) 100%
+    );
+  border-radius: inherit;
+  z-index: 2;
+  pointer-events: none;
+}
+
+
 /* ── Serif font for question text ── */
 .font-serif {
   font-family: 'Merriweather', Georgia, serif;
@@ -901,7 +977,7 @@ a:hover {
   position: fixed;
   inset: 0;
   z-index: 1;
-  background: rgba(0, 0, 0, 0.60);
+  background: rgba(0, 0, 0, 0.45);
   backdrop-filter: blur(1px);
   -webkit-backdrop-filter: blur(1px);
   transform: translateZ(0);
