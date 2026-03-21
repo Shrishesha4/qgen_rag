@@ -1,6 +1,7 @@
 /** Vetting API — fetch questions for review, submit decisions. */
 import { apiFetch } from './client';
 import { session } from '../session';
+import { get } from 'svelte/store';
 
 // ── Types ──
 
@@ -143,11 +144,7 @@ export async function warmVettingTaxonomy(force = false): Promise<void> {
 	}
 
 	// Check if user is authenticated before making API call
-	let currentSession: any = null;
-	const unsubscribe = session.subscribe((s) => {
-		currentSession = s;
-		unsubscribe();
-	});
+	const currentSession = get(session);
 	
 	if (!currentSession) {
 		// User not authenticated, don't fetch taxonomy

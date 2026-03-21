@@ -35,6 +35,7 @@
 		if (typeof window !== 'undefined') {
 			const params = new URLSearchParams(window.location.search);
 			requestedSubjectId = params.get('subject') ?? '';
+			requestedGenerateTopicId = params.get('generateTopic') ?? '';
 		}
 
 		const unsub = session.subscribe((s) => {
@@ -62,6 +63,7 @@
 	let error = $state('');
 	let searchQuery = $state('');
 	let requestedSubjectId = $state('');
+	let requestedGenerateTopicId = $state('');
 
 	let expandedId = $state('');
 	let topicsMap = $state<Record<string, TopicResponse[]>>({});
@@ -636,7 +638,9 @@
 		try {
 			const res = await listSubjects(1, 100);
 			subjects = res.subjects;
+			let deepLinkTarget: SubjectResponse | null = null;
 			if (requestedSubjectId && res.subjects.some((subject) => subject.id === requestedSubjectId)) {
+				deepLinkTarget = res.subjects.find((subject) => subject.id === requestedSubjectId) ?? null;
 				expandedId = requestedSubjectId;
 				if (!topicsMap[requestedSubjectId]) {
 					loadingTopics = requestedSubjectId;
@@ -648,6 +652,10 @@
 					} finally {
 						loadingTopics = '';
 					}
+				}
+				if (requestedGenerateTopicId && deepLinkTarget) {
+					await openGenerateModeModal(deepLinkTarget, 'topic', requestedGenerateTopicId);
+					requestedGenerateTopicId = '';
 				}
 				requestedSubjectId = '';
 			}
@@ -1711,7 +1719,7 @@
 		font-weight: 700;
 		letter-spacing: 0.08em;
 		text-transform: uppercase;
-		color: #fbbf24;
+		color: var(--theme-primary);
 	}
 
 	.subject-page-title {
@@ -2301,9 +2309,9 @@
 	}
 
 	.modal-submit-btn {
-		background: linear-gradient(135deg, #f49e58, #d9642f);
-		color: #1f1308;
-		border-color: rgba(191, 96, 35, 0.55);
+		background: linear-gradient(135deg, rgba(var(--theme-primary-rgb), 0.95), rgba(var(--theme-primary-rgb), 0.72));
+		color: var(--theme-text-primary);
+		border-color: rgba(var(--theme-primary-rgb), 0.55);
 	}
 
 	.modal-submit-btn:disabled {
@@ -2751,8 +2759,9 @@
 
 		.mobile-add-subject-fab {
 			position: fixed;
-			right: 1rem;
-			bottom: calc(1rem + env(safe-area-inset-bottom, 0px));
+			left: 50%;
+			top: 50%;
+			transform: translate(-50%, -50%);
 			display: inline-flex;
 			align-items: center;
 			gap: 0.45rem;
@@ -2770,6 +2779,10 @@
 			z-index: 72;
 			cursor: pointer;
 			box-shadow: 0 14px 28px rgba(15, 23, 42, 0.26), inset 0 1px 0 rgba(255, 255, 255, 0.3);
+		}
+
+		.mobile-add-subject-fab:active {
+			transform: translate(-50%, -50%) scale(0.97);
 		}
 
 		.mobile-add-subject-fab-icon {
@@ -2893,7 +2906,7 @@
 	.topic-accordion-index {
 		font-size: 1.65rem;
 		font-weight: 800;
-		color: #ff8a3d;
+		color: var(--theme-primary);
 		line-height: 1;
 	}
 
@@ -2981,10 +2994,10 @@
 	}
 
 	.topic-material-tab.active {
-		background: rgba(245, 158, 11, 0.14);
-		border-bottom-color: #ff8a3d;
+		background: rgba(var(--theme-primary-rgb), 0.14);
+		border-bottom-color: var(--theme-primary);
 		opacity: 1;
-		color: #ff8a3d;
+		color: var(--theme-primary);
 	}
 
 	.optional-copy {

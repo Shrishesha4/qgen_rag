@@ -1005,11 +1005,7 @@
 	}
 
 	function selectOption(index: number) {
-		selectedOptionIndex = selectedOptionIndex === index ? null : index;
-	}
-
-	function openAnswerModal() {
-		if (selectedOptionIndex === null) return;
+		selectedOptionIndex = index;
 		showAnswerModal = true;
 	}
 
@@ -1276,13 +1272,6 @@
 							</button>
 						{/each}
 						</div>
-						{#if selectedOptionIndex !== null}
-							<div class="answer-check-actions">
-								<button class="glass-btn check-answer-btn" onclick={openAnswerModal}>
-									Check Answer
-								</button>
-							</div>
-						{/if}
 					</div>
 				{/if}
 
@@ -1537,29 +1526,6 @@
 		text-align: center;
 		font-weight: 700;
 		flex-shrink: 0;
-	}
-
-	.answer-check-actions {
-		margin-top: 0.85rem;
-		display: flex;
-		justify-content: flex-end;
-	}
-
-	.check-answer-btn {
-		min-height: 44px;
-		padding: 0.72rem 1.15rem;
-		border-radius: 0.9rem;
-		font-weight: 700;
-		font-size: 0.9rem;
-		letter-spacing: 0.01em;
-		border: 1px solid rgba(var(--theme-primary-rgb), 0.38);
-		background: linear-gradient(135deg, rgba(var(--theme-primary-rgb), 0.26), rgba(255, 255, 255, 0.08));
-		box-shadow: 0 8px 18px rgba(0, 0, 0, 0.18);
-	}
-
-	.check-answer-btn:hover {
-		transform: translateY(-1px);
-		border-color: rgba(var(--theme-primary-rgb), 0.52);
 	}
 
 	.answer-modal-overlay {
@@ -2586,26 +2552,11 @@
 		min-height: 5.5rem;
 		padding: 1.2rem 1.35rem;
 		border-radius: 1rem;
-		border: 1px solid rgba(17, 24, 39, 0.12);
-		background: rgba(255, 255, 255, 0.64);
+		border: 1px solid rgba(17, 24, 39, 0.18);
+		background: rgba(226, 232, 240, 0.78);
 		font-size: 1.05rem;
 		color: var(--theme-text-primary);
-	}
-
-	.option:nth-child(4n + 1) {
-		background: linear-gradient(160deg, rgba(236, 253, 245, 0.9), rgba(255, 255, 255, 0.74));
-	}
-
-	.option:nth-child(4n + 2) {
-		background: linear-gradient(160deg, rgba(255, 251, 235, 0.92), rgba(255, 255, 255, 0.74));
-	}
-
-	.option:nth-child(4n + 3) {
-		background: linear-gradient(160deg, rgba(253, 242, 248, 0.92), rgba(255, 255, 255, 0.74));
-	}
-
-	.option:nth-child(4n + 4) {
-		background: linear-gradient(160deg, rgba(239, 246, 255, 0.92), rgba(255, 255, 255, 0.74));
+		opacity: 0.96;
 	}
 
 	.opt-marker {
@@ -2880,11 +2831,6 @@
 			align-items: flex-start;
 		}
 
-		.answer-check-actions {
-			justify-content: stretch;
-		}
-
-		.check-answer-btn,
 		.secondary-btn {
 			width: 100%;
 			justify-content: center;

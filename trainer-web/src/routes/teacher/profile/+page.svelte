@@ -38,13 +38,6 @@
 </svelte:head>
 
 <div class="profile-page">
-	<div class="profile-topbar animate-fade-in">
-		<button class="nav-btn glass-panel" onclick={() => goto('/teacher/train')} aria-label="Back to train topics">
-			<svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
-				<polyline points="15 18 9 12 15 6"></polyline>
-			</svg>
-		</button>
-	</div>
 
 	<div class="profile-card glass-panel animate-scale-in">
 		<div class="avatar-ring">
@@ -69,7 +62,7 @@
 		</div>
 
 		<div class="profile-actions">
-			<button class="secondary-action glass-panel" onclick={() => goto('/teacher/train')}>Back to Train Topics</button>
+			<button class="secondary-action glass-panel" onclick={() => goto('/teacher/subjects')}>Back to Subjects</button>
 			<button class="primary-action" onclick={handleLogout}>Sign Out</button>
 		</div>
 	</div>
@@ -86,7 +79,7 @@
 		gap: 1.25rem;
 	}
 
-	.profile-topbar {
+	/* .profile-topbar {
 		width: 100%;
 		max-width: 760px;
 		display: flex;
@@ -104,9 +97,10 @@
 		background: transparent;
 		color: var(--theme-text);
 		cursor: pointer;
-	}
+	} */
 
 	.profile-card {
+		margin-top: 15%;
 		width: min(100%, 760px);
 		padding: 2rem 1.5rem;
 		border-radius: 1.5rem;
@@ -307,7 +301,7 @@
 			gap: 0.85rem;
 		}
 
-		.nav-btn {
+		/* .nav-btn {
 			width: 40px;
 			height: 40px;
 		}
@@ -315,7 +309,7 @@
 		.nav-btn svg {
 			width: 18px;
 			height: 18px;
-		}
+		} */
 
 		.profile-card {
 			padding: 1.5rem 1rem;

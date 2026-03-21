@@ -55,9 +55,10 @@
 	let navItems = $derived.by(() => {
 		if (pathname.startsWith('/teacher')) {
 			return [
-				{ href: '/teacher/train', label: 'Train Topic', icon: '📚' },
-				{ href: '/teacher/train/loop', label: 'Training Loop', icon: '🪟' },
-				{ href: '/teacher/verify', label: 'Verify', icon: '🎙️' },
+				{ href: '/teacher/subjects', label: 'Subjects', icon: '🧾' },
+				// { href: '/teacher/train', label: 'Train Topic', icon: '📚' },
+				{ href: '/teacher/train/loop', label: 'Training', icon: '🪟' },
+				// { href: '/teacher/verify', label: 'Verify', icon: '🎙️' },
 				{ href: '/teacher/profile', label: 'Profile', icon: '👤' }
 			];
 		}
@@ -65,7 +66,7 @@
 			return [
 				{ href: '/vetter/dashboard', label: 'Home', icon: '🏠' },
 				{ href: '/vetter/subjects', label: 'Subjects', icon: '📚' },
-				{ href: '/vetter/loop', label: 'Vetting Loop', icon: '🎙️' }
+				// { href: '/vetter/loop', label: 'Vetting Loop', icon: '🎙️' }
 			];
 		}
 		if (pathname.startsWith('/admin')) {
@@ -184,7 +185,7 @@
 	</button>
 {/if}
 
-<div class="app-shell">
+<div class="app-shell" class:with-desktop-chrome={showDesktopChrome}>
 	{#if showDesktopChrome}
 		<aside class="desktop-sidebar glass-panel">
 			<div class="sidebar-brand">
@@ -328,7 +329,7 @@
 	}
 
 	@media (min-width: 960px) {
-		.app-shell {
+		.app-shell.with-desktop-chrome {
 			display: grid;
 			grid-template-columns: 280px minmax(0, 1fr);
 			gap: 1.5rem;

@@ -672,10 +672,10 @@
 	// Accent color mapping
 	let accentColors = $derived.by(() => {
 		switch (accent) {
-			case 'emerald': return { bg: 'rgba(16,185,129,0.2)', border: 'rgba(16,185,129,0.4)', text: '#6ee7b7', solid: '#10b981' };
-			case 'amber': return { bg: 'rgba(245,158,11,0.2)', border: 'rgba(245,158,11,0.4)', text: '#fcd34d', solid: '#f59e0b' };
-			case 'rose': return { bg: 'rgba(244,63,94,0.2)', border: 'rgba(244,63,94,0.4)', text: '#fda4af', solid: '#f43f5e' };
-			default: return { bg: 'rgba(59,130,246,0.2)', border: 'rgba(59,130,246,0.4)', text: '#93c5fd', solid: '#3b82f6' };
+			case 'emerald': return { bg: 'rgba(16,185,129,0.16)', border: 'rgba(16,185,129,0.42)', text: '#065f46', solid: '#10b981' };
+			case 'amber': return { bg: 'rgba(245,158,11,0.16)', border: 'rgba(245,158,11,0.42)', text: '#92400e', solid: '#f59e0b' };
+			case 'rose': return { bg: 'rgba(244,63,94,0.16)', border: 'rgba(244,63,94,0.42)', text: '#9f1239', solid: '#f43f5e' };
+			default: return { bg: 'rgba(59,130,246,0.16)', border: 'rgba(59,130,246,0.42)', text: '#1d4ed8', solid: '#3b82f6' };
 		}
 	});
 
@@ -896,23 +896,23 @@
 		height: 32px;
 		border-radius: 8px;
 		border: none;
-		background: rgba(255, 255, 255, 0.1);
-		color: rgba(255, 255, 255, 0.6);
+		background: rgba(17, 24, 39, 0.06);
+		color: var(--theme-text-secondary);
 		cursor: pointer;
 		transition: all 0.2s;
 	}
 
 	.recorder-close:hover {
-		background: rgba(255, 255, 255, 0.2);
-		color: white;
+		background: rgba(var(--theme-primary-rgb), 0.16);
+		color: var(--theme-text-primary);
 	}
 
 	.retry-btn {
 		padding: 0.75rem 1rem;
 		border-radius: 999px;
 		border: 1px solid;
-		background: rgba(255, 255, 255, 0.12);
-		color: rgba(255, 255, 255, 0.94);
+		background: rgba(var(--theme-primary-rgb), 0.14);
+		color: var(--theme-text-primary);
 		font-size: 0.88rem;
 		font-weight: 700;
 		min-height: 44px;
@@ -922,7 +922,7 @@
 	}
 
 	.retry-btn:hover {
-		background: rgba(255, 255, 255, 0.2);
+		background: rgba(var(--theme-primary-rgb), 0.2);
 		transform: translateY(-1px);
 	}
 
@@ -1025,7 +1025,7 @@
 
 	.recording-hint {
 		font-size: 0.8rem;
-		color: rgba(255, 255, 255, 0.5);
+		color: var(--theme-text-secondary);
 		margin: 0;
 		text-align: center;
 		max-width: 24rem;
@@ -1035,8 +1035,8 @@
 		width: 100%;
 		padding: 0.9rem 1rem;
 		border-radius: 1rem;
-		background: rgba(255, 255, 255, 0.06);
-		border: 1px solid rgba(255, 255, 255, 0.08);
+		background: rgba(17, 24, 39, 0.04);
+		border: 1px solid rgba(17, 24, 39, 0.12);
 		display: flex;
 		flex-direction: column;
 		gap: 0.45rem;
@@ -1048,14 +1048,14 @@
 		font-weight: 700;
 		text-transform: uppercase;
 		letter-spacing: 0.08em;
-		color: rgba(255, 255, 255, 0.55);
+		color: var(--theme-text-muted);
 	}
 
 	.live-transcript-copy {
 		margin: 0;
 		font-size: 0.88rem;
 		line-height: 1.55;
-		color: rgba(255, 255, 255, 0.85);
+		color: var(--theme-text-secondary);
 	}
 
 	/* Transcript phase */
@@ -1071,7 +1071,7 @@
 		border-radius: 0.85rem;
 		background: rgba(244, 63, 94, 0.12);
 		border: 1px solid rgba(244, 63, 94, 0.22);
-		color: rgba(254, 205, 211, 0.92);
+		color: #9f1239;
 		font-size: 0.82rem;
 		line-height: 1.45;
 	}
@@ -1082,8 +1082,8 @@
 		gap: 0.5rem;
 		padding: 0.9rem 1rem;
 		border-radius: 1rem;
-		background: rgba(255, 255, 255, 0.06);
-		border: 1px solid rgba(255, 255, 255, 0.08);
+		background: rgba(17, 24, 39, 0.04);
+		border: 1px solid rgba(17, 24, 39, 0.12);
 	}
 
 	.audio-preview-meta {
@@ -1095,7 +1095,7 @@
 
 	.audio-preview-size {
 		font-size: 0.78rem;
-		color: rgba(255, 255, 255, 0.5);
+		color: var(--theme-text-muted);
 	}
 
 	.audio-preview-player {
@@ -1109,27 +1109,31 @@
 		font-weight: 600;
 		text-transform: uppercase;
 		letter-spacing: 0.05em;
-		color: rgba(255, 255, 255, 0.6);
+		color: var(--theme-text-secondary);
 	}
 
 	.transcript-input {
 		width: 100%;
 		padding: 0.75rem;
 		padding-right: 2.8rem;
-		background: rgba(255, 255, 255, 0.08);
-		border: 1px solid rgba(255, 255, 255, 0.15);
+		background: rgba(255, 255, 255, 0.92);
+		border: 1px solid rgba(17, 24, 39, 0.14);
 		border-radius: 12px;
-		color: var(--theme-text);
+		color: var(--theme-text-primary);
 		font-family: inherit;
 		font-size: 0.92rem;
 		line-height: 1.5;
 		resize: vertical;
 	}
 
+	.transcript-input::placeholder {
+		color: var(--theme-text-muted);
+	}
+
 	.transcript-input:focus {
 		outline: none;
-		border-color: rgba(255, 255, 255, 0.3);
-		box-shadow: 0 0 0 2px rgba(255, 255, 255, 0.1);
+		border-color: rgba(var(--theme-primary-rgb), 0.5);
+		box-shadow: 0 0 0 2px rgba(var(--theme-primary-rgb), 0.14);
 	}
 
 	.transcript-input-wrap {
@@ -1146,15 +1150,15 @@
 		align-items: center;
 		justify-content: center;
 		border-radius: 999px;
-		border: 1px solid rgba(255, 255, 255, 0.2);
-		background: rgba(255, 255, 255, 0.07);
-		color: rgba(255, 255, 255, 0.82);
+		border: 1px solid rgba(17, 24, 39, 0.16);
+		background: rgba(255, 255, 255, 0.92);
+		color: var(--theme-text-secondary);
 		cursor: pointer;
 		transition: all 0.2s ease;
 	}
 
 	.transcript-mic-btn:hover {
-		background: rgba(255, 255, 255, 0.14);
+		background: rgba(var(--theme-primary-rgb), 0.12);
 	}
 
 	.transcript-mic-btn.active {
@@ -1170,7 +1174,7 @@
 
 	.transcript-hint {
 		font-size: 0.75rem;
-		color: rgba(255, 255, 255, 0.4);
+		color: var(--theme-text-muted);
 		margin: 0;
 	}
 
@@ -1184,9 +1188,9 @@
 		flex: 1;
 		padding: 0.75rem;
 		border-radius: 12px;
-		border: 1px solid rgba(255, 255, 255, 0.15);
-		background: rgba(255, 255, 255, 0.05);
-		color: rgba(255, 255, 255, 0.7);
+		border: 1px solid rgba(17, 24, 39, 0.16);
+		background: rgba(255, 255, 255, 0.92);
+		color: var(--theme-text-primary);
 		font-size: 0.95rem;
 		font-weight: 600;
 		cursor: pointer;
@@ -1195,7 +1199,7 @@
 	}
 
 	.recorder-cancel-btn:hover {
-		background: rgba(255, 255, 255, 0.1);
+		background: rgba(var(--theme-primary-rgb), 0.12);
 	}
 
 	.recorder-secondary-btn {
@@ -1204,7 +1208,7 @@
 		border-radius: 12px;
 		border: 1px solid rgba(244, 63, 94, 0.3);
 		background: rgba(244, 63, 94, 0.14);
-		color: rgba(254, 205, 211, 0.92);
+		color: #9f1239;
 		font-size: 0.95rem;
 		font-weight: 600;
 		cursor: pointer;
