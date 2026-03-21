@@ -2,7 +2,6 @@
 	import { onMount } from 'svelte';
 	import { goto } from '$app/navigation';
 	import { session, currentUser } from '$lib/session';
-	import ThemeSelector from '$lib/components/ThemeSelector.svelte';
 
 	onMount(() => {
 		const unsub = session.subscribe((s) => {
@@ -17,8 +16,6 @@
 <svelte:head>
 	<title>Home — VQuest Trainer</title>
 </svelte:head>
-
-<ThemeSelector />
 
 <div class="home">
 	<div class="dashboard-topbar animate-fade-in">

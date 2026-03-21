@@ -5,6 +5,7 @@
 	import {
 		listSubjects,
 		getSubject,
+		createSubject,
 		createTopic,
 		deleteSubject,
 		type SubjectResponse,
@@ -31,6 +32,11 @@
 	} from '$lib/vetting-progress';
 
 	onMount(() => {
+		if (typeof window !== 'undefined') {
+			const params = new URLSearchParams(window.location.search);
+			requestedSubjectId = params.get('subject') ?? '';
+		}
+
 		const unsub = session.subscribe((s) => {
 			if (!s) goto('/teacher/login');
 		});
@@ -55,6 +61,7 @@
 	let loading = $state(true);
 	let error = $state('');
 	let searchQuery = $state('');
+	let requestedSubjectId = $state('');
 
 	let expandedId = $state('');
 	let topicsMap = $state<Record<string, TopicResponse[]>>({});
@@ -65,6 +72,11 @@
 	let addTopicSubjectName = $state('');
 	let addTopicName = $state('');
 	let addTopicSyllabus = $state('');
+	let showAddSubjectModal = $state(false);
+	let addSubjectName = $state('');
+	let addSubjectCode = $state('');
+	let addSubjectDescription = $state('');
+	let addingSubject = $state(false);
 	let deletingSubjectId = $state('');
 
 	let showReferenceModal = $state(false);
@@ -607,6 +619,21 @@
 		try {
 			const res = await listSubjects(1, 100);
 			subjects = res.subjects;
+			if (requestedSubjectId && res.subjects.some((subject) => subject.id === requestedSubjectId)) {
+				expandedId = requestedSubjectId;
+				if (!topicsMap[requestedSubjectId]) {
+					loadingTopics = requestedSubjectId;
+					try {
+						const detail = await getSubject(requestedSubjectId);
+						topicsMap = { ...topicsMap, [requestedSubjectId]: detail.topics };
+					} catch {
+						topicsMap = { ...topicsMap, [requestedSubjectId]: [] };
+					} finally {
+						loadingTopics = '';
+					}
+				}
+				requestedSubjectId = '';
+			}
 			await refreshBackgroundStatuses();
 			ensureBackgroundStatusPolling();
 		} catch (e: unknown) {
@@ -685,7 +712,7 @@
 
 	function normalizedGenerateCount() {
 		const safe = Number.isFinite(generateQuestionCount) ? generateQuestionCount : 10;
-		return Math.max(1, Math.min(200, Math.trunc(safe)));
+		return Math.max(1, Math.min(30, Math.trunc(safe)));
 	}
 
 	function chooseVetNow() {
@@ -792,6 +819,56 @@
 		addTopicSyllabus = '';
 		error = '';
 		showAddTopicModal = true;
+	}
+
+	function buildSubjectCode(name: string) {
+		const raw = name
+			.trim()
+			.toUpperCase()
+			.replace(/[^A-Z0-9\s]/g, '')
+			.split(/\s+/)
+			.filter(Boolean)
+			.map((part) => part[0])
+			.join('')
+			.slice(0, 5);
+		const fallback = raw || 'SUBJ';
+		return `${fallback}${String(Date.now()).slice(-4)}`;
+	}
+
+	function openAddSubjectModal() {
+		addSubjectName = '';
+		addSubjectCode = '';
+		addSubjectDescription = '';
+		error = '';
+		showAddSubjectModal = true;
+	}
+
+	function closeAddSubjectModal() {
+		if (addingSubject) return;
+		showAddSubjectModal = false;
+	}
+
+	async function submitAddSubject() {
+		const name = addSubjectName.trim();
+		if (!name || addingSubject) return;
+
+		addingSubject = true;
+		error = '';
+		try {
+			const created = await createSubject({
+				name,
+				code: addSubjectCode.trim() || buildSubjectCode(name),
+				description: addSubjectDescription.trim() || undefined,
+			});
+			subjects = [created, ...subjects];
+			topicsMap = { ...topicsMap, [created.id]: [] };
+			expandedId = created.id;
+			showAddSubjectModal = false;
+		} catch (e: unknown) {
+			error = e instanceof Error ? e.message : 'Failed to create subject';
+		} finally {
+			addingSubject = false;
+		}
 	}
 
 	function closeAddTopicModal() {
@@ -1025,9 +1102,7 @@
 		<div class="center-state">
 			<span class="empty-icon">📭</span>
 			<p>No subjects created yet</p>
-			<button class="glass-btn" onclick={() => goto('/teacher/train/new')}>
-				Create New Topic
-			</button>
+			<button class="glass-btn" onclick={openAddSubjectModal}>Create Subject</button>
 		</div>
 	{:else}
 		{#if generateModeSuccess}
@@ -1036,6 +1111,14 @@
 				<button class="success-dismiss" onclick={() => (generateModeSuccess = '')}>✕</button>
 			</p>
 		{/if}
+		<div class="subject-page-header">
+			<div>
+				<p class="subject-page-kicker">Teacher Console</p>
+				<h1 class="subject-page-title font-serif">Subjects</h1>
+				<p class="subject-page-subtitle">Manage your subjects, topics, and content before generating or vetting.</p>
+			</div>
+			<button class="glass-btn header-add-subject-btn" onclick={openAddSubjectModal}>+ Add Subject</button>
+		</div>
 		<div class="search-container">
 			<input
 				type="text"
@@ -1378,7 +1461,7 @@
 								<input
 									type="number"
 									min="1"
-									max="200"
+									max="30"
 									bind:value={generateQuestionCount}
 									class="search-input"
 								/>
@@ -1458,6 +1541,61 @@
 		</div>
 	{/if}
 
+	{#if showAddSubjectModal}
+		<div class="modal-backdrop" role="button" tabindex="0" aria-label="Close" onclick={closeAddSubjectModal} onkeydown={(e) => (e.key === 'Enter' || e.key === ' ') && closeAddSubjectModal()}>
+			<div
+				class="modal add-topic-modal"
+				role="dialog"
+				aria-modal="true"
+				tabindex="0"
+				onclick={(e) => e.stopPropagation()}
+				onkeydown={(e) => e.stopPropagation()}
+			>
+				<div class="modal-header">
+					<h3>Add Subject</h3>
+					<button class="close-btn" onclick={closeAddSubjectModal}>✕</button>
+				</div>
+
+				<div class="topic-create-fields topic-create-modal-fields">
+					<input
+						class="topic-input"
+						type="text"
+						placeholder="Subject name"
+						value={addSubjectName}
+						oninput={(e) => {
+							addSubjectName = (e.currentTarget as HTMLInputElement).value;
+						}}
+					/>
+					<input
+						class="topic-input"
+						type="text"
+						placeholder="Subject code (optional)"
+						value={addSubjectCode}
+						oninput={(e) => {
+							addSubjectCode = (e.currentTarget as HTMLInputElement).value;
+						}}
+					/>
+					<textarea
+						class="syllabus-input"
+						rows="3"
+						placeholder="Description (optional)"
+						value={addSubjectDescription}
+						oninput={(e) => {
+							addSubjectDescription = (e.currentTarget as HTMLTextAreaElement).value;
+						}}
+					></textarea>
+				</div>
+
+				<div class="modal-actions">
+					<button class="glass-btn small-btn modal-cancel-btn" onclick={closeAddSubjectModal}>Cancel</button>
+					<button class="glass-btn small-btn modal-submit-btn" disabled={addingSubject || !addSubjectName.trim()} onclick={submitAddSubject}>
+						{addingSubject ? 'Creating...' : 'Create Subject'}
+					</button>
+				</div>
+			</div>
+		</div>
+	{/if}
+
 	{#if showAddTopicModal}
 		<div class="modal-backdrop" role="button" tabindex="0" aria-label="Close" onclick={closeAddTopicModal} onkeydown={(e) => (e.key === 'Enter' || e.key === ' ') && closeAddTopicModal()}>
 			<div
@@ -1515,6 +1653,44 @@
 		margin: 0 auto;
 		padding: 2rem 1.5rem;
 		min-height: 100vh;
+	}
+
+	.subject-page-header {
+		display: flex;
+		align-items: flex-end;
+		justify-content: space-between;
+		gap: 1rem;
+		margin-bottom: 0.8rem;
+	}
+
+	.subject-page-kicker {
+		margin: 0 0 0.25rem;
+		font-size: 0.74rem;
+		font-weight: 700;
+		letter-spacing: 0.08em;
+		text-transform: uppercase;
+		color: #fbbf24;
+	}
+
+	.subject-page-title {
+		margin: 0;
+		font-size: 1.8rem;
+		color: var(--theme-text);
+	}
+
+	.subject-page-subtitle {
+		margin: 0.35rem 0 0;
+		color: var(--theme-text-muted);
+		font-size: 0.9rem;
+	}
+
+	.header-add-subject-btn {
+		min-height: 2.6rem;
+		padding: 0 1rem;
+		border-radius: 999px;
+		font-size: 0.86rem;
+		font-weight: 700;
+		white-space: nowrap;
 	}
 
 	.center-state {
@@ -2420,6 +2596,16 @@
 	@media (max-width: 768px) {
 		.page {
 			padding-top: 1rem;
+		}
+
+		.subject-page-header {
+			flex-direction: column;
+			align-items: flex-start;
+		}
+
+		.header-add-subject-btn {
+			width: 100%;
+			justify-content: center;
 		}
 
 		.modal-backdrop {

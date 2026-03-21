@@ -4,7 +4,6 @@
 	import { session, currentUser } from '$lib/session';
 	import { logout } from '$lib/api/auth';
 	import { getVetterDashboard, type VetterDashboard } from '$lib/api/vetting';
-	import ThemeSelector from '$lib/components/ThemeSelector.svelte';
 
 	let loading = $state(true);
 	let stats = $state<VetterDashboard | null>(null);
@@ -46,8 +45,6 @@
 </svelte:head>
 
 <div class="vetter-dash">
-	<ThemeSelector />
-
 	<div class="hero animate-fade-in">
 		<div class="hero-icon emerald">
 			<svg width="28" height="28" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">

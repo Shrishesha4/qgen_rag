@@ -55,8 +55,7 @@
 	let navItems = $derived.by(() => {
 		if (pathname.startsWith('/teacher')) {
 			return [
-				{ href: '/teacher/dashboard', label: 'Home', icon: '🏠' },
-				{ href: '/teacher/train/new', label: 'Train Topic', icon: '📚' },
+				{ href: '/teacher/train', label: 'Train Topic', icon: '📚' },
 				{ href: '/teacher/train/loop', label: 'Training Loop', icon: '🪟' },
 				{ href: '/teacher/verify', label: 'Verify', icon: '🎙️' },
 				{ href: '/teacher/profile', label: 'Profile', icon: '👤' }
@@ -77,15 +76,7 @@
 		}
 		return [];
 	});
-	let routeTitle = $derived.by(() => {
-		if (!pathname || pathname === '/') return 'VQuest Trainer';
-		if (pathname.includes('/login')) return 'Welcome';
-		const chunks = pathname.split('/').filter(Boolean);
-		const last = chunks[chunks.length - 1] ?? 'workspace';
-		return last
-			.replace(/[-_]/g, ' ')
-			.replace(/\b\w/g, (char) => char.toUpperCase());
-	});
+	
 	let showGlobalBack = $derived.by(() => {
 		if (showDesktopChrome) return false;
 		if (
@@ -219,14 +210,6 @@
 
 		<section class="desktop-window-wrap">
 			<div class="desktop-window glass-panel">
-				<div class="desktop-window-titlebar" style:background="var(--theme-nav-glass)">
-					<div class="window-dots" aria-hidden="true">
-						<span class="dot dot-red"></span>
-						<span class="dot dot-yellow"></span>
-						<span class="dot dot-green"></span>
-					</div>
-					<h1>{routeTitle}</h1>
-				</div>
 				<div class="desktop-window-content">
 					{@render children()}
 				</div>
@@ -422,7 +405,25 @@
 		}
 
 		.sidebar-link-icon {
-			font-size: 1.05rem;
+			width: 1.9rem;
+			height: 1.9rem;
+			display: inline-flex;
+			align-items: center;
+			justify-content: center;
+			font-size: 1.08rem;
+			line-height: 1;
+			background: rgba(255, 255, 255, 0.8);
+			color: #121212;
+			border: 1px solid rgba(17, 24, 39, 0.16);
+			border-radius: 0.55rem;
+			box-shadow: 0 3px 10px rgba(15, 23, 42, 0.16);
+			filter: saturate(1.1) contrast(1.06);
+			flex-shrink: 0;
+		}
+
+		.sidebar-link.active .sidebar-link-icon {
+			background: rgba(255, 255, 255, 0.92);
+			border-color: rgba(17, 24, 39, 0.24);
 		}
 
 		.sidebar-footer {
@@ -457,39 +458,6 @@
 			height: calc(100dvh - env(safe-area-inset-top) - 3rem);
 			border-radius: 1.25rem;
 			overflow: hidden;
-		}
-
-		.desktop-window-titlebar {
-			height: 46px;
-			display: grid;
-			grid-template-columns: auto 1fr auto;
-			align-items: center;
-			padding: 0 0.9rem;
-			border-bottom: 1px solid rgba(255, 255, 255, 0.38);
-		}
-
-		.window-dots {
-			display: flex;
-			gap: 0.35rem;
-		}
-
-		.dot {
-			width: 11px;
-			height: 11px;
-			border-radius: 999px;
-			display: inline-block;
-		}
-
-		.dot-red { background: #ff5f56; border: 1px solid #e0443e; }
-		.dot-yellow { background: #ffbd2e; border: 1px solid #dea123; }
-		.dot-green { background: #27c93f; border: 1px solid #1aab29; }
-
-		.desktop-window-titlebar h1 {
-			margin: 0;
-			text-align: center;
-			font-size: 0.92rem;
-			font-weight: 700;
-			color: var(--theme-text-primary);
 		}
 
 		.desktop-window-content {

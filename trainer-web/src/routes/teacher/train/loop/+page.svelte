@@ -36,7 +36,7 @@
 	const WAIT_DOCS_TIMEOUT_MS = 3 * 60 * 1000;
 	const DEFAULT_BATCH_SIZE = 30;
 	const MIN_BATCH_SIZE = 5;
-	const MAX_BATCH_SIZE = 100;
+	const MAX_BATCH_SIZE = 30;
 
 	function parseBatchSizeParam(raw: string | null) {
 		if (raw == null || raw.trim() === '') return DEFAULT_BATCH_SIZE;
@@ -190,7 +190,7 @@
 	let postTriggerGenerationActive = $state(false);
 	let postTriggerBaseQuestionCount = $state(0);
 
-	// Trigger next generation when user has vetted ≥70% of current questions
+	// Trigger next generation when user has vetted at least 25 questions from current batch
 	$effect(() => {
 		if (batchComplete || generating || regenerating || voiceAction?.kind === 'reject' || !subjectId) return;
 		if (nextGenAt === 0) return;
@@ -424,7 +424,7 @@
 				// No pending questions — generate first batch immediately
 				startBackgroundGeneration();
 			} else {
-				// Existing questions — wait until 70% are vetted before generating more
+				// Existing questions — wait until at least 25 are vetted before generating more
 				armNextGen();
 			}
 		}
@@ -455,7 +455,7 @@
 				await generateBatch(genCtx, generationBatchSize, topicId || undefined);
 			}
 
-			// Arm threshold: next batch triggers when 70% of current questions are vetted
+			// Arm threshold: next batch triggers when at least 25 current questions are vetted
 			if (!batchComplete) armNextGen();
 		} catch (e: unknown) {
 			postTriggerGenerationActive = false;
@@ -567,7 +567,8 @@
 	}
 
 	function armNextGen() {
-		nextGenAt = Math.max(1, Math.floor(questions.length * 0.7));
+		const threshold = Math.min(25, Math.max(1, questions.length));
+		nextGenAt = threshold;
 	}
 
 	async function doNextBatch() {

@@ -4,7 +4,6 @@
 	import { session, currentUser } from '$lib/session';
 	import { logout } from '$lib/api/auth';
 	import { getAdminDashboard, type AdminDashboard, type UserStats, type VetterBreakdown } from '$lib/api/admin';
-	import ThemeSelector from '$lib/components/ThemeSelector.svelte';
 
 	let loading = $state(true);
 	let stats = $state<AdminDashboard | null>(null);
@@ -52,8 +51,6 @@
 </svelte:head>
 
 <div class="admin-dash">
-	<ThemeSelector />
-
 	<div class="hero animate-fade-in">
 		<div class="hero-icon amber">
 			<svg width="28" height="28" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">

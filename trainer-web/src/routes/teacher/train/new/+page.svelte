@@ -10,13 +10,12 @@
 		deleteDocumentById,
 		getDocumentStatus,
 		listReferenceDocuments,
-		scheduleBackgroundGeneration,
 		uploadDocument,
 	} from '$lib/api/documents';
 
 	const DRAFT_STORAGE_KEY = 'qgen:new-topic-wizard:draft:v1';
 	const MIN_QUESTION_COUNT = 1;
-	const MAX_QUESTION_COUNT = 100;
+	const MAX_QUESTION_COUNT = 30;
 
 	function clampStep(value: number) {
 		if (!Number.isFinite(value)) return 1;
@@ -682,7 +681,7 @@
 		backgroundGenerationMessage = '';
 		setupProgress = 0;
 		setupError = '';
-		setupStatus = completeOnlyMode ? 'Completing setup...' : 'Creating Subject...';
+		setupStatus = 'Creating Subject...';
 
 		try {
 			// 1. Create subject (or reuse tempSubjectId)
@@ -729,29 +728,11 @@
 			// 3. Reference materials are already uploaded per-topic in Step 3.
 			setupProgress = 80;
 
-			if (completeOnlyMode) {
-				setupStatus = 'Scheduling background generation...';
-				const scheduleRes = await scheduleBackgroundGeneration({
-					subjectId,
-					count: desiredQuestionCount,
-					types: 'mcq',
-					difficulty: 'medium',
-					allowWithoutReference: skipReferencePdf && totalBookDocs === 0,
-				});
-				backgroundGenerationScheduled = true;
-				backgroundGenerationMessage = scheduleRes.message;
-			}
-
 			setupProgress = 100;
-			setupStatus = completeOnlyMode ? 'Setup completed. Redirecting to dashboard...' : 'Setup complete! Redirecting...';
+			setupStatus = 'Setup complete. Redirecting to subjects...';
 			await new Promise(r => setTimeout(r, 600));
 			clearDraft();
-			if (completeOnlyMode || !allDocsReady) {
-				goto('/teacher/dashboard');
-			} else {
-				const noPdfParam = skipReferencePdf && totalBookDocs === 0 ? '&noPdf=1' : '';
-				goto(`/teacher/train/loop?subject=${subjectId}&provisional=1&count=${encodeURIComponent(String(desiredQuestionCount))}${noPdfParam}`);
-			}
+			goto(`/teacher/train/existing?subject=${encodeURIComponent(subjectId)}`);
 		} catch (e: unknown) {
 			setupError = e instanceof Error ? e.message : 'Setup failed';
 			setupStatus = '';
@@ -1117,12 +1098,8 @@
 						<button class="glass-btn step-back-btn" onclick={prevStep}>
 							← Back
 						</button>
-						<button class="glass-btn step-next-btn step-train-btn" onclick={() => { step = 5; startSetup(!completeOnlyMode && allDocsReady); }}>
-							{#if !completeOnlyMode && allDocsReady}
-								⚡ Start Training
-							{:else}
-								✓ Complete
-							{/if}
+						<button class="glass-btn step-next-btn step-train-btn" onclick={() => { step = 5; startSetup(false); }}>
+							✓ Finish Setup
 						</button>
 					</div>
 				{/if}

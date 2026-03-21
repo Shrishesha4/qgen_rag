@@ -13,8 +13,8 @@
   --theme-primary-hover: #2888d4;
   --theme-accent-gradient: #2dd4bf;
   --theme-primary-rgb: 56, 152, 224;
-  --theme-text: #e0e8f4; 
-  --theme-text-muted: #8aa8c8;
+  --theme-text: #1a1a2e;
+  --theme-text-muted: rgba(0, 0, 0, 0.55);
   --theme-text-primary: #1a1a2e;
   --theme-text-secondary: rgba(0, 0, 0, 0.55);
   --theme-glass-bg: rgba(255, 255, 255, 0.55);
@@ -1289,7 +1289,7 @@ a:hover {
 }
 
 /* ── Android-specific optimizations ── */
-@media screen and (-webkit-min-device-pixel-ratio: 0) and (min-resolution: .001dpcm) {
+@media (max-width: 768px) and (-webkit-min-device-pixel-ratio: 0) and (min-resolution: .001dpcm) {
   /* Target Android devices */
   .glass,
   .glass-heavy,
@@ -1397,7 +1397,7 @@ a:hover {
 
 .glass-btn-secondary {
   background: rgba(255, 255, 255, 0.45);
-  color: var(--theme-text-primary);
+  color: var(--theme-text);
   border-radius: 12px;
   border: 1px solid rgba(255, 255, 255, 0.6);
   box-shadow:
@@ -1407,7 +1407,7 @@ a:hover {
 
 .glass-input {
   background: rgba(255, 255, 255, 0.65) !important;
-  color: var(--theme-text-primary);
+  color: var(--theme-text);
   border: 1px solid rgba(255, 255, 255, 0.7);
 }
 

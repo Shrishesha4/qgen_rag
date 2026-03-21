@@ -21,7 +21,7 @@
 	let loading = $state(false);
 
 	const roleLabel = $derived(role === 'teacher' ? 'Teacher' : role === 'admin' ? 'Admin' : 'Vetter');
-	const dashboardPath = $derived(role === 'teacher' ? '/teacher/dashboard' : role === 'admin' ? '/admin/dashboard' : '/vetter/dashboard');
+	const dashboardPath = $derived(role === 'teacher' ? '/teacher/train' : role === 'admin' ? '/admin/dashboard' : '/vetter/dashboard');
 
 	async function handleSubmit() {
 		error = '';

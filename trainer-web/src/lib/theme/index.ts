@@ -35,8 +35,8 @@ function applyTheme(config: ThemeConfig) {
 	root.style.setProperty('--theme-primary-hover', config.primaryHover);
 	root.style.setProperty('--theme-accent-gradient', config.accentGradient);
 	root.style.setProperty('--theme-primary-rgb', config.primaryRgb);
-	root.style.setProperty('--theme-text', config.text);
-	root.style.setProperty('--theme-text-muted', config.textMuted);
+	root.style.setProperty('--theme-text', config.textPrimary);
+	root.style.setProperty('--theme-text-muted', config.textSecondary);
 	root.style.setProperty('--theme-text-primary', config.textPrimary);
 	root.style.setProperty('--theme-text-secondary', config.textSecondary);
 	root.style.setProperty('--theme-glass-bg', config.glassBg);

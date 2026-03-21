@@ -6,7 +6,7 @@
 	onMount(() => {
 		const unsub = session.subscribe((s) => {
 			if (s) {
-				goto(s.user.role === 'admin' ? '/admin/dashboard' : s.user.role === 'vetter' ? '/vetter/dashboard' : '/teacher/dashboard');
+				goto(s.user.role === 'admin' ? '/admin/dashboard' : s.user.role === 'vetter' ? '/vetter/dashboard' : '/teacher/train');
 			}
 		});
 		return unsub;
