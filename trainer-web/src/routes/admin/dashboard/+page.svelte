@@ -78,18 +78,6 @@
 </svelte:head>
 
 <div class="admin-dash">
-	<div class="hero animate-fade-in">
-		<div class="hero-icon amber">
-			<svg width="28" height="28" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
-				<path d="M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10z"></path>
-			</svg>
-		</div>
-		<h1 class="title font-serif">Admin Dashboard</h1>
-		{#if $currentUser}
-			<p class="welcome">Welcome, {$currentUser.full_name || $currentUser.username}</p>
-		{/if}
-	</div>
-
 	{#if error}
 		<div class="error-banner" role="alert">{error}</div>
 	{/if}
@@ -360,7 +348,7 @@
 		display: flex;
 		flex-direction: column;
 		align-items: center;
-		padding: 5rem 1.5rem 2rem;
+		padding: 5rem 0 2rem;
 		gap: 1.5rem;
 		min-height: 100vh;
 		width: 100%;
@@ -540,19 +528,13 @@
 	.tabs {
 		display: flex;
 		gap: 0.25rem;
-		background: rgba(255, 255, 255, 0.06);
+		background: var(--theme-nav-glass);
 		border-radius: 0.75rem;
 		padding: 0.25rem;
-		border: 1px solid rgba(255, 255, 255, 0.1);
+		border: 1px solid var(--theme-glass-border);
 		/* Force blur effect - override mobile styles */
 		backdrop-filter: blur(10px) saturate(150%) brightness(1.02) !important;
 		-webkit-backdrop-filter: blur(10px) saturate(150%) brightness(1.02) !important;
-		background: linear-gradient(
-			145deg,
-			rgba(255,255,255,0.08) 0%,
-			rgba(255,255,255,0.04) 50%,
-			rgba(255,255,255,0.06) 100%
-		) !important;
 		box-shadow:
 			0 8px 40px rgba(0, 0, 0, 0.25),
 			inset 0 1px 1px rgba(255, 255, 255, 0.25),
@@ -562,7 +544,7 @@
 
 	.tab-btn {
 		padding: 0.5rem 1.25rem;
-		border: none;
+		border: 1px solid transparent;
 		border-radius: 0.6rem;
 		background: transparent;
 		color: var(--theme-text-muted);
@@ -578,8 +560,10 @@
 	}
 
 	.tab-btn.active {
-		background: rgba(245, 158, 11, 0.2);
-		color: #fbbf24;
+		background: color-mix(in srgb, var(--theme-input-bg) 72%, rgba(var(--theme-primary-rgb), 0.26));
+		border-color: color-mix(in srgb, var(--theme-glass-border) 68%, rgba(var(--theme-primary-rgb), 0.48));
+		color: var(--theme-primary);
+		box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.32);
 	}
 
 	/* Tab content / Sections */
@@ -596,8 +580,8 @@
 	.teacher-card {
 		padding: 0.95rem;
 		border-radius: 0.95rem;
-		border: 1px solid rgba(17, 24, 39, 0.12);
-		background: rgba(255, 255, 255, 0.7);
+		border: 1px solid var(--theme-glass-border);
+		background: color-mix(in srgb, var(--theme-surface) 88%, transparent);
 	}
 
 	.teacher-head {
@@ -623,8 +607,8 @@
 	.teacher-progress {
 		padding: 0.25rem 0.6rem;
 		border-radius: 999px;
-		background: rgba(59, 130, 246, 0.14);
-		color: #1d4ed8;
+		background: color-mix(in srgb, var(--theme-input-bg) 68%, rgba(var(--theme-primary-rgb), 0.2));
+		color: var(--theme-primary);
 		font-size: 0.78rem;
 		font-weight: 700;
 		white-space: nowrap;
@@ -649,10 +633,18 @@
 	.teacher-subject-chip {
 		padding: 0.25rem 0.55rem;
 		border-radius: 999px;
-		background: rgba(245, 158, 11, 0.14);
-		color: #92400e;
+		background: color-mix(in srgb, var(--theme-input-bg) 64%, rgba(var(--theme-primary-rgb), 0.16));
+		color: var(--theme-text-primary);
 		font-size: 0.76rem;
 		font-weight: 700;
+	}
+
+	:global([data-color-mode='dark']) .tab-btn.active {
+		box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.12), 0 6px 14px rgba(0, 0, 0, 0.28);
+	}
+
+	:global([data-color-mode='dark']) .teacher-card {
+		box-shadow: 0 10px 24px rgba(0, 0, 0, 0.3), inset 0 1px 0 rgba(255, 255, 255, 0.08);
 	}
 
 	.section {
@@ -923,11 +915,6 @@
 			height: 48px;
 		}
 
-		.hero-icon svg {
-			width: 24px;
-			height: 24px;
-		}
-
 		.title {
 			font-size: 1.75rem;
 		}
@@ -965,7 +952,7 @@
 
 	@media (max-width: 480px) {
 		.admin-dash {
-			padding: 3.5rem 0.75rem 1.25rem;
+			padding: 1rem 0.75rem 1.25rem;
 			gap: 1rem;
 		}
 

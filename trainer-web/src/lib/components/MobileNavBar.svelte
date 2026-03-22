@@ -126,7 +126,7 @@
 				</span>
 				<div>
 					<p class="drawer-brand-title">VQuest</p>
-					<p class="drawer-brand-subtitle">Trainer Console</p>
+					<p class="drawer-brand-subtitle">Console</p>
 				</div>
 			</div>
 			<button class="drawer-close" onclick={closeDrawer} aria-label="Close menu">

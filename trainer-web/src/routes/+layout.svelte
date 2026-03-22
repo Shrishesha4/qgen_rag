@@ -201,7 +201,7 @@
 				</div>
 				<div>
 					<p class="brand-title">VQuest</p>
-					<p class="brand-subtitle">Trainer Console</p>
+					<p class="brand-subtitle">Console</p>
 				</div>
 			</div>
 			<nav class="sidebar-nav">
