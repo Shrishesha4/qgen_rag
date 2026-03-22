@@ -43,7 +43,7 @@
 <style>
 	.theme-picker {
 		position: relative;
-		z-index: 50;
+		z-index: 100;
 	}
 
 	.picker-toggle {
@@ -70,7 +70,7 @@
 	.picker-backdrop {
 		position: fixed;
 		inset: 0;
-		z-index: 40;
+		z-index: 99;
 	}
 
 	.picker-menu {
@@ -87,7 +87,7 @@
 		gap: 0.25rem;
 		box-shadow: 0 8px 32px rgba(0, 0, 0, 0.15);
 		min-width: 9rem;
-		z-index: 50;
+		z-index: 100;
 		transform-origin: bottom right;
 	}
 
@@ -116,5 +116,32 @@
 
 	.option-icon {
 		font-size: 1.1rem;
+	}
+
+	/* On mobile, open menu downward since the picker is in the top nav bar */
+	@media (max-width: 959px) {
+		.picker-menu {
+			bottom: auto;
+			top: calc(100% + 0.5rem);
+			transform-origin: top right;
+			background: rgba(255, 255, 255, 0.92);
+			backdrop-filter: blur(20px) saturate(180%);
+			-webkit-backdrop-filter: blur(20px) saturate(180%);
+			border-color: rgba(0, 0, 0, 0.12);
+			box-shadow: 0 8px 32px rgba(0, 0, 0, 0.18);
+		}
+
+		.picker-option {
+			color: #1c1c1e;
+		}
+
+		.picker-option:hover {
+			background: rgba(0, 0, 0, 0.06);
+		}
+
+		.picker-option.active {
+			background: var(--theme-primary);
+			color: white;
+		}
 	}
 </style>

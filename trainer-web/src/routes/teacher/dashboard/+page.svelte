@@ -294,15 +294,17 @@
 		margin: 0;
 	} */
 
+	@media (max-width: 959px) {
+		.dashboard-topbar {
+			display: none;
+		}
+	}
+
 	@media (max-width: 768px) {
 		.home {
-			padding: 4.5rem 1rem 2rem;
+			padding: 2rem 1rem 2rem;
 			min-height: 100vh;
 			gap: 1.5rem;
-		}
-
-		.dashboard-topbar {
-			right: 1rem;
 		}
 
 		.profile-shortcut {

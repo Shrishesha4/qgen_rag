@@ -158,12 +158,13 @@
 
 </div>
 
-<div class="mobile-search-dock">
+<div class="mobile-floating-dock">
 	<input
 		class="search-input mobile-search-input"
 		bind:value={query}
 		placeholder="Search by subject, code, or description"
 	/>
+	<button class="mobile-add-btn" onclick={goToAddSubject}>+ Add Subject</button>
 </div>
 
 <style>
@@ -239,7 +240,7 @@
 		color: var(--theme-text-muted);
 	}
 
-	.mobile-search-dock {
+	.mobile-floating-dock {
 		display: none;
 	}
 
@@ -407,87 +408,107 @@
 
 	@media (max-width: 920px) {
 		.page {
-			gap: 0.85rem;
-			padding: 1.1rem 0.9rem calc(5.6rem + env(safe-area-inset-bottom));
+			gap: 0.75rem;
+			padding: 0.75rem 1rem calc(7.5rem + env(safe-area-inset-bottom));
+		}
+
+		.eyebrow {
+			display: none;
+		}
+
+		.title {
+			font-size: 1.65rem;
+		}
+
+		.subtitle {
+			font-size: 0.88rem;
+			line-height: 1.45;
 		}
 
 		.toolbar {
-			flex-direction: column;
-		}
-
-		.add-subject-btn {
-			width: 100%;
+			display: none;
 		}
 
 		.subject-grid {
 			grid-template-columns: 1fr;
-			gap: 0.75rem;
+			gap: 0.65rem;
 		}
 
 		.stats-row {
-			order: 2;
+			order: -1;
 			grid-template-columns: repeat(3, minmax(0, 1fr));
-			gap: 0.5rem;
-		}
-
-		.toolbar {
-			order: 3;
-			padding: 0.75rem;
-			gap: 0.55rem;
-		}
-
-		.search-input {
-			padding: 0.72rem 0.8rem;
-			font-size: 0.9rem;
+			gap: 0.45rem;
 		}
 
 		.search-input-desktop {
 			display: none;
 		}
 
-		.mobile-search-dock {
-			display: block;
+		.mobile-floating-dock {
+			display: flex;
 			position: fixed;
 			left: 0;
 			right: 0;
 			bottom: 0;
-			z-index: 90;
-			pointer-events: none;
-			display: flex;
-			justify-content: center;
-			padding: 0.7rem 0.9rem calc(0.7rem + env(safe-area-inset-bottom));
-			background: linear-gradient(to top, rgba(255, 255, 255, 0.97), rgba(255, 255, 255, 0.9));
-			backdrop-filter: blur(8px);
-			border-top: 1px solid rgba(17, 24, 39, 0.12);
+			z-index: 70;
+			flex-direction: column;
+			gap: 0.5rem;
+			padding: 0.65rem 1rem calc(0.65rem + env(safe-area-inset-bottom));
+			background: linear-gradient(
+				135deg,
+				rgba(255, 255, 255, 0.94) 0%,
+				rgba(255, 255, 255, 0.88) 25%,
+				rgba(255, 255, 255, 0.85) 50%,
+				rgba(255, 255, 255, 0.82) 75%,
+				rgba(255, 255, 255, 0.78) 100%
+			);
+			backdrop-filter: blur(32px) saturate(200%) brightness(1.05);
+			-webkit-backdrop-filter: blur(32px) saturate(200%) brightness(1.05);
+			border-top: 1px solid rgba(255, 255, 255, 0.4);
+			box-shadow: 
+				0 -4px 32px rgba(0, 0, 0, 0.08),
+				0 -2px 16px rgba(0, 0, 0, 0.04),
+				inset 0 1px 0 rgba(255, 255, 255, 0.6),
+				0 0 0 1px rgba(255, 255, 255, 0.2);
 		}
 
 		.mobile-search-input {
-			width: min(100%, 640px);
-			pointer-events: auto;
+			width: 100%;
+			padding: 0.7rem 0.85rem;
+			font-size: 0.9rem;
+			border-radius: 0.75rem;
 		}
 
-		/* .refresh-btn {
-			padding: 0.72rem 0.82rem;
-			font-size: 0.85rem;
-		} */
+		.mobile-add-btn {
+			width: 100%;
+			padding: 0.72rem 1rem;
+			border-radius: 999px;
+			border: 1px solid rgba(var(--theme-primary-rgb), 0.45);
+			background: rgba(var(--theme-primary-rgb), 0.18);
+			color: var(--theme-text-primary);
+			font: inherit;
+			font-weight: 800;
+			cursor: pointer;
+			-webkit-tap-highlight-color: transparent;
+		}
 
 		.stat-card {
-			padding: 0.62rem 0.4rem;
-			border-radius: 0.85rem;
+			padding: 0.55rem 0.35rem;
+			border-radius: 0.75rem;
 			gap: 0.06rem;
 		}
 
 		.stat-value {
-			font-size: 1.05rem;
+			font-size: 1rem;
 		}
 
 		.stat-label {
-			font-size: 0.62rem;
+			font-size: 0.6rem;
 		}
 
 		.subject-card {
-			padding: 0.88rem;
-			border-radius: 1rem;
+			padding: 0.9rem 1rem;
+			border-radius: 0.9rem;
 		}
 
 		.card-top {
@@ -495,7 +516,7 @@
 		}
 
 		.subject-name {
-			margin: 0.55rem 0 0.2rem;
+			margin: 0.5rem 0 0.15rem;
 			font-size: 1.05rem;
 		}
 
@@ -512,7 +533,7 @@
 
 		.metrics-grid {
 			grid-template-columns: repeat(3, minmax(0, 1fr));
-			gap: 0.45rem;
+			gap: 0.4rem;
 			margin-top: 0.55rem;
 		}
 
@@ -524,33 +545,28 @@
 			font-size: 0.82rem;
 		}
 
-		.subject-code{
+		.subject-code {
 			font-size: 0.64rem;
 			padding: 0.22rem 0.45rem;
 		}
-		/* .subject-code,
-		.coverage-chip {
-			font-size: 0.64rem;
-			padding: 0.22rem 0.45rem;
-		} */
 	}
 
 	@media (max-width: 420px) {
+		.page {
+			padding: 0.65rem 0.85rem calc(7.5rem + env(safe-area-inset-bottom));
+		}
+
 		.title {
-			font-size: 1.72rem;
+			font-size: 1.6rem;
 		}
 
 		.subtitle {
-			font-size: 0.88rem;
+			font-size: 0.85rem;
 			line-height: 1.45;
 		}
 
-		.search-input {
-			min-width: 0;
-		}
-
 		.metrics-grid {
-			gap: 0.38rem;
+			gap: 0.35rem;
 		}
 	}
 </style>

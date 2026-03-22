@@ -5,6 +5,7 @@
 	import { page } from '$app/stores';
 	import { initTheme } from '$lib/theme';
 	import ThemePicker from '$lib/components/ThemePicker.svelte';
+	import MobileNavBar from '$lib/components/MobileNavBar.svelte';
 	import { warmVettingTaxonomy } from '$lib/api/vetting';
 	import { initAiOps } from '$lib/api/ops';
 	import { session } from '$lib/session';
@@ -178,6 +179,10 @@
 <div class="bg-image-layer" aria-hidden="true"></div>
 <div class="bg-overlay-layer" aria-hidden="true"></div>
 
+{#if showDesktopChrome}
+	<MobileNavBar {navItems} />
+{/if}
+
 {#if showGlobalBack}
 	<button class="global-back-btn" aria-label="Go back" onclick={goBack}>
 		<svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round">
@@ -323,6 +328,43 @@
 		padding-right: env(safe-area-inset-right);
 		padding-bottom: env(safe-area-inset-bottom);
 		padding-left: env(safe-area-inset-left);
+	}
+
+	/* When mobile nav bar is present, push content below it */
+	@media (max-width: 959px) {
+		.app-shell.with-desktop-chrome {
+			padding-top: calc(env(safe-area-inset-top) + 52px);
+		}
+
+		.global-back-btn {
+			display: none;
+		}
+
+		/* Reset desktop wrappers on mobile so position:fixed works in children.
+		   glass-panel's transform: translateZ(0) creates a containing block
+		   that breaks fixed positioning for floating docks, etc. */
+		.desktop-window-wrap,
+		.desktop-window,
+		.desktop-window-content {
+			display: block !important;
+			position: static !important;
+			overflow: visible !important;
+			transform: none !important;
+			backdrop-filter: none !important;
+			-webkit-backdrop-filter: none !important;
+			background: transparent !important;
+			border: none !important;
+			box-shadow: none !important;
+			border-radius: 0 !important;
+			height: auto !important;
+			min-height: 0 !important;
+		}
+
+		/* Also kill the glass-panel pseudo-elements on these wrappers */
+		.desktop-window::before,
+		.desktop-window::after {
+			display: none !important;
+		}
 	}
 
 	.desktop-sidebar {

@@ -2822,9 +2822,10 @@
 
 	@media (max-width: 768px) {
 		.loop-page {
-			padding: 1.25rem 1rem;
+			padding: 1.25rem 1.1rem;
 			padding-bottom: 0.5rem;
 			gap: 1rem;
+			min-height: calc(100dvh - 52px);
 		}
 
 		.floating-stack {
@@ -2912,8 +2913,9 @@
 
 	@media (max-width: 480px) {
 		.loop-page {
-			padding: 1rem 0.75rem 0.35rem;
+			padding: 1rem 0.9rem 0.35rem;
 			gap: 0.85rem;
+			min-height: calc(100dvh - 52px);
 		}
 
 		.floating-stack {

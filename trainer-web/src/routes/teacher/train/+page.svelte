@@ -888,16 +888,141 @@
 	}
 
 	@media (max-width: 860px) {
+		.page {
+			padding: 1rem 1.1rem 2.5rem;
+			gap: 0.85rem;
+		}
+
+		.kicker {
+			display: none;
+		}
+
+		.title {
+			font-size: 1.6rem;
+		}
+
+		.subtitle {
+			font-size: 0.88rem;
+		}
+
 		.summary-grid {
 			grid-template-columns: 1fr;
+			gap: 0.45rem;
+		}
+
+		.resume-strip {
+			padding: 0.85rem;
+			border-radius: 0.9rem;
+		}
+
+		.content-panel {
+			padding: 1rem 0.9rem;
+			border-radius: 0.9rem;
+			min-height: auto;
+		}
+
+		.content-panel h2 {
+			font-size: 1.1rem;
 		}
 
 		.inline-selector-grid {
 			grid-template-columns: 1fr;
+			gap: 0.65rem;
+		}
+
+		.subjects-pane,
+		.topics-pane {
+			padding: 0.55rem;
+			border-radius: 0.85rem;
+		}
+
+		.search-input {
+			padding: 0.65rem 0.75rem;
+			font-size: 0.9rem;
+			border-radius: 0.7rem;
+		}
+
+		.subject-list {
+			max-height: 38vh;
+			gap: 0.35rem;
+			margin-top: 0.5rem;
+		}
+
+		.subject-item {
+			padding: 0.6rem 0.65rem;
+			border-radius: 0.7rem;
+			gap: 0.18rem;
+		}
+
+		.subject-item strong {
+			font-size: 0.92rem;
+			line-height: 1.3;
+		}
+
+		.subject-code,
+		.subject-code-line {
+			font-size: 0.65rem;
+			letter-spacing: 0.04em;
+		}
+
+		.subject-meta {
+			font-size: 0.68rem;
+			color: var(--theme-text-muted);
+			line-height: 1.2;
+		}
+
+		.resume-dot {
+			font-size: 0.62rem;
+			padding: 0.12rem 0.35rem;
+		}
+
+		.topics-head {
+			flex-direction: column;
+			gap: 0.5rem;
+		}
+
+		.topics-head h3 {
+			font-size: 1rem;
+		}
+
+		.primary-btn,
+		.secondary-btn {
+			min-height: 40px;
+			padding: 0.55rem 0.85rem;
+			font-size: 0.88rem;
+		}
+
+		.primary-btn {
+			width: 100%;
+			text-align: center;
 		}
 
 		.topic-grid {
 			grid-template-columns: 1fr;
+			gap: 0.45rem;
+		}
+
+		.topic-card {
+			padding: 0.6rem 0.65rem;
+			border-radius: 0.75rem;
+		}
+
+		.topic-card h4 {
+			font-size: 0.9rem;
+		}
+
+		.topic-card p {
+			font-size: 0.76rem;
+		}
+
+		.actions-row {
+			margin-top: 0.2rem;
+		}
+
+		.error-banner {
+			padding: 0.75rem 0.85rem;
+			border-radius: 0.85rem;
+			font-size: 0.88rem;
 		}
 	}
 </style>
