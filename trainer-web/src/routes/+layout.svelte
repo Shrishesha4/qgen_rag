@@ -48,6 +48,7 @@
 	});
 
 	let pathname = $derived($page.url.pathname);
+	const currentYear = $derived.by(() => new Date().getFullYear());
 	const hideGlobalBackPrefixes = ['/teacher/train/loop'];
 	let showDesktopChrome = $derived.by(() => {
 		if (pathname.includes('/login')) return false;
@@ -105,6 +106,8 @@
 		}
 		return !hideGlobalBackPrefixes.some((prefix) => pathname.startsWith(prefix));
 	});
+
+	let enableVettingLoopScroll = $derived(pathname.startsWith('/teacher/train/loop'));
 
 	function goBack() {
 		if (typeof window !== 'undefined' && window.history.length > 1) {
@@ -195,7 +198,7 @@
 	</button>
 {/if}
 
-<div class="app-shell" class:with-desktop-chrome={showDesktopChrome} class:profile-window-scroll={pathname.endsWith('/profile')}>
+<div class="app-shell" class:with-desktop-chrome={showDesktopChrome} class:profile-window-scroll={pathname.endsWith('/profile')} class:vetting-loop-scroll={enableVettingLoopScroll}>
 	{#if showDesktopChrome}
 		<aside class="desktop-sidebar glass-panel">
 			<div class="sidebar-brand">
@@ -223,6 +226,12 @@
 				<div class="theme-row">
 					<span class="theme-label">Theme</span>
 					<ThemePicker />
+				</div>
+				<div class="copyright-row">
+					<p class="copyright-text">
+						{currentYear} © Viana Soft Private Limited
+					</p>
+					<a href="#" class="privacy-link">Privacy Policy</a>
 				</div>
 			</div>
 		</aside>
@@ -381,10 +390,10 @@
 		.app-shell.with-desktop-chrome {
 			display: grid;
 			grid-template-columns: 300px minmax(0, 1fr);
-			gap: 1.5rem;
+			gap: 2.5rem;
 			padding: calc(env(safe-area-inset-top) + 1.5rem) 1.5rem 1.5rem;
 			height: 100dvh;
-			max-width: 1640px;
+			max-width: 1500px;
 			margin: 0 auto;
 		}
 
@@ -524,6 +533,34 @@
 			color: var(--theme-text-secondary);
 		}
 
+		.copyright-row {
+			display: flex;
+			flex-direction: column;
+			gap: 0.5rem;
+			padding-top: 0.5rem;
+			border-top: 1px solid rgba(255, 255, 255, 0.2);
+			margin-top: 0.5rem;
+		}
+
+		.copyright-text {
+			margin: 0;
+			font-size: 0.65rem;
+			color: var(--theme-text-muted);
+			line-height: 1.4;
+		}
+
+		.privacy-link {
+			font-size: 0.65rem;
+			color: var(--theme-primary);
+			text-decoration: none;
+			transition: color 0.2s ease;
+		}
+
+		.privacy-link:hover {
+			color: color-mix(in srgb, var(--theme-primary) 120%, white);
+			text-decoration: underline;
+		}
+
 		.desktop-window-wrap {
 			min-width: 0;
 			display: flex;
@@ -546,6 +583,10 @@
 		}
 
 		.app-shell.profile-window-scroll .desktop-window-content {
+			overflow: auto;
+		}
+
+		.app-shell.vetting-loop-scroll .desktop-window-content {
 			overflow: auto;
 		}
 

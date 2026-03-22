@@ -21,7 +21,7 @@
 		aria-label="Change theme"
 		title="Change theme"
 	>
-		{themes[$currentThemeName].icon}
+		<span class="toggle-icon" style="background-image: url('{themes[$currentThemeName].bgImage}')"></span>
 	</button>
 
 	{#if open}
@@ -60,7 +60,7 @@
 					onclick={() => select(name)}
 					role="menuitem"
 				>
-					<span class="option-icon">{themes[name].icon}</span>
+					<span class="option-icon" style="background-image: url('{themes[name].bgImage}')"></span>
 					<span class="option-label">{themes[name].label}</span>
 				</button>
 			{/each}
@@ -95,6 +95,17 @@
 		box-shadow: 0 4px 16px var(--theme-glow);
 	}
 
+	.toggle-icon {
+		width: 100%;
+		height: 100%;
+		border-radius: 50%;
+		background-size: cover;
+		background-position: center;
+		display: inline-flex;
+		align-items: center;
+		justify-content: center;
+	}
+
 	.picker-backdrop {
 		position: fixed;
 		inset: 0;
@@ -119,6 +130,12 @@
 		transform-origin: bottom right;
 		backdrop-filter: blur(14px) saturate(130%);
 		-webkit-backdrop-filter: blur(14px) saturate(130%);
+	}
+
+	:global([data-color-mode='light']) .picker-menu {
+		backdrop-filter: blur(20px) saturate(140%);
+		-webkit-backdrop-filter: blur(20px) saturate(140%);
+		background: rgba(255, 255, 255, 0.65);
 	}
 
 	.mode-section {
@@ -196,6 +213,16 @@
 
 	.option-icon {
 		font-size: 1.1rem;
+		width: 1.8rem;
+		height: 1.8rem;
+		border-radius: 50%;
+		background-size: cover;
+		background-position: center;
+		border: 2px solid var(--theme-glass-border);
+		display: inline-flex;
+		align-items: center;
+		justify-content: center;
+		overflow: hidden;
 	}
 
 	/* On mobile, open menu downward since the picker is in the top nav bar */

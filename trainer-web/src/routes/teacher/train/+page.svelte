@@ -942,8 +942,8 @@
 		border-right: none;
 	}
 
-	.training-table tr:last-child td {
-		border-bottom: none;
+	.training-table tbody tr:last-child td {
+		border-bottom: 1px solid var(--theme-glass-border);
 	}
 
 	.subject-row td {

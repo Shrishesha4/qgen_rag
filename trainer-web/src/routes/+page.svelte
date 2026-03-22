@@ -1,24 +1,15 @@
 <script lang="ts">
 	import { onMount } from 'svelte';
-	import { goto } from '$app/navigation';
-	import { session } from '$lib/session';
 
 	let introReady = $state(false);
 
 	onMount(() => {
-		const unsub = session.subscribe((s) => {
-			if (s) {
-				goto(s.user.role === 'admin' ? '/admin/dashboard' : s.user.role === 'vetter' ? '/vetter/dashboard' : '/teacher/train');
-			}
-		});
-
 		const rafId = requestAnimationFrame(() => {
 			introReady = true;
 		});
 
 		return () => {
 			cancelAnimationFrame(rafId);
-			unsub();
 		};
 	});
 </script>

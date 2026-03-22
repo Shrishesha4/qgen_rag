@@ -15,6 +15,7 @@
 
 	let drawerOpen = $state(false);
 	let pathname = $derived($page.url.pathname);
+	const currentYear = $derived.by(() => new Date().getFullYear());
 
 	let pageTitle = $derived.by(() => {
 		// Teacher routes
@@ -26,7 +27,7 @@
 		if (pathname === '/teacher/train/loop') return 'Vetting';
 		if (pathname.startsWith('/teacher/train/existing')) return 'Train Topic';
 		if (pathname.startsWith('/teacher/train/new')) return 'New Topic';
-		if (pathname === '/teacher/train') return 'Training';
+		if (pathname === '/teacher/train') return 'Vetting';
 		if (pathname === '/teacher/verify') return 'Verify';
 		if (pathname === '/teacher/profile') return 'Profile';
 		if (pathname === '/teacher/ops') return 'Operations';
@@ -159,6 +160,12 @@
 				<span class="drawer-link-icon">↪</span>
 				<span>Sign Out</span>
 			</button>
+			<div class="drawer-copyright">
+				<p class="drawer-copyright-text">
+					{currentYear} © Viana Soft Private Limited
+				</p>
+				<a href="#" class="drawer-privacy-link">Privacy Policy</a>
+			</div>
 		</div>
 	</aside>
 {/if}
@@ -410,6 +417,33 @@
 	.drawer-signout:active {
 		background: rgba(239, 68, 68, 0.2);
 		transform: scale(0.99);
+	}
+
+	.drawer-copyright {
+		display: flex;
+		flex-direction: column;
+		gap: 0.55rem;
+		padding: 0.65rem 0.75rem;
+		border-top: 0.5px solid rgba(255, 255, 255, 0.15);
+		margin-top: 0.5rem;
+	}
+
+	.drawer-copyright-text {
+		margin: 0;
+		font-size: 0.65rem;
+		color: var(--theme-text-muted);
+		line-height: 1.4;
+	}
+
+	.drawer-privacy-link {
+		font-size: 0.65rem;
+		color: var(--theme-primary);
+		text-decoration: none;
+		transition: color 0.2s ease;
+	}
+
+	.drawer-privacy-link:active {
+		opacity: 0.7;
 	}
 
 	.drawer-link {
