@@ -8,12 +8,12 @@
 </script>
 
 <svelte:head>
-	<title>Training - Teacher Console</title>
+	<title>Vetting - Teacher Console</title>
 </svelte:head>
 
 <div class="redirect-state">
 	<div class="spinner"></div>
-	<p>Redirecting to Training...</p>
+	<p>Redirecting to Vetting...</p>
 </div>
 
 <style>

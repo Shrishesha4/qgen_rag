@@ -57,8 +57,9 @@
 		if (pathname.startsWith('/teacher')) {
 			return [
 				{ href: '/teacher/subjects', label: 'Subjects', icon: '🧾' },
+				{ href: '/teacher/stats', label: 'Stats', icon: '📈' },
 				// { href: '/teacher/train', label: 'Train Topic', icon: '📚' },
-				{ href: '/teacher/train', label: 'Training', icon: '🪟' },
+				{ href: '/teacher/train', label: 'Vetting', icon: '🪟' },
 				// { href: '/teacher/verify', label: 'Verify', icon: '🎙️' },
 				{ href: '/teacher/profile', label: 'Profile', icon: '👤' }
 			];
@@ -194,7 +195,7 @@
 	</button>
 {/if}
 
-<div class="app-shell" class:with-desktop-chrome={showDesktopChrome}>
+<div class="app-shell" class:with-desktop-chrome={showDesktopChrome} class:profile-window-scroll={pathname.endsWith('/profile')}>
 	{#if showDesktopChrome}
 		<aside class="desktop-sidebar glass-panel">
 			<div class="sidebar-brand">
@@ -379,11 +380,11 @@
 	@media (min-width: 960px) {
 		.app-shell.with-desktop-chrome {
 			display: grid;
-			grid-template-columns: 280px minmax(0, 1fr);
+			grid-template-columns: 300px minmax(0, 1fr);
 			gap: 1.5rem;
 			padding: calc(env(safe-area-inset-top) + 1.5rem) 1.5rem 1.5rem;
 			height: 100dvh;
-			max-width: 1400px;
+			max-width: 1640px;
 			margin: 0 auto;
 		}
 
@@ -541,6 +542,10 @@
 		.desktop-window-content {
 			flex: 1;
 			min-height: 0;
+			overflow: hidden;
+		}
+
+		.app-shell.profile-window-scroll .desktop-window-content {
 			overflow: auto;
 		}
 

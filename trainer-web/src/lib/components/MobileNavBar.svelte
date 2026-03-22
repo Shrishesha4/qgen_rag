@@ -22,6 +22,7 @@
 		if (pathname === '/teacher/subjects/new') return 'New Subject';
 		if (pathname.startsWith('/teacher/subjects/')) return 'Subject';
 		if (pathname === '/teacher/subjects') return 'Subjects';
+		if (pathname === '/teacher/stats') return 'Stats';
 		if (pathname === '/teacher/train/loop') return 'Vetting';
 		if (pathname.startsWith('/teacher/train/existing')) return 'Train Topic';
 		if (pathname.startsWith('/teacher/train/new')) return 'New Topic';
@@ -47,6 +48,7 @@
 
 	const rootPages = new Set([
 		'/teacher', '/teacher/dashboard', '/teacher/subjects', '/teacher/train',
+		'/teacher/stats',
 		'/teacher/profile', '/teacher/ops', '/teacher/verify', '/teacher/ab-test',
 		'/vetter', '/vetter/dashboard', '/vetter/subjects', '/vetter/profile',
 		'/admin/dashboard', '/admin/subjects', '/admin/teachers', '/admin/vetters',

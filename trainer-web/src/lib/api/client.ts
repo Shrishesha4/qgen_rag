@@ -44,7 +44,7 @@ export async function apiFetch<T>(
 	const res = await fetch(apiUrl(path), { ...options, headers });
 
 	if (res.status === 401 && session?.refresh_token) {
-		const refreshed = await refreshToken(session.refresh_token);
+		const refreshed = await refreshTokenWithDelay(session.refresh_token, 2000);
 		if (refreshed) {
 			headers.set('Authorization', `Bearer ${refreshed.access_token}`);
 			const retry = await fetch(apiUrl(path), { ...options, headers });
@@ -91,6 +91,32 @@ export function storeSession(session: StoredSession) {
 
 export function clearSession() {
 	localStorage.removeItem(SESSION_KEY);
+}
+
+let activeRefreshPromise: Promise<{ access_token: string; refresh_token: string } | null> | null = null;
+
+function sleep(ms: number): Promise<void> {
+	return new Promise((resolve) => setTimeout(resolve, ms));
+}
+
+async function refreshTokenWithDelay(
+	token: string,
+	delayMs: number
+): Promise<{ access_token: string; refresh_token: string } | null> {
+	if (!activeRefreshPromise) {
+		activeRefreshPromise = (async () => {
+			if (delayMs > 0) {
+				await sleep(delayMs);
+			}
+			return refreshToken(token);
+		})();
+	}
+
+	try {
+		return await activeRefreshPromise;
+	} finally {
+		activeRefreshPromise = null;
+	}
 }
 
 async function refreshToken(

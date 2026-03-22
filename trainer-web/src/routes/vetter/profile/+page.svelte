@@ -145,7 +145,14 @@
 			</div>
 		</div>
 
-		<form class="settings-form" onsubmit={(event) => {
+		<div class="profile-actions">
+			<button class="secondary-action glass-panel" onclick={() => goto('/vetter/dashboard')}>Back to Dashboard</button>
+			<button class="primary-action" onclick={handleLogout}>Sign Out</button>
+		</div>
+	</div>
+
+	<div class="settings-stack animate-fade-in">
+		<form class="settings-form glass-panel" onsubmit={(event) => {
 			event.preventDefault();
 			handleProfileUpdate();
 		}}>
@@ -169,7 +176,7 @@
 			</button>
 		</form>
 
-		<form class="settings-form" onsubmit={(event) => {
+		<form class="settings-form glass-panel" onsubmit={(event) => {
 			event.preventDefault();
 			handlePasswordUpdate();
 		}}>
@@ -205,11 +212,6 @@
 				{passwordLoading ? 'Updating...' : 'Update Password'}
 			</button>
 		</form>
-
-		<div class="profile-actions">
-			<button class="secondary-action glass-panel" onclick={() => goto('/vetter/dashboard')}>Back to Dashboard</button>
-			<button class="primary-action" onclick={handleLogout}>Sign Out</button>
-		</div>
 	</div>
 </div>
 
@@ -221,10 +223,17 @@
 		flex-direction: column;
 		align-items: center;
 		justify-content: flex-start;
+		gap: 1.25rem;
+	}
+
+	.settings-stack {
+		width: min(100%, 760px);
+		display: grid;
+		grid-template-columns: repeat(2, minmax(0, 1fr));
+		gap: 0.9rem;
 	}
 
 	.profile-card {
-		margin-top: 15%;
 		width: min(100%, 760px);
 		padding: 2rem 1.5rem;
 		border-radius: 1.5rem;
@@ -452,6 +461,12 @@
 	@media (max-width: 480px) {
 		.profile-page {
 			padding: 1rem 0.75rem;
+			gap: 0.85rem;
+		}
+
+		.settings-stack {
+			grid-template-columns: 1fr;
+			gap: 0.6rem;
 		}
 
 		.profile-card {

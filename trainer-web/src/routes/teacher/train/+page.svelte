@@ -1,5 +1,6 @@
 <script lang="ts">
 	import { onDestroy, onMount } from 'svelte';
+	import { slide } from 'svelte/transition';
 	import { goto } from '$app/navigation';
 	import { session } from '$lib/session';
 	import { getSubject, listSubjects, type SubjectResponse, type TopicResponse } from '$lib/api/subjects';
@@ -18,11 +19,12 @@
 	let subjects = $state<SubjectResponse[]>([]);
 	let topicsMap = $state<Record<string, TopicResponse[]>>({});
 	let loadingTopics = $state('');
-	let selectedSubjectId = $state('');
+	let expandedSubjectId = $state('');
 	let searchQuery = $state('');
 	let progressBySubject = $state<Record<string, TeacherVettingProgressSnapshot>>({});
 	let pendingByTopic = $state<Record<string, number>>({});
 	let loadingPendingCounts = $state(false);
+
 	type SubjectGenerationState = {
 		in_progress: boolean;
 		status: string;
@@ -30,7 +32,7 @@
 		current_question: number;
 		total_questions?: number | null;
 	};
-	let subjectGenerationStateBySubject = $state<Record<string, SubjectGenerationState>>({});
+
 	type TopicGenerationState = {
 		subjectId: string;
 		status: string;
@@ -39,6 +41,8 @@
 		total: number;
 		stalePolls: number;
 	};
+
+	let subjectGenerationStateBySubject = $state<Record<string, SubjectGenerationState>>({});
 	let topicGenerationStateByTopic = $state<Record<string, TopicGenerationState>>({});
 	let generationPollTimer: ReturnType<typeof setInterval> | null = null;
 	let subjectGenerationPollTimer: ReturnType<typeof setInterval> | null = null;
@@ -115,10 +119,6 @@
 			subjects = res.subjects;
 			await refreshSubjectGenerationStatuses(res.subjects);
 			ensureSubjectGenerationPolling();
-			if (!selectedSubjectId && res.subjects.length > 0) {
-				selectedSubjectId = res.subjects[0].id;
-				await ensureTopicsLoaded(selectedSubjectId);
-			}
 		} catch (e: unknown) {
 			error = e instanceof Error ? e.message : 'Failed to load subjects';
 		} finally {
@@ -212,8 +212,12 @@
 		}
 	}
 
-	async function selectSubject(subjectId: string) {
-		selectedSubjectId = subjectId;
+	async function toggleSubject(subjectId: string) {
+		if (expandedSubjectId === subjectId) {
+			expandedSubjectId = '';
+			return;
+		}
+		expandedSubjectId = subjectId;
 		await ensureTopicsLoaded(subjectId);
 	}
 
@@ -302,7 +306,10 @@
 		if (activeEntries.length === 0) return;
 
 		const subjectIds = [...new Set(activeEntries.map(([, state]) => state.subjectId))];
-		let statusesBySubject: Record<string, { in_progress: boolean; status: string; progress: number; current_question: number; total_questions?: number | null }> = {};
+		let statusesBySubject: Record<
+			string,
+			{ in_progress: boolean; status: string; progress: number; current_question: number; total_questions?: number | null }
+		> = {};
 		try {
 			const statusRes = await getBackgroundGenerationStatuses(subjectIds);
 			statusesBySubject = statusRes.statuses;
@@ -387,19 +394,13 @@
 		});
 	});
 
-	const selectedSubject = $derived.by(() => {
-		if (!selectedSubjectId) return null;
-		return (
-			filteredSubjects.find((subject) => subject.id === selectedSubjectId) ||
-			subjects.find((subject) => subject.id === selectedSubjectId) ||
-			null
-		);
-	});
+	function isExpanded(subjectId: string): boolean {
+		return expandedSubjectId === subjectId;
+	}
 
-	const selectedTopics = $derived.by(() => {
-		if (!selectedSubjectId) return [] as TopicResponse[];
-		return topicsMap[selectedSubjectId] || [];
-	});
+	function getSubjectGenerationState(subjectId: string): SubjectGenerationState | null {
+		return subjectGenerationStateBySubject[subjectId] ?? null;
+	}
 
 	function getTopicPendingCount(topicId: string): number {
 		return pendingByTopic[topicId] ?? 0;
@@ -407,10 +408,6 @@
 
 	function getTopicGenerationState(topicId: string): TopicGenerationState | null {
 		return topicGenerationStateByTopic[topicId] ?? null;
-	}
-
-	function getSubjectGenerationState(subjectId: string): SubjectGenerationState | null {
-		return subjectGenerationStateBySubject[subjectId] ?? null;
 	}
 
 	function getTopicGenerationLabel(topicId: string): string {
@@ -436,17 +433,22 @@
 		if (state.progress > 0) return `Gen ${state.progress}%`;
 		return 'Generating...';
 	}
+
+	function estimateTopicApproved(topic: TopicResponse): number {
+		const pending = getTopicPendingCount(topic.id);
+		return Math.max(0, topic.total_questions - pending);
+	}
 </script>
 
 <svelte:head>
-	<title>Training - Teacher Console</title>
+	<title>Vetting - Teacher Console</title>
 </svelte:head>
 
 <div class="page">
 	<div class="hero">
 		<p class="kicker">Teacher Console</p>
-		<h1 class="title font-serif">Training</h1>
-		<p class="subtitle">Resume progress quickly, then continue with subject/topic vetting below.</p>
+		<h1 class="title font-serif">Vetting</h1>
+		<p class="subtitle">Pick a subject, expand rows, and start vetting directly from the table.</p>
 	</div>
 
 	{#if loading}
@@ -486,85 +488,137 @@
 		{/if}
 
 		<section class="content-panel glass-panel">
-			<h2>Start New Vetting</h2>
-			<p class="muted">Pick a subject and topic below, then begin vetting immediately in this page.</p>
-			<div class="inline-selector-grid">
-				<div class="subjects-pane">
-					<p class="pane-title">Subjects</p>
-					<input class="search-input" bind:value={searchQuery} placeholder="Search subjects or topics" />
-					<div class="subject-list">
-						{#each filteredSubjects as subject}
-							<button
-								class="subject-item"
-								class:active={subject.id === selectedSubjectId}
-								onclick={() => selectSubject(subject.id)}
-							>
-								<div class="subject-item-head">
-									<span class="subject-code">{subject.code}</span>
-									{#if progressBySubject[subject.id] && !isProgressComplete(progressBySubject[subject.id])}
-										<span class="resume-dot">Resume</span>
-									{/if}
-								</div>
-								<strong>{subject.name}</strong>
-								<span class="subject-meta">{subject.total_questions} questions • {subject.total_topics} topics</span>
-							</button>
-						{/each}
-					</div>
-				</div>
+			<div class="panel-head">
+				<h2>Start New Vetting</h2>
+				<input class="search-input" bind:value={searchQuery} placeholder="Search subjects or topics" />
+			</div>
 
-				<div class="topics-pane">
-					<p class="pane-title">Topics</p>
-					{#if selectedSubject}
-						{@const selectedSubjectGenerationState = getSubjectGenerationState(selectedSubject.id)}
-						<div class="topics-head">
-							<div>
-								<p class="subject-code-line">{selectedSubject.code}</p>
-								<h3>{selectedSubject.name}</h3>
-								{#if selectedSubjectGenerationState?.in_progress}
-									<p class="subject-generating-note">Background generation in progress</p>
-								{/if}
-							</div>
-							<button class="primary-btn" onclick={() => startSubjectVetting(selectedSubject.id)} disabled={loadingPendingCounts}>Start Subject Vetting</button>
-						</div>
-
-						{#if loadingTopics === selectedSubject.id}
-							<div class="loading-inline"><div class="spinner-sm"></div><span>Loading topics...</span></div>
-						{:else if selectedTopics.length}
-							<div class="topic-grid">
-								{#each selectedTopics as topic}
-									{@const pendingCount = getTopicPendingCount(topic.id)}
-									{@const generationState = getTopicGenerationState(topic.id)}
-									{@const subjectGenerationState = getSubjectGenerationState(selectedSubject.id)}
-									{@const canStart = pendingCount > 0}
-									<div class="topic-card">
-										<h4>{topic.name}</h4>
-										{#if topic.syllabus_content}
-											<p>{topic.syllabus_content.slice(0, 120)}{topic.syllabus_content.length > 120 ? '...' : ''}</p>
-										{/if}
-										<div class="topic-actions">
-											<span>{pendingCount} Qs</span>
-											{#if generationState}
-												<button class="secondary-btn" disabled>{getTopicGenerationLabel(topic.id)}</button>
-											{:else if subjectGenerationState?.in_progress && pendingCount === 0}
-												<button class="secondary-btn" disabled>{getSubjectGenerationLabel(selectedSubject.id)}</button>
-											{:else if canStart}
-												<button class="secondary-btn" onclick={() => startTopicVetting(selectedSubject.id, topic.id)}>Start</button>
-											{:else}
-												<button class="secondary-btn" onclick={() => generateTopicBatch(selectedSubject.id, topic.id)}>
-													Generate
-												</button>
+			<div class="table-shell">
+				<table class="training-table">
+					<colgroup>
+						<col class="name-col" />
+						<col class="num-col" />
+						<col class="num-col" />
+						<col class="num-col" />
+						<col class="num-col" />
+						<col class="action-col" />
+					</colgroup>
+					<thead>
+						<tr>
+							<th>Name</th>
+							<th>Questions</th>
+							<th>Pending</th>
+							<th>Approved</th>
+							<th>Rejected</th>
+							<th>Actions</th>
+						</tr>
+					</thead>
+					<tbody>
+						{#if filteredSubjects.length === 0}
+							<tr>
+								<td colspan="6" class="empty-cell">No matching subjects.</td>
+							</tr>
+						{:else}
+							{#each filteredSubjects as subject}
+								<tr class="subject-row" role="button" tabindex="0" onclick={() => toggleSubject(subject.id)} onkeydown={(event) => {
+									if (event.key === 'Enter' || event.key === ' ') {
+										event.preventDefault();
+										void toggleSubject(subject.id);
+									}
+								}}>
+									<td>
+										<div class="row-trigger">
+											<button class="expand-btn" type="button" aria-label="Toggle topics">
+												<span class="chevron" class:open={isExpanded(subject.id)}>▸</span>
+											</button>
+											<div class="name-stack">
+												<div class="name-header">
+													<span class="code-chip">{subject.code}</span>
+													<strong>{subject.name}</strong>
+												</div>
+											</div>
+										</div>
+									</td>
+									<td>{subject.total_questions}</td>
+									<td>{subject.total_pending ?? 0}</td>
+									<td class="green-text">{subject.total_approved ?? 0}</td>
+									<td class="red-text">{subject.total_rejected ?? 0}</td>
+									<td class="action-cell">
+										<div class="inline-actions">
+											<button class="table-btn primary" onclick={(event) => {
+												event.stopPropagation();
+												startSubjectVetting(subject.id);
+											}} disabled={loadingPendingCounts}>
+												Start Vetting
+											</button>
+											{#if progressBySubject[subject.id] && !isProgressComplete(progressBySubject[subject.id])}
+												<button class="table-btn" onclick={(event) => {
+													event.stopPropagation();
+													resumeLastProgress();
+												}}>Resume</button>
+											{/if}
+											{#if getSubjectGenerationState(subject.id)?.in_progress}
+												<span class="status-text">{getSubjectGenerationLabel(subject.id)}</span>
 											{/if}
 										</div>
-									</div>
-								{/each}
-							</div>
-						{:else}
-							<p class="muted">No topics found for this subject.</p>
+									</td>
+								</tr>
+
+								{#if isExpanded(subject.id)}
+									{#if loadingTopics === subject.id}
+											<tr class="topic-row" transition:slide={{ duration: 180 }}>
+												<td colspan="6" class="topic-loading"><span class="spinner-sm"></span> Loading topics...</td>
+										</tr>
+									{:else if (topicsMap[subject.id] || []).length === 0}
+											<tr class="topic-row" transition:slide={{ duration: 180 }}>
+												<td colspan="6" class="empty-cell">No topics found for this subject.</td>
+										</tr>
+									{:else}
+										{#each topicsMap[subject.id] || [] as topic}
+											{@const pendingCount = getTopicPendingCount(topic.id)}
+											{@const generationState = getTopicGenerationState(topic.id)}
+											{@const subjectGenerationState = getSubjectGenerationState(subject.id)}
+											{@const canStart = pendingCount > 0}
+												<tr class="topic-row" transition:slide={{ duration: 180 }}>
+												<td>
+													<div class="topic-name-stack">
+														<div class="topic-title-line">
+															<span class="topic-branch">↳</span>
+															<strong>{topic.name}</strong>
+														</div>
+													</div>
+												</td>
+												<td>{topic.total_questions}</td>
+												<td>{pendingCount}</td>
+												<td class="green-text">{estimateTopicApproved(topic)}</td>
+												<td class="red-text">0</td>
+													<td class="action-cell">
+														<div class="inline-actions">
+															{#if generationState}
+																<button class="table-btn" disabled>{getTopicGenerationLabel(topic.id)}</button>
+															{:else if subjectGenerationState?.in_progress && pendingCount === 0}
+																<button class="table-btn" disabled>{getSubjectGenerationLabel(subject.id)}</button>
+															{:else if canStart}
+																<button class="table-btn primary" onclick={(event) => {
+																	event.stopPropagation();
+																	startTopicVetting(subject.id, topic.id);
+																}}>Start Vetting</button>
+															{:else}
+																<button class="table-btn" onclick={(event) => {
+																	event.stopPropagation();
+																	generateTopicBatch(subject.id, topic.id);
+																}}>Generate</button>
+															{/if}
+														</div>
+													</td>
+											</tr>
+										{/each}
+									{/if}
+								{/if}
+							{/each}
 						{/if}
-					{:else}
-						<p class="muted">Select a subject to begin.</p>
-					{/if}
-				</div>
+					</tbody>
+				</table>
 			</div>
 		</section>
 	{/if}
@@ -572,12 +626,15 @@
 
 <style>
 	.page {
-		max-width: 980px;
+		max-width: 1120px;
 		margin: 0 auto;
 		padding: 2rem 1.25rem 2.5rem;
 		display: flex;
 		flex-direction: column;
 		gap: 1rem;
+		height: 100%;
+		min-height: 0;
+		overflow: hidden;
 	}
 
 	.hero {
@@ -625,21 +682,6 @@
 		gap: 0.55rem;
 	}
 
-	.content-panel {
-		padding: 1.2rem;
-		border-radius: 1.1rem;
-		display: flex;
-		flex-direction: column;
-		gap: 0.65rem;
-		min-height: 58vh;
-	}
-
-	.content-panel h2 {
-		margin: 0;
-		font-size: 1.2rem;
-		color: var(--theme-text-primary);
-	}
-
 	.summary-grid {
 		display: grid;
 		grid-template-columns: repeat(3, minmax(0, 1fr));
@@ -669,34 +711,6 @@
 		color: var(--theme-text-primary);
 	}
 
-	.muted {
-		margin: 0;
-		color: var(--theme-text-muted);
-	}
-
-	.primary-btn,
-	.secondary-btn {
-		margin-top: 0;
-		min-height: 44px;
-		padding: 0.65rem 1rem;
-		border-radius: 999px;
-		border: 1px solid rgba(var(--theme-primary-rgb), 0.45);
-		font: inherit;
-		font-weight: 800;
-		cursor: pointer;
-	}
-
-	.primary-btn {
-		background: rgba(var(--theme-primary-rgb), 0.22);
-		color: var(--theme-text-primary);
-		white-space: nowrap;
-	}
-
-	.secondary-btn {
-		background: rgba(var(--theme-primary-rgb), 0.12);
-		color: var(--theme-primary);
-	}
-
 	.actions-row {
 		display: flex;
 		gap: 0.55rem;
@@ -704,36 +718,31 @@
 		margin-top: 0.35rem;
 	}
 
-	.inline-selector-grid {
-		display: grid;
-		grid-template-columns: 300px minmax(0, 1fr);
-		gap: 0.75rem;
-		margin-top: 0.35rem;
-		align-items: stretch;
-	}
-
-	.subjects-pane,
-	.topics-pane {
-		border: 1px solid var(--theme-glass-border);
-		background: var(--theme-glass-bg);
-		border-radius: 0.95rem;
-		padding: 0.65rem;
+	.content-panel {
+		padding: 1rem;
+		border-radius: 1.1rem;
 		display: flex;
 		flex-direction: column;
+		gap: 0.75rem;
+		flex: 1;
 		min-height: 0;
 	}
 
-	.pane-title {
-		margin: 0 0 0.5rem;
-		font-size: 0.72rem;
-		font-weight: 800;
-		letter-spacing: 0.08em;
-		text-transform: uppercase;
-		color: var(--theme-text-muted);
+	.panel-head {
+		display: flex;
+		justify-content: space-between;
+		align-items: center;
+		gap: 0.8rem;
+	}
+
+	.panel-head h2 {
+		margin: 0;
+		font-size: 1.18rem;
+		color: var(--theme-text-primary);
 	}
 
 	.search-input {
-		width: 100%;
+		width: min(360px, 100%);
 		padding: 0.7rem 0.8rem;
 		border-radius: 0.75rem;
 		border: 1px solid var(--theme-glass-border);
@@ -742,156 +751,254 @@
 		font: inherit;
 	}
 
-	.subject-list {
-		display: flex;
-		flex-direction: column;
-		gap: 0.45rem;
+	.table-shell {
+		border: 1px solid var(--theme-glass-border);
+		background: var(--theme-glass-bg);
+		border-radius: 0.95rem;
+		overflow: auto;
 		flex: 1;
 		min-height: 0;
-		max-height: none;
-		overflow: auto;
-		margin-top: 0.6rem;
-		overscroll-behavior: contain;
 	}
 
-	.subject-item {
+	.training-table {
 		width: 100%;
-		padding: 0.62rem;
+		table-layout: fixed;
+		border-collapse: collapse;
+	}
+
+	.name-col {
+		width: 40%;
+	}
+
+	.num-col {
+		width: 11%;
+	}
+
+	.action-col {
+		width: 16%;
+	}
+
+	.training-table th {
+		padding: 0.72rem 0.62rem;
+		font-size: 0.72rem;
+		font-weight: 800;
+		letter-spacing: 0.07em;
+		text-transform: uppercase;
+		color: var(--theme-text-muted);
 		text-align: left;
-		border-radius: 0.8rem;
-		border: 1px solid var(--theme-glass-border);
-		background: var(--theme-nav-glass);
+		border-bottom: 1px solid var(--theme-glass-border);
+		border-right: 1px solid color-mix(in srgb, var(--theme-glass-border) 85%, transparent);
+		background: rgba(255, 255, 255, 0.38);
+		position: sticky;
+		top: 0;
+		z-index: 2;
+	}
+
+	.training-table th:last-child {
+		border-right: none;
+	}
+
+	.training-table td {
+		padding: 0.68rem 0.62rem;
+		border-bottom: 1px solid var(--theme-glass-border);
+		border-right: 1px solid color-mix(in srgb, var(--theme-glass-border) 75%, transparent);
+		color: var(--theme-text-primary);
+		vertical-align: top;
+		word-break: break-word;
+	}
+
+	.training-table th:nth-child(n + 2),
+	.training-table td:nth-child(n + 2) {
+		text-align: center;
+	}
+
+	.training-table td:last-child {
+		border-right: none;
+	}
+
+	.training-table tr:last-child td {
+		border-bottom: none;
+	}
+
+	.subject-row td {
+		background: rgba(255, 255, 255, 0.04);
+	}
+
+	.subject-row {
 		cursor: pointer;
+	}
+
+	.row-trigger {
 		display: flex;
-		flex-direction: column;
-		gap: 0.22rem;
-		min-height: fit-content;
+		align-items: flex-start;
+		gap: 0.55rem;
+		width: 100%;
 	}
 
-	.subject-item.active {
-		border-color: rgba(var(--theme-primary-rgb), 0.5);
-		background: rgba(var(--theme-primary-rgb), 0.16);
-	}
-
-	.subject-item-head {
-		display: flex;
-		align-items: center;
-		justify-content: space-between;
-	}
-
-	.subject-code,
-	.subject-code-line {
-		margin: 0;
+	.expand-btn {
+		padding: 0;
+		border: none;
+		background: transparent;
+		cursor: inherit;
 		display: inline-flex;
 		align-items: center;
 		justify-content: center;
-		width: fit-content;
-		font-size: 0.72rem;
-		text-transform: uppercase;
-		letter-spacing: 0.06em;
-		font-weight: 700;
-		padding: 0.22rem 0.55rem;
-		border-radius: 999px;
-		line-height: 1;
-		background: rgba(var(--theme-primary-rgb), 0.16);
-		color: var(--theme-primary);
+		width: 1rem;
+		height: 1.2rem;
+		pointer-events: none;
 	}
 
-	.subject-meta {
-		font-size: 0.74rem;
+	.chevron {
+		display: inline-flex;
+		width: 1rem;
+		margin-top: 0.18rem;
 		color: var(--theme-text-muted);
-		line-height: 1.25;
+		transition: transform 0.2s ease;
 	}
 
-	.resume-dot {
-		font-size: 0.68rem;
-		font-weight: 700;
-		padding: 0.15rem 0.42rem;
-		border-radius: 999px;
-		background: rgba(var(--theme-primary-rgb), 0.16);
-		color: var(--theme-text-primary);
+	.chevron.open {
+		transform: rotate(90deg);
 	}
 
-	.topics-head {
+	.name-stack {
 		display: flex;
-		justify-content: space-between;
-		align-items: flex-start;
-		gap: 0.6rem;
-		margin-bottom: 0.55rem;
+		flex-direction: column;
+		gap: 0.28rem;
+		min-width: 0;
 	}
 
-	.topics-head h3 {
-		margin: 0.18rem 0 0;
-		font-size: 1.12rem;
-		color: var(--theme-text-primary);
-	}
-
-	.subject-generating-note {
-		margin: 0.3rem 0 0;
-		font-size: 0.76rem;
-		font-weight: 700;
-		color: var(--theme-primary);
-		letter-spacing: 0.02em;
-		text-transform: uppercase;
-	}
-
-	.loading-inline {
+	.name-header {
 		display: flex;
 		align-items: center;
-		gap: 0.55rem;
-		padding: 0.7rem 0;
+		gap: 0.5rem;
+		flex-wrap: wrap;
+	}
+
+	.name-header strong {
+		font-size: 1.02rem;
+		color: var(--theme-text-primary);
+	}
+
+	.code-chip {
+		display: inline-flex;
+		padding: 0.2rem 0.56rem;
+		border-radius: 0.48rem;
+		font-size: 0.72rem;
+		font-weight: 700;
+		letter-spacing: 0.05em;
+		text-transform: uppercase;
+		background: rgba(34, 197, 94, 0.16);
+		color: #166534;
+	}
+
+	.topic-row td {
+		background: rgba(255, 255, 255, 0.02);
+	}
+
+	.topic-row td:first-child {
+		padding-left: 1.5rem;
+	}
+
+	.topic-name-stack {
+		display: flex;
+		flex-direction: column;
+		gap: 0.26rem;
+	}
+
+	.topic-title-line {
+		display: flex;
+		align-items: center;
+		gap: 0.35rem;
+		min-width: 0;
+	}
+
+	.topic-branch {
+		color: var(--theme-text-muted);
+		font-weight: 700;
+	}
+
+	.topic-title-line strong {
+		font-size: 0.96rem;
+		color: #475569;
+	}
+
+	.inline-actions {
+		display: flex;
+		flex-wrap: nowrap;
+		gap: 0.38rem;
+		overflow-x: auto;
+		padding-bottom: 0.12rem;
+		justify-content: flex-end;
+		align-items: center;
+	}
+
+	.action-cell {
+		text-align: right;
+	}
+
+	.table-btn,
+	.primary-btn {
+		padding: 0.42rem 0.74rem;
+		border-radius: 999px;
+		border: 1px solid rgba(var(--theme-primary-rgb), 0.35);
+		font: inherit;
+		font-size: 0.78rem;
+		font-weight: 700;
+		cursor: pointer;
+	}
+
+	.primary-btn {
+		background: rgba(var(--theme-primary-rgb), 0.2);
+		color: var(--theme-text-primary);
+	}
+
+	.table-btn {
+		background: rgba(var(--theme-primary-rgb), 0.1);
+		color: var(--theme-primary);
+	}
+
+	.table-btn.primary {
+		background: rgba(var(--theme-primary-rgb), 0.2);
+		color: var(--theme-text-primary);
+	}
+
+	.table-btn:disabled,
+	.primary-btn:disabled {
+		opacity: 0.6;
+		cursor: not-allowed;
+	}
+
+	.status-text {
+		font-size: 0.75rem;
+		font-weight: 700;
+		color: var(--theme-primary);
+	}
+
+	.topic-loading {
+		display: flex;
+		align-items: center;
+		gap: 0.5rem;
 		color: var(--theme-text-secondary);
 	}
 
 	.spinner-sm {
-		width: 18px;
-		height: 18px;
+		width: 16px;
+		height: 16px;
 		border-radius: 50%;
 		border: 2px solid rgba(255, 255, 255, 0.2);
 		border-top-color: var(--theme-primary);
 		animation: spin 0.8s linear infinite;
 	}
 
-	.topic-grid {
-		display: grid;
-		grid-template-columns: repeat(2, minmax(0, 1fr));
-		gap: 0.6rem;
-	}
-
-	.topic-card {
-		border: 1px solid var(--theme-glass-border);
-		background: var(--theme-nav-glass);
-		border-radius: 0.85rem;
-		padding: 0.62rem;
-		display: flex;
-		flex-direction: column;
-		gap: 0.3rem;
-	}
-
-	.topic-card h4 {
-		margin: 0;
-		font-size: 0.95rem;
-		color: var(--theme-text-primary);
-	}
-
-	.topic-card p {
-		margin: 0;
-		font-size: 0.8rem;
-		line-height: 1.35;
+	.empty-cell {
+		text-align: center;
 		color: var(--theme-text-muted);
+		padding: 0.95rem 0.7rem;
 	}
 
-	.topic-actions {
-		display: flex;
-		justify-content: space-between;
-		align-items: center;
-		gap: 0.5rem;
-	}
-
-	.topic-actions span {
-		font-size: 0.74rem;
-		font-weight: 700;
-		color: var(--theme-primary);
+	.muted {
+		margin: 0;
+		color: var(--theme-text-muted);
 	}
 
 	.error-banner {
@@ -902,22 +1009,44 @@
 		color: #b91c1c;
 	}
 
+	.green-text {
+		color: #059669;
+	}
+
+	.red-text {
+		color: #dc2626;
+	}
+
 	.spinner {
 		width: 30px;
 		height: 30px;
 		border-radius: 50%;
-		border: 3px solid rgba(255,255,255,0.2);
+		border: 3px solid rgba(255, 255, 255, 0.2);
 		border-top-color: var(--theme-primary);
 		animation: spin 0.8s linear infinite;
 	}
 
 	@keyframes spin {
-		to { transform: rotate(360deg); }
+		to {
+			transform: rotate(360deg);
+		}
 	}
 
-	@media (max-width: 860px) {
+	:global([data-color-mode='light']) .training-table th {
+		border-bottom-color: rgba(148, 163, 184, 0.42);
+		border-right-color: rgba(148, 163, 184, 0.42);
+	}
+
+	:global([data-color-mode='light']) .training-table td {
+		border-bottom-color: rgba(148, 163, 184, 0.38);
+		border-right-color: rgba(148, 163, 184, 0.38);
+	}
+
+	@media (max-width: 960px) {
 		.page {
-			padding: max(0.9rem, env(safe-area-inset-top)) 1rem max(2.75rem, env(safe-area-inset-bottom));
+			height: auto;
+			overflow: visible;
+			padding: max(0.9rem, env(safe-area-inset-top)) 0.9rem max(2.75rem, env(safe-area-inset-bottom));
 			gap: 0.85rem;
 		}
 
@@ -929,227 +1058,44 @@
 			font-size: 1.6rem;
 		}
 
-		.subtitle {
-			font-size: 0.88rem;
-		}
-
 		.summary-grid {
 			grid-template-columns: 1fr;
 			gap: 0.45rem;
 		}
 
-		.resume-strip {
-			padding: 0.85rem;
-			border-radius: 0.9rem;
+		.panel-head {
+			flex-direction: column;
+			align-items: stretch;
 		}
 
-		.content-panel {
-			padding: 1.05rem 0.9rem;
-			border-radius: 0.9rem;
+		.search-input {
+			width: 100%;
+		}
+
+		.training-table th,
+		.training-table td {
+			padding: 0.56rem 0.42rem;
+			font-size: 0.83rem;
+		}
+
+		.name-header strong {
+			font-size: 0.9rem;
+		}
+
+		.code-chip {
+			font-size: 0.64rem;
+		}
+
+		.table-btn,
+		.primary-btn {
+			font-size: 0.72rem;
+			padding: 0.36rem 0.58rem;
+		}
+
+		.table-shell {
+			flex: initial;
 			min-height: auto;
 		}
-
-		.content-panel h2 {
-			font-size: 1.1rem;
-		}
-
-		.inline-selector-grid {
-			grid-template-columns: 1fr;
-			gap: 0.65rem;
-		}
-
-		.subjects-pane,
-		.topics-pane {
-			padding: 0.55rem;
-			border-radius: 0.85rem;
-		}
-
-		.search-input {
-			padding: 0.65rem 0.75rem;
-			font-size: 0.9rem;
-			border-radius: 0.7rem;
-		}
-
-		.subject-list {
-			max-height: min(36vh, 320px);
-			gap: 0.35rem;
-			margin-top: 0.5rem;
-		}
-
-		.subject-item {
-			padding: 0.6rem 0.65rem;
-			border-radius: 0.7rem;
-			gap: 0.18rem;
-		}
-
-		.subject-item strong {
-			font-size: 0.92rem;
-			line-height: 1.28;
-		}
-
-		.subject-code,
-		.subject-code-line {
-			font-size: 0.65rem;
-			letter-spacing: 0.04em;
-		}
-
-		.subject-meta {
-			font-size: 0.72rem;
-			color: var(--theme-text-muted);
-			line-height: 1.24;
-		}
-
-		.resume-dot {
-			font-size: 0.62rem;
-			padding: 0.12rem 0.35rem;
-		}
-
-		.topics-head {
-			flex-direction: column;
-			gap: 0.5rem;
-		}
-
-		.topics-head h3 {
-			font-size: 1rem;
-		}
-
-		.primary-btn,
-		.secondary-btn {
-			min-height: 40px;
-			padding: 0.55rem 0.85rem;
-			font-size: 0.88rem;
-		}
-
-		.primary-btn {
-			width: 100%;
-			text-align: center;
-		}
-
-		.topic-grid {
-			grid-template-columns: 1fr;
-			gap: 0.45rem;
-		}
-
-		.topic-card {
-			padding: 0.6rem 0.65rem;
-			border-radius: 0.75rem;
-		}
-
-		.topic-card h4 {
-			font-size: 0.9rem;
-		}
-
-		.topic-card p {
-			font-size: 0.76rem;
-		}
-
-		.actions-row {
-			margin-top: 0.2rem;
-		}
-
-		.error-banner {
-			padding: 0.75rem 0.85rem;
-			border-radius: 0.85rem;
-			font-size: 0.88rem;
-		}
 	}
 
-	@media (max-width: 640px) {
-		.page {
-			padding-left: 0.75rem;
-			padding-right: 0.75rem;
-		}
-
-		.inline-selector-grid {
-			grid-template-columns: 1fr;
-			gap: 0.75rem;
-		}
-
-		.content-panel {
-			padding: 0.95rem 0.75rem;
-			gap: 0.7rem;
-		}
-
-		.content-panel h2 {
-			font-size: 1.05rem;
-			line-height: 1.25;
-		}
-
-		.muted {
-			font-size: 0.92rem;
-			line-height: 1.5;
-		}
-
-		.subjects-pane,
-		.topics-pane {
-			padding: 0.55rem;
-			border-radius: 0.8rem;
-			background: var(--theme-glass-bg);
-		}
-
-		.subjects-pane {
-			display: flex;
-			flex-direction: column;
-			max-height: min(42dvh, 340px);
-		}
-
-		.topics-pane {
-			min-height: min(44dvh, 360px);
-		}
-
-		.pane-title {
-			margin-bottom: 0.45rem;
-			font-size: 0.68rem;
-		}
-
-		.search-input {
-			min-height: 46px;
-			font-size: 0.95rem;
-		}
-
-		.subject-list {
-			max-height: min(28dvh, 240px);
-			gap: 0.42rem;
-		}
-
-		.subject-item {
-			padding: 0.72rem;
-			border-radius: 0.85rem;
-			gap: 0.28rem;
-		}
-
-		.subject-item strong {
-			font-size: 1rem;
-			line-height: 1.3;
-		}
-
-		.subject-meta {
-			font-size: 0.8rem;
-		}
-
-		.subject-code,
-		.subject-code-line {
-			font-size: 0.72rem;
-		}
-
-		.topic-card {
-			padding: 0.72rem;
-		}
-
-		.topics-head {
-			margin-bottom: 0.65rem;
-		}
-
-		.topics-head .primary-btn {
-			width: 100%;
-		}
-
-		.topic-actions {
-			align-items: center;
-		}
-
-		.topic-actions span {
-			font-size: 0.8rem;
-		}
-	}
 </style>

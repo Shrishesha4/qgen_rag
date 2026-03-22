@@ -55,7 +55,6 @@
 	let editTopicDescription = $state('');
 	let editTopicSyllabus = $state('');
 
-	let showReferenceModal = $state(false);
 	let referenceTab = $state<'pdfs' | 'questions'>('pdfs');
 	let referenceLoading = $state(false);
 	let referenceUploading = $state(false);
@@ -68,10 +67,6 @@
 	let referenceProgressByDoc = $state<Record<string, number>>({});
 	let referenceProgressDetailByDoc = $state<Record<string, string>>({});
 	let referencePollTimer: ReturnType<typeof setInterval> | null = null;
-	let selectedTopicId = $state('');
-	let selectedTopicName = $state('');
-	let topicDocuments = $state<Record<string, ReferenceDocumentItem[]>>({});
-	let loadingTopicDocuments = $state('');
 	let topicGeneratingById = $state<Record<string, boolean>>({});
 	let topicGenerationProgressById = $state<Record<string, string>>({});
 	let completedGenerationHoldByTopicId = $state<Record<string, boolean>>({});
@@ -468,11 +463,21 @@
 		editTopicName = topic.name;
 		editTopicDescription = topic.description || '';
 		editTopicSyllabus = topic.syllabus_content || '';
+		referenceTab = 'pdfs';
+		referenceError = '';
 		showEditTopicModal = true;
+		void loadReferenceMaterials();
 	}
 
 	function closeEditTopicModal() {
 		if (editingTopic) return;
+		clearReferencePolling();
+		referenceError = '';
+		referenceBooks = [];
+		templatePapers = [];
+		referenceQuestions = [];
+		referenceProgressByDoc = {};
+		referenceProgressDetailByDoc = {};
 		showEditTopicModal = false;
 	}
 
@@ -506,22 +511,6 @@
 
 	function hasAnyProcessingDocs() {
 		return allReferenceDocs().some((doc) => isDocProcessing(doc.processing_status));
-	}
-
-	function getTopicDocumentCount(topicId: string): number {
-		const booksAndTemplates = [...referenceBooks, ...templatePapers].filter((doc) => doc.topic_id === topicId).length;
-		const questionRefs = referenceQuestions.filter((doc) => doc.topic_id === topicId).length;
-		return booksAndTemplates + questionRefs;
-	}
-
-	function buildTopicDocumentsMap(): Record<string, ReferenceDocumentItem[]> {
-		const topics = subject?.topics || [];
-		if (!topics.length) return {};
-		const grouped: Record<string, ReferenceDocumentItem[]> = {};
-		for (const topic of topics) {
-			grouped[topic.id] = [...referenceBooks, ...templatePapers].filter((doc) => doc.topic_id === topic.id);
-		}
-		return grouped;
 	}
 
 	async function refreshReferenceProgressForProcessingDocs() {
@@ -559,7 +548,7 @@
 
 	function ensureReferenceProgressPolling() {
 		clearReferencePolling();
-		if (!showReferenceModal || !hasAnyProcessingDocs()) return;
+		if (!showEditTopicModal || !hasAnyProcessingDocs()) return;
 		referencePollTimer = setInterval(() => {
 			void loadReferenceMaterials(false);
 		}, 5000);
@@ -574,7 +563,6 @@
 			referenceBooks = res.reference_books || [];
 			templatePapers = res.template_papers || [];
 			referenceQuestions = res.reference_questions || [];
-			topicDocuments = buildTopicDocumentsMap();
 			await refreshReferenceProgressForProcessingDocs();
 			ensureReferenceProgressPolling();
 		} catch (e: unknown) {
@@ -584,59 +572,16 @@
 		}
 	}
 
-	async function openReferenceModal() {
-		referenceError = '';
-		referenceTab = 'pdfs';
-		selectedTopicId = '';
-		selectedTopicName = '';
-		topicDocuments = {};
-		showReferenceModal = true;
-		await loadReferenceMaterials();
-	}
-
-	function closeReferenceModal() {
-		clearReferencePolling();
-		showReferenceModal = false;
-		referenceError = '';
-		selectedTopicId = '';
-		selectedTopicName = '';
-		topicDocuments = {};
-		referenceBooks = [];
-		templatePapers = [];
-		referenceQuestions = [];
-		referenceProgressByDoc = {};
-		referenceProgressDetailByDoc = {};
-	}
-
-	function selectTopic(topicId: string, topicName: string) {
-		selectedTopicId = topicId;
-		selectedTopicName = topicName;
-		void loadTopicDocuments(topicId);
-	}
-
-	async function loadTopicDocuments(topicId: string) {
-		if (topicDocuments[topicId]) return;
-		loadingTopicDocuments = topicId;
-		try {
-			const topicDocs = [...referenceBooks, ...templatePapers].filter((doc) => doc.topic_id === topicId);
-			topicDocuments = { ...topicDocuments, [topicId]: topicDocs };
-		} finally {
-			loadingTopicDocuments = '';
-		}
-	}
-
 	async function uploadTopicPdf(event: Event, indexType: 'reference_book' | 'template_paper' | 'reference_questions') {
 		const input = event.target as HTMLInputElement;
 		const file = input.files?.[0];
-		if (!file || !subjectId || !selectedTopicId || referenceUploading) return;
+		if (!file || !subjectId || !editTopicId || referenceUploading) return;
 
 		referenceUploading = true;
 		referenceError = '';
 		try {
-			await uploadDocument(file, subjectId, indexType, selectedTopicId);
+			await uploadDocument(file, subjectId, indexType, editTopicId);
 			await loadReferenceMaterials();
-			topicDocuments = {};
-			await loadTopicDocuments(selectedTopicId);
 			await loadSubject();
 		} catch (e: unknown) {
 			referenceError = e instanceof Error ? e.message : 'Upload failed';
@@ -645,6 +590,16 @@
 			input.value = '';
 		}
 	}
+
+	const editTopicReferenceDocs = $derived.by(() => {
+		if (!editTopicId) return [] as ReferenceDocumentItem[];
+		return [...referenceBooks, ...templatePapers].filter((doc) => doc.topic_id === editTopicId);
+	});
+
+	const editTopicQuestionDocs = $derived.by(() => {
+		if (!editTopicId) return [] as ReferenceDocumentItem[];
+		return referenceQuestions.filter((doc) => doc.topic_id === editTopicId);
+	});
 
 	async function deleteReference(docId: string) {
 		if (!subjectId || deletingRefId) return;
@@ -726,7 +681,6 @@
 				</div>
 				<div class="section-head-actions">
 					<span class="topic-count">{subject.topics.length}</span>
-					<button class="action-btn action-reference" onclick={openReferenceModal}>References</button>
 					<button class="action-btn action-add-topic" onclick={openAddTopicModal}>Add Topic</button>
 				</div>
 			</div>
@@ -736,46 +690,68 @@
 					<p>No topics available for this subject yet.</p>
 				</div>
 			{:else}
-				<div class="topic-list">
-					{#each subject.topics as topic, index}
-						<div class="topic-card">
-							<div class="topic-index">{index + 1}</div>
-							<div class="topic-body">
-								<div class="topic-header">
-									<div>
-										<h3 class="topic-name">{topic.name}</h3>
-										{#if topic.description}
-											<p class="topic-description">{topic.description}</p>
-										{/if}
-									</div>
-									<div class="topic-actions-edge">
-										{#if canGenerateTopic(topic.id, topic.total_questions, topic.total_questions)}
-											<button class="action-btn action-generate" class:generating={!!topicGeneratingById[topic.id]} onclick={() => generateTopic(topic.id)} disabled={!!topicGeneratingById[topic.id] || !!generationPollingTopicId}>
-												{#if topicGeneratingById[topic.id]}
-													<span class="btn-spinner" aria-hidden="true"></span>
-													<span>Generating {topicGenerationProgressById[topic.id] || ''}</span>
-												{:else}
-													<span>Generate</span>
+				<div class="topics-table-shell">
+					<table class="topics-table">
+						<colgroup>
+							<col class="topic-col" />
+							<col class="metric-col" />
+							<col class="metric-col" />
+							<col class="metric-col" />
+							<col class="metric-col" />
+							<col class="metric-col" />
+							<col class="metric-col" />
+						</colgroup>
+						<thead>
+							<tr>
+								<th>Topic</th>
+								<th>G</th>
+								<th>V</th>
+								<th>P</th>
+								<th>A</th>
+								<th>R</th>
+								<th>AR</th>
+							</tr>
+						</thead>
+						<tbody>
+							{#each subject.topics as topic, index}
+								<tr>
+									<td>
+										<div class="topic-main-cell">
+											<div class="topic-title-row">
+												<span class="topic-index">{index + 1}</span>
+												<div class="topic-copy">
+													<h3 class="topic-name">{topic.name}</h3>
+													{#if topic.description}
+														<p class="topic-description">{topic.description}</p>
+													{/if}
+												</div>
+											</div>
+											<div class="topic-inline-actions">
+												{#if canGenerateTopic(topic.id, topic.total_questions, topic.total_questions)}
+													<button class="action-btn action-generate" class:generating={!!topicGeneratingById[topic.id]} onclick={() => generateTopic(topic.id)} disabled={!!topicGeneratingById[topic.id] || !!generationPollingTopicId}>
+														{#if topicGeneratingById[topic.id]}
+															<span class="btn-spinner" aria-hidden="true"></span>
+															<span>Generating {topicGenerationProgressById[topic.id] || ''}</span>
+														{:else}
+															<span>Generate</span>
+														{/if}
+													</button>
 												{/if}
-											</button>
-										{:else}
-											<span class="action-slot-spacer" aria-hidden="true"></span>
-										{/if}
-										<button class="action-btn action-vet" onclick={() => vetTopic(topic.id)}>Vet</button>
-										<button class="action-btn action-edit" onclick={() => openEditTopicModal(topic)}>Edit</button>
-									</div>
-								</div>
-								<div class="topic-metrics">
-									<div class="metric"><span>Generated</span><strong>{topicReviewStats[topic.id]?.generated ?? topic.total_questions}</strong></div>
-									<div class="metric"><span>Vetted</span><strong>{topicReviewStats[topic.id]?.vetted ?? 0}</strong></div>
-									<div class="metric"><span>Pending</span><strong>{topicReviewStats[topic.id]?.pending ?? topic.total_questions}</strong></div>
-									<div class="metric"><span>Approved</span><strong class="green-text">{topicReviewStats[topic.id]?.approved ?? 0}</strong></div>
-									<div class="metric"><span>Rejected</span><strong class="red-text">{topicReviewStats[topic.id]?.rejected ?? 0}</strong></div>
-									<div class="metric"><span>Approval Rate</span><strong class="violet-text">{topicReviewStats[topic.id]?.approvalRate ?? 0}%</strong></div>
-								</div>
-							</div>
-						</div>
-					{/each}
+												<button class="action-btn action-vet" onclick={() => vetTopic(topic.id)}>Vet</button>
+												<button class="action-btn action-edit" onclick={() => openEditTopicModal(topic)}>Edit</button>
+											</div>
+										</div>
+									</td>
+									<td>{topicReviewStats[topic.id]?.generated ?? topic.total_questions}</td>
+									<td>{topicReviewStats[topic.id]?.vetted ?? 0}</td>
+									<td>{topicReviewStats[topic.id]?.pending ?? topic.total_questions}</td>
+									<td class="green-text">{topicReviewStats[topic.id]?.approved ?? 0}</td>
+									<td class="red-text">{topicReviewStats[topic.id]?.rejected ?? 0}</td>
+									<td class="violet-text">{topicReviewStats[topic.id]?.approvalRate ?? 0}%</td>
+								</tr>
+							{/each}
+						</tbody>
+					</table>
 				</div>
 			{/if}
 		</div>
@@ -848,6 +824,98 @@
 				<input id="editTopicDescription" class="input" placeholder="Description" bind:value={editTopicDescription} />
 				<label class="input-label" for="editTopicSyllabus">Syllabus content</label>
 				<textarea id="editTopicSyllabus" class="input textarea" rows="4" placeholder="Syllabus content" bind:value={editTopicSyllabus}></textarea>
+
+				<div class="topic-material-tabs edit-material-tabs">
+					<button type="button" class="topic-material-tab" class:active={referenceTab === 'pdfs'} onclick={() => (referenceTab = 'pdfs')}>
+						Reference Books
+					</button>
+					<button type="button" class="topic-material-tab" class:active={referenceTab === 'questions'} onclick={() => (referenceTab = 'questions')}>
+						Reference Questions
+					</button>
+				</div>
+
+				{#if referenceError}
+					<p class="modal-error inline-error">{referenceError}</p>
+				{/if}
+
+				{#if referenceLoading}
+					<div class="topics-loading"><div class="spinner-sm"></div><span>Loading materials…</span></div>
+				{:else if referenceTab === 'pdfs'}
+					<p class="topic-upload-copy">Upload books/templates for this topic.</p>
+					<label class="upload-dropzone glass-panel-frosted compact-dropzone">
+						<input type="file" accept=".pdf,.doc,.docx,.txt" oninput={(e) => uploadTopicPdf(e, pdfUploadType)} disabled={referenceUploading} />
+						<div class="upload-dropzone-title">{referenceUploading ? 'Uploading…' : 'Drop files or click to upload'}</div>
+						<div class="upload-dropzone-subtitle">PDF, Word, PowerPoint, or Text</div>
+					</label>
+					<!-- <div class="upload-type-row">
+						<select bind:value={pdfUploadType} class="select-input topic-inline-select">
+							<option value="reference_book">Reference Book PDF</option>
+							<option value="template_paper">Template Paper PDF</option>
+						</select>
+					</div> -->
+					<div class="doc-list topic-doc-list">
+						{#if editTopicReferenceDocs.length}
+							{#each editTopicReferenceDocs as doc}
+								<div class="doc-row">
+									<div class="doc-main">
+										<div class="doc-name">{doc.filename}</div>
+										<div class="doc-meta">{doc.index_type.replace('_', ' ')} • {doc.processing_status}</div>
+										{#if isDocProcessing(doc.processing_status)}
+											<div class="doc-progress-track">
+												<div class="doc-progress-fill" style:width="{referenceProgressByDoc[doc.id] ?? 0}%"></div>
+											</div>
+											{#if referenceProgressDetailByDoc[doc.id]}
+												<div class="doc-progress-detail">{referenceProgressDetailByDoc[doc.id]}</div>
+											{/if}
+										{/if}
+									</div>
+									<button class="danger-btn" disabled={deletingRefId === doc.id} onclick={() => deleteReference(doc.id)}>
+										{deletingRefId === doc.id ? 'Deleting...' : 'Delete'}
+									</button>
+								</div>
+							{/each}
+						{:else}
+							<p class="topics-empty">No reference books uploaded yet.</p>
+						{/if}
+					</div>
+				{:else}
+					<p class="topic-upload-copy">Upload question files for this topic.</p>
+					<label class="upload-dropzone glass-panel-frosted question-dropzone compact-dropzone">
+						<input type="file" accept=".pdf,.xlsx,.csv" oninput={(e) => uploadTopicPdf(e, 'reference_questions')} disabled={referenceUploading} />
+						<div class="upload-dropzone-title">{referenceUploading ? 'Uploading…' : 'Drop files or click to upload'}</div>
+						<div class="upload-dropzone-subtitle">PDF, XLSX, or CSV</div>
+					</label>
+					<div class="doc-list topic-doc-list">
+						{#if editTopicQuestionDocs.length}
+							{#each editTopicQuestionDocs as doc}
+								<div class="doc-row">
+									<div class="doc-main">
+										<div class="doc-name">{doc.filename}</div>
+										<div class="doc-meta">
+											{doc.processing_status}
+											{#if doc.parsed_question_count !== null && doc.parsed_question_count !== undefined}
+												• {doc.parsed_question_count} parsed
+											{/if}
+										</div>
+										{#if isDocProcessing(doc.processing_status)}
+											<div class="doc-progress-track">
+												<div class="doc-progress-fill" style:width="{referenceProgressByDoc[doc.id] ?? 0}%"></div>
+											</div>
+											{#if referenceProgressDetailByDoc[doc.id]}
+												<div class="doc-progress-detail">{referenceProgressDetailByDoc[doc.id]}</div>
+											{/if}
+										{/if}
+									</div>
+									<button class="danger-btn" disabled={deletingRefId === doc.id} onclick={() => deleteReference(doc.id)}>
+										{deletingRefId === doc.id ? 'Deleting...' : 'Delete'}
+									</button>
+								</div>
+							{/each}
+						{:else}
+							<p class="topics-empty">No reference question files uploaded yet.</p>
+						{/if}
+					</div>
+				{/if}
 			</div>
 			<div class="modal-actions">
 				<button class="action-btn action-muted" onclick={closeEditTopicModal}>Cancel</button>
@@ -855,168 +923,6 @@
 					{editingTopic ? 'Saving...' : 'Save Changes'}
 				</button>
 			</div>
-		</div>
-	</div>
-{/if}
-
-{#if showReferenceModal}
-	<div class="modal-backdrop" role="button" tabindex="0" aria-label="Close" onclick={closeReferenceModal} onkeydown={(e) => (e.key === 'Enter' || e.key === ' ') && closeReferenceModal()}>
-		<div
-			class="modal reference-modal"
-			role="dialog"
-			aria-modal="true"
-			tabindex="0"
-			onclick={(e) => e.stopPropagation()}
-			onkeydown={(e) => e.stopPropagation()}
-		>
-			<div class="modal-header">
-				<h3>Reference Materials • {subject?.name ?? ''}</h3>
-				<button class="close-btn" onclick={closeReferenceModal}>✕</button>
-			</div>
-
-			{#if referenceError}
-				<p class="modal-error">{referenceError}</p>
-			{/if}
-
-			{#if referenceLoading}
-				<div class="topics-loading"><div class="spinner-sm"></div><span>Loading materials…</span></div>
-			{:else}
-				<div class="topic-accordion-list">
-					{#if subject?.topics?.length}
-						{#each subject.topics as topic, index}
-							<div class="topic-accordion-panel glass-panel-frosted" class:expanded={selectedTopicId === topic.id}>
-								<button
-									type="button"
-									class="topic-accordion-header"
-									aria-expanded={selectedTopicId === topic.id}
-									onclick={() =>
-										selectedTopicId === topic.id
-											? ((selectedTopicId = ''), (selectedTopicName = ''))
-											: selectTopic(topic.id, topic.name)}
-								>
-									<div class="topic-accordion-title-wrap">
-										<span class="topic-accordion-index">{index + 1}</span>
-										<span class="topic-accordion-title">{topic.name}</span>
-									</div>
-									<div class="topic-accordion-header-right">
-										<span class="topic-status-pill">
-											{#if getTopicDocumentCount(topic.id) > 0}
-												Ready
-											{:else}
-												Empty
-											{/if}
-										</span>
-										<span class="topic-accordion-chevron" class:expanded={selectedTopicId === topic.id}>▾</span>
-									</div>
-								</button>
-
-								<div class="topic-accordion-body-wrap" class:expanded={selectedTopicId === topic.id}>
-									<div class="topic-accordion-body">
-										<div class="syllabus-block">
-											<h4>Syllabus Content</h4>
-											<div class="syllabus-preview">{topic.syllabus_content || `Paste or type the syllabus content for this topic...`}</div>
-										</div>
-
-										<div class="topic-material-tabs">
-											<button type="button" class="topic-material-tab" class:active={referenceTab === 'pdfs'} onclick={() => (referenceTab = 'pdfs')}>
-												📚 Reference Books
-											</button>
-											<button type="button" class="topic-material-tab" class:active={referenceTab === 'questions'} onclick={() => (referenceTab = 'questions')}>
-												❖ Reference Questions
-												<span class="optional-copy">optional</span>
-											</button>
-										</div>
-
-										{#if referenceTab === 'pdfs'}
-											<p class="topic-upload-copy">Upload textbooks or notes for &quot;{topic.name}&quot;</p>
-											<label class="upload-dropzone glass-panel-frosted">
-												<input type="file" accept=".pdf,.doc,.docx,.txt" oninput={(e) => uploadTopicPdf(e, pdfUploadType)} disabled={referenceUploading} />
-												<div class="upload-dropzone-icon">📁</div>
-												<div class="upload-dropzone-title">{referenceUploading ? 'Uploading…' : 'Drop files or click to upload'}</div>
-												<div class="upload-dropzone-subtitle">PDF, Word, PowerPoint, or Text</div>
-											</label>
-											<div class="upload-type-row">
-												<select bind:value={pdfUploadType} class="select-input topic-inline-select">
-													<option value="reference_book">Reference Book PDF</option>
-													<option value="template_paper">Template Paper PDF</option>
-												</select>
-											</div>
-											<div class="doc-list topic-doc-list">
-												{#if loadingTopicDocuments === topic.id}
-													<div class="topics-loading"><div class="spinner-sm"></div><span>Loading PDFs…</span></div>
-												{:else if topicDocuments[topic.id]?.length}
-													{#each topicDocuments[topic.id] as doc}
-														<div class="doc-row">
-															<div class="doc-main">
-																<div class="doc-name">{doc.filename}</div>
-																<div class="doc-meta">{doc.index_type.replace('_', ' ')} • {doc.processing_status}</div>
-																{#if isDocProcessing(doc.processing_status)}
-																	<div class="doc-progress-track">
-																		<div class="doc-progress-fill" style:width="{referenceProgressByDoc[doc.id] ?? 0}%"></div>
-																	</div>
-																	{#if referenceProgressDetailByDoc[doc.id]}
-																		<div class="doc-progress-detail">{referenceProgressDetailByDoc[doc.id]}</div>
-																	{/if}
-																{/if}
-															</div>
-															<button class="danger-btn" disabled={deletingRefId === doc.id} onclick={() => deleteReference(doc.id)}>
-																{deletingRefId === doc.id ? 'Deleting...' : 'Delete'}
-															</button>
-														</div>
-													{/each}
-												{:else}
-													<p class="topics-empty">No reference books uploaded yet.</p>
-												{/if}
-											</div>
-										{:else}
-											<p class="topic-upload-copy">Upload question files for &quot;{topic.name}&quot;</p>
-											<label class="upload-dropzone glass-panel-frosted question-dropzone">
-												<input type="file" accept=".pdf,.xlsx,.csv" oninput={(e) => uploadTopicPdf(e, 'reference_questions')} disabled={referenceUploading} />
-												<div class="upload-dropzone-icon">❖</div>
-												<div class="upload-dropzone-title">{referenceUploading ? 'Uploading…' : 'Drop files or click to upload'}</div>
-												<div class="upload-dropzone-subtitle">PDF, XLSX, or CSV</div>
-											</label>
-											<div class="doc-list topic-doc-list">
-												{#each referenceQuestions.filter((doc) => doc.topic_id === topic.id) as doc}
-													<div class="doc-row">
-														<div class="doc-main">
-															<div class="doc-name">{doc.filename}</div>
-															<div class="doc-meta">
-																{doc.processing_status}
-																{#if doc.parsed_question_count !== null && doc.parsed_question_count !== undefined}
-																	• {doc.parsed_question_count} parsed
-																{/if}
-															</div>
-															{#if isDocProcessing(doc.processing_status)}
-																<div class="doc-progress-track">
-																	<div class="doc-progress-fill" style:width="{referenceProgressByDoc[doc.id] ?? 0}%"></div>
-																</div>
-																{#if referenceProgressDetailByDoc[doc.id]}
-																	<div class="doc-progress-detail">{referenceProgressDetailByDoc[doc.id]}</div>
-																{/if}
-															{/if}
-														</div>
-														<button class="danger-btn" disabled={deletingRefId === doc.id} onclick={() => deleteReference(doc.id)}>
-															{deletingRefId === doc.id ? 'Deleting...' : 'Delete'}
-														</button>
-													</div>
-												{:else}
-													<p class="topics-empty">No reference question files uploaded yet.</p>
-												{/each}
-											</div>
-										{/if}
-									</div>
-								</div>
-							</div>
-						{/each}
-					{:else}
-						<div class="empty-state">
-							<div class="empty-icon">📚</div>
-							<p>No topics found. Please add topics first.</p>
-						</div>
-					{/if}
-				</div>
-			{/if}
 		</div>
 	</div>
 {/if}
@@ -1029,6 +935,9 @@
 		display: flex;
 		flex-direction: column;
 		gap: 1rem;
+		height: 100%;
+		min-height: 0;
+		overflow: hidden;
 	}
 
 	.hero,
@@ -1128,24 +1037,85 @@
 		font-size: 0.8rem;
 	}
 
-	.topic-list {
-		display: flex;
-		flex-direction: column;
-		gap: 0.85rem;
+	.topics-table-shell {
+		border-radius: 1rem;
+		overflow: auto;
+		border: 1px solid color-mix(in srgb, var(--theme-glass-border) 88%, rgba(148, 163, 184, 0.22));
+		background: color-mix(in srgb, var(--theme-glass-bg) 92%, transparent);
+		max-height: clamp(260px, 52dvh, 650px);
 	}
 
-	.topic-card {
+	.topics-table {
+		width: 100%;
+		table-layout: fixed;
+		border-collapse: collapse;
+	}
+
+	.topic-col {
+		width: 52%;
+	}
+
+	.metric-col {
+		width: 8%;
+	}
+
+	.topics-table th {
+		padding: 0.72rem 0.62rem;
+		font-size: 0.72rem;
+		font-weight: 800;
+		letter-spacing: 0.07em;
+		text-transform: uppercase;
+		color: var(--theme-text-muted);
+		text-align: left;
+		border-bottom: 1px solid color-mix(in srgb, var(--theme-glass-border) 90%, transparent);
+		border-right: 1px solid color-mix(in srgb, var(--theme-glass-border) 82%, transparent);
+		background: color-mix(in srgb, var(--theme-glass-bg) 94%, rgba(255, 255, 255, 0.24));
+		position: sticky;
+		top: 0;
+		z-index: 2;
+	}
+
+	.topics-table th:last-child {
+		border-right: none;
+	}
+
+	.topics-table td {
+		padding: 0.7rem 0.62rem;
+		border-bottom: 1px solid color-mix(in srgb, var(--theme-glass-border) 78%, transparent);
+		border-right: 1px solid color-mix(in srgb, var(--theme-glass-border) 72%, transparent);
+		color: var(--theme-text-primary);
+		vertical-align: top;
+		word-break: break-word;
+	}
+
+	.topics-table td:last-child {
+		border-right: none;
+	}
+
+	.topics-table th:nth-child(n + 2),
+	.topics-table td:nth-child(n + 2) {
+		text-align: center;
+	}
+
+	.topics-table tbody tr:last-child td {
+		border-bottom: none;
+	}
+
+	.topic-main-cell {
 		display: flex;
-		gap: 1rem;
-		padding: 1rem;
-		border-radius: 1rem;
-		border: 1px solid rgba(17, 24, 39, 0.1);
-		background: rgba(255, 255, 255, 0.72);
+		flex-direction: column;
+		gap: 0.55rem;
+	}
+
+	.topic-title-row {
+		display: flex;
+		gap: 0.7rem;
+		align-items: flex-start;
 	}
 
 	.topic-index {
-		width: 40px;
-		height: 40px;
+		width: 32px;
+		height: 32px;
 		border-radius: 50%;
 		display: inline-flex;
 		align-items: center;
@@ -1154,65 +1124,40 @@
 		background: rgba(var(--theme-primary-rgb), 0.15);
 		color: var(--theme-primary);
 		font-weight: 800;
+		font-size: 0.82rem;
 	}
 
-	.topic-body {
-		flex: 1;
-		display: flex;
-		flex-direction: column;
-		gap: 0.9rem;
-	}
-
-	.topic-header {
-		display: flex;
-		justify-content: space-between;
-		align-items: flex-start;
-		gap: 1rem;
+	.topic-copy {
+		min-width: 0;
 	}
 
 	.topic-name {
 		margin: 0;
-		font-size: 1rem;
+		font-size: 0.98rem;
 		color: var(--theme-text-primary);
 	}
 
 	.topic-description {
-		margin: 0.3rem 0 0;
+		margin: 0.28rem 0 0;
 		color: var(--theme-text-muted);
-		line-height: 1.55;
+		line-height: 1.4;
+		font-size: 0.86rem;
 	}
 
-	.topic-metrics {
-		display: grid;
-		grid-template-columns: repeat(6, minmax(0, 1fr));
-		gap: 0.75rem;
-	}
-
-	.metric {
+	.topic-inline-actions {
 		display: flex;
-		flex-direction: column;
-		gap: 0.1rem;
+		flex-wrap: nowrap;
+		gap: 0.45rem;
+		overflow-x: auto;
+		padding-bottom: 0.12rem;
 	}
 
-	.metric span {
-		font-size: 0.72rem;
-		text-transform: uppercase;
-		letter-spacing: 0.04em;
-		color: var(--theme-text-muted);
-	}
-
-	.metric strong {
-		font-size: 0.96rem;
-		color: var(--theme-text-primary);
-	}
-
-	.topic-actions-edge {
-		display: grid;
-		grid-template-columns: repeat(3, 128px);
-		gap: 0.55rem;
-		width: 100%;
-		justify-content: end;
-		align-self: flex-start;
+	.topic-inline-actions .action-btn {
+		width: auto;
+		min-width: 96px;
+		height: 36px;
+		padding: 0.4rem 0.75rem;
+		font-size: 0.78rem;
 	}
 
 	.action-btn {
@@ -1231,13 +1176,6 @@
 		align-items: center;
 		justify-content: center;
 		white-space: nowrap;
-	}
-
-	.action-slot-spacer {
-		width: 100%;
-		height: 44px;
-		visibility: hidden;
-		pointer-events: none;
 	}
 
 	.action-btn:hover {
@@ -1288,12 +1226,6 @@
 		color: var(--theme-text-primary);
 	}
 
-	.action-reference {
-		background: rgba(var(--theme-primary-rgb), 0.12);
-		border-color: rgba(var(--theme-primary-rgb), 0.36);
-		color: var(--theme-primary);
-	}
-
 	.action-edit {
 		background: rgba(var(--theme-primary-rgb), 0.1);
 		border-color: rgba(var(--theme-primary-rgb), 0.34);
@@ -1321,6 +1253,7 @@
 
 	.modal-card {
 		width: min(620px, 96vw);
+		max-height: min(82dvh, 760px);
 		border-radius: 1.2rem;
 		border: 1px solid color-mix(in srgb, var(--theme-glass-border) 70%, rgba(255, 255, 255, 0.45));
 		background: linear-gradient(
@@ -1332,6 +1265,8 @@
 			0 24px 58px rgba(15, 23, 42, 0.24),
 			inset 0 1px 0 rgba(255, 255, 255, 0.42);
 		overflow: hidden;
+		display: flex;
+		flex-direction: column;
 	}
 
 	.modal-head {
@@ -1363,6 +1298,8 @@
 		flex-direction: column;
 		gap: 0.82rem;
 		padding: 1rem 1.1rem;
+		overflow: auto;
+		min-height: 0;
 	}
 
 	.input {
@@ -1428,61 +1365,6 @@
 		flex: 1;
 	}
 
-	.modal {
-		width: min(820px, 96vw);
-		max-height: 86vh;
-		overflow: auto;
-		border-radius: 20px;
-		border: 1px solid var(--theme-modal-border);
-		background: linear-gradient(
-			165deg,
-			color-mix(in srgb, var(--theme-modal-surface) 94%, var(--theme-surface)) 0%,
-			color-mix(in srgb, var(--theme-modal-surface) 88%, var(--theme-input-bg)) 100%
-		);
-		box-shadow:
-			0 24px 52px rgba(15, 23, 42, 0.24),
-			inset 0 1px 0 rgba(255, 255, 255, 0.4);
-	}
-
-	.reference-modal {
-		width: min(900px, 96vw);
-		max-height: 90vh;
-		border-radius: 20px;
-		border: 1px solid color-mix(in srgb, var(--theme-glass-border) 70%, rgba(255, 255, 255, 0.5));
-		background: linear-gradient(
-			165deg,
-			color-mix(in srgb, var(--theme-modal-surface) 95%, var(--theme-surface)) 0%,
-			color-mix(in srgb, var(--theme-modal-surface) 90%, var(--theme-input-bg)) 100%
-		);
-		backdrop-filter: blur(16px) saturate(140%);
-		-webkit-backdrop-filter: blur(16px) saturate(140%);
-		box-shadow: 0 24px 54px rgba(15, 23, 42, 0.24), inset 0 1px 0 rgba(255, 255, 255, 0.52);
-	}
-
-	.modal-header {
-		display: flex;
-		justify-content: space-between;
-		align-items: center;
-		padding: 1rem 1.1rem;
-		border-bottom: 1px solid var(--theme-glass-border);
-		background: color-mix(in srgb, var(--theme-surface) 88%, transparent);
-	}
-
-	.modal-header h3 {
-		margin: 0;
-		font-size: 1rem;
-		color: var(--theme-text-primary);
-	}
-
-	.close-btn {
-		background: none;
-		border: none;
-		color: var(--theme-text-secondary);
-		font-size: 1.45rem;
-		line-height: 1;
-		cursor: pointer;
-	}
-
 	.glass-panel-frosted {
 		backdrop-filter: blur(10px) saturate(150%);
 		-webkit-backdrop-filter: blur(10px) saturate(150%);
@@ -1500,16 +1382,6 @@
 		margin: 0;
 		padding: 0.8rem 0.2rem;
 		color: var(--theme-text-muted);
-	}
-
-	.select-input {
-		min-height: 40px;
-		padding: 0.55rem 0.8rem;
-		border-radius: 0.75rem;
-		border: 1px solid var(--theme-glass-border);
-		background: var(--theme-input-bg);
-		color: var(--theme-text-primary);
-		font: inherit;
 	}
 
 	.doc-list {
@@ -1584,129 +1456,6 @@
 		font-size: 0.85rem;
 	}
 
-	.topic-accordion-list {
-		display: flex;
-		flex-direction: column;
-		gap: 0.8rem;
-		padding: 0.75rem 0.85rem 1rem;
-	}
-
-	.topic-accordion-panel {
-		padding: 0;
-		border-radius: 1.5rem;
-		overflow: hidden;
-		border: 1px solid color-mix(in srgb, var(--theme-glass-border) 75%, rgba(255, 255, 255, 0.4));
-		background: linear-gradient(
-			145deg,
-			color-mix(in srgb, var(--theme-surface) 92%, rgba(var(--theme-primary-rgb), 0.08)) 0%,
-			color-mix(in srgb, var(--theme-input-bg) 88%, rgba(var(--theme-primary-rgb), 0.04)) 100%
-		);
-		box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.36);
-	}
-
-	.topic-accordion-panel.expanded {
-		border-color: rgba(var(--theme-primary-rgb), 0.55);
-		box-shadow: 0 12px 30px rgba(15, 23, 42, 0.12), 0 0 0 1px rgba(var(--theme-primary-rgb), 0.18), inset 0 1px 0 rgba(255, 255, 255, 0.18);
-	}
-
-	.topic-accordion-header {
-		width: 100%;
-		padding: 1.15rem 1.35rem;
-		border: 0;
-		background: transparent;
-		display: flex;
-		align-items: center;
-		justify-content: space-between;
-		gap: 1rem;
-		color: inherit;
-		font: inherit;
-		text-align: left;
-		cursor: pointer;
-	}
-
-	.topic-accordion-title-wrap {
-		display: flex;
-		align-items: center;
-		gap: 0.95rem;
-		min-width: 0;
-	}
-
-	.topic-accordion-header-right {
-		display: flex;
-		align-items: center;
-		gap: 0.85rem;
-		flex-shrink: 0;
-	}
-
-	.topic-status-pill {
-		padding: 0.42rem 0.9rem;
-		border-radius: 999px;
-		background: color-mix(in srgb, var(--theme-input-bg) 90%, rgba(var(--theme-primary-rgb), 0.12));
-		border: 1px solid color-mix(in srgb, var(--theme-glass-border) 68%, rgba(255, 255, 255, 0.5));
-		color: var(--theme-text-secondary);
-		font-size: 0.85rem;
-		font-weight: 700;
-	}
-
-	.topic-accordion-chevron {
-		font-size: 1rem;
-		color: var(--theme-text-secondary);
-		transition: transform 0.2s ease;
-	}
-
-	.topic-accordion-chevron.expanded {
-		transform: rotate(180deg);
-	}
-
-	.topic-accordion-body {
-		min-height: 0;
-		overflow: hidden;
-		transform-origin: top;
-		transform: translateY(-8px);
-		opacity: 0;
-		transition: transform 0.22s ease, opacity 0.22s ease;
-		padding: 0 1.2rem 1.2rem;
-		display: flex;
-		flex-direction: column;
-		gap: 1.2rem;
-	}
-
-	.topic-accordion-body-wrap {
-		display: grid;
-		grid-template-rows: 0fr;
-		min-height: 0;
-		overflow: hidden;
-		transition: grid-template-rows 0.24s ease;
-	}
-
-	.topic-accordion-body-wrap.expanded {
-		grid-template-rows: 1fr;
-	}
-
-	.topic-accordion-body-wrap.expanded .topic-accordion-body {
-		transform: translateY(0);
-		opacity: 1;
-	}
-
-	.syllabus-block h4 {
-		margin: 0 0 0.8rem;
-		font-size: 1.1rem;
-		font-weight: 800;
-		color: var(--theme-text);
-	}
-
-	.syllabus-preview {
-		min-height: 140px;
-		padding: 1.2rem 1.3rem;
-		border-radius: 1.3rem;
-		background: color-mix(in srgb, var(--theme-input-bg) 90%, var(--theme-surface));
-		border: 1px solid color-mix(in srgb, var(--theme-glass-border) 70%, rgba(255, 255, 255, 0.4));
-		box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.5);
-		font-size: 1rem;
-		line-height: 1.65;
-		color: var(--theme-text-primary);
-		white-space: pre-wrap;
-	}
 
 	.topic-material-tabs {
 		display: grid;
@@ -1736,14 +1485,6 @@
 		color: var(--theme-primary);
 	}
 
-	.optional-copy {
-		margin-left: 0.55rem;
-		font-size: 0.9rem;
-		font-style: italic;
-		font-weight: 400;
-		color: var(--theme-text-secondary);
-	}
-
 	.topic-upload-copy {
 		margin: 0;
 		font-size: 0.98rem;
@@ -1757,7 +1498,7 @@
 		align-items: center;
 		justify-content: center;
 		gap: 0.7rem;
-		min-height: 230px;
+		min-height: 170px;
 		padding: 1.75rem;
 		border-radius: 1.7rem;
 		border: 2px dashed color-mix(in srgb, var(--theme-glass-border) 85%, rgba(var(--theme-primary-rgb), 0.22));
@@ -1771,61 +1512,54 @@
 		overflow: hidden;
 	}
 
-	:global([data-color-mode='dark']) .modal-card,
-	:global([data-color-mode='dark']) .reference-modal {
+	:global([data-color-mode='dark']) .modal-card {
 		border-color: rgba(255, 255, 255, 0.18);
 		box-shadow: 0 24px 54px rgba(0, 0, 0, 0.42), inset 0 1px 0 rgba(255, 255, 255, 0.12);
 	}
 
 	:global([data-color-mode='dark']) .input,
 	:global([data-color-mode='dark']) .file-input,
-	:global([data-color-mode='dark']) .syllabus-preview,
-	:global([data-color-mode='dark']) .doc-row,
-	:global([data-color-mode='dark']) .topic-status-pill {
+	:global([data-color-mode='dark']) .doc-row {
 		box-shadow: none;
-	}
-
-	:global([data-color-mode='dark']) .topic-accordion-panel.expanded {
-		box-shadow: 0 14px 34px rgba(0, 0, 0, 0.34), 0 0 0 1px rgba(var(--theme-primary-rgb), 0.24), inset 0 1px 0 rgba(255, 255, 255, 0.08);
 	}
 
 	:global([data-color-mode='dark']) .upload-dropzone {
 		border-color: rgba(var(--theme-primary-rgb), 0.32);
 	}
 
-	:global([data-color-mode='dark']) .topic-status-pill {
-		color: var(--theme-text-primary);
-	}
-
 	:global([data-color-mode='light']) .modal-backdrop {
 		background: rgba(15, 23, 42, 0.28);
 	}
 
-	:global([data-color-mode='light']) .modal-card,
-	:global([data-color-mode='light']) .reference-modal {
+	:global([data-color-mode='light']) .modal-card {
 		border-color: rgba(148, 163, 184, 0.38);
 		background: linear-gradient(165deg, rgba(255, 255, 255, 0.97) 0%, rgba(248, 250, 252, 0.95) 100%);
 		box-shadow: 0 24px 52px rgba(15, 23, 42, 0.16), inset 0 1px 0 rgba(255, 255, 255, 0.96);
 	}
 
-	:global([data-color-mode='light']) .modal-head,
-	:global([data-color-mode='light']) .modal-header {
+	:global([data-color-mode='light']) .modal-head {
 		background: rgba(248, 250, 252, 0.72);
 	}
 
+	:global([data-color-mode='light']) .topics-table-shell {
+		border-color: rgba(148, 163, 184, 0.5);
+	}
+
+	:global([data-color-mode='light']) .topics-table th {
+		border-right-color: rgba(148, 163, 184, 0.42);
+		border-bottom-color: rgba(148, 163, 184, 0.42);
+	}
+
+	:global([data-color-mode='light']) .topics-table td {
+		border-right-color: rgba(148, 163, 184, 0.38);
+		border-bottom-color: rgba(148, 163, 184, 0.38);
+	}
+
 	:global([data-color-mode='light']) .input,
-	:global([data-color-mode='light']) .file-input,
-	:global([data-color-mode='light']) .select-input,
-	:global([data-color-mode='light']) .syllabus-preview {
+	:global([data-color-mode='light']) .file-input {
 		background: rgba(255, 255, 255, 0.96);
 		border-color: rgba(148, 163, 184, 0.46);
 		color: var(--theme-text-primary);
-	}
-
-	:global([data-color-mode='light']) .topic-accordion-panel {
-		background: linear-gradient(145deg, rgba(255, 255, 255, 0.96), rgba(248, 250, 252, 0.92));
-		border-color: rgba(148, 163, 184, 0.42);
-		box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.95);
 	}
 
 	:global([data-color-mode='light']) .doc-row {
@@ -1839,11 +1573,6 @@
 		cursor: pointer;
 	}
 
-	.upload-dropzone-icon {
-		font-size: 2.8rem;
-		line-height: 1;
-	}
-
 	.upload-dropzone-title {
 		font-size: 1.1rem;
 		font-weight: 800;
@@ -1855,35 +1584,13 @@
 		color: var(--theme-text-secondary);
 	}
 
-	.upload-type-row {
-		display: flex;
-		justify-content: flex-start;
-	}
-
-	.topic-inline-select {
-		width: min(280px, 100%);
-	}
-
 	.topic-doc-list {
 		margin-top: 0.25rem;
 	}
 
-	.empty-state {
-		text-align: center;
-		padding: 3rem 2rem;
-		color: var(--theme-text-muted);
-	}
-
-	.empty-icon {
-		font-size: 2.5rem;
-		margin-bottom: 1rem;
-		opacity: 0.6;
-	}
-
-	.empty-state p {
-		margin: 0;
-		font-size: 0.95rem;
-		font-style: italic;
+	.compact-dropzone {
+		min-height: 148px;
+		padding: 1.1rem;
 	}
 
 	.spinner-sm {
@@ -1904,6 +1611,30 @@
 		gap: 0.8rem;
 		text-align: center;
 		color: var(--theme-text-muted);
+	}
+
+	.topic-section {
+		display: flex;
+		flex-direction: column;
+		flex: 1;
+		min-height: 0;
+	}
+
+	:global([data-color-mode='dark']) .topics-table-shell {
+		background: color-mix(in srgb, var(--theme-glass-bg) 78%, rgba(15, 23, 42, 0.4));
+		border-color: color-mix(in srgb, var(--theme-glass-border) 82%, rgba(255, 255, 255, 0.06));
+	}
+
+	:global([data-color-mode='dark']) .topics-table th {
+		background: color-mix(in srgb, var(--theme-glass-bg) 70%, rgba(15, 23, 42, 0.55));
+	}
+
+	:global([data-color-mode='dark']) .topic-name {
+		color: var(--theme-text-primary);
+	}
+
+	:global([data-color-mode='dark']) .topic-description {
+		color: var(--theme-text-secondary);
 	}
 
 	.spinner {
@@ -1936,26 +1667,50 @@
 	}
 
 	@media (max-width: 920px) {
+		.page {
+			height: auto;
+			overflow: visible;
+		}
+
 		.stats-grid {
 			grid-template-columns: 1fr 1fr;
 		}
 
-		.topic-header {
-			flex-direction: column;
+		.topics-table th,
+		.topics-table td {
+			padding: 0.56rem 0.44rem;
+			font-size: 0.8rem;
 		}
 
-		.topic-actions-edge {
-			grid-template-columns: 1fr;
-			width: 100%;
+		.topic-col {
+			width: 44%;
 		}
 
-		.topic-metrics {
-			grid-template-columns: 1fr 1fr;
+		.metric-col {
+			width: 9.33%;
+		}
+
+		.topic-inline-actions .action-btn {
+			min-width: 82px;
+			height: 34px;
+			font-size: 0.72rem;
+			padding: 0.34rem 0.58rem;
+		}
+
+		.topic-index {
+			width: 28px;
+			height: 28px;
+			font-size: 0.76rem;
 		}
 
 		.section-head {
 			flex-direction: column;
 			align-items: flex-start;
 		}
+
+		.topics-table-shell {
+			max-height: none;
+		}
 	}
+
 </style>

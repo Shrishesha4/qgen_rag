@@ -1,0 +1,674 @@
+<script lang="ts">
+	import { onMount } from 'svelte';
+	import { goto } from '$app/navigation';
+	import { session } from '$lib/session';
+	import { getQuestionsForVetting, getVetterDashboard, type VetterDashboard } from '$lib/api/vetting';
+	import { getSubject, listSubjects, type SubjectResponse } from '$lib/api/subjects';
+
+	let loading = $state(true);
+	let error = $state('');
+	let stats = $state<VetterDashboard | null>(null);
+	let subjects = $state<SubjectResponse[]>([]);
+	let expandedSubjectId = $state('');
+	let loadingTopicRowsForSubject = $state('');
+	let topicRowsBySubject = $state<Record<string, TopicStatsRow[]>>({});
+	let topicRowsError = $state('');
+
+	type TopicStatsRow = {
+		id: string;
+		name: string;
+		generated: number;
+		pending: number;
+		approved: number;
+		rejected: number;
+		vettedPct: number;
+	};
+
+	onMount(() => {
+		const unsub = session.subscribe((s) => {
+			if (!s || s.user.role !== 'teacher') {
+				goto('/teacher/login');
+			}
+		});
+		void loadData();
+		return unsub;
+	});
+
+	async function loadData() {
+		loading = true;
+		error = '';
+		try {
+			const [dashRes, subjectRes] = await Promise.all([getVetterDashboard(), listSubjects(1, 100)]);
+			stats = dashRes;
+			subjects = subjectRes.subjects;
+		} catch (e: unknown) {
+			error = e instanceof Error ? e.message : 'Failed to load teacher stats';
+		} finally {
+			loading = false;
+		}
+	}
+
+	const rows = $derived.by(() => {
+		return subjects
+			.map((subject) => {
+				const approved = subject.total_approved ?? 0;
+				const rejected = subject.total_rejected ?? 0;
+				const pending = subject.total_pending ?? 0;
+				const vetted = approved + rejected;
+				const total = subject.total_questions ?? vetted + pending;
+				const vettedPct = total > 0 ? Math.round((vetted / total) * 100) : 0;
+				return {
+					...subject,
+					approved,
+					rejected,
+					pending,
+					vetted,
+					total,
+					vettedPct,
+				};
+			})
+			.sort((a, b) => b.total - a.total);
+	});
+
+	const totals = $derived.by(() => {
+		return rows.reduce(
+			(acc, row) => {
+				acc.totalQuestions += row.total;
+				acc.totalPending += row.pending;
+				acc.totalApproved += row.approved;
+				acc.totalRejected += row.rejected;
+				return acc;
+			},
+			{ totalQuestions: 0, totalPending: 0, totalApproved: 0, totalRejected: 0 }
+		);
+	});
+
+	const totalVetted = $derived.by(() => totals.totalApproved + totals.totalRejected);
+
+	const overallProgress = $derived.by(() => {
+		if (totals.totalQuestions <= 0) return 0;
+		return Math.round((totalVetted / totals.totalQuestions) * 100);
+	});
+
+	async function countQuestionsByTopic(subjectId: string, status: 'pending' | 'approved' | 'rejected') {
+		const counts: Record<string, number> = {};
+		const limit = 100;
+		let pageNo = 1;
+
+		while (true) {
+			const pageRes = await getQuestionsForVetting({
+				subject_id: subjectId,
+				status,
+				page: pageNo,
+				limit,
+			});
+			for (const question of pageRes.questions) {
+				if (!question.topic_id) continue;
+				counts[question.topic_id] = (counts[question.topic_id] ?? 0) + 1;
+			}
+			if (pageNo >= pageRes.pages || pageRes.questions.length === 0) break;
+			pageNo += 1;
+		}
+
+		return counts;
+	}
+
+	async function loadTopicRows(subjectId: string) {
+		loadingTopicRowsForSubject = subjectId;
+		topicRowsError = '';
+		try {
+			const [detail, pendingCounts, approvedCounts, rejectedCounts] = await Promise.all([
+				getSubject(subjectId),
+				countQuestionsByTopic(subjectId, 'pending'),
+				countQuestionsByTopic(subjectId, 'approved'),
+				countQuestionsByTopic(subjectId, 'rejected'),
+			]);
+
+			const topicRows: TopicStatsRow[] = detail.topics.map((topic) => {
+				const generated = topic.total_questions ?? 0;
+				const pending = pendingCounts[topic.id] ?? 0;
+				const approved = approvedCounts[topic.id] ?? 0;
+				const rejected = rejectedCounts[topic.id] ?? 0;
+				const vetted = approved + rejected;
+				const vettedPct = generated > 0 ? Math.round((vetted / generated) * 100) : 0;
+				return {
+					id: topic.id,
+					name: topic.name,
+					generated,
+					pending,
+					approved,
+					rejected,
+					vettedPct,
+				};
+			});
+
+			topicRowsBySubject = { ...topicRowsBySubject, [subjectId]: topicRows };
+		} catch (e: unknown) {
+			topicRowsError = e instanceof Error ? e.message : 'Failed to load topic rows';
+		} finally {
+			loadingTopicRowsForSubject = '';
+		}
+	}
+
+	async function toggleRow(subjectId: string) {
+		expandedSubjectId = expandedSubjectId === subjectId ? '' : subjectId;
+		if (expandedSubjectId && !topicRowsBySubject[expandedSubjectId]) {
+			await loadTopicRows(expandedSubjectId);
+		}
+	}
+</script>
+
+<svelte:head>
+	<title>Stats - Teacher Console</title>
+</svelte:head>
+
+<div class="page">
+	<div class="hero">
+		<p class="kicker">Teacher Console</p>
+		<h1 class="title font-serif">Stats</h1>
+		<p class="subtitle">Track your question vetting progress across subjects and topics.</p>
+	</div>
+
+	{#if loading}
+		<div class="center-state glass-panel">
+			<div class="spinner"></div>
+			<p>Loading stats...</p>
+		</div>
+	{:else}
+		{#if error}
+			<div class="error-banner" role="alert">{error}</div>
+		{/if}
+
+		<div class="stats-row">
+			<div class="stat-card glass-panel">
+				<div class="stat-icon">❔</div>
+				<div>
+					<p class="stat-value">{totals.totalQuestions}</p>
+					<p class="stat-label">Total Questions</p>
+				</div>
+			</div>
+			<div class="stat-card glass-panel">
+				<div class="stat-icon">📊</div>
+				<div>
+					<p class="stat-value">{totalVetted}</p>
+					<p class="stat-label">Total Vetted</p>
+				</div>
+			</div>
+			<div class="stat-card glass-panel">
+				<div class="stat-icon amber">🕒</div>
+				<div>
+					<p class="stat-value amber-text">{totals.totalPending}</p>
+					<p class="stat-label">Pending</p>
+				</div>
+			</div>
+			<div class="stat-card glass-panel">
+				<div class="stat-icon green">✅</div>
+				<div>
+					<p class="stat-value green-text">{totals.totalApproved}</p>
+					<p class="stat-label">Approved</p>
+				</div>
+			</div>
+			<div class="stat-card glass-panel">
+				<div class="stat-icon red">⛔</div>
+				<div>
+					<p class="stat-value red-text">{totals.totalRejected}</p>
+					<p class="stat-label">Rejected</p>
+				</div>
+			</div>
+		</div>
+
+		<section class="progress-panel glass-panel">
+			<div class="progress-head">
+				<h2>Overall Vetting Progress</h2>
+				<strong>{overallProgress}% vetted</strong>
+			</div>
+			<div class="progress-track" aria-label="Overall progress">
+				<div class="progress-approved" style={`width: ${totals.totalQuestions > 0 ? Math.round((totals.totalApproved / totals.totalQuestions) * 100) : 0}%`}></div>
+				<div class="progress-pending" style={`width: ${totals.totalQuestions > 0 ? Math.round((totals.totalPending / totals.totalQuestions) * 100) : 0}%`}></div>
+			</div>
+			<div class="legend">
+				<span class="dot green"></span> Approved ({totals.totalApproved})
+				<span class="dot red"></span> Rejected ({totals.totalRejected})
+				<span class="dot amber"></span> Pending ({totals.totalPending})
+			</div>
+		</section>
+
+		<section class="table-panel glass-panel">
+			<h2>Breakdown by Subject</h2>
+			<div class="table-wrap">
+				<table>
+					<thead>
+						<tr>
+							<th></th>
+							<th>Code</th>
+							<th>Name</th>
+							<th>Questions</th>
+							<th>Pending</th>
+							<th>Approved</th>
+							<th>Rejected</th>
+							<th>Vetted %</th>
+						</tr>
+					</thead>
+					<tbody>
+						{#if rows.length === 0}
+							<tr><td colspan="8" class="empty-row">No subjects yet.</td></tr>
+						{:else}
+							{#each rows as row}
+								<tr>
+									<td>
+										<button class="expand-btn" onclick={() => toggleRow(row.id)} aria-label="Toggle details">
+											{expandedSubjectId === row.id ? '▾' : '▸'}
+										</button>
+									</td>
+									<td><span class="code-chip">{row.code}</span></td>
+									<td class="name-cell">{row.name}</td>
+									<td>{row.total}</td>
+									<td class="amber-text">{row.pending}</td>
+									<td class="green-text">{row.approved}</td>
+									<td class="red-text">{row.rejected}</td>
+									<td>
+										<div class="inline-progress">
+											<div class="inline-progress-fill" style={`width: ${row.vettedPct}%`}></div>
+										</div>
+										<span class="pct">{row.vettedPct}%</span>
+									</td>
+								</tr>
+								{#if expandedSubjectId === row.id}
+									<tr class="expanded-row">
+										<td></td>
+										<td colspan="7">
+											<div class="topic-subtable-wrap">
+												{#if loadingTopicRowsForSubject === row.id}
+													<div class="topic-substate">Loading topics...</div>
+												{:else if topicRowsError}
+													<div class="topic-substate error">{topicRowsError}</div>
+												{:else if (topicRowsBySubject[row.id] || []).length === 0}
+													<div class="topic-substate">No topics found.</div>
+												{:else}
+													<table class="topic-subtable">
+														<thead>
+															<tr>
+																<th>Topic</th>
+																<th>Generated</th>
+																<th>Pending</th>
+																<th>Approved</th>
+																<th>Rejected</th>
+																<th>Vetted %</th>
+															</tr>
+														</thead>
+														<tbody>
+															{#each topicRowsBySubject[row.id] || [] as topicRow}
+																<tr>
+																	<td>{topicRow.name}</td>
+																	<td>{topicRow.generated}</td>
+																	<td class="amber-text">{topicRow.pending}</td>
+																	<td class="green-text">{topicRow.approved}</td>
+																	<td class="red-text">{topicRow.rejected}</td>
+																	<td>{topicRow.vettedPct}%</td>
+																</tr>
+															{/each}
+														</tbody>
+													</table>
+												{/if}
+											</div>
+										</td>
+									</tr>
+								{/if}
+							{/each}
+						{/if}
+					</tbody>
+				</table>
+			</div>
+		</section>
+	{/if}
+</div>
+
+<style>
+	.page {
+		max-width: 1120px;
+		margin: 0 auto;
+		padding: 2rem 1.5rem 2.5rem;
+		display: flex;
+		flex-direction: column;
+		gap: 1rem;
+		height: 100%;
+		min-height: 0;
+		overflow: hidden;
+	}
+
+	.kicker {
+		margin: 0 0 0.35rem;
+		font-size: 0.78rem;
+		font-weight: 700;
+		letter-spacing: 0.08em;
+		text-transform: uppercase;
+		color: var(--theme-primary);
+	}
+
+	.title {
+		margin: 0;
+		font-size: 2rem;
+		color: var(--theme-text-primary);
+	}
+
+	.subtitle {
+		margin: 0.5rem 0 0;
+		color: var(--theme-text-secondary);
+	}
+
+	.stats-row {
+		display: grid;
+		grid-template-columns: repeat(5, minmax(0, 1fr));
+		gap: 0.75rem;
+	}
+
+	.stat-card {
+		display: flex;
+		align-items: center;
+		gap: 0.8rem;
+		padding: 1rem;
+		border-radius: 1rem;
+	}
+
+	.stat-icon {
+		width: 2.6rem;
+		height: 2.6rem;
+		border-radius: 0.8rem;
+		display: grid;
+		place-items: center;
+		background: rgba(var(--theme-primary-rgb), 0.12);
+	}
+
+	.stat-value {
+		margin: 0;
+		font-size: 2rem;
+		line-height: 1;
+		font-weight: 800;
+		color: var(--theme-text-primary);
+	}
+
+	.stat-label {
+		margin: 0.25rem 0 0;
+		font-size: 0.75rem;
+		letter-spacing: 0.08em;
+		text-transform: uppercase;
+		color: var(--theme-text-muted);
+		font-weight: 700;
+	}
+
+	.progress-panel,
+	.table-panel {
+		padding: 1.2rem;
+		border-radius: 1rem;
+		display: flex;
+		flex-direction: column;
+		min-height: 0;
+	}
+
+	.progress-panel {
+		flex: 0 0 auto;
+		min-height: auto;
+	}
+
+	.table-panel {
+		flex: 1;
+	}
+
+	.progress-head {
+		display: flex;
+		justify-content: space-between;
+		align-items: baseline;
+		gap: 0.75rem;
+	}
+
+	.progress-head h2,
+	.table-panel h2 {
+		margin: 0;
+		font-size: 1.2rem;
+		color: var(--theme-text-primary);
+	}
+
+	.progress-track {
+		margin-top: 0.8rem;
+		height: 14px;
+		border-radius: 999px;
+		overflow: hidden;
+		background: rgba(148, 163, 184, 0.22);
+		display: flex;
+	}
+
+	.progress-approved { background: #10b981; }
+	.progress-pending { background: #f59e0b; }
+
+	.legend {
+		margin-top: 0.7rem;
+		display: flex;
+		gap: 1rem;
+		font-size: 0.85rem;
+		color: var(--theme-text-muted);
+	}
+
+	.dot {
+		display: inline-block;
+		width: 0.75rem;
+		height: 0.75rem;
+		border-radius: 50%;
+		margin-right: 0.35rem;
+	}
+
+	.dot.green { background: #10b981; }
+	.dot.red { background: #ef4444; }
+	.dot.amber { background: #f59e0b; }
+
+	.table-wrap {
+		overflow: auto;
+		margin-top: 0.75rem;
+		flex: 1;
+		min-height: 0;
+	}
+
+	table {
+		width: 100%;
+		border-collapse: collapse;
+	}
+
+	th,
+	td {
+		padding: 0.8rem 0.7rem;
+		border-bottom: 1px solid rgba(148, 163, 184, 0.22);
+		border-right: 1px solid rgba(148, 163, 184, 0.22);
+		text-align: left;
+	}
+
+	th:last-child,
+	td:last-child {
+		border-right: none;
+	}
+
+	th {
+		font-size: 0.72rem;
+		letter-spacing: 0.08em;
+		text-transform: uppercase;
+		color: var(--theme-text-muted);
+	}
+
+	th:nth-child(n + 4),
+	td:nth-child(n + 4) {
+		text-align: center;
+	}
+
+	.name-cell {
+		font-weight: 700;
+		color: var(--theme-text-primary);
+	}
+
+	.code-chip {
+		display: inline-flex;
+		align-items: center;
+		padding: 0.2rem 0.6rem;
+		border-radius: 999px;
+		background: rgba(var(--theme-primary-rgb), 0.16);
+		color: var(--theme-primary);
+		font-weight: 700;
+	}
+
+	.inline-progress {
+		width: 80px;
+		height: 8px;
+		border-radius: 999px;
+		overflow: hidden;
+		background: rgba(148, 163, 184, 0.3);
+		display: inline-block;
+		vertical-align: middle;
+		margin-right: 0.45rem;
+	}
+
+	.inline-progress-fill {
+		height: 100%;
+		background: #10b981;
+	}
+
+	.pct {
+		font-size: 0.86rem;
+		font-weight: 700;
+		color: var(--theme-text-primary);
+	}
+
+	.expand-btn {
+		border: none;
+		background: transparent;
+		color: var(--theme-text-muted);
+		font-size: 1rem;
+		cursor: pointer;
+	}
+
+	.expanded-row td {
+		font-size: 0.84rem;
+		color: var(--theme-text-muted);
+	}
+
+	.topic-subtable-wrap {
+		padding: 0.5rem 0;
+	}
+
+	.topic-subtable {
+		width: 100%;
+		border-collapse: collapse;
+		background: color-mix(in srgb, var(--theme-glass-bg) 94%, transparent);
+		border: 1px solid rgba(148, 163, 184, 0.24);
+		border-radius: 0.75rem;
+		overflow: hidden;
+	}
+
+	.topic-subtable th,
+	.topic-subtable td {
+		padding: 0.6rem 0.55rem;
+		font-size: 0.8rem;
+		border-bottom: 1px solid rgba(148, 163, 184, 0.2);
+		border-right: 1px solid rgba(148, 163, 184, 0.2);
+	}
+
+	.topic-subtable th:last-child,
+	.topic-subtable td:last-child {
+		border-right: none;
+	}
+
+	.topic-subtable tr:last-child td {
+		border-bottom: none;
+	}
+
+	.topic-subtable th {
+		text-align: left;
+		font-weight: 700;
+		text-transform: uppercase;
+		letter-spacing: 0.06em;
+		color: var(--theme-text-muted);
+	}
+
+	.topic-subtable th:nth-child(n + 2),
+	.topic-subtable td:nth-child(n + 2) {
+		text-align: center;
+	}
+
+	.topic-substate {
+		padding: 0.6rem 0.2rem;
+		color: var(--theme-text-muted);
+	}
+
+	.topic-substate.error {
+		color: #b91c1c;
+	}
+
+	.empty-row {
+		text-align: center;
+		color: var(--theme-text-muted);
+	}
+
+	.error-banner {
+		padding: 0.9rem 1rem;
+		border-radius: 1rem;
+		background: rgba(239, 68, 68, 0.12);
+		border: 1px solid rgba(239, 68, 68, 0.3);
+		color: #b91c1c;
+	}
+
+	.green-text { color: #059669; }
+	.red-text { color: #dc2626; }
+	.amber-text { color: #d97706; }
+
+	.center-state {
+		display: flex;
+		flex-direction: column;
+		align-items: center;
+		justify-content: center;
+		min-height: 50vh;
+		gap: 0.8rem;
+	}
+
+	.spinner {
+		width: 30px;
+		height: 30px;
+		border-radius: 50%;
+		border: 3px solid rgba(255,255,255,0.2);
+		border-top-color: var(--theme-primary);
+		animation: spin 0.8s linear infinite;
+	}
+
+	@keyframes spin {
+		to { transform: rotate(360deg); }
+	}
+
+	:global([data-color-mode='light']) th,
+	:global([data-color-mode='light']) td {
+		border-bottom-color: rgba(148, 163, 184, 0.38);
+		border-right-color: rgba(148, 163, 184, 0.38);
+	}
+
+	:global([data-color-mode='light']) .topic-subtable {
+		border-color: rgba(148, 163, 184, 0.42);
+	}
+
+	:global([data-color-mode='light']) .topic-subtable th,
+	:global([data-color-mode='light']) .topic-subtable td {
+		border-bottom-color: rgba(148, 163, 184, 0.36);
+		border-right-color: rgba(148, 163, 184, 0.36);
+	}
+
+	@media (max-width: 920px) {
+		.page {
+			height: auto;
+			overflow: visible;
+			padding: 0.9rem 1rem 1.25rem;
+		}
+		.kicker { display: none; }
+		.title { font-size: 1.65rem; }
+		.stats-row { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+		.legend { flex-wrap: wrap; gap: 0.6rem 1rem; }
+		.table-panel { flex: initial; min-height: auto; }
+		.table-wrap { flex: initial; min-height: auto; }
+	}
+
+	:global(.app-shell.with-desktop-chrome > .desktop-window-wrap > .desktop-window > .desktop-window-content) {
+		overflow: hidden;
+	}
+</style>

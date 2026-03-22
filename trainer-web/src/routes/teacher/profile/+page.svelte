@@ -151,7 +151,14 @@
 			</div>
 		</div>
 
-		<form class="settings-form" onsubmit={(event) => {
+		<div class="profile-actions">
+			<button class="secondary-action glass-panel" onclick={() => goto('/teacher/subjects')}>Back to Subjects</button>
+			<button class="primary-action" onclick={handleLogout}>Sign Out</button>
+		</div>
+	</div>
+
+	<div class="settings-stack animate-fade-in">
+		<form class="settings-form glass-panel" onsubmit={(event) => {
 			event.preventDefault();
 			handleProfileUpdate();
 		}}>
@@ -175,7 +182,7 @@
 			</button>
 		</form>
 
-		<form class="settings-form" onsubmit={(event) => {
+		<form class="settings-form glass-panel" onsubmit={(event) => {
 			event.preventDefault();
 			handlePasswordUpdate();
 		}}>
@@ -211,11 +218,6 @@
 				{passwordLoading ? 'Updating...' : 'Update Password'}
 			</button>
 		</form>
-
-		<div class="profile-actions">
-			<button class="secondary-action glass-panel" onclick={() => goto('/teacher/subjects')}>Back to Subjects</button>
-			<button class="primary-action" onclick={handleLogout}>Sign Out</button>
-		</div>
 	</div>
 </div>
 
@@ -228,6 +230,13 @@
 		align-items: center;
 		justify-content: flex-start;
 		gap: 1.25rem;
+	}
+
+	.settings-stack {
+		width: min(100%, 760px);
+		display: grid;
+		grid-template-columns: repeat(2, minmax(0, 1fr));
+		gap: 0.9rem;
 	}
 
 	/* .profile-topbar {
@@ -251,7 +260,6 @@
 	} */
 
 	.profile-card {
-		margin-top: 15%;
 		width: min(100%, 760px);
 		padding: 2rem 1.5rem;
 		border-radius: 1.5rem;
@@ -487,6 +495,11 @@
 			gap: 1rem;
 		}
 
+		.settings-stack {
+			grid-template-columns: 1fr;
+			gap: 0.75rem;
+		}
+
 		.profile-card {
 			padding: 1.75rem 1.25rem;
 			border-radius: 1.25rem;
@@ -543,6 +556,10 @@
 			justify-content: flex-start;
 			padding-top: max(1rem, env(safe-area-inset-top));
 			gap: 0.85rem;
+		}
+
+		.settings-stack {
+			gap: 0.6rem;
 		}
 
 		/* .nav-btn {
