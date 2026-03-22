@@ -165,7 +165,7 @@
 		let mouseY = -1;
 		let autoScrollRaf: number | null = null;
 		let cachedScrollTarget: HTMLElement | null = null;
-		const AUTO_SCROLL_ZONE = 150; // px from bottom of viewport
+		const AUTO_SCROLL_ZONE = 150; // px from top/bottom of viewport
 		const AUTO_SCROLL_MAX_SPEED = 10; // px per animation frame
 
 		function resolveScrollTarget(): HTMLElement | null {
@@ -173,6 +173,7 @@
 				return cachedScrollTarget;
 			}
 			cachedScrollTarget =
+				(document.querySelector('.app-shell.vetting-loop-scroll .desktop-window-content') as HTMLElement | null) ??
 				(document.querySelector('.app-shell.vetting-loop-scroll .desktop-window') as HTMLElement | null) ??
 				(document.scrollingElement as HTMLElement | null);
 			return cachedScrollTarget;
@@ -189,8 +190,16 @@
 		function autoScrollTick() {
 			const scrollTarget = resolveScrollTarget();
 			if (scrollTarget && mouseY >= 0) {
+				const distanceFromTop = mouseY;
 				const distanceFromBottom = window.innerHeight - mouseY;
-				if (distanceFromBottom <= AUTO_SCROLL_ZONE) {
+				if (distanceFromTop <= AUTO_SCROLL_ZONE) {
+					const proximity = 1 - Math.max(0, distanceFromTop) / AUTO_SCROLL_ZONE;
+					const delta = Math.max(2, Math.round(proximity * AUTO_SCROLL_MAX_SPEED));
+					const atTop = scrollTarget.scrollTop <= 0;
+					if (!atTop) {
+						scrollTarget.scrollTop -= delta;
+					}
+				} else if (distanceFromBottom <= AUTO_SCROLL_ZONE) {
 					const proximity = 1 - Math.max(0, distanceFromBottom) / AUTO_SCROLL_ZONE;
 					const delta = Math.max(2, Math.round(proximity * AUTO_SCROLL_MAX_SPEED));
 					const atBottom = scrollTarget.scrollTop + scrollTarget.clientHeight >= scrollTarget.scrollHeight - 1;

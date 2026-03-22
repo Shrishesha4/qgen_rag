@@ -403,10 +403,13 @@
 
 	@media (min-width: 960px) {
 		.app-shell.with-desktop-chrome {
+			--desktop-shell-vpad-top: 4rem;
+			--desktop-shell-vpad-bottom: 1.5rem;
+			--desktop-frame-height: calc(100dvh - env(safe-area-inset-top) - env(safe-area-inset-bottom) - var(--desktop-shell-vpad-top) - var(--desktop-shell-vpad-bottom));
 			display: grid;
 			grid-template-columns: 300px minmax(0, 1fr);
 			gap: 2.5rem;
-			padding: calc(env(safe-area-inset-top) + 1.5rem) 1.5rem 1.5rem;
+			padding: calc(env(safe-area-inset-top) + var(--desktop-shell-vpad-top)) 1.5rem calc(env(safe-area-inset-bottom) + var(--desktop-shell-vpad-bottom));
 			height: 100dvh;
 			max-width: 1500px;
 			margin: 0 auto;
@@ -418,6 +421,7 @@
 			padding: 1rem;
 			border-radius: 1.25rem;
 			overflow: hidden;
+			height: var(--desktop-frame-height);
 		}
 
 		.sidebar-brand {
@@ -579,6 +583,7 @@
 		.desktop-window-wrap {
 			min-width: 0;
 			display: flex;
+			min-height: 0;
 		}
 
 		.desktop-window {
@@ -586,7 +591,7 @@
 			flex-direction: column;
 			min-width: 0;
 			width: 100%;
-			height: calc(100dvh - env(safe-area-inset-top) - 3rem);
+			height: var(--desktop-frame-height);
 			border-radius: 1.25rem;
 			overflow: hidden;
 		}
@@ -601,12 +606,24 @@
 			overflow: auto;
 		}
 
+		.app-shell.vetting-loop-scroll {
+			overflow: hidden;
+		}
+
+		.app-shell.vetting-loop-scroll .desktop-window-wrap {
+			min-height: 0;
+		}
+
 		.app-shell.vetting-loop-scroll .desktop-window {
-			overflow: auto;
+			overflow: hidden;
 		}
 
 		.app-shell.vetting-loop-scroll .desktop-window-content {
-			overflow: visible;
+			height: 100%;
+			overflow-y: auto;
+			overflow-x: hidden;
+			overscroll-behavior-y: contain;
+			-webkit-overflow-scrolling: touch;
 		}
 
 		.global-back-btn {
