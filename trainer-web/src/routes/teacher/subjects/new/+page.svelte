@@ -166,7 +166,7 @@
 
 	let stepTitle = $derived.by(() => {
 		switch (step) {
-			case 1: return 'Discipline';
+			case 1: return 'Subject';
 			case 2: return 'Topics';
 			case 3: return 'Topic Content & References';
 			case 4: return 'Review';
@@ -791,7 +791,12 @@
 <div class="wizard">
 	<div class="wizard-meta animate-fade-in">
 		<p class="wizard-kicker"></p>
-		<div class="wizard-progress-pill">{step}/{totalSteps}</div>
+		<div class="progress-pill" aria-label="Setup progress">
+			<span class="progress-pill-count">{step}/{totalSteps}</span>
+			<div class="progress-pill-track" aria-hidden="true">
+				<div class="progress-pill-fill" style:width={`${(step / totalSteps) * 100}%`}></div>
+			</div>
+		</div>
 	</div>
 	<!-- Step indicator -->
 	<div class="step-bar">
@@ -1256,16 +1261,42 @@
 		color: var(--theme-primary);
 	}
 
-	.wizard-progress-pill {
-		min-width: 4.75rem;
-		padding: 0.8rem 1rem;
+	.progress-pill {
+		min-width: 11rem;
+		padding: 0.95rem 1.1rem;
 		border-radius: 999px;
-		background: rgba(255, 255, 255, 0.12);
-		border: 1px solid rgba(255, 255, 255, 0.12);
-		color: var(--theme-text);
-		font-size: 0.95rem;
+		background: linear-gradient(135deg, rgba(255, 255, 255, 0.3), rgba(255, 255, 255, 0.2));
+		border: 1px solid rgba(255, 255, 255, 0.34);
+		display: flex;
+		align-items: center;
+		gap: 0.85rem;
+		box-shadow: 0 12px 26px rgba(0, 0, 0, 0.22), inset 0 1px 0 rgba(255, 255, 255, 0.45);
+		backdrop-filter: blur(10px) saturate(130%);
+		-webkit-backdrop-filter: blur(10px) saturate(130%);
+	}
+
+	.progress-pill-count {
+		font-size: 1.35rem;
 		font-weight: 700;
-		text-align: center;
+		color: #f8fffa;
+		font-variant-numeric: tabular-nums;
+		text-shadow: 0 1px 8px rgba(0, 0, 0, 0.38);
+	}
+
+	.progress-pill-track {
+		flex: 1;
+		height: 0.5rem;
+		border-radius: 999px;
+		background: rgba(10, 22, 16, 0.38);
+		border: 1px solid rgba(255, 255, 255, 0.22);
+		overflow: hidden;
+	}
+
+	.progress-pill-fill {
+		height: 100%;
+		background: linear-gradient(90deg, rgba(var(--theme-primary-rgb), 0.55), var(--theme-primary));
+		border-radius: inherit;
+		box-shadow: 0 0 10px rgba(var(--theme-primary-rgb), 0.55);
 	}
 
 	/* Step bar */
@@ -1282,7 +1313,7 @@
 		width: 10px;
 		height: 10px;
 		border-radius: 50%;
-		background: rgba(255, 255, 255, 0.2);
+		background: rgba(30, 30, 30, 0.614);
 		flex-shrink: 0;
 		transition: all 0.3s;
 	}
@@ -1302,8 +1333,9 @@
 	.step-line {
 		flex: 1;
 		height: 2px;
-		background: rgba(255, 255, 255, 0.15);
+		background: rgba(54, 54, 54, 0.808);
 		transition: background 0.3s;
+		
 	}
 
 	.step-line.done {

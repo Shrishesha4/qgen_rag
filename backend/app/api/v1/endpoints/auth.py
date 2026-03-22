@@ -196,9 +196,14 @@ async def update_profile(
     """
     user_service = UserService(db)
     
-    updated_user = await user_service.update_user(current_user.id, update_data)
-    
-    return UserResponse.model_validate(updated_user)
+    try:
+        updated_user = await user_service.update_user(current_user.id, update_data)
+        return UserResponse.model_validate(updated_user)
+    except ValueError as e:
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail=str(e),
+        )
 
 
 @router.post("/upload-avatar", response_model=UserResponse)

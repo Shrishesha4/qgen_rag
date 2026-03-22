@@ -59,11 +59,21 @@ class UserLogin(BaseModel):
 
 class UserUpdate(BaseModel):
     """Schema for updating user profile."""
+    username: Optional[str] = Field(None, min_length=3, max_length=50)
     full_name: Optional[str] = Field(None, max_length=255)
     avatar_url: Optional[str] = Field(None, max_length=500)
     timezone: Optional[str] = Field(None, max_length=50)
     language: Optional[str] = Field(None, max_length=10)
     preferences: Optional[dict] = None
+
+    @field_validator("username")
+    @classmethod
+    def validate_username(cls, v: Optional[str]) -> Optional[str]:
+        if v is None:
+            return v
+        if not re.match(r"^[a-zA-Z0-9_]+$", v):
+            raise ValueError("Username can only contain letters, numbers, and underscores")
+        return v.lower()
 
 
 

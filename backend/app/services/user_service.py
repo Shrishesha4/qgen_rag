@@ -160,6 +160,15 @@ class UserService:
             raise ValueError("User not found")
 
         update_dict = update_data.model_dump(exclude_unset=True)
+
+        new_username = update_dict.get("username")
+        if new_username and new_username != user.username:
+            existing_username = await self.db.execute(
+                select(User).where(User.username == new_username)
+            )
+            if existing_username.scalar_one_or_none():
+                raise ValueError("Username already taken")
+
         for key, value in update_dict.items():
             setattr(user, key, value)
 

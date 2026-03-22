@@ -1,5 +1,12 @@
 /** Auth API calls — matches backend UserCreate / UserLogin schemas. */
-import { apiFetch, storeSession, clearSession, apiUrl, type StoredSession } from './client';
+import {
+	apiFetch,
+	storeSession,
+	clearSession,
+	apiUrl,
+	getStoredSession,
+	type StoredSession
+} from './client';
 
 export interface LoginRequest {
 	email: string;
@@ -30,6 +37,16 @@ export interface TokenResponse {
 		created_at: string;
 		last_login_at: string | null;
 	};
+}
+
+export interface UpdateProfileRequest {
+	username?: string;
+	full_name?: string;
+}
+
+export interface ChangePasswordRequest {
+	current_password: string;
+	new_password: string;
 }
 
 export async function login(credentials: LoginRequest): Promise<TokenResponse> {
@@ -106,4 +123,35 @@ export async function logout(): Promise<void> {
 
 export async function getCurrentUser() {
 	return apiFetch<TokenResponse['user']>('/auth/me');
+}
+
+export async function updateProfile(payload: UpdateProfileRequest): Promise<TokenResponse['user']> {
+	const updatedUser = await apiFetch<TokenResponse['user']>('/auth/update-profile', {
+		method: 'PUT',
+		body: JSON.stringify(payload)
+	});
+
+	const existing = getStoredSession();
+	if (existing) {
+		storeSession({
+			...existing,
+			user: {
+				...existing.user,
+				email: updatedUser.email,
+				username: updatedUser.username,
+				full_name: updatedUser.full_name,
+				role: updatedUser.role,
+				avatar_url: updatedUser.avatar_url
+			}
+		});
+	}
+
+	return updatedUser;
+}
+
+export async function changePassword(payload: ChangePasswordRequest): Promise<{ message: string }> {
+	return apiFetch<{ message: string }>('/auth/change-password', {
+		method: 'POST',
+		body: JSON.stringify(payload)
+	});
 }
