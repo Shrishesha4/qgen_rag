@@ -8,7 +8,7 @@
 	import MobileNavBar from '$lib/components/MobileNavBar.svelte';
 	import { warmVettingTaxonomy } from '$lib/api/vetting';
 	import { initAiOps } from '$lib/api/ops';
-	import { session } from '$lib/session';
+	import { session, currentUser } from '$lib/session';
 
 	let { children } = $props();
 
@@ -108,6 +108,20 @@
 	});
 
 	let enableVettingLoopScroll = $derived(pathname.startsWith('/teacher/train/loop'));
+
+	// Role-based routing: redirect to dashboard on root path
+	$effect(() => {
+		if (pathname === '/' && $currentUser) {
+			const role = $currentUser.role;
+			if (role === 'teacher') {
+				goto('/teacher/subjects');
+			} else if (role === 'vetter') {
+				goto('/vetter/dashboard');
+			} else if (role === 'admin') {
+				goto('/admin/dashboard');
+			}
+		}
+	});
 
 	function goBack() {
 		if (typeof window !== 'undefined' && window.history.length > 1) {
@@ -231,6 +245,7 @@
 					<p class="copyright-text">
 						{currentYear} © Viana Soft Private Limited
 					</p>
+					<!-- svelte-ignore a11y_invalid_attribute -->
 					<a href="#" class="privacy-link">Privacy Policy</a>
 				</div>
 			</div>
