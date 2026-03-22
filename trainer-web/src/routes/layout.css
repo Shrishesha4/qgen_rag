@@ -126,6 +126,24 @@ body {
   min-height: 100%; 
 }
 
+/* Default site zoom for desktop-like devices */
+@media (hover: hover) and (pointer: fine) {
+  html {
+    zoom: 0.95;
+  }
+}
+
+/* Firefox fallback (no zoom support) */
+@supports not (zoom: 1) {
+  @media (hover: hover) and (pointer: fine) {
+    body {
+      transform: scale(0.95);
+      transform-origin: top left;
+      width: 105.2632%;
+    }
+  }
+}
+
 /* Hide visible scrollbars globally while keeping scroll interaction intact. */
 html,
 body,

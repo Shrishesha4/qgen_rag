@@ -601,8 +601,12 @@
 			overflow: auto;
 		}
 
-		.app-shell.vetting-loop-scroll .desktop-window-content {
+		.app-shell.vetting-loop-scroll .desktop-window {
 			overflow: auto;
+		}
+
+		.app-shell.vetting-loop-scroll .desktop-window-content {
+			overflow: visible;
 		}
 
 		.global-back-btn {

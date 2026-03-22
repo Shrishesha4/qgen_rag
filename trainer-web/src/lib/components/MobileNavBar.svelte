@@ -164,6 +164,7 @@
 				<p class="drawer-copyright-text">
 					{currentYear} © Viana Soft Private Limited
 				</p>
+				<!-- svelte-ignore a11y_invalid_attribute -->
 				<a href="#" class="drawer-privacy-link">Privacy Policy</a>
 			</div>
 		</div>

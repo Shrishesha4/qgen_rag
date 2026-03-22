@@ -160,10 +160,64 @@
 		}
 		window.addEventListener('beforeunload', handleBeforeUnload);
 
+		// Auto-scroll when mouse approaches bottom action area.
+		// For desktop vetting loop, scrolling happens inside .desktop-window, not window.
+		let mouseY = -1;
+		let autoScrollRaf: number | null = null;
+		let cachedScrollTarget: HTMLElement | null = null;
+		const AUTO_SCROLL_ZONE = 150; // px from bottom of viewport
+		const AUTO_SCROLL_MAX_SPEED = 10; // px per animation frame
+
+		function resolveScrollTarget(): HTMLElement | null {
+			if (cachedScrollTarget && document.contains(cachedScrollTarget)) {
+				return cachedScrollTarget;
+			}
+			cachedScrollTarget =
+				(document.querySelector('.app-shell.vetting-loop-scroll .desktop-window') as HTMLElement | null) ??
+				(document.scrollingElement as HTMLElement | null);
+			return cachedScrollTarget;
+		}
+
+		function handlePointerMove(e: MouseEvent | PointerEvent) {
+			mouseY = e.clientY;
+		}
+
+		function handlePointerLeave() {
+			mouseY = -1;
+		}
+
+		function autoScrollTick() {
+			const scrollTarget = resolveScrollTarget();
+			if (scrollTarget && mouseY >= 0) {
+				const distanceFromBottom = window.innerHeight - mouseY;
+				if (distanceFromBottom <= AUTO_SCROLL_ZONE) {
+					const proximity = 1 - Math.max(0, distanceFromBottom) / AUTO_SCROLL_ZONE;
+					const delta = Math.max(2, Math.round(proximity * AUTO_SCROLL_MAX_SPEED));
+					const atBottom = scrollTarget.scrollTop + scrollTarget.clientHeight >= scrollTarget.scrollHeight - 1;
+					if (!atBottom) {
+						scrollTarget.scrollTop += delta;
+					}
+				}
+			}
+			autoScrollRaf = window.requestAnimationFrame(autoScrollTick);
+		}
+
+		window.addEventListener('mousemove', handlePointerMove, { passive: true });
+		window.addEventListener('pointermove', handlePointerMove, { passive: true });
+		window.addEventListener('mouseleave', handlePointerLeave);
+		autoScrollRaf = window.requestAnimationFrame(autoScrollTick);
+
 		return () => {
 			unsub();
 			unsubPage();
 			window.removeEventListener('beforeunload', handleBeforeUnload);
+			window.removeEventListener('mousemove', handlePointerMove);
+			window.removeEventListener('pointermove', handlePointerMove);
+			window.removeEventListener('mouseleave', handlePointerLeave);
+			if (autoScrollRaf !== null) {
+				window.cancelAnimationFrame(autoScrollRaf);
+				autoScrollRaf = null;
+			}
 			if (progressSaveTimer) {
 				clearTimeout(progressSaveTimer);
 				progressSaveTimer = null;
@@ -1515,18 +1569,17 @@
 
 <style>
 	.loop-page {
-		max-width: 600px;
+		max-width: 540px;
 		margin: 0 auto;
-		padding: 2rem 1.5rem 10rem;
+		padding: 1.5rem 1.25rem 9rem;
 		display: flex;
 		flex-direction: column;
-		gap: 1.5rem;
-		padding-bottom: 12rem;
+		gap: 1.25rem;
 	}
 
 	/* Question card - subtle dark blur effect */
 	.question-card {
-		padding: 1.5rem;
+		padding: 1.25rem;
 		backdrop-filter: blur(28px) saturate(95%) brightness(0.92) !important;
 		-webkit-backdrop-filter: blur(28px) saturate(95%) brightness(0.92) !important;
 		background: linear-gradient(
@@ -1543,10 +1596,10 @@
 	}
 
 	.q-text {
-		font-size: 1.25rem;
-		line-height: 1.2;
+		font-size: 1.15rem;
+		line-height: 1.4;
 		color: var(--theme-text);
-		margin: 0 0 1.25rem;
+		margin: 0 0 1rem;
 		font-weight: 500;
 	}
 
@@ -1554,14 +1607,14 @@
 	.options {
 		display: flex;
 		flex-direction: column;
-		gap: 0.5rem;
+		gap: 0.4rem;
 	}
 
 	.option {
 		display: flex;
 		align-items: center;
 		gap: 0.6rem;
-		padding: 0.6rem 0.8rem;
+		padding: 0.5rem 0.7rem;
 		background: linear-gradient(
 			145deg,
 			rgba(0,0,0,0.12) 0%,
@@ -1570,7 +1623,7 @@
 		);
 		border: 1px solid rgba(0, 0, 0, 0.1);
 		border-radius: 10px;
-		font-size: 0.9rem;
+		font-size: 0.85rem;
 		color: var(--theme-text);
 		transition: all 0.15s;
 		backdrop-filter: blur(16px) saturate(95%) brightness(0.96) !important;
@@ -2097,7 +2150,7 @@
 
 	@media (max-width: 768px) {
 		.loop-page {
-			padding: 1.25rem 1rem 11.5rem;
+			padding: 1.25rem 1rem 8.5rem;
 		}
 
 		/* .caught-up-stats {
@@ -2511,7 +2564,7 @@
 
 	.hero-title {
 		margin: 0;
-		font-size: clamp(2.8rem, 6vw, 4rem);
+		font-size: clamp(2rem, 5vw, 2.8rem);
 		line-height: 0.95;
 		color: var(--theme-text);
 	}
@@ -2891,9 +2944,9 @@
 		}
 
 		.q-text {
-			font-size: clamp(1.4rem, 5vw, 2rem);
-			line-height: 1.25;
-			margin-bottom: 1.25rem;
+			font-size: clamp(1.1rem, 4vw, 1.5rem);
+			line-height: 1.35;
+			margin-bottom: 1rem;
 		}
 
 		.options {
