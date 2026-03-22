@@ -178,6 +178,7 @@
 
 <div class="bg-image-layer" aria-hidden="true"></div>
 <div class="bg-overlay-layer" aria-hidden="true"></div>
+<div class="bg-mobile-frost-layer" aria-hidden="true"></div>
 
 {#if showDesktopChrome}
 	<MobileNavBar {navItems} />
@@ -195,7 +196,9 @@
 	{#if showDesktopChrome}
 		<aside class="desktop-sidebar glass-panel">
 			<div class="sidebar-brand">
-				<div class="brand-icon">🧠</div>
+				<div class="brand-icon">
+					<img src="/logo.png" alt="VQuest logo" class="brand-logo-img" loading="eager" decoding="async" />
+				</div>
 				<div>
 					<p class="brand-title">VQuest</p>
 					<p class="brand-subtitle">Trainer Console</p>
@@ -323,7 +326,7 @@
 		min-height: 100dvh;
 		color: var(--theme-text);
 		position: relative;
-		z-index: 2;
+		z-index: 3;
 		padding-top: calc(env(safe-area-inset-top) + 0.25rem);
 		padding-right: env(safe-area-inset-right);
 		padding-bottom: env(safe-area-inset-bottom);
@@ -406,6 +409,12 @@
 			place-items: center;
 			background: rgba(255, 255, 255, 0.62);
 			border: 1px solid rgba(255, 255, 255, 0.74);
+		}
+
+		.brand-logo-img {
+			width: 28px;
+			height: 28px;
+			object-fit: contain;
 		}
 
 		.brand-title {

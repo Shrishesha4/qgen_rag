@@ -102,6 +102,22 @@ body {
   min-height: 100%; 
 }
 
+/* Hide visible scrollbars globally while keeping scroll interaction intact. */
+html,
+body,
+* {
+  scrollbar-width: none;      /* Firefox */
+  -ms-overflow-style: none;   /* IE/legacy Edge */
+}
+
+html::-webkit-scrollbar,
+body::-webkit-scrollbar,
+*::-webkit-scrollbar {
+  width: 0;
+  height: 0;
+  display: none;              /* WebKit/Blink */
+}
+
 body {
   margin: 0;
   font-family:
@@ -993,6 +1009,28 @@ a:hover {
   -webkit-backdrop-filter: blur(1px);
   transform: translateZ(0);
   will-change: transform;
+}
+
+.bg-mobile-frost-layer {
+  display: none;
+}
+
+@media (max-width: 920px) {
+  .bg-mobile-frost-layer {
+    display: block;
+    position: fixed;
+    inset: 0;
+    z-index: 2;
+    pointer-events: none;
+    background: linear-gradient(
+      180deg,
+      rgba(255, 255, 255, 0.62) 0%,
+      rgba(255, 255, 255, 0.56) 38%,
+      rgba(255, 255, 255, 0.52) 100%
+    );
+    backdrop-filter: blur(12px) saturate(120%);
+    -webkit-backdrop-filter: blur(12px) saturate(120%);
+  }
 }
 
 /* ── Scroll area ── */

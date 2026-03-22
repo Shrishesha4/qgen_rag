@@ -159,12 +159,16 @@
 </div>
 
 <div class="mobile-floating-dock">
-	<input
-		class="search-input mobile-search-input"
-		bind:value={query}
-		placeholder="Search by subject, code, or description"
-	/>
-	<button class="mobile-add-btn" onclick={goToAddSubject}>+ Add Subject</button>
+	<div class="mobile-floating-dock__glass">
+		<div class="mobile-floating-dock__content">
+			<input
+				class="search-input mobile-search-input"
+				bind:value={query}
+				placeholder="Search by subject, code, or description"
+			/>
+			<button class="mobile-add-btn" onclick={goToAddSubject}>+ Add Subject</button>
+		</div>
+	</div>
 </div>
 
 <style>
@@ -242,6 +246,11 @@
 
 	.mobile-floating-dock {
 		display: none;
+	}
+
+	.mobile-floating-dock__glass,
+	.mobile-floating-dock__content {
+		position: relative;
 	}
 
 	/* .refresh-btn {
@@ -445,51 +454,116 @@
 		}
 
 		.mobile-floating-dock {
-			display: flex;
+			display: block;
 			position: fixed;
+			left: 0.75rem;
+			right: 0.75rem;
+			bottom: 0.65rem;
+			z-index: 70;
+			padding-bottom: env(safe-area-inset-bottom);
+			pointer-events: none;
+		}
+
+		.mobile-floating-dock__glass {
+			border-radius: 1.75rem 1.75rem 1.35rem 1.35rem;
+			overflow: visible;
+			pointer-events: auto;
+		}
+
+		.mobile-floating-dock__glass::before {
+			content: '';
+			position: absolute;
 			left: 0;
 			right: 0;
-			bottom: 0;
-			z-index: 70;
-			flex-direction: column;
-			gap: 0.5rem;
-			padding: 0.65rem 1rem calc(0.65rem + env(safe-area-inset-bottom));
+			bottom: -0.2rem;
+			top: -7rem;
+			border-radius: 2rem;
 			background: linear-gradient(
-				135deg,
-				rgba(255, 255, 255, 0.94) 0%,
-				rgba(255, 255, 255, 0.88) 25%,
-				rgba(255, 255, 255, 0.85) 50%,
-				rgba(255, 255, 255, 0.82) 75%,
-				rgba(255, 255, 255, 0.78) 100%
+				to top,
+				rgba(255, 255, 255, 0.93) 0%,
+				rgba(255, 255, 255, 0.86) 32%,
+				rgba(255, 255, 255, 0.62) 58%,
+				rgba(255, 255, 255, 0.26) 80%,
+				rgba(255, 255, 255, 0) 100%
 			);
-			backdrop-filter: blur(32px) saturate(200%) brightness(1.05);
-			-webkit-backdrop-filter: blur(32px) saturate(200%) brightness(1.05);
-			border-top: 1px solid rgba(255, 255, 255, 0.4);
-			box-shadow: 
-				0 -4px 32px rgba(0, 0, 0, 0.08),
-				0 -2px 16px rgba(0, 0, 0, 0.04),
-				inset 0 1px 0 rgba(255, 255, 255, 0.6),
-				0 0 0 1px rgba(255, 255, 255, 0.2);
+			backdrop-filter: blur(28px) saturate(180%) brightness(1.06);
+			-webkit-backdrop-filter: blur(28px) saturate(180%) brightness(1.06);
+			mask-image: linear-gradient(
+				to top,
+				rgba(0, 0, 0, 1) 0%,
+				rgba(0, 0, 0, 0.96) 30%,
+				rgba(0, 0, 0, 0.72) 56%,
+				rgba(0, 0, 0, 0.26) 82%,
+				rgba(0, 0, 0, 0) 100%
+			);
+			-webkit-mask-image: linear-gradient(
+				to top,
+				rgba(0, 0, 0, 1) 0%,
+				rgba(0, 0, 0, 0.96) 30%,
+				rgba(0, 0, 0, 0.72) 56%,
+				rgba(0, 0, 0, 0.26) 82%,
+				rgba(0, 0, 0, 0) 100%
+			);
+			border: 1px solid rgba(255, 255, 255, 0.34);
+			box-shadow:
+				0 -8px 36px rgba(0, 0, 0, 0.1),
+				0 -2px 16px rgba(0, 0, 0, 0.06),
+				inset 0 1px 0 rgba(255, 255, 255, 0.68);
+			z-index: 0;
+			pointer-events: none;
+		}
+
+		.mobile-floating-dock__glass::after {
+			content: '';
+			position: absolute;
+			left: 10%;
+			right: 10%;
+			bottom: 0.45rem;
+			height: 5.75rem;
+			border-radius: 999px;
+			background: radial-gradient(
+				ellipse at center,
+				rgba(255, 255, 255, 0.24) 0%,
+				rgba(255, 255, 255, 0.11) 44%,
+				rgba(255, 255, 255, 0) 82%
+			);
+			filter: blur(20px);
+			z-index: 0;
+			pointer-events: none;
+		}
+
+		.mobile-floating-dock__content {
+			z-index: 1;
+			display: flex;
+			flex-direction: column;
+			gap: 0.6rem;
+			padding: 0.75rem;
+			border-radius: 1.75rem;
 		}
 
 		.mobile-search-input {
 			width: 100%;
-			padding: 0.7rem 0.85rem;
-			font-size: 0.9rem;
-			border-radius: 0.75rem;
+			padding: 0.88rem 1rem;
+			font-size: 0.95rem;
+			border-radius: 1.35rem;
+			border: 1px solid rgba(17, 24, 39, 0.12);
+			background: rgba(255, 255, 255, 0.74);
+			backdrop-filter: blur(8px) saturate(120%);
+			-webkit-backdrop-filter: blur(8px) saturate(120%);
 		}
 
 		.mobile-add-btn {
 			width: 100%;
-			padding: 0.72rem 1rem;
+			padding: 0.88rem 1rem;
 			border-radius: 999px;
 			border: 1px solid rgba(var(--theme-primary-rgb), 0.45);
-			background: rgba(var(--theme-primary-rgb), 0.18);
+			background: linear-gradient(135deg, rgba(var(--theme-primary-rgb), 0.34), rgba(var(--theme-primary-rgb), 0.2));
 			color: var(--theme-text-primary);
 			font: inherit;
 			font-weight: 800;
 			cursor: pointer;
 			-webkit-tap-highlight-color: transparent;
+			box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.5), 0 8px 20px rgba(var(--theme-primary-rgb), 0.18);
 		}
 
 		.stat-card {
@@ -554,6 +628,12 @@
 	@media (max-width: 420px) {
 		.page {
 			padding: 0.65rem 0.85rem calc(7.5rem + env(safe-area-inset-bottom));
+		}
+
+		.mobile-floating-dock {
+			left: 0.6rem;
+			right: 0.6rem;
+			bottom: 0.5rem;
 		}
 
 		.title {

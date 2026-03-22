@@ -1,6 +1,8 @@
 <script lang="ts">
 	import { page } from '$app/stores';
 	import { goto } from '$app/navigation';
+	import { logout } from '$lib/api/auth';
+	import { session } from '$lib/session';
 	import ThemePicker from './ThemePicker.svelte';
 
 	interface NavItem {
@@ -76,6 +78,13 @@
 	function closeDrawer() {
 		drawerOpen = false;
 	}
+
+	async function handleSignOut() {
+		drawerOpen = false;
+		await logout();
+		session.clear();
+		goto('/');
+	}
 </script>
 
 <!-- ─── iOS 7-style top nav bar ─── -->
@@ -112,7 +121,9 @@
 	<aside class="drawer-panel">
 		<div class="drawer-header">
 			<div class="drawer-brand">
-				<span class="drawer-brand-icon">🧠</span>
+				<span class="drawer-brand-icon">
+					<img src="/logo.png" alt="VQuest logo" class="drawer-brand-logo" loading="eager" decoding="async" />
+				</span>
 				<div>
 					<p class="drawer-brand-title">VQuest</p>
 					<p class="drawer-brand-subtitle">Trainer Console</p>
@@ -138,6 +149,13 @@
 				</button>
 			{/each}
 		</nav>
+
+		<div class="drawer-footer">
+			<button class="drawer-signout" onclick={handleSignOut}>
+				<span class="drawer-link-icon">↪</span>
+				<span>Sign Out</span>
+			</button>
+		</div>
 	</aside>
 {/if}
 
@@ -306,8 +324,13 @@
 		place-items: center;
 		background: rgba(255, 255, 255, 0.75);
 		border: 1px solid rgba(0, 0, 0, 0.08);
-		font-size: 1.15rem;
 		box-shadow: 0 1px 4px rgba(0, 0, 0, 0.06);
+	}
+
+	.drawer-brand-logo {
+		width: 24px;
+		height: 24px;
+		object-fit: contain;
 	}
 
 	.drawer-brand-title {
@@ -353,6 +376,36 @@
 		gap: 0.2rem;
 		overflow-y: auto;
 		-webkit-overflow-scrolling: touch;
+	}
+
+	.drawer-footer {
+		padding: 0.7rem 0.6rem calc(0.8rem + env(safe-area-inset-bottom, 0px));
+		border-top: 0.5px solid rgba(0, 0, 0, 0.1);
+		background: linear-gradient(180deg, rgba(255, 255, 255, 0.5), rgba(255, 255, 255, 0.72));
+	}
+
+	.drawer-signout {
+		display: flex;
+		align-items: center;
+		gap: 0.7rem;
+		width: 100%;
+		padding: 0.72rem 0.75rem;
+		border: none;
+		border-radius: 12px;
+		background: rgba(239, 68, 68, 0.12);
+		color: #b91c1c;
+		font: inherit;
+		font-size: 0.95rem;
+		font-weight: 700;
+		text-align: left;
+		cursor: pointer;
+		transition: background 0.12s, transform 0.12s;
+		-webkit-tap-highlight-color: transparent;
+	}
+
+	.drawer-signout:active {
+		background: rgba(239, 68, 68, 0.2);
+		transform: scale(0.99);
 	}
 
 	.drawer-link {

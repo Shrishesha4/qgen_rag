@@ -40,10 +40,7 @@
 <div class="vetter-dash">
 	<div class="hero animate-fade-in">
 		<div class="hero-icon emerald">
-			<svg width="28" height="28" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
-				<circle cx="11" cy="11" r="8"></circle>
-				<path d="m21 21-4.3-4.3"></path>
-			</svg>
+			<img src="/logo.png" alt="VQuest logo" class="hero-logo-img" loading="eager" decoding="async" />
 		</div>
 		<h1 class="title font-serif">Vetter Dashboard</h1>
 		{#if $currentUser}
@@ -118,6 +115,12 @@
 	.hero-icon.emerald {
 		background: rgba(16, 185, 129, 0.2);
 		color: #10b981;
+	}
+
+	.hero-logo-img {
+		width: 28px;
+		height: 28px;
+		object-fit: contain;
 	}
 
 	.title {
@@ -265,7 +268,7 @@
 			height: 48px;
 		}
 
-		.hero-icon svg {
+		.hero-logo-img {
 			width: 24px;
 			height: 24px;
 		}
@@ -332,7 +335,7 @@
 			height: 44px;
 		}
 
-		.hero-icon svg {
+		.hero-logo-img {
 			width: 22px;
 			height: 22px;
 		}

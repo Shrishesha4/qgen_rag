@@ -31,10 +31,7 @@
 	<!-- Hero -->
 	<div class="hero animate-fade-in">
 		<div class="hero-icon">
-			<svg width="32" height="32" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round">
-				<path d="M12 2a7.5 7.5 0 0 0-5.5 12.5l.5.5V20h10v-5l.5-.5A7.5 7.5 0 0 0 12 2z"></path>
-				<path d="M9 22h6"></path>
-			</svg>
+			<img src="/logo.png" alt="VQuest logo" class="hero-logo-img" loading="eager" decoding="async" />
 		</div>
 		<h1 class="hero-title font-serif">VQuest</h1>
 		<p class="hero-sub">Select a mode to begin</p>
@@ -162,6 +159,12 @@
 		align-items: center;
 		justify-content: center;
 		color: var(--theme-primary);
+	}
+
+	.hero-logo-img {
+		width: 32px;
+		height: 32px;
+		object-fit: contain;
 	}
 
 	.hero-title {
@@ -327,7 +330,7 @@
 			height: 56px;
 		}
 
-		.hero-icon svg {
+		.hero-logo-img {
 			width: 28px;
 			height: 28px;
 		}
@@ -395,7 +398,7 @@
 			height: 50px;
 		}
 
-		.hero-icon svg {
+		.hero-logo-img {
 			width: 24px;
 			height: 24px;
 		}

@@ -3,33 +3,39 @@
 	import { goto } from '$app/navigation';
 	import { session } from '$lib/session';
 
+	let introReady = $state(false);
+
 	onMount(() => {
 		const unsub = session.subscribe((s) => {
 			if (s) {
 				goto(s.user.role === 'admin' ? '/admin/dashboard' : s.user.role === 'vetter' ? '/vetter/dashboard' : '/teacher/train');
 			}
 		});
-		return unsub;
+
+		const rafId = requestAnimationFrame(() => {
+			introReady = true;
+		});
+
+		return () => {
+			cancelAnimationFrame(rafId);
+			unsub();
+		};
 	});
 </script>
 
 <div class="landing">
-	<section class="landing-shell animate-fade-in">
+	<section class="landing-shell" class:intro-ready={introReady}>
 		<div class="hero">
 			<div class="hero-icon">
-				<svg width="40" height="40" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round">
-					<path d="M12 2a7.5 7.5 0 0 0-5.5 12.5l.5.5V20h10v-5l.5-.5A7.5 7.5 0 0 0 12 2z"></path>
-					<path d="M9 22h6"></path>
-				</svg>
+				<img src="/logo.png" alt="VQuest logo" class="hero-logo-img" loading="eager" decoding="async" />
 			</div>
-			<p class="hero-kicker">Adaptive Content Studio</p>
 			<h1 class="hero-title font-serif">VQuest</h1>
 			<p class="hero-sub">
 				Self-correcting AI for educational content, refined by teacher and vetter feedback loops.
 			</p>
 		</div>
 
-		<div class="cards animate-slide-up">
+		<div class="cards">
 			<a href="/teacher/login" class="role-card glass-panel teacher-card">
 			<div class="role-icon teacher-icon">
 				<svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
@@ -88,6 +94,186 @@
 		display: flex;
 		flex-direction: column;
 		gap: 1rem;
+		position: relative;
+		isolation: isolate;
+		padding: clamp(0.7rem, 1.5vw, 1rem);
+		border-radius: 1.7rem;
+		overflow: hidden;
+	}
+
+	.landing-shell::before,
+	.landing-shell::after {
+		content: '';
+		position: absolute;
+		pointer-events: none;
+	}
+
+	/* Phase 1: Painterly mask-based white reveal */
+	.landing-shell::before {
+		inset: -12% -10%;
+		z-index: 1;
+		background:
+			radial-gradient(120% 90% at 16% 32%, rgba(255, 255, 255, 0.98) 0%, rgba(255, 255, 255, 0.94) 40%, rgba(255, 255, 255, 0.84) 72%, rgba(255, 255, 255, 0.35) 100%),
+			linear-gradient(115deg, rgba(255, 255, 255, 1) 0%, rgba(255, 255, 255, 0.92) 55%, rgba(255, 255, 255, 0.5) 100%);
+		transform: translateX(-118%) translateY(-3%) rotate(-4.5deg);
+		opacity: 0;
+		filter: blur(1px);
+		mask-image:
+			radial-gradient(70% 96% at 8% 50%, #000 42%, transparent 84%),
+			radial-gradient(56% 86% at 32% 46%, #000 50%, transparent 82%),
+			radial-gradient(68% 88% at 58% 58%, #000 46%, transparent 83%),
+			radial-gradient(72% 98% at 90% 48%, #000 45%, transparent 82%),
+			linear-gradient(90deg, transparent 0%, #000 18%, #000 84%, transparent 100%);
+		-webkit-mask-image:
+			radial-gradient(70% 96% at 8% 50%, #000 42%, transparent 84%),
+			radial-gradient(56% 86% at 32% 46%, #000 50%, transparent 82%),
+			radial-gradient(68% 88% at 58% 58%, #000 46%, transparent 83%),
+			radial-gradient(72% 98% at 90% 48%, #000 45%, transparent 82%),
+			linear-gradient(90deg, transparent 0%, #000 18%, #000 84%, transparent 100%);
+		mask-repeat: no-repeat;
+		-webkit-mask-repeat: no-repeat;
+	}
+
+	/* Phase 2: Morph target - glass panel that settles and remains */
+	.landing-shell::after {
+		inset: 0;
+		z-index: 1;
+		opacity: 0;
+		border-radius: inherit;
+		background: linear-gradient(
+			155deg,
+			rgba(255, 255, 255, 0.48) 0%,
+			rgba(255, 255, 255, 0.34) 42%,
+			rgba(255, 255, 255, 0.22) 100%
+		);
+		border: 1px solid rgba(255, 255, 255, 0.56);
+		box-shadow:
+			0 16px 42px rgba(0, 0, 0, 0.22),
+			inset 0 1px 0 rgba(255, 255, 255, 0.68),
+			inset 0 -1px 0 rgba(255, 255, 255, 0.18);
+		backdrop-filter: blur(16px) saturate(145%);
+		-webkit-backdrop-filter: blur(16px) saturate(145%);
+	}
+
+	.landing-shell > * {
+		position: relative;
+		z-index: 2;
+	}
+
+	.landing-shell.intro-ready::before {
+		animation: paintSweep 0.92s cubic-bezier(0.2, 0.86, 0.22, 1) both;
+	}
+
+	.landing-shell.intro-ready::after {
+		animation: glassSettle 0.9s cubic-bezier(0.2, 0.7, 0.12, 1) 0.56s both;
+	}
+
+	/* Phase 3: Staggered content reveal once glass is legible */
+	.hero-icon,
+	.hero-title,
+	.hero-sub,
+	.teacher-card,
+	.vetter-card {
+		opacity: 0;
+		transform: translateY(14px);
+		filter: blur(8px);
+	}
+
+	.landing-shell.intro-ready .hero-icon {
+		animation: contentFadeUp 0.55s ease 0.94s both;
+	}
+
+	.landing-shell.intro-ready .hero-title {
+		animation: contentFadeUp 0.58s ease 1.12s both;
+	}
+
+	.landing-shell.intro-ready .hero-sub {
+		animation: contentFadeUp 0.6s ease 1.22s both;
+	}
+
+	.landing-shell.intro-ready .teacher-card {
+		animation: contentFadeUp 0.62s ease 1.34s both;
+	}
+
+	.landing-shell.intro-ready .vetter-card {
+		animation: contentFadeUp 0.62s ease 1.46s both;
+	}
+
+	@keyframes paintSweep {
+		0% {
+			opacity: 0;
+			transform: translateX(-118%) translateY(-3%) rotate(-4.5deg);
+			filter: blur(2px);
+		}
+		8% {
+			opacity: 0.96;
+		}
+		58% {
+			opacity: 0.9;
+			transform: translateX(0%) translateY(0) rotate(-1.1deg);
+			filter: blur(0);
+		}
+		100% {
+			opacity: 0;
+			transform: translateX(24%) translateY(0) rotate(0deg);
+			filter: blur(1px);
+		}
+	}
+
+	@keyframes glassSettle {
+		0% {
+			opacity: 0;
+			transform: scale(1.02);
+			filter: blur(4px);
+		}
+		100% {
+			opacity: 1;
+			transform: scale(1);
+			filter: blur(0);
+		}
+	}
+
+	@keyframes contentFadeUp {
+		0% {
+			opacity: 0;
+			transform: translateY(14px);
+			filter: blur(8px);
+		}
+		100% {
+			opacity: 1;
+			transform: translateY(0);
+			filter: blur(0);
+		}
+	}
+
+	@supports not ((mask-image: linear-gradient(#000, #000)) or (-webkit-mask-image: linear-gradient(#000, #000))) {
+		.landing-shell::before {
+			mask-image: none;
+			-webkit-mask-image: none;
+			border-radius: inherit;
+		}
+	}
+
+	@media (prefers-reduced-motion: reduce) {
+		.landing-shell::before,
+		.landing-shell::after {
+			animation: none !important;
+		}
+
+		.hero-icon,
+		.hero-title,
+		.hero-sub,
+		.teacher-card,
+		.vetter-card {
+			opacity: 1;
+			transform: none;
+			filter: none;
+			animation: none !important;
+		}
+
+		.landing-shell::after {
+			opacity: 1;
+		}
 	}
 
 	.hero {
@@ -107,25 +293,20 @@
 	}
 
 	.hero-icon {
-		width: 72px;
-		height: 72px;
-		border-radius: 50%;
-		background: rgba(255, 255, 255, 0.1);
-		border: 1px solid rgba(255, 255, 255, 0.15);
+		width: auto;
+		height: auto;
 		display: flex;
 		align-items: center;
 		justify-content: center;
-		color: var(--theme-primary);
+		background: transparent;
+		border: none;
 		margin-bottom: 0.3rem;
 	}
 
-	.hero-kicker {
-		margin: 0;
-		font-size: 0.76rem;
-		font-weight: 700;
-		letter-spacing: 0.08em;
-		text-transform: uppercase;
-		color: var(--theme-primary);
+	.hero-logo-img {
+		width: 100px;
+		height: 100px;
+		object-fit: contain;
 	}
 
 	.hero-title {
@@ -133,12 +314,14 @@
 		font-weight: 800;
 		letter-spacing: -0.02em;
 		margin: 0;
-		color: var(--theme-text-primary);
+		/* color: var(--theme-text-primary); */
+		color: black;
 	}
 
 	.hero-sub {
-		font-size: 1rem;
-		color: var(--theme-text-secondary);
+		font-size: 1.2rem;
+		color: black;
+		/* color: var(--theme-text-secondary); */
 		margin: 0;
 		line-height: 1.55;
 		max-width: 48ch;
@@ -267,14 +450,9 @@
 			padding: 0.35rem 0.15rem;
 		}
 
-		.hero-icon {
+		.hero-logo-img {
 			width: 64px;
 			height: 64px;
-		}
-
-		.hero-icon svg {
-			width: 32px;
-			height: 32px;
 		}
 
 		.hero-title {
@@ -328,14 +506,12 @@
 		}
 
 		.hero-icon {
-			width: 52px;
-			height: 52px;
 			margin-bottom: 0.25rem;
 		}
 
-		.hero-icon svg {
-			width: 26px;
-			height: 26px;
+		.hero-logo-img {
+			width: 64px;
+			height: 64px;
 		}
 
 		.hero-title {

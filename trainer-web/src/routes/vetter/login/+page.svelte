@@ -52,7 +52,7 @@
 
 <div class="login-page">
 	<div class="login-grid">
-		<section class="hero-card">
+		<!-- <section class="hero-card">
 			<p class="kicker">Vetter Console</p>
 			<h1 class="hero-title font-serif">Review With Confidence</h1>
 			<p class="hero-copy">
@@ -63,7 +63,7 @@
 				<div class="point">One-click approve, reject, or edit</div>
 				<div class="point">Structured feedback for regeneration</div>
 			</div>
-		</section>
+		</section> -->
 
 		<section class="auth-card glass-panel animate-scale-in">
 			<a href="/" class="back-link">← Back to Home</a>
@@ -139,13 +139,14 @@
 	}
 
 	.login-grid {
-		width: min(100%, 980px);
+		width: min(100%, 430px);
 		display: grid;
-		grid-template-columns: 1.15fr minmax(0, 430px);
+		grid-template-columns: minmax(0, 1fr);
 		gap: 1rem;
+		margin: 0 auto;
 	}
 
-	.hero-card {
+	/* .hero-card {
 		padding: 2rem;
 		border-radius: 1.25rem;
 		background:
@@ -193,7 +194,7 @@
 		border-radius: 0.7rem;
 		border: 1px solid rgba(167, 243, 208, 0.3);
 		background: rgba(15, 23, 42, 0.46);
-	}
+	} */
 
 	.auth-card {
 		padding: 1.5rem;
@@ -310,15 +311,15 @@
 	@media (max-width: 900px) {
 		.login-grid {
 			grid-template-columns: 1fr;
-			max-width: 520px;
+			max-width: 430px;
 		}
 
-		.hero-card {
+		/* .hero-card {
 			padding: 1.45rem;
 		}
 
 		.hero-title {
 			font-size: 1.75rem;
-		}
+		} */
 	}
 </style>

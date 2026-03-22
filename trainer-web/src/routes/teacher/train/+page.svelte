@@ -490,6 +490,7 @@
 			<p class="muted">Pick a subject and topic below, then begin vetting immediately in this page.</p>
 			<div class="inline-selector-grid">
 				<div class="subjects-pane">
+					<p class="pane-title">Subjects</p>
 					<input class="search-input" bind:value={searchQuery} placeholder="Search subjects or topics" />
 					<div class="subject-list">
 						{#each filteredSubjects as subject}
@@ -512,6 +513,7 @@
 				</div>
 
 				<div class="topics-pane">
+					<p class="pane-title">Topics</p>
 					{#if selectedSubject}
 						{@const selectedSubjectGenerationState = getSubjectGenerationState(selectedSubject.id)}
 						<div class="topics-head">
@@ -717,6 +719,15 @@
 		padding: 0.65rem;
 	}
 
+	.pane-title {
+		margin: 0 0 0.5rem;
+		font-size: 0.72rem;
+		font-weight: 800;
+		letter-spacing: 0.08em;
+		text-transform: uppercase;
+		color: var(--theme-text-muted);
+	}
+
 	.search-input {
 		width: 100%;
 		padding: 0.7rem 0.8rem;
@@ -734,6 +745,7 @@
 		max-height: 44vh;
 		overflow: auto;
 		margin-top: 0.6rem;
+		overscroll-behavior: contain;
 	}
 
 	.subject-item {
@@ -747,6 +759,7 @@
 		display: flex;
 		flex-direction: column;
 		gap: 0.22rem;
+		min-height: fit-content;
 	}
 
 	.subject-item.active {
@@ -773,6 +786,7 @@
 	.subject-meta {
 		font-size: 0.74rem;
 		color: var(--theme-text-muted);
+		line-height: 1.25;
 	}
 
 	.resume-dot {
@@ -889,7 +903,7 @@
 
 	@media (max-width: 860px) {
 		.page {
-			padding: 1rem 1.1rem 2.5rem;
+			padding: max(0.9rem, env(safe-area-inset-top)) 1rem max(2.75rem, env(safe-area-inset-bottom));
 			gap: 0.85rem;
 		}
 
@@ -916,7 +930,7 @@
 		}
 
 		.content-panel {
-			padding: 1rem 0.9rem;
+			padding: 1.05rem 0.9rem;
 			border-radius: 0.9rem;
 			min-height: auto;
 		}
@@ -943,7 +957,7 @@
 		}
 
 		.subject-list {
-			max-height: 38vh;
+			max-height: min(36vh, 320px);
 			gap: 0.35rem;
 			margin-top: 0.5rem;
 		}
@@ -956,7 +970,7 @@
 
 		.subject-item strong {
 			font-size: 0.92rem;
-			line-height: 1.3;
+			line-height: 1.28;
 		}
 
 		.subject-code,
@@ -966,9 +980,9 @@
 		}
 
 		.subject-meta {
-			font-size: 0.68rem;
+			font-size: 0.72rem;
 			color: var(--theme-text-muted);
-			line-height: 1.2;
+			line-height: 1.24;
 		}
 
 		.resume-dot {
@@ -1023,6 +1037,105 @@
 			padding: 0.75rem 0.85rem;
 			border-radius: 0.85rem;
 			font-size: 0.88rem;
+		}
+	}
+
+	@media (max-width: 640px) {
+		.page {
+			padding-left: 0.75rem;
+			padding-right: 0.75rem;
+		}
+
+		.inline-selector-grid {
+			grid-template-columns: 1fr;
+			gap: 0.75rem;
+		}
+
+		.content-panel {
+			padding: 0.95rem 0.75rem;
+			gap: 0.7rem;
+		}
+
+		.content-panel h2 {
+			font-size: 1.05rem;
+			line-height: 1.25;
+		}
+
+		.muted {
+			font-size: 0.92rem;
+			line-height: 1.5;
+		}
+
+		.subjects-pane,
+		.topics-pane {
+			padding: 0.55rem;
+			border-radius: 0.8rem;
+			background: rgba(255, 255, 255, 0.62);
+		}
+
+		.subjects-pane {
+			display: flex;
+			flex-direction: column;
+			max-height: min(42dvh, 340px);
+		}
+
+		.topics-pane {
+			min-height: min(44dvh, 360px);
+		}
+
+		.pane-title {
+			margin-bottom: 0.45rem;
+			font-size: 0.68rem;
+		}
+
+		.search-input {
+			min-height: 46px;
+			font-size: 0.95rem;
+		}
+
+		.subject-list {
+			max-height: min(28dvh, 240px);
+			gap: 0.42rem;
+		}
+
+		.subject-item {
+			padding: 0.72rem;
+			border-radius: 0.85rem;
+			gap: 0.28rem;
+		}
+
+		.subject-item strong {
+			font-size: 1rem;
+			line-height: 1.3;
+		}
+
+		.subject-meta {
+			font-size: 0.8rem;
+		}
+
+		.subject-code,
+		.subject-code-line {
+			font-size: 0.72rem;
+		}
+
+		.topic-card {
+			padding: 0.72rem;
+		}
+
+		.topics-head {
+			margin-bottom: 0.65rem;
+		}
+
+		.topics-head .primary-btn {
+			width: 100%;
+		}
+
+		.topic-actions {
+			align-items: center;
+		}
+
+		.topic-actions span {
+			font-size: 0.8rem;
 		}
 	}
 </style>
