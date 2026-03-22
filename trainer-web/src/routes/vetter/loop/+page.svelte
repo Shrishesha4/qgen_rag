@@ -1,5 +1,6 @@
 <script lang="ts">
-	import { onMount, tick } from 'svelte';
+	import { onMount, onDestroy, tick } from 'svelte';
+	import { browser } from '$app/environment';
 	import { goto, beforeNavigate } from '$app/navigation';
 	import { page } from '$app/stores';
 	import { session } from '$lib/session';
@@ -16,6 +17,15 @@
 		getSubject,
 		type SubjectResponse,
 	} from '$lib/api/subjects';
+	import {
+		buildVetterProgressKey,
+		findVetterProgressMatch,
+		hydrateVetterProgressStoreFromRemote,
+		removeVetterProgress,
+		removeVetterProgressRemoteSnapshot,
+		upsertVetterProgress,
+		upsertVetterProgressRemoteSnapshot,
+	} from '$lib/vetter-progress';
 
 	let subjectId = $state('');
 	let topicId = $state('');
@@ -29,6 +39,11 @@
 	let navConfirmMessage = $state('');
 	let navConfirmAction = $state<null | (() => void | Promise<void>)>(null);
 	let skipLeaveConfirmOnce = false;
+	let resumeMode = $state<'auto' | 'force' | 'skip'>('auto');
+	let resumeProgressKey = $state('');
+	let progressSaveTimer: ReturnType<typeof setTimeout> | null = null;
+	let remoteSaveTimer: ReturnType<typeof setTimeout> | null = null;
+	let isSavingProgress = false;
 
 	// Confirm before navigating away with unfinished work
 	beforeNavigate(({ cancel, to }) => {
@@ -36,11 +51,12 @@
 			skipLeaveConfirmOnce = false;
 			return;
 		}
-		if (submitting || (totalReviewed > 0 && totalReviewed < questions.length)) {
+		if (submitting || hasVettingProgress()) {
 			cancel();
 			const destination = to?.url ? `${to.url.pathname}${to.url.search}${to.url.hash}` : '/vetter/subjects';
-			navConfirmMessage = 'You have unfinished vetting progress. Leave and discard?';
+			navConfirmMessage = 'You have unfinished vetting progress. Leave and save for resume?';
 			navConfirmAction = async () => {
+				await persistProgressNow(true);
 				skipLeaveConfirmOnce = true;
 				await goto(destination);
 			};
@@ -55,22 +71,53 @@
 		const unsubPage = page.subscribe((p) => {
 			subjectId = p.url.searchParams.get('subject') ?? '';
 			topicId = p.url.searchParams.get('topic') ?? '';
+			const resumeParam = p.url.searchParams.get('resume');
+			resumeMode = resumeParam === '1' ? 'force' : resumeParam === '0' ? 'skip' : 'auto';
+			resumeProgressKey = p.url.searchParams.get('resume_key') ?? '';
 		});
 		loadSubjects();
 		loadQuestions();
 
 		function handleBeforeUnload(e: BeforeUnloadEvent) {
-			if (submitting || (totalReviewed > 0 && totalReviewed < questions.length)) {
+			if (submitting || hasVettingProgress()) {
+				void persistProgressNow(true);
 				e.preventDefault();
 			}
 		}
+
+		function handleVisibilityChange() {
+			if (document.visibilityState === 'hidden') {
+				void persistProgressNow(true);
+			}
+		}
+
+		function handlePageHide() {
+			void persistProgressNow(true);
+		}
+
 		window.addEventListener('beforeunload', handleBeforeUnload);
+		document.addEventListener('visibilitychange', handleVisibilityChange);
+		window.addEventListener('pagehide', handlePageHide);
 
 		return () => {
 			unsub();
 			unsubPage();
 			window.removeEventListener('beforeunload', handleBeforeUnload);
+			document.removeEventListener('visibilitychange', handleVisibilityChange);
+			window.removeEventListener('pagehide', handlePageHide);
 		};
+	});
+
+	onDestroy(() => {
+		if (progressSaveTimer) {
+			clearTimeout(progressSaveTimer);
+			progressSaveTimer = null;
+		}
+		if (remoteSaveTimer) {
+			clearTimeout(remoteSaveTimer);
+			remoteSaveTimer = null;
+		}
+		void persistProgressNow(true);
 	});
 
 	// Core state
@@ -122,6 +169,124 @@
 	});
 	let voiceRecorderSubmitLabel = $derived(voiceAction?.kind === 'reject' ? 'Reject & Regenerate' : 'Approve & Next');
 
+	function currentProgressKey(): string {
+		return buildVetterProgressKey({
+			subjectId: subjectId || null,
+			topicId: topicId || null,
+		});
+	}
+
+	function hasVettingProgress(): boolean {
+		return questions.length > 0 && (currentIndex > 0 || approved.size > 0 || rejected.size > 0) && totalReviewed < questions.length;
+	}
+
+	async function persistProgressNow(remote = false) {
+		if (!browser || loading || isSavingProgress) return;
+		isSavingProgress = true;
+		try {
+			const key = currentProgressKey();
+			if (!key) return;
+			if (!hasVettingProgress()) {
+				removeVetterProgress(key);
+				if (remote) {
+					void removeVetterProgressRemoteSnapshot(key);
+				}
+				return;
+			}
+			const snapshot = upsertVetterProgress({
+				key,
+				subjectId: subjectId || null,
+				topicId: topicId || null,
+				questions,
+				currentIndex,
+				approvedQuestionIds: [...approved],
+				rejectedQuestionIds: [...rejected],
+			});
+			if (remote) {
+				void upsertVetterProgressRemoteSnapshot(snapshot);
+			}
+		} finally {
+			isSavingProgress = false;
+		}
+	}
+
+	function queueRemoteProgressSave() {
+		if (!browser) return;
+		if (remoteSaveTimer) {
+			clearTimeout(remoteSaveTimer);
+		}
+		remoteSaveTimer = setTimeout(() => {
+			remoteSaveTimer = null;
+			void persistProgressNow(true);
+		}, 1200);
+	}
+
+	function queueProgressSave() {
+		if (!browser || loading || isSavingProgress) return;
+		if (progressSaveTimer) {
+			clearTimeout(progressSaveTimer);
+		}
+		progressSaveTimer = setTimeout(() => {
+			progressSaveTimer = null;
+			void persistProgressNow(false);
+		}, 120);
+		queueRemoteProgressSave();
+	}
+
+	async function restoreSavedProgress(): Promise<boolean> {
+		if (!browser || resumeMode === 'skip') return false;
+
+		const store = await hydrateVetterProgressStoreFromRemote({
+			subjectId: subjectId || null,
+			topicId: topicId || null,
+		});
+		let snapshot = resumeProgressKey ? store[resumeProgressKey] : null;
+
+		if (!snapshot) {
+			snapshot = findVetterProgressMatch(store, {
+				subjectId: subjectId || null,
+				topicId: topicId || null,
+			});
+		}
+
+		if (!snapshot) return false;
+
+		const snapshotHasProgress =
+			snapshot.questions.length > 0 &&
+			(snapshot.currentIndex > 0 || snapshot.approvedQuestionIds.length > 0 || snapshot.rejectedQuestionIds.length > 0) &&
+			snapshot.approvedQuestionIds.length + snapshot.rejectedQuestionIds.length < snapshot.questions.length;
+
+		if (!snapshotHasProgress) {
+			removeVetterProgress(snapshot.key);
+			void removeVetterProgressRemoteSnapshot(snapshot.key);
+			return false;
+		}
+
+		displayedQuestions = snapshot.questions;
+		const validIds = new Set(snapshot.questions.map((question) => question.id));
+		approved = new Set(snapshot.approvedQuestionIds.filter((id) => validIds.has(id)));
+		rejected = new Set(snapshot.rejectedQuestionIds.filter((id) => validIds.has(id)));
+		currentIndex = Math.max(0, Math.min(snapshot.currentIndex, snapshot.questions.length - 1));
+		return true;
+	}
+
+	function clearCurrentProgress() {
+		const key = currentProgressKey();
+		if (!key) return;
+		removeVetterProgress(key);
+		void removeVetterProgressRemoteSnapshot(key);
+	}
+
+	$effect(() => {
+		questions.length;
+		currentIndex;
+		approved;
+		rejected;
+		if (!loading) {
+			queueProgressSave();
+		}
+	});
+
 	async function loadQuestions() {
 		loading = true;
 		error = '';
@@ -143,10 +308,12 @@
 				pageNum += 1;
 			}
 
-			displayedQuestions = loaded;
-			currentIndex = 0;
-			approved = new Set();
-			rejected = new Set();
+			if (!(await restoreSavedProgress())) {
+				displayedQuestions = loaded;
+				currentIndex = 0;
+				approved = new Set();
+				rejected = new Set();
+			}
 		} catch (e: unknown) {
 			error = e instanceof Error ? e.message : 'Failed to load questions';
 		} finally {
@@ -425,11 +592,13 @@
 	}
 
 	function finish() {
+		clearCurrentProgress();
 		skipLeaveConfirmOnce = true;
 		goto('/vetter/subjects');
 	}
 
 	function goBack() {
+		void persistProgressNow(true);
 		if (subjectId) {
 			skipLeaveConfirmOnce = true;
 			goto(`/vetter/subjects/${subjectId}`);

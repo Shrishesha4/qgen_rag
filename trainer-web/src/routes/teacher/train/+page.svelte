@@ -782,10 +782,18 @@
 	.subject-code,
 	.subject-code-line {
 		margin: 0;
+		display: inline-flex;
+		align-items: center;
+		justify-content: center;
+		width: fit-content;
 		font-size: 0.72rem;
 		text-transform: uppercase;
 		letter-spacing: 0.06em;
 		font-weight: 700;
+		padding: 0.22rem 0.55rem;
+		border-radius: 999px;
+		line-height: 1;
+		background: rgba(var(--theme-primary-rgb), 0.16);
 		color: var(--theme-primary);
 	}
 

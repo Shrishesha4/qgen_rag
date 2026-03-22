@@ -7,6 +7,7 @@ filtered by subject and topic.
 """
 
 import uuid
+import re
 from typing import Optional, List
 from datetime import datetime, timezone
 
@@ -247,6 +248,60 @@ def _normalize_progress_ids(values: Optional[List[str]]) -> List[str]:
         seen.add(clean)
         normalized.append(clean)
     return normalized
+
+
+def _normalize_reason_code(value: str) -> str:
+    return re.sub(r"_+", "_", re.sub(r"[^a-z0-9_]+", "_", re.sub(r"\s*_\s*", "_", (value or "").strip().lower()))).strip("_")
+
+
+async def _resolve_reason_codes(
+    db: AsyncSession,
+    provided_codes: Optional[List[str]],
+    decision: str,
+    feedback: Optional[str] = None,
+    rejection_reasons: Optional[List[str]] = None,
+) -> List[str]:
+    result = await db.execute(
+        select(VettingReasonCode.code).where(VettingReasonCode.is_active == True)
+    )
+    active_codes = [row[0] for row in result.fetchall() if row[0]]
+    if not active_codes:
+        return []
+
+    canonical_by_normalized = {
+        _normalize_reason_code(code): code for code in active_codes
+    }
+
+    resolved: List[str] = []
+    seen = set()
+
+    def _push(code: Optional[str]) -> None:
+        if not code or code in seen:
+            return
+        seen.add(code)
+        resolved.append(code)
+
+    for raw_code in provided_codes or []:
+        canonical = canonical_by_normalized.get(_normalize_reason_code(raw_code))
+        _push(canonical)
+
+    if not resolved and decision in ("reject", "edit"):
+        inferred_codes = _infer_reason_codes(
+            feedback=feedback or "",
+            rejection_reasons=rejection_reasons,
+            decision=decision,
+        )
+        for inferred in inferred_codes:
+            canonical = canonical_by_normalized.get(_normalize_reason_code(inferred))
+            _push(canonical)
+
+    if not resolved:
+        _push(canonical_by_normalized.get("quality_issue"))
+
+    if not resolved:
+        _push(sorted(active_codes)[0])
+
+    return resolved[:5]
 
 
 def _progress_to_response(progress: TeacherVettingProgress) -> TeacherVettingProgressResponse:
@@ -1031,27 +1086,18 @@ async def submit_vetting(
                 status_code=400,
                 detail="approved_difficulty can only be sent with approve decisions",
             )
-        if data.decision == "reject" and (not data.reason_codes or len(data.reason_codes) == 0):
+        resolved_reason_codes = await _resolve_reason_codes(
+            db,
+            provided_codes=data.reason_codes,
+            decision=data.decision,
+            feedback=data.feedback or data.notes,
+            rejection_reasons=data.rejection_reasons,
+        )
+        if data.decision == "reject" and not resolved_reason_codes:
             raise HTTPException(
                 status_code=422,
-                detail="At least one structured reason code is required when rejecting",
+                detail="No active reason codes are configured for reject decisions",
             )
-
-        # Validate reason codes against controlled taxonomy
-        if data.reason_codes:
-            valid_codes_result = await db.execute(
-                select(VettingReasonCode.code).where(
-                    VettingReasonCode.code.in_(data.reason_codes),
-                    VettingReasonCode.is_active == True,
-                )
-            )
-            valid_codes = {row[0] for row in valid_codes_result.fetchall()}
-            invalid_codes = sorted(set(data.reason_codes) - valid_codes)
-            if invalid_codes:
-                raise HTTPException(
-                    status_code=422,
-                    detail=f"Invalid reason codes: {', '.join(invalid_codes)}",
-                )
 
         rubric_snapshot = data.rubric_snapshot
         if rubric_snapshot is None and question.subject_id:
@@ -1108,15 +1154,6 @@ async def submit_vetting(
                     "rationale": rationale.get("explanation"),
                 }
 
-        # Auto-infer reason_codes from feedback if not explicitly provided
-        inferred_codes = data.reason_codes
-        if not inferred_codes and (data.feedback or data.notes or data.rejection_reasons):
-            inferred_codes = _infer_reason_codes(
-                feedback=data.feedback or data.notes or "",
-                rejection_reasons=data.rejection_reasons,
-                decision=data.decision,
-            )
-
         # Auto-compute quality_score if not provided
         quality = data.quality_score
         if quality is None:
@@ -1135,7 +1172,7 @@ async def submit_vetting(
             review_version=data.review_version,
             quality_score=quality,
             rubric_snapshot=rubric_snapshot,
-            reason_codes=inferred_codes,
+            reason_codes=resolved_reason_codes or None,
             severity_level=severity,
             original_text=original_text,
             edited_text=data.edited_text if data.decision == "edit" else None,
@@ -1204,7 +1241,7 @@ async def submit_vetting(
                 language="en",
                 source_split="train",
                 dedupe_hash=hashlib.sha256(dedupe_source.encode("utf-8")).hexdigest(),
-                rejected_reason_codes=data.reason_codes,
+                rejected_reason_codes=resolved_reason_codes or None,
             )
             db.add(training_pair)
 
@@ -1212,7 +1249,7 @@ async def submit_vetting(
                 ratio = 1.0 - SequenceMatcher(None, original_text, chosen_text).ratio()
                 edit_distance_mean.set(ratio)
 
-        elif data.decision == "reject" and data.reason_codes:
+        elif data.decision == "reject" and resolved_reason_codes:
             generation_prompt = _reconstruct_prompt(question)
             dedupe_source = f"{generation_prompt}|{original_text}|reject"
             training_pair = TrainingPair(
@@ -1228,7 +1265,7 @@ async def submit_vetting(
                 language="en",
                 source_split="train",
                 dedupe_hash=hashlib.sha256(dedupe_source.encode("utf-8")).hexdigest(),
-                rejected_reason_codes=data.reason_codes,
+                rejected_reason_codes=resolved_reason_codes,
             )
             db.add(training_pair)
 
@@ -1501,6 +1538,14 @@ async def reject_with_feedback(
     original_answer = question.correct_answer
     original_explanation = question.explanation
 
+    resolved_reason_codes = await _resolve_reason_codes(
+        db,
+        provided_codes=req.rejection_reasons,
+        decision="reject",
+        feedback=req.feedback,
+        rejection_reasons=req.rejection_reasons,
+    )
+
     # 2. Create VettingLog
     vetting_log = VettingLog(
         question_id=question.id,
@@ -1509,7 +1554,7 @@ async def reject_with_feedback(
         original_text=original_text,
         rejection_reasons=req.rejection_reasons or [req.feedback[:200]],
         feedback=req.feedback,
-        reason_codes=req.rejection_reasons[:3] if req.rejection_reasons else ["quality_issue"],
+        reason_codes=resolved_reason_codes,
         severity_level="major",
         quality_score=0.3,
         time_spent_seconds=req.time_spent_seconds if hasattr(req, 'time_spent_seconds') else None,
@@ -1542,7 +1587,7 @@ async def reject_with_feedback(
             language="en",
             source_split="train",
             dedupe_hash=hashlib.sha256(dedupe_source.encode("utf-8")).hexdigest(),
-            rejected_reason_codes=req.rejection_reasons[:3] if req.rejection_reasons else ["quality_issue"],
+            rejected_reason_codes=resolved_reason_codes,
         )
         db.add(training_pair)
 
@@ -1831,7 +1876,7 @@ Return ONLY the JSON, no other text."""
             language="en",
             source_split="train",
             dedupe_hash=hashlib.sha256(dedupe_source.encode("utf-8")).hexdigest(),
-            rejected_reason_codes=req.rejection_reasons[:3] if req.rejection_reasons else ["quality_issue"],
+            rejected_reason_codes=resolved_reason_codes,
         )
         db.add(training_pair)
 

@@ -281,10 +281,14 @@
 	}
 
 	.subject-code {
+		display: inline-flex;
+		align-items: center;
+		justify-content: center;
 		font-size: 0.72rem;
 		font-weight: 700;
 		padding: 0.28rem 0.6rem;
 		border-radius: 999px;
+		line-height: 1;
 	}
 	/* .subject-code,
 	.coverage-chip {

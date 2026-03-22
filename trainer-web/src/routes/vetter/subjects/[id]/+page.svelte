@@ -116,11 +116,6 @@
 					bind:value={topicQuery}
 					placeholder="Search topic"
 				/>
-				<div class="filter-row">
-					<button class="filter-chip" class:active={topicStatus === 'all'} onclick={() => (topicStatus = 'all')}>All</button>
-					<button class="filter-chip" class:active={topicStatus === 'pending'} onclick={() => (topicStatus = 'pending')}>Pending</button>
-					<button class="filter-chip" class:active={topicStatus === 'reviewed'} onclick={() => (topicStatus = 'reviewed')}>Reviewed</button>
-				</div>
 			</div>
 
 			<div class="divider">

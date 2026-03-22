@@ -3,9 +3,14 @@
 	import { goto } from '$app/navigation';
 	import { session, currentUser } from '$lib/session';
 	import { getVetterDashboard, type VetterDashboard } from '$lib/api/vetting';
+	import {
+		hydrateVetterProgressStoreFromRemote,
+		type VetterProgressSnapshot,
+	} from '$lib/vetter-progress';
 
 	let loading = $state(true);
 	let stats = $state<VetterDashboard | null>(null);
+	let latestResumeProgress = $state<VetterProgressSnapshot | null>(null);
 
 	onMount(() => {
 		const unsub = session.subscribe((s) => {
@@ -13,9 +18,49 @@
 				goto('/vetter/login');
 			}
 		});
-		loadStats();
+		void loadDashboard();
 		return unsub;
 	});
+
+	function toMillis(iso: string): number {
+		const ts = Date.parse(iso);
+		return Number.isFinite(ts) ? ts : 0;
+	}
+
+	function isProgressComplete(snapshot: VetterProgressSnapshot | null | undefined): boolean {
+		if (!snapshot) return true;
+		const total = snapshot.questions.length;
+		if (total === 0) return true;
+		const reviewed = snapshot.approvedQuestionIds.length + snapshot.rejectedQuestionIds.length;
+		return reviewed >= total;
+	}
+
+	function resolveLatestProgress(
+		store: Record<string, VetterProgressSnapshot>
+	): VetterProgressSnapshot | null {
+		const snapshots = Object.values(store).filter((snapshot) => !isProgressComplete(snapshot));
+		if (snapshots.length === 0) return null;
+		return snapshots.reduce((latest, candidate) =>
+			toMillis(candidate.updatedAt) > toMillis(latest.updatedAt) ? candidate : latest
+		);
+	}
+
+	function resumeProgress() {
+		if (!latestResumeProgress) {
+			startVetting();
+			return;
+		}
+		const params = new URLSearchParams();
+		if (latestResumeProgress.subjectId) params.set('subject', latestResumeProgress.subjectId);
+		if (latestResumeProgress.topicId) params.set('topic', latestResumeProgress.topicId);
+		params.set('resume', '1');
+		params.set('resume_key', latestResumeProgress.key);
+		goto(`/vetter/loop?${params.toString()}`);
+	}
+
+	async function loadDashboard() {
+		await Promise.all([loadStats(), loadResumeProgress()]);
+	}
 
 	async function loadStats() {
 		loading = true;
@@ -27,6 +72,30 @@
 			loading = false;
 		}
 	}
+
+	async function loadResumeProgress() {
+		try {
+			const store = await hydrateVetterProgressStoreFromRemote();
+			latestResumeProgress = resolveLatestProgress(store);
+		} catch {
+			latestResumeProgress = null;
+		}
+	}
+
+	const resumeProgressLabel = $derived.by(() => {
+		const snapshot = latestResumeProgress;
+		if (!snapshot) return '';
+		const total = snapshot.questions.length;
+		if (total <= 0) return 'Saved progress';
+		const current = Math.min(total, Math.max(1, snapshot.currentIndex + 1));
+		return `${current}/${total} questions`;
+	});
+
+	const resumeSubjectLabel = $derived.by(() => {
+		const snapshot = latestResumeProgress;
+		if (!snapshot) return 'Saved vetting progress';
+		return snapshot.questions[0]?.subject_name || 'Saved vetting progress';
+	});
 
 	function startVetting() {
 		goto('/vetter/subjects');
@@ -64,6 +133,19 @@
 	</div>
 
 	<div class="actions animate-slide-up">
+		{#if latestResumeProgress}
+			<button class="resume-card" onclick={resumeProgress}>
+				<div class="resume-left">
+					<span class="resume-kicker">Resumable Progress</span>
+					<h2 class="resume-title">Resume Vetting</h2>
+					<p class="resume-meta">{resumeSubjectLabel} • {resumeProgressLabel}</p>
+				</div>
+				<svg class="arrow" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+					<polyline points="9 18 15 12 9 6"></polyline>
+				</svg>
+			</button>
+		{/if}
+
 		<button class="action-card glass-panel" onclick={startVetting}>
 			<div class="action-row">
 				<div class="action-icon emerald">
@@ -150,6 +232,9 @@
 		align-items: center;
 		padding: 1rem;
 		gap: 0.25rem;
+		background: rgba(255, 255, 255, 0.86);
+		border: 1px solid rgba(255, 255, 255, 0.95);
+		box-shadow: 0 10px 28px rgba(15, 23, 42, 0.12);
 	}
 
 	.stat-value {
@@ -186,10 +271,87 @@
 		-webkit-backdrop-filter: blur(10px) saturate(150%) brightness(1.02) !important;
 		background: linear-gradient(
 			145deg,
-			rgba(255,255,255,0.03) 0%,
-			rgba(255,255,255,0.02) 50%,
-			rgba(255,255,255,0.025) 100%
+			rgba(255,255,255,0.95) 0%,
+			rgba(255,255,255,0.9) 50%,
+			rgba(255,255,255,0.94) 100%
 		) !important;
+		box-shadow:
+			0 10px 28px rgba(15, 23, 42, 0.12),
+			inset 0 1px 1px rgba(255, 255, 255, 0.65),
+			inset 0 -1px 1px rgba(255, 255, 255, 0.35),
+			0 0 0 1px rgba(255, 255, 255, 0.98) !important;
+	}
+
+	.action-card:hover {
+		transform: translateY(-2px);
+		background: linear-gradient(
+			145deg,
+			rgba(255,255,255,0.98) 0%,
+			rgba(255,255,255,0.94) 50%,
+			rgba(255,255,255,0.96) 100%
+		) !important;
+		box-shadow: 
+			0 14px 30px rgba(15, 23, 42, 0.16),
+			inset 0 1px 1px rgba(255, 255, 255, 0.72),
+			inset 0 -1px 1px rgba(255, 255, 255, 0.4),
+			0 0 0 1px rgba(255, 255, 255, 0.99) !important;
+		/* Maintain blur on hover - force override */
+		backdrop-filter: blur(10px) saturate(150%) brightness(1.02) !important;
+		-webkit-backdrop-filter: blur(10px) saturate(150%) brightness(1.02) !important;
+	}
+
+	.resume-card {
+		width: 100%;
+		padding: 1.1rem 1.2rem;
+		border-radius: 1rem;
+		border: 1px solid rgba(255, 255, 255, 0.96);
+		background: linear-gradient(145deg, rgba(255, 255, 255, 0.98), rgba(255, 255, 255, 0.92));
+		box-shadow: 0 10px 28px rgba(15, 23, 42, 0.12);
+		display: flex;
+		align-items: center;
+		justify-content: space-between;
+		gap: 1rem;
+		cursor: pointer;
+		color: var(--theme-text);
+		text-align: left;
+		margin-bottom: 0.85rem;
+	}
+
+	.resume-left {
+		display: flex;
+		flex-direction: column;
+		gap: 0.2rem;
+	}
+
+	.resume-kicker {
+		font-size: 0.7rem;
+		font-weight: 700;
+		text-transform: uppercase;
+		letter-spacing: 0.06em;
+		color: color-mix(in srgb, var(--theme-primary) 70%, #334155 30%);
+	}
+
+	.resume-title {
+		margin: 0;
+		font-size: 1.02rem;
+		font-weight: 800;
+		color: var(--theme-text);
+	}
+
+	.resume-meta {
+		margin: 0;
+		font-size: 0.82rem;
+		color: var(--theme-text-muted);
+	}
+
+	:global([data-color-mode='dark']) .stat {
+		background: rgba(20, 24, 31, 0.72);
+		border-color: rgba(255, 255, 255, 0.14);
+		box-shadow: 0 10px 28px rgba(0, 0, 0, 0.28);
+	}
+
+	:global([data-color-mode='dark']) .action-card {
+		background: linear-gradient(145deg, rgba(255,255,255,0.03), rgba(255,255,255,0.02), rgba(255,255,255,0.025)) !important;
 		box-shadow:
 			0 8px 40px rgba(0, 0, 0, 0.25),
 			inset 0 1px 1px rgba(255, 255, 255, 0.25),
@@ -197,22 +359,19 @@
 			0 0 0 1px rgba(255, 255, 255, 0.12) !important;
 	}
 
-	.action-card:hover {
-		transform: translateY(-2px);
-		background: linear-gradient(
-			145deg,
-			rgba(255,255,255,0.05) 0%,
-			rgba(255,255,255,0.04) 50%,
-			rgba(255,255,255,0.045) 100%
-		) !important;
-		box-shadow: 
+	:global([data-color-mode='dark']) .action-card:hover {
+		background: linear-gradient(145deg, rgba(255,255,255,0.05), rgba(255,255,255,0.04), rgba(255,255,255,0.045)) !important;
+		box-shadow:
 			0 12px 40px rgba(0, 0, 0, 0.3),
 			inset 0 1px 1px rgba(255, 255, 255, 0.3),
 			inset 0 -1px 1px rgba(255, 255, 255, 0.12),
 			0 0 0 1px rgba(255, 255, 255, 0.18) !important;
-		/* Maintain blur on hover - force override */
-		backdrop-filter: blur(10px) saturate(150%) brightness(1.02) !important;
-		-webkit-backdrop-filter: blur(10px) saturate(150%) brightness(1.02) !important;
+	}
+
+	:global([data-color-mode='dark']) .resume-card {
+		border-color: rgba(255, 255, 255, 0.14);
+		background: linear-gradient(145deg, rgba(20, 24, 31, 0.84), rgba(20, 24, 31, 0.74));
+		box-shadow: 0 12px 28px rgba(0, 0, 0, 0.3);
 	}
 
 	.action-row {

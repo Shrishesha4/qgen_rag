@@ -129,6 +129,16 @@ function normalizeReasonLabel(value: string): string {
 	return value.trim().toLowerCase().replace(/\s+/g, ' ');
 }
 
+function normalizeReasonCode(value: string): string {
+	return value
+		.trim()
+		.toLowerCase()
+		.replace(/\s*_\s*/g, '_')
+		.replace(/[^a-z0-9_]+/g, '_')
+		.replace(/_+/g, '_')
+		.replace(/^_+|_+$/g, '');
+}
+
 function toCandidateCode(label: string): string {
 	return label
 		.trim()
@@ -155,18 +165,19 @@ export async function warmVettingTaxonomy(force = false): Promise<void> {
 		const entries = await apiFetch<ReasonCodeEntry[]>('/vetter/reason-codes');
 		reasonCodeEntries = entries;
 		reasonLabelToCode = new Map();
-		reasonCodeSet = new Set(entries.map((entry) => entry.code.toLowerCase()));
+		reasonCodeSet = new Set(entries.map((entry) => normalizeReasonCode(entry.code)));
 
 		for (const entry of entries) {
-			reasonLabelToCode.set(normalizeReasonLabel(entry.label), entry.code);
+			const normalizedCode = normalizeReasonCode(entry.code);
+			reasonLabelToCode.set(normalizeReasonLabel(entry.label), normalizedCode);
 			if (entry.description) {
-				reasonLabelToCode.set(normalizeReasonLabel(entry.description), entry.code);
+				reasonLabelToCode.set(normalizeReasonLabel(entry.description), normalizedCode);
 			}
 		}
 
 		fallbackReasonCode = reasonCodeSet.has('quality_issue')
 			? 'quality_issue'
-			: entries[0]?.code ?? 'quality_issue';
+			: normalizeReasonCode(entries[0]?.code ?? 'quality_issue');
 		taxonomyLoadedAt = now;
 	} catch {
 		if (reasonCodeEntries.length === 0) {
@@ -178,7 +189,7 @@ export async function warmVettingTaxonomy(force = false): Promise<void> {
 async function mapReasonLabelsToCodes(labels?: string[]): Promise<string[]> {
 	await warmVettingTaxonomy(false);
 	if (!labels || labels.length === 0) {
-		return [fallbackReasonCode];
+		return [normalizeReasonCode(fallbackReasonCode || 'quality_issue') || 'quality_issue'];
 	}
 
 	const mapped: string[] = [];
@@ -190,7 +201,7 @@ async function mapReasonLabelsToCodes(labels?: string[]): Promise<string[]> {
 			continue;
 		}
 
-		const candidateCode = toCandidateCode(label).toLowerCase();
+		const candidateCode = normalizeReasonCode(toCandidateCode(label));
 		if (reasonCodeSet.has(candidateCode)) {
 			mapped.push(candidateCode);
 			continue;
@@ -201,11 +212,13 @@ async function mapReasonLabelsToCodes(labels?: string[]): Promise<string[]> {
 			const descText = normalizeReasonLabel(entry.description || '');
 			return labelText.includes(normalized) || normalized.includes(labelText) || descText.includes(normalized);
 		});
-		mapped.push(fuzzy?.code ?? fallbackReasonCode);
+		mapped.push(normalizeReasonCode(fuzzy?.code ?? fallbackReasonCode));
 	}
 
-	const uniqueCodes = [...new Set(mapped.filter(Boolean))];
-	return uniqueCodes.length > 0 ? uniqueCodes : [fallbackReasonCode];
+	const uniqueCodes = [...new Set(mapped.map((code) => normalizeReasonCode(code)).filter(Boolean))];
+	return uniqueCodes.length > 0
+		? uniqueCodes
+		: [normalizeReasonCode(fallbackReasonCode || 'quality_issue') || 'quality_issue'];
 }
 
 function buildFieldChangeRationale(data: VetSubmission): Record<string, string> | undefined {

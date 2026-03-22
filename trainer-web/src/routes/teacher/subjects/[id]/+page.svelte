@@ -4,7 +4,14 @@
 	import { page } from '$app/stores';
 	import { session } from '$lib/session';
 	import { createTopic, getSubject, updateTopic, type SubjectDetailResponse, type TopicResponse } from '$lib/api/subjects';
-	import { deleteDocumentById, getDocumentStatus, listReferenceDocuments, uploadDocument, type ReferenceDocumentItem } from '$lib/api/documents';
+	import {
+		deleteDocumentById,
+		getDocumentStatus,
+		listReferenceDocuments,
+		scheduleBackgroundGeneration,
+		uploadDocument,
+		type ReferenceDocumentItem,
+	} from '$lib/api/documents';
 	import { getQuestionsForVetting } from '$lib/api/vetting';
 
 	let loading = $state(true);
@@ -64,6 +71,7 @@
 	let selectedTopicName = $state('');
 	let topicDocuments = $state<Record<string, ReferenceDocumentItem[]>>({});
 	let loadingTopicDocuments = $state('');
+	let topicGeneratingById = $state<Record<string, boolean>>({});
 
 	const PROCESSING_DOC_STATUSES = new Set(['pending', 'processing']);
 
@@ -223,10 +231,37 @@
 		goto(`/teacher/train/loop?${params.toString()}`);
 	}
 
-	function generateTopic(topicId: string) {
-		if (!subjectId) return;
-		const params = new URLSearchParams({ subject: subjectId, generateTopic: topicId });
-		goto(`/teacher/train/existing?${params.toString()}`);
+	async function generateTopic(topicId: string) {
+		if (!subjectId || topicGeneratingById[topicId]) return;
+		topicGeneratingById = {
+			...topicGeneratingById,
+			[topicId]: true,
+		};
+		error = '';
+		try {
+			await scheduleBackgroundGeneration({
+				subjectId,
+				count: 30,
+				types: 'mcq',
+				difficulty: 'medium',
+				topicId,
+			});
+			await loadReviewStats();
+		} catch (e: unknown) {
+			error = e instanceof Error ? e.message : 'Failed to start background generation';
+		} finally {
+			const next = { ...topicGeneratingById };
+			delete next[topicId];
+			topicGeneratingById = next;
+		}
+	}
+
+	function canGenerateTopic(topicId: string, fallbackPending: number, fallbackGenerated: number) {
+		const totalPending = subjectReviewStats.pending;
+		const topicGenerated = topicReviewStats[topicId]?.generated ?? fallbackGenerated;
+		const topicPending = topicReviewStats[topicId]?.pending ?? fallbackPending;
+		if (topicGenerated === 0) return true;
+		return totalPending <= 25 && topicPending < 5;
 	}
 
 	function openAddTopicModal() {
@@ -569,7 +604,11 @@
 										{/if}
 									</div>
 									<div class="topic-actions-edge">
-										<button class="action-btn action-generate" onclick={() => generateTopic(topic.id)}>Generate</button>
+										{#if canGenerateTopic(topic.id, topic.total_questions, topic.total_questions)}
+											<button class="action-btn action-generate" onclick={() => generateTopic(topic.id)} disabled={!!topicGeneratingById[topic.id]}>
+												{topicGeneratingById[topic.id] ? 'Generating...' : 'Generate'}
+											</button>
+										{/if}
 										<button class="action-btn action-vet" onclick={() => vetTopic(topic.id)}>Vet</button>
 										<button class="action-btn action-edit" onclick={() => openEditTopicModal(topic)}>Edit</button>
 									</div>
@@ -1096,25 +1135,33 @@
 		align-items: center;
 		justify-content: center;
 		padding: 1rem;
-		background: rgba(15, 23, 42, 0.35);
-		backdrop-filter: blur(8px);
-		-webkit-backdrop-filter: blur(8px);
+		background: var(--theme-modal-backdrop, rgba(15, 23, 42, 0.45));
+		backdrop-filter: blur(12px) saturate(125%);
+		-webkit-backdrop-filter: blur(12px) saturate(125%);
 	}
 
 	.modal-card {
 		width: min(620px, 96vw);
-		border-radius: 1rem;
-		border: 1px solid var(--theme-glass-border);
-		background: var(--theme-modal-surface);
-		box-shadow: 0 20px 42px rgba(15, 23, 42, 0.22);
+		border-radius: 1.2rem;
+		border: 1px solid color-mix(in srgb, var(--theme-glass-border) 70%, rgba(255, 255, 255, 0.45));
+		background: linear-gradient(
+			165deg,
+			color-mix(in srgb, var(--theme-modal-surface) 94%, var(--theme-surface)) 0%,
+			color-mix(in srgb, var(--theme-modal-surface) 88%, var(--theme-input-bg)) 100%
+		);
+		box-shadow:
+			0 24px 58px rgba(15, 23, 42, 0.24),
+			inset 0 1px 0 rgba(255, 255, 255, 0.42);
+		overflow: hidden;
 	}
 
 	.modal-head {
 		display: flex;
 		justify-content: space-between;
 		align-items: center;
-		padding: 0.9rem 1rem;
+		padding: 1rem 1.1rem;
 		border-bottom: 1px solid var(--theme-glass-border);
+		background: color-mix(in srgb, var(--theme-surface) 88%, transparent);
 	}
 
 	.modal-head h3 {
@@ -1126,7 +1173,8 @@
 	.modal-close {
 		border: none;
 		background: none;
-		font-size: 1.1rem;
+		font-size: 1.45rem;
+		line-height: 1;
 		cursor: pointer;
 		color: var(--theme-text-secondary);
 	}
@@ -1134,18 +1182,19 @@
 	.modal-body {
 		display: flex;
 		flex-direction: column;
-		gap: 0.7rem;
-		padding: 0.9rem 1rem;
+		gap: 0.82rem;
+		padding: 1rem 1.1rem;
 	}
 
 	.input {
 		width: 100%;
-		padding: 0.7rem 0.8rem;
-		border-radius: 0.75rem;
-		border: 1px solid var(--theme-glass-border);
-		background: var(--theme-input-bg);
+		padding: 0.75rem 0.9rem;
+		border-radius: 0.9rem;
+		border: 1px solid color-mix(in srgb, var(--theme-glass-border) 72%, rgba(255, 255, 255, 0.5));
+		background: color-mix(in srgb, var(--theme-input-bg) 88%, var(--theme-surface));
 		color: var(--theme-text-primary);
 		font: inherit;
+		box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.28);
 	}
 
 	.input:focus,
@@ -1180,48 +1229,64 @@
 
 	.file-input {
 		width: 100%;
-		padding: 0.58rem 0.65rem;
-		border-radius: 0.72rem;
-		border: 1px solid var(--theme-glass-border);
-		background: var(--theme-input-bg);
+		padding: 0.68rem 0.8rem;
+		border-radius: 0.9rem;
+		border: 1px solid color-mix(in srgb, var(--theme-glass-border) 72%, rgba(255, 255, 255, 0.5));
+		background: color-mix(in srgb, var(--theme-input-bg) 88%, var(--theme-surface));
 		color: var(--theme-text-primary);
 		font: inherit;
+		box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.28);
 	}
 
 	.modal-actions {
 		display: flex;
-		justify-content: flex-end;
+		justify-content: space-between;
 		gap: 0.55rem;
-		padding: 0.7rem 1rem 1rem;
+		padding: 0.78rem 1.1rem 1.1rem;
+	}
+
+	.modal-actions .action-btn {
+		flex: 1;
 	}
 
 	.modal {
 		width: min(820px, 96vw);
 		max-height: 86vh;
 		overflow: auto;
-		border-radius: 16px;
+		border-radius: 20px;
 		border: 1px solid var(--theme-modal-border);
-		background: var(--theme-modal-surface);
-		box-shadow: var(--theme-modal-shadow);
+		background: linear-gradient(
+			165deg,
+			color-mix(in srgb, var(--theme-modal-surface) 94%, var(--theme-surface)) 0%,
+			color-mix(in srgb, var(--theme-modal-surface) 88%, var(--theme-input-bg)) 100%
+		);
+		box-shadow:
+			0 24px 52px rgba(15, 23, 42, 0.24),
+			inset 0 1px 0 rgba(255, 255, 255, 0.4);
 	}
 
 	.reference-modal {
 		width: min(900px, 96vw);
 		max-height: 90vh;
 		border-radius: 20px;
-		border: 1px solid var(--theme-glass-border);
-		background: var(--theme-modal-surface);
+		border: 1px solid color-mix(in srgb, var(--theme-glass-border) 70%, rgba(255, 255, 255, 0.5));
+		background: linear-gradient(
+			165deg,
+			color-mix(in srgb, var(--theme-modal-surface) 95%, var(--theme-surface)) 0%,
+			color-mix(in srgb, var(--theme-modal-surface) 90%, var(--theme-input-bg)) 100%
+		);
 		backdrop-filter: blur(16px) saturate(140%);
 		-webkit-backdrop-filter: blur(16px) saturate(140%);
-		box-shadow: 0 24px 52px rgba(15, 23, 42, 0.2), inset 0 1px 0 rgba(255, 255, 255, 0.65);
+		box-shadow: 0 24px 54px rgba(15, 23, 42, 0.24), inset 0 1px 0 rgba(255, 255, 255, 0.52);
 	}
 
 	.modal-header {
 		display: flex;
 		justify-content: space-between;
 		align-items: center;
-		padding: 0.9rem 1rem;
+		padding: 1rem 1.1rem;
 		border-bottom: 1px solid var(--theme-glass-border);
+		background: color-mix(in srgb, var(--theme-surface) 88%, transparent);
 	}
 
 	.modal-header h3 {
@@ -1234,7 +1299,8 @@
 		background: none;
 		border: none;
 		color: var(--theme-text-secondary);
-		font-size: 1rem;
+		font-size: 1.45rem;
+		line-height: 1;
 		cursor: pointer;
 	}
 
@@ -1278,7 +1344,7 @@
 		gap: 0.75rem;
 		padding: 0.65rem 1rem;
 		border-top: 1px solid var(--theme-glass-border);
-		background: color-mix(in srgb, var(--theme-surface) 78%, transparent);
+		background: color-mix(in srgb, var(--theme-surface) 90%, var(--theme-input-bg));
 	}
 
 	.doc-main {
@@ -1350,8 +1416,13 @@
 		padding: 0;
 		border-radius: 1.5rem;
 		overflow: hidden;
-		border: 1px solid var(--theme-glass-border);
-		background: color-mix(in srgb, var(--theme-surface) 88%, transparent);
+		border: 1px solid color-mix(in srgb, var(--theme-glass-border) 75%, rgba(255, 255, 255, 0.4));
+		background: linear-gradient(
+			145deg,
+			color-mix(in srgb, var(--theme-surface) 92%, rgba(var(--theme-primary-rgb), 0.08)) 0%,
+			color-mix(in srgb, var(--theme-input-bg) 88%, rgba(var(--theme-primary-rgb), 0.04)) 100%
+		);
+		box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.36);
 	}
 
 	.topic-accordion-panel.expanded {
@@ -1391,7 +1462,8 @@
 	.topic-status-pill {
 		padding: 0.42rem 0.9rem;
 		border-radius: 999px;
-		background: color-mix(in srgb, var(--theme-input-bg) 84%, transparent);
+		background: color-mix(in srgb, var(--theme-input-bg) 90%, rgba(var(--theme-primary-rgb), 0.12));
+		border: 1px solid color-mix(in srgb, var(--theme-glass-border) 68%, rgba(255, 255, 255, 0.5));
 		color: var(--theme-text-secondary);
 		font-size: 0.85rem;
 		font-weight: 700;
@@ -1448,9 +1520,9 @@
 		min-height: 140px;
 		padding: 1.2rem 1.3rem;
 		border-radius: 1.3rem;
-		background: color-mix(in srgb, var(--theme-input-bg) 78%, transparent);
-		border: 1px solid var(--theme-glass-border);
-		box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.72);
+		background: color-mix(in srgb, var(--theme-input-bg) 90%, var(--theme-surface));
+		border: 1px solid color-mix(in srgb, var(--theme-glass-border) 70%, rgba(255, 255, 255, 0.4));
+		box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.5);
 		font-size: 1rem;
 		line-height: 1.65;
 		color: var(--theme-text-primary);
@@ -1522,7 +1594,16 @@
 
 	:global([data-color-mode='dark']) .modal-card,
 	:global([data-color-mode='dark']) .reference-modal {
+		border-color: rgba(255, 255, 255, 0.18);
 		box-shadow: 0 24px 54px rgba(0, 0, 0, 0.42), inset 0 1px 0 rgba(255, 255, 255, 0.12);
+	}
+
+	:global([data-color-mode='dark']) .input,
+	:global([data-color-mode='dark']) .file-input,
+	:global([data-color-mode='dark']) .syllabus-preview,
+	:global([data-color-mode='dark']) .doc-row,
+	:global([data-color-mode='dark']) .topic-status-pill {
+		box-shadow: none;
 	}
 
 	:global([data-color-mode='dark']) .topic-accordion-panel.expanded {
@@ -1535,6 +1616,41 @@
 
 	:global([data-color-mode='dark']) .topic-status-pill {
 		color: var(--theme-text-primary);
+	}
+
+	:global([data-color-mode='light']) .modal-backdrop {
+		background: rgba(15, 23, 42, 0.28);
+	}
+
+	:global([data-color-mode='light']) .modal-card,
+	:global([data-color-mode='light']) .reference-modal {
+		border-color: rgba(148, 163, 184, 0.38);
+		background: linear-gradient(165deg, rgba(255, 255, 255, 0.97) 0%, rgba(248, 250, 252, 0.95) 100%);
+		box-shadow: 0 24px 52px rgba(15, 23, 42, 0.16), inset 0 1px 0 rgba(255, 255, 255, 0.96);
+	}
+
+	:global([data-color-mode='light']) .modal-head,
+	:global([data-color-mode='light']) .modal-header {
+		background: rgba(248, 250, 252, 0.72);
+	}
+
+	:global([data-color-mode='light']) .input,
+	:global([data-color-mode='light']) .file-input,
+	:global([data-color-mode='light']) .select-input,
+	:global([data-color-mode='light']) .syllabus-preview {
+		background: rgba(255, 255, 255, 0.96);
+		border-color: rgba(148, 163, 184, 0.46);
+		color: var(--theme-text-primary);
+	}
+
+	:global([data-color-mode='light']) .topic-accordion-panel {
+		background: linear-gradient(145deg, rgba(255, 255, 255, 0.96), rgba(248, 250, 252, 0.92));
+		border-color: rgba(148, 163, 184, 0.42);
+		box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.95);
+	}
+
+	:global([data-color-mode='light']) .doc-row {
+		background: rgba(255, 255, 255, 0.9);
 	}
 
 	.upload-dropzone input {
