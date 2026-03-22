@@ -1093,11 +1093,6 @@ async def submit_vetting(
             feedback=data.feedback or data.notes,
             rejection_reasons=data.rejection_reasons,
         )
-        if data.decision == "reject" and not resolved_reason_codes:
-            raise HTTPException(
-                status_code=422,
-                detail="No active reason codes are configured for reject decisions",
-            )
 
         rubric_snapshot = data.rubric_snapshot
         if rubric_snapshot is None and question.subject_id:

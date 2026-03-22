@@ -135,6 +135,20 @@
 			</div>
 			<span class="quick-link-arrow">→</span>
 		</a>
+		<a href="/admin/teachers" class="quick-link glass-panel">
+			<div>
+				<h2 class="quick-link-title">Teacher Progress</h2>
+				<p class="quick-link-desc">View each teacher's assigned subjects, generation activity, and vetting progress coverage.</p>
+			</div>
+			<span class="quick-link-arrow">→</span>
+		</a>
+		<a href="/admin/vetters" class="quick-link glass-panel">
+			<div>
+				<h2 class="quick-link-title">Vetter Progress</h2>
+				<p class="quick-link-desc">Track vetter throughput, approval patterns, and individual contribution to platform vetting.</p>
+			</div>
+			<span class="quick-link-arrow">→</span>
+		</a>
 	</div>
 
 	<!-- Tabs -->
@@ -473,6 +487,8 @@
 
 	.quick-links {
 		width: 100%;
+		display: grid;
+		gap: 0.75rem;
 	}
 
 	.quick-link {

@@ -192,7 +192,7 @@
 		font: inherit;
 	}
 
-	.filter-row {
+	/* .filter-row {
 		display: flex;
 		gap: 0.45rem;
 		flex-wrap: wrap;
@@ -214,7 +214,7 @@
 		border-color: rgba(var(--theme-primary-rgb), 0.42);
 		background: rgba(var(--theme-primary-rgb), 0.16);
 		color: var(--theme-text);
-	}
+	} */
 
 	.empty-filter {
 		padding: 1rem;

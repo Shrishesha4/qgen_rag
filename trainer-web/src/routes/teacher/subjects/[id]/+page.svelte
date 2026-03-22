@@ -7,6 +7,7 @@
 	import {
 		deleteDocumentById,
 		getDocumentStatus,
+		getBackgroundGenerationStatuses,
 		listReferenceDocuments,
 		scheduleBackgroundGeneration,
 		uploadDocument,
@@ -72,6 +73,12 @@
 	let topicDocuments = $state<Record<string, ReferenceDocumentItem[]>>({});
 	let loadingTopicDocuments = $state('');
 	let topicGeneratingById = $state<Record<string, boolean>>({});
+	let topicGenerationProgressById = $state<Record<string, string>>({});
+	let completedGenerationHoldByTopicId = $state<Record<string, boolean>>({});
+	let generationPollTimer: ReturnType<typeof setInterval> | null = null;
+	let generationPollingTopicId = $state<string | null>(null);
+	let generationPollingRunId = $state<string | null>(null);
+	let generationPollMisses = 0;
 
 	const PROCESSING_DOC_STATUSES = new Set(['pending', 'processing']);
 
@@ -95,7 +102,108 @@
 
 	onDestroy(() => {
 		clearReferencePolling();
+		clearGenerationPolling();
 	});
+
+	function clearGenerationPolling() {
+		if (generationPollTimer) {
+			clearInterval(generationPollTimer);
+			generationPollTimer = null;
+		}
+		generationPollingTopicId = null;
+		generationPollingRunId = null;
+		generationPollMisses = 0;
+	}
+
+	async function syncBackgroundGenerationState() {
+		if (!subjectId || !generationPollingTopicId) return;
+
+		try {
+			const statusRes = await getBackgroundGenerationStatuses([subjectId]);
+			const status = statusRes.statuses[subjectId];
+
+			if (!status) {
+				generationPollMisses += 1;
+				if (generationPollMisses >= 2 && generationPollingTopicId) {
+					const next = { ...topicGeneratingById };
+					delete next[generationPollingTopicId];
+					topicGeneratingById = next;
+
+					const nextProgress = { ...topicGenerationProgressById };
+					delete nextProgress[generationPollingTopicId];
+					topicGenerationProgressById = nextProgress;
+
+					clearGenerationPolling();
+					await loadSubject();
+				}
+				return;
+			}
+
+			generationPollMisses = 0;
+
+			if (generationPollingRunId && status.run_id && status.run_id !== generationPollingRunId) {
+				return;
+			}
+
+			if (generationPollingTopicId) {
+				const total = Math.max(1, status.total_questions || 0);
+				const current = Math.max(0, Math.min(total, status.current_question || 0));
+				topicGenerationProgressById = {
+					...topicGenerationProgressById,
+					[generationPollingTopicId]: `${current}/${total}`,
+				};
+			}
+
+			if (status.in_progress) {
+				if (generationPollingTopicId) {
+					topicGeneratingById = {
+						...topicGeneratingById,
+						[generationPollingTopicId]: true,
+					};
+				}
+				return;
+			}
+
+			if (generationPollingTopicId) {
+				const next = { ...topicGeneratingById };
+				delete next[generationPollingTopicId];
+				topicGeneratingById = next;
+
+				const nextProgress = { ...topicGenerationProgressById };
+				delete nextProgress[generationPollingTopicId];
+				topicGenerationProgressById = nextProgress;
+
+				if ((status.status || '').toLowerCase() === 'completed' && (status.current_question || 0) > 0) {
+					completedGenerationHoldByTopicId = {
+						...completedGenerationHoldByTopicId,
+						[generationPollingTopicId]: true,
+					};
+				}
+			}
+
+			clearGenerationPolling();
+			await loadSubject();
+		} catch {
+			// Keep polling; transient status failures should not interrupt active generation UI.
+		}
+	}
+
+	function startGenerationPolling(topicId: string, runId?: string | null) {
+		if (generationPollTimer) {
+			clearInterval(generationPollTimer);
+			generationPollTimer = null;
+		}
+
+		generationPollingTopicId = topicId;
+		generationPollingRunId = runId ?? null;
+		generationPollMisses = 0;
+
+		generationPollTimer = setInterval(() => {
+			void syncBackgroundGenerationState();
+		}, 2500);
+
+		void syncBackgroundGenerationState();
+	}
 
 	function clearReferencePolling() {
 		if (referencePollTimer) {
@@ -209,6 +317,16 @@
 				vetted: vettedTotal,
 					approvalRate: calcApprovalRate(approvedTotal, generatedTotal),
 			};
+
+			if (Object.keys(completedGenerationHoldByTopicId).length > 0) {
+				const nextHold = { ...completedGenerationHoldByTopicId };
+				for (const topicId of Object.keys(nextHold)) {
+					if ((perTopic[topicId]?.generated || 0) > 0) {
+						delete nextHold[topicId];
+					}
+				}
+				completedGenerationHoldByTopicId = nextHold;
+			}
 		} catch {
 			if (subject) {
 				subjectReviewStats = {
@@ -232,31 +350,58 @@
 	}
 
 	async function generateTopic(topicId: string) {
-		if (!subjectId || topicGeneratingById[topicId]) return;
+		if (!subjectId || topicGeneratingById[topicId] || !!generationPollingTopicId) return;
+		const nextHold = { ...completedGenerationHoldByTopicId };
+		delete nextHold[topicId];
+		completedGenerationHoldByTopicId = nextHold;
 		topicGeneratingById = {
 			...topicGeneratingById,
 			[topicId]: true,
 		};
+		topicGenerationProgressById = {
+			...topicGenerationProgressById,
+			[topicId]: '0/30',
+		};
 		error = '';
 		try {
-			await scheduleBackgroundGeneration({
+			const references = await listReferenceDocuments(subjectId, topicId);
+			const topicPdfCount = [
+				...(references.reference_books ?? []),
+				...(references.template_papers ?? []),
+			].filter((doc) => doc.topic_id === topicId).length;
+			const allowWithoutReference = topicPdfCount === 0;
+
+			const scheduled = await scheduleBackgroundGeneration({
 				subjectId,
 				count: 30,
 				types: 'mcq',
 				difficulty: 'medium',
 				topicId,
+				allowWithoutReference,
 			});
-			await loadReviewStats();
+
+			const total = Math.max(1, scheduled.count || 30);
+			topicGenerationProgressById = {
+				...topicGenerationProgressById,
+				[topicId]: `0/${total}`,
+			};
+
+			startGenerationPolling(topicId, scheduled.run_id ?? null);
 		} catch (e: unknown) {
 			error = e instanceof Error ? e.message : 'Failed to start background generation';
-		} finally {
+
 			const next = { ...topicGeneratingById };
 			delete next[topicId];
 			topicGeneratingById = next;
+
+			const nextProgress = { ...topicGenerationProgressById };
+			delete nextProgress[topicId];
+			topicGenerationProgressById = nextProgress;
 		}
 	}
 
 	function canGenerateTopic(topicId: string, fallbackPending: number, fallbackGenerated: number) {
+		if (completedGenerationHoldByTopicId[topicId]) return false;
 		const totalPending = subjectReviewStats.pending;
 		const topicGenerated = topicReviewStats[topicId]?.generated ?? fallbackGenerated;
 		const topicPending = topicReviewStats[topicId]?.pending ?? fallbackPending;
@@ -605,9 +750,16 @@
 									</div>
 									<div class="topic-actions-edge">
 										{#if canGenerateTopic(topic.id, topic.total_questions, topic.total_questions)}
-											<button class="action-btn action-generate" onclick={() => generateTopic(topic.id)} disabled={!!topicGeneratingById[topic.id]}>
-												{topicGeneratingById[topic.id] ? 'Generating...' : 'Generate'}
+											<button class="action-btn action-generate" class:generating={!!topicGeneratingById[topic.id]} onclick={() => generateTopic(topic.id)} disabled={!!topicGeneratingById[topic.id] || !!generationPollingTopicId}>
+												{#if topicGeneratingById[topic.id]}
+													<span class="btn-spinner" aria-hidden="true"></span>
+													<span>Generating {topicGenerationProgressById[topic.id] || ''}</span>
+												{:else}
+													<span>Generate</span>
+												{/if}
 											</button>
+										{:else}
+											<span class="action-slot-spacer" aria-hidden="true"></span>
 										{/if}
 										<button class="action-btn action-vet" onclick={() => vetTopic(topic.id)}>Vet</button>
 										<button class="action-btn action-edit" onclick={() => openEditTopicModal(topic)}>Edit</button>
@@ -1081,6 +1233,13 @@
 		white-space: nowrap;
 	}
 
+	.action-slot-spacer {
+		width: 100%;
+		height: 44px;
+		visibility: hidden;
+		pointer-events: none;
+	}
+
 	.action-btn:hover {
 		transform: translateY(-1px);
 	}
@@ -1095,6 +1254,26 @@
 		background: rgba(var(--theme-primary-rgb), 0.22);
 		border-color: rgba(var(--theme-primary-rgb), 0.5);
 		color: var(--theme-text-primary);
+	}
+
+	.action-generate.generating {
+		gap: 0.45rem;
+	}
+
+	.btn-spinner {
+		width: 0.88rem;
+		height: 0.88rem;
+		border-radius: 999px;
+		border: 2px solid rgba(255, 255, 255, 0.35);
+		border-top-color: currentColor;
+		animation: btn-spin 0.8s linear infinite;
+		flex-shrink: 0;
+	}
+
+	@keyframes btn-spin {
+		to {
+			transform: rotate(360deg);
+		}
 	}
 
 	.action-vet {

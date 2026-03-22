@@ -238,6 +238,12 @@
 	let handingOffGeneration = $state(false);
 	let showGenerateChoiceModal = $state(false);
 
+	function hasRenderableDocumentSources(question: QuestionForVetting | undefined): boolean {
+		if (!question || allowNoPdfGeneration) return false;
+		const sources = question.source_info?.sources ?? [];
+		return sources.some((src) => Boolean(src.document_name));
+	}
+
 	let voiceAction = $state<PendingVoiceAction | null>(null);
 
 	let currentQuestion = $derived(questions[currentIndex]);
@@ -1331,17 +1337,17 @@
 				{/if}
 
 				<!-- Source References -->
-				{#if currentQuestion.source_info?.sources?.length}
+				{#if hasRenderableDocumentSources(currentQuestion)}
 					<button class="sources-toggle" onclick={() => showSources = !showSources}>
-						📚 {showSources ? 'Hide' : 'Show'} Sources ({currentQuestion.source_info.sources.length})
+						📚 {showSources ? 'Hide' : 'Show'} Sources ({currentQuestion.source_info?.sources?.length ?? 0})
 					</button>
 
 					{#if showSources}
 						<div class="sources-section">
-							{#if currentQuestion.source_info.generation_reasoning}
-								<p class="source-reasoning">{currentQuestion.source_info.generation_reasoning}</p>
+							{#if currentQuestion.source_info?.generation_reasoning}
+								<p class="source-reasoning">{currentQuestion.source_info?.generation_reasoning}</p>
 							{/if}
-							{#each currentQuestion.source_info.sources as src}
+							{#each currentQuestion.source_info?.sources ?? [] as src}
 								<div class="source-card">
 									{#if src.document_name}
 										<div class="source-doc">

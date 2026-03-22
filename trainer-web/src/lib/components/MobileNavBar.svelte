@@ -40,6 +40,8 @@
 		if (pathname === '/admin/dashboard') return 'Dashboard';
 		if (pathname.startsWith('/admin/subjects/')) return 'Subject';
 		if (pathname === '/admin/subjects') return 'Subjects';
+		if (pathname === '/admin/teachers') return 'Teachers';
+		if (pathname === '/admin/vetters') return 'Vetters';
 		return 'VQuest';
 	});
 
@@ -47,7 +49,7 @@
 		'/teacher', '/teacher/dashboard', '/teacher/subjects', '/teacher/train',
 		'/teacher/profile', '/teacher/ops', '/teacher/verify', '/teacher/ab-test',
 		'/vetter', '/vetter/dashboard', '/vetter/subjects', '/vetter/profile',
-		'/admin/dashboard', '/admin/subjects',
+		'/admin/dashboard', '/admin/subjects', '/admin/teachers', '/admin/vetters',
 	]);
 
 	let showBack = $derived(!rootPages.has(pathname));
