@@ -828,9 +828,6 @@
 			</div>
 
 			<div class="recorder-actions">
-				{#if secondaryActionLabel && onSecondaryAction}
-					<button class="recorder-secondary-btn" onclick={handleSecondaryAction}>{secondaryActionLabel}</button>
-				{/if}
 				<button class="recorder-cancel-btn" onclick={onCancel}>Cancel</button>
 				<button
 					class="recorder-submit-btn"
@@ -844,6 +841,9 @@
 					</svg>
 					{submitLabel}
 				</button>
+				{#if secondaryActionLabel && onSecondaryAction}
+					<button class="recorder-secondary-btn" onclick={handleSecondaryAction}>{secondaryActionLabel}</button>
+				{/if}
 			</div>
 		{/if}
 	</div>
@@ -867,9 +867,13 @@
 		width: 100%;
 		max-width: 400px;
 		border-radius: 1.5rem;
-		border: 1px solid var(--theme-modal-border);
-		background: var(--theme-modal-surface);
-		box-shadow: var(--theme-modal-shadow);
+		border: 1px solid rgba(255, 255, 255, 0.5);
+		background: linear-gradient(160deg, rgba(255, 255, 255, 0.96), rgba(247, 250, 252, 0.92));
+		box-shadow:
+			0 22px 52px rgba(15, 23, 42, 0.32),
+			inset 0 1px 0 rgba(255, 255, 255, 0.9);
+		backdrop-filter: blur(14px) saturate(135%);
+		-webkit-backdrop-filter: blur(14px) saturate(135%);
 		padding: 1.5rem;
 		display: flex;
 		flex-direction: column;

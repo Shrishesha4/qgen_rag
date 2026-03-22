@@ -8,7 +8,7 @@
 			if (!s) {
 				goto('/teacher/login');
 			} else if (s.user.role === 'teacher') {
-				goto('/teacher/dashboard');
+				goto('/teacher/subjects');
 			} else {
 				goto('/');
 			}

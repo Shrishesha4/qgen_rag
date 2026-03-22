@@ -118,6 +118,9 @@ class SubjectResponse(SubjectBase):
     course_outcomes: Optional[dict]
     total_questions: int
     total_topics: int
+    total_pending: int = 0
+    total_approved: int = 0
+    total_rejected: int = 0
     syllabus_coverage: int
     created_at: datetime
     updated_at: datetime

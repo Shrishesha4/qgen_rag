@@ -2,7 +2,6 @@
 	import { onMount } from 'svelte';
 	import { goto } from '$app/navigation';
 	import { session, currentUser } from '$lib/session';
-	import { logout } from '$lib/api/auth';
 	import { getVetterDashboard, type VetterDashboard } from '$lib/api/vetting';
 
 	let loading = $state(true);
@@ -27,12 +26,6 @@
 		} finally {
 			loading = false;
 		}
-	}
-
-	async function handleLogout() {
-		await logout();
-		session.clear();
-		goto('/');
 	}
 
 	function startVetting() {
@@ -91,9 +84,8 @@
 				</svg>
 			</div>
 		</button>
-	</div>
 
-	<button class="logout-link" onclick={handleLogout}>Sign Out</button>
+	</div>
 </div>
 
 <style>
@@ -262,20 +254,6 @@
 		flex-shrink: 0;
 	}
 
-	.logout-link {
-		background: none;
-		border: none;
-		color: var(--theme-text-muted);
-		cursor: pointer;
-		font-size: 0.85rem;
-		padding: 0.5rem;
-		transition: color 0.15s;
-	}
-
-	.logout-link:hover {
-		color: #e94560;
-	}
-
 	@media (max-width: 768px) {
 		.vetter-dash {
 			padding: 4rem 1rem 1.5rem;
@@ -412,8 +390,5 @@
 			line-height: 1.35;
 		}
 
-		.logout-link {
-			font-size: 0.8rem;
-		}
 	}
 </style>

@@ -110,10 +110,9 @@
 		}
 	}
 
-	function calcApprovalRate(approved: number, rejected: number): number {
-		const vetted = approved + rejected;
-		if (vetted <= 0) return 0;
-		return Math.round((approved / vetted) * 100);
+	function calcApprovalRate(approved: number, generated: number): number {
+		if (generated <= 0) return 0;
+		return Math.round((approved / generated) * 100);
 	}
 
 	function normalizeStatus(status: string | null | undefined): 'approved' | 'rejected' | 'pending' {
@@ -127,22 +126,30 @@
 		if (!subject) return;
 		statsLoading = true;
 		try {
-			const limit = 200;
+			const limit = 100;
 			let pageNo = 1;
-			const allQuestions: Array<{ topic_id: string | null; vetting_status: string }> = [];
+			const allQuestions: Array<{ topic_id: string | null; vetting_status: string; version_number: number }> = [];
 
 			while (true) {
 				const pageRes = await getQuestionsForVetting({
 					subject_id: subject.id,
+					status: 'all',
 					page: pageNo,
 					limit,
 				});
-				allQuestions.push(...pageRes.questions.map((q) => ({ topic_id: q.topic_id, vetting_status: q.vetting_status })));
+				allQuestions.push(
+					...pageRes.questions.map((q) => ({
+						topic_id: q.topic_id,
+						vetting_status: q.vetting_status,
+						version_number: Math.max(1, q.version_number || 1),
+					}))
+				);
 				if (pageNo >= pageRes.pages || pageRes.questions.length === 0) break;
 				pageNo += 1;
 			}
 
 			const perTopic: Record<string, ReviewStats> = {};
+			const regeneratedByTopic: Record<string, number> = {};
 			for (const topic of subject.topics) {
 				perTopic[topic.id] = {
 					generated: topic.total_questions,
@@ -152,6 +159,7 @@
 					vetted: 0,
 					approvalRate: 0,
 				};
+				regeneratedByTopic[topic.id] = 0;
 			}
 
 			for (const q of allQuestions) {
@@ -160,6 +168,7 @@
 				if (normalized === 'approved') perTopic[q.topic_id].approved += 1;
 				else if (normalized === 'rejected') perTopic[q.topic_id].rejected += 1;
 				else perTopic[q.topic_id].pending += 1;
+				regeneratedByTopic[q.topic_id] += Math.max(0, q.version_number - 1);
 			}
 
 			let approvedTotal = 0;
@@ -169,11 +178,12 @@
 
 			for (const topic of subject.topics) {
 				const stats = perTopic[topic.id];
+				stats.generated += regeneratedByTopic[topic.id] || 0;
 				stats.vetted = stats.approved + stats.rejected;
 				if (stats.pending === 0) {
-					stats.pending = Math.max(0, stats.generated - stats.vetted);
+					stats.pending = Math.max(0, topic.total_questions - stats.vetted);
 				}
-				stats.approvalRate = calcApprovalRate(stats.approved, stats.rejected);
+				stats.approvalRate = calcApprovalRate(stats.approved, stats.generated);
 
 				generatedTotal += stats.generated;
 				approvedTotal += stats.approved;
@@ -183,13 +193,13 @@
 
 			const vettedTotal = approvedTotal + rejectedTotal;
 			topicReviewStats = perTopic;
-			subjectReviewStats = {
+				subjectReviewStats = {
 				generated: generatedTotal,
 				approved: approvedTotal,
 				rejected: rejectedTotal,
 				pending: pendingTotal,
 				vetted: vettedTotal,
-				approvalRate: calcApprovalRate(approvedTotal, rejectedTotal),
+					approvalRate: calcApprovalRate(approvedTotal, generatedTotal),
 			};
 		} catch {
 			if (subject) {
@@ -593,9 +603,9 @@
 			<div class="modal-body">
 				<input class="input" placeholder="Topic name" bind:value={addTopicName} />
 				<input class="input" placeholder="Description (optional)" bind:value={addTopicDescription} />
-				<textarea class="input textarea" rows="4" placeholder="Syllabus content (optional)" bind:value={addTopicSyllabus}></textarea>
+				<textarea class="input textarea" rows="4" placeholder="Syllabus content" bind:value={addTopicSyllabus}></textarea>
 				<div class="file-input-group">
-					<label class="file-label" for="bookPdf">Book PDF (optional)</label>
+					<label class="file-label" for="bookPdf">Book PDF</label>
 					<input
 						id="bookPdf"
 						class="file-input"
@@ -643,10 +653,10 @@
 			<div class="modal-body">
 				<label class="input-label" for="editTopicName">Topic name</label>
 				<input id="editTopicName" class="input" placeholder="Topic name" bind:value={editTopicName} />
-				<label class="input-label" for="editTopicDescription">Description (optional)</label>
-				<input id="editTopicDescription" class="input" placeholder="Description (optional)" bind:value={editTopicDescription} />
-				<label class="input-label" for="editTopicSyllabus">Syllabus content (optional)</label>
-				<textarea id="editTopicSyllabus" class="input textarea" rows="4" placeholder="Syllabus content (optional)" bind:value={editTopicSyllabus}></textarea>
+				<label class="input-label" for="editTopicDescription">Description</label>
+				<input id="editTopicDescription" class="input" placeholder="Description" bind:value={editTopicDescription} />
+				<label class="input-label" for="editTopicSyllabus">Syllabus content</label>
+				<textarea id="editTopicSyllabus" class="input textarea" rows="4" placeholder="Syllabus content" bind:value={editTopicSyllabus}></textarea>
 			</div>
 			<div class="modal-actions">
 				<button class="action-btn action-muted" onclick={closeEditTopicModal}>Cancel</button>
@@ -709,7 +719,7 @@
 									</div>
 								</button>
 
-								{#if selectedTopicId === topic.id}
+								<div class="topic-accordion-body-wrap" class:expanded={selectedTopicId === topic.id}>
 									<div class="topic-accordion-body">
 										<div class="syllabus-block">
 											<h4>Syllabus Content</h4>
@@ -805,7 +815,7 @@
 											</div>
 										{/if}
 									</div>
-								{/if}
+								</div>
 							</div>
 						{/each}
 					{:else}
@@ -965,6 +975,7 @@
 	.topic-header {
 		display: flex;
 		justify-content: space-between;
+		align-items: flex-start;
 		gap: 1rem;
 	}
 
@@ -1006,16 +1017,17 @@
 
 	.topic-actions-edge {
 		display: grid;
-		grid-template-columns: repeat(3, minmax(110px, 1fr));
+		grid-template-columns: repeat(3, 128px);
 		gap: 0.55rem;
-		width: min(390px, 100%);
-		justify-items: stretch;
+		width: 100%;
+		justify-content: end;
+		align-self: flex-start;
 	}
 
 	.action-btn {
 		width: 100%;
 		min-width: 0;
-		min-height: 44px;
+		height: 44px;
 		padding: 0.62rem 0.95rem;
 		border-radius: 999px;
 		font: inherit;
@@ -1024,6 +1036,10 @@
 		border: 1px solid transparent;
 		cursor: pointer;
 		transition: background 0.15s ease, border-color 0.15s ease, transform 0.15s ease;
+		display: inline-flex;
+		align-items: center;
+		justify-content: center;
+		white-space: nowrap;
 	}
 
 	.action-btn:hover {
@@ -1392,10 +1408,33 @@
 	}
 
 	.topic-accordion-body {
+		min-height: 0;
+		overflow: hidden;
+		transform-origin: top;
+		transform: translateY(-8px);
+		opacity: 0;
+		transition: transform 0.22s ease, opacity 0.22s ease;
 		padding: 0 1.2rem 1.2rem;
 		display: flex;
 		flex-direction: column;
 		gap: 1.2rem;
+	}
+
+	.topic-accordion-body-wrap {
+		display: grid;
+		grid-template-rows: 0fr;
+		min-height: 0;
+		overflow: hidden;
+		transition: grid-template-rows 0.24s ease;
+	}
+
+	.topic-accordion-body-wrap.expanded {
+		grid-template-rows: 1fr;
+	}
+
+	.topic-accordion-body-wrap.expanded .topic-accordion-body {
+		transform: translateY(0);
+		opacity: 1;
 	}
 
 	.syllabus-block h4 {
@@ -1544,6 +1583,8 @@
 		display: flex;
 		flex-direction: column;
 		align-items: center;
+		justify-content: center;
+		min-height: 56vh;
 		gap: 0.8rem;
 		text-align: center;
 		color: var(--theme-text-muted);

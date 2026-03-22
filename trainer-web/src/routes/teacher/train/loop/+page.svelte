@@ -4,6 +4,7 @@
 	import { goto, beforeNavigate } from '$app/navigation';
 	import { page } from '$app/stores';
 	import { session } from '$lib/session';
+	import ConfirmDialog from '$lib/components/ConfirmDialog.svelte';
 	import VoiceRecorder from '$lib/components/VoiceRecorder.svelte';
 	import {
 		getQuestionsForVetting,
@@ -34,15 +35,17 @@
 	const FAILED_DOC_STATUSES = new Set(['failed', 'error']);
 	const WAIT_POLL_MS = 1500;
 	const WAIT_DOCS_TIMEOUT_MS = 3 * 60 * 1000;
+	const BATCH_SIZE_UNIT = 30;
 	const DEFAULT_BATCH_SIZE = 30;
-	const MIN_BATCH_SIZE = 5;
-	const MAX_BATCH_SIZE = 30;
+	const MIN_BATCH_SIZE = 30;
+	const MAX_BATCH_SIZE = 300;
 
 	function parseBatchSizeParam(raw: string | null) {
 		if (raw == null || raw.trim() === '') return DEFAULT_BATCH_SIZE;
 		const parsed = Number(raw);
 		if (!Number.isFinite(parsed) || parsed <= 0) return DEFAULT_BATCH_SIZE;
-		return Math.max(MIN_BATCH_SIZE, Math.min(MAX_BATCH_SIZE, Math.trunc(parsed)));
+		const normalized = Math.trunc(parsed / BATCH_SIZE_UNIT) * BATCH_SIZE_UNIT;
+		return Math.max(MIN_BATCH_SIZE, Math.min(MAX_BATCH_SIZE, normalized || DEFAULT_BATCH_SIZE));
 	}
 
 	let subjectId = $state('');
@@ -63,23 +66,39 @@
 	let remoteSaveTimer: ReturnType<typeof setTimeout> | null = null;
 	let isSavingProgress = false;
 	let verifyMode = $state(false);
+	let allowAutoGeneration = $state(true);
+	let navigationConfirmOpen = $state(false);
+	let navigationConfirmTitle = $state('');
+	let navigationConfirmMessage = $state('');
+	let navigationConfirmAction = $state<null | (() => void | Promise<void>)>(null);
+	let skipNextLeaveConfirm = false;
 
 	// Confirm + cleanup before any SvelteKit navigation
-	beforeNavigate(({ cancel }) => {
+	beforeNavigate(({ cancel, to }) => {
 		if (verifyMode) return; // Skip all progress handling in verify mode
-		const hasProgress = questions.length > 0 && (totalReviewed > 0 || currentIndex > 0 || batchComplete);
+		if (skipNextLeaveConfirm) {
+			skipNextLeaveConfirm = false;
+			return;
+		}
+		const hasProgress =
+			questions.length > 0 &&
+			(totalReviewed > 0 || currentIndex > 0 || batchComplete) &&
+			!showBatchCompletePanel;
 		const isActive = generating || submitting || hasProgress;
 		if (isActive) {
-			const msg = generating
-				? 'Generation is still running. Leave and save your vetting progress?'
-				: 'You have existing vetting progress. Leave and save it for later?';
-			if (!confirm(msg)) {
-				cancel();
-				return;
-			}
-			// User confirmed — stop generation cleanly
-			stopBackgroundGen();
-			persistProgressNow(true);
+			cancel();
+			const destination = to?.url ? `${to.url.pathname}${to.url.search}${to.url.hash}` : '/teacher/subjects';
+			openNavigationConfirm(
+				generating ? 'Leave And Save Progress?' : 'Leave This Vetting Session?',
+				generating
+					? 'Generation is still running. Leave and save your vetting progress for later?'
+					: 'You have existing vetting progress. Leave and save it for later?',
+				async () => {
+					persistProgressNow(true);
+					skipNextLeaveConfirm = true;
+					await goto(destination);
+				}
+			);
 		}
 	});
 
@@ -104,6 +123,7 @@
 			const nextResumeMode = resumeParam === '1' ? 'force' : resumeParam === '0' ? 'skip' : 'auto';
 			const nextResumeProgressKey = p.url.searchParams.get('resume_key') ?? '';
 			const nextVerifyMode = p.url.searchParams.get('verify_mode') === 'true';
+			const nextAllowAutoGeneration = p.url.searchParams.get('auto_generate') !== '0';
 
 			if (nextSubjectId !== subjectId || nextMixedTopicsMode !== mixedTopicsMode || nextProvisionalSubject !== provisionalSubject || nextAllowNoPdfGeneration !== allowNoPdfGeneration) {
 				topicCycleIds = [];
@@ -125,6 +145,7 @@
 			resumeMode = nextResumeMode;
 			resumeProgressKey = nextResumeProgressKey;
 			verifyMode = nextVerifyMode;
+			allowAutoGeneration = nextAllowAutoGeneration;
 		});
 		loadAndStream();
 
@@ -134,7 +155,6 @@
 			const hasProgress = questions.length > 0 && (totalReviewed > 0 || currentIndex > 0 || batchComplete);
 			if (generating || submitting || hasProgress) {
 				e.preventDefault();
-				stopBackgroundGen();
 				persistProgressNow(true);
 			}
 		}
@@ -152,7 +172,6 @@
 				clearTimeout(remoteSaveTimer);
 				remoteSaveTimer = null;
 			}
-			stopBackgroundGen();
 			if (!verifyMode) {
 				persistProgressNow(true);
 			}
@@ -193,6 +212,7 @@
 	// Trigger next generation when user has vetted at least 25 questions from current batch
 	$effect(() => {
 		if (batchComplete || generating || regenerating || voiceAction?.kind === 'reject' || !subjectId) return;
+		if (!allowAutoGeneration) return;
 		if (nextGenAt === 0) return;
 		if (totalReviewed >= nextGenAt) {
 			nextGenAt = 0; // disarm before async to prevent double-trigger
@@ -378,12 +398,14 @@
 
 		if (await restoreSavedProgress()) {
 			loading = false;
-			if (subjectId && !batchComplete) {
+			if (subjectId && !batchComplete && allowAutoGeneration) {
 				if (questions.length === 0) {
 					startBackgroundGeneration();
 				} else {
 					armNextGen();
 				}
+			} else {
+				nextGenAt = 0;
 			}
 			return;
 		}
@@ -419,7 +441,7 @@
 		}
 
 		// Start or arm generation
-		if (subjectId && !batchComplete) {
+		if (subjectId && !batchComplete && allowAutoGeneration) {
 			if (questions.length === 0) {
 				// No pending questions — generate first batch immediately
 				startBackgroundGeneration();
@@ -427,6 +449,8 @@
 				// Existing questions — wait until at least 25 are vetted before generating more
 				armNextGen();
 			}
+		} else {
+			nextGenAt = 0;
 		}
 	}
 
@@ -456,7 +480,7 @@
 			}
 
 			// Arm threshold: next batch triggers when at least 25 current questions are vetted
-			if (!batchComplete) armNextGen();
+			if (!batchComplete && allowAutoGeneration) armNextGen();
 		} catch (e: unknown) {
 			postTriggerGenerationActive = false;
 			postTriggerBaseQuestionCount = 0;
@@ -567,12 +591,16 @@
 	}
 
 	function armNextGen() {
+		if (!allowAutoGeneration) {
+			nextGenAt = 0;
+			return;
+		}
 		const threshold = Math.min(25, Math.max(1, questions.length));
 		nextGenAt = threshold;
 	}
 
 	async function doNextBatch() {
-		if (generating || batchComplete || !subjectId) return;
+		if (generating || batchComplete || !subjectId || !allowAutoGeneration) return;
 		postTriggerGenerationActive = true;
 		postTriggerBaseQuestionCount = questions.length;
 		generating = true;
@@ -687,7 +715,7 @@
 	}
 
 	function completeBatch() {
-		stopBackgroundGen();
+		// stopBackgroundGen();
 		generating = false;
 		genMessage = '';
 		showBatchCompleteNotice = true;
@@ -704,6 +732,25 @@
 		approved.clear();
 		rejected.clear();
 		batchComplete = true;
+	}
+
+	function openNavigationConfirm(title: string, message: string, onConfirm: () => void | Promise<void>) {
+		navigationConfirmTitle = title;
+		navigationConfirmMessage = message;
+		navigationConfirmAction = onConfirm;
+		navigationConfirmOpen = true;
+	}
+
+	function closeNavigationConfirm() {
+		navigationConfirmOpen = false;
+		navigationConfirmAction = null;
+	}
+
+	async function confirmNavigation() {
+		const action = navigationConfirmAction;
+		closeNavigationConfirm();
+		if (!action) return;
+		await action();
 	}
 
 	function resetDocumentProcessingState() {
@@ -978,7 +1025,8 @@
 	function finish() {
 		stopBackgroundGen();
 		persistProgressNow(true);
-		goto('/teacher/dashboard');
+		skipNextLeaveConfirm = true;
+		goto('/teacher/train');
 	}
 
 	function openGenerateChoiceModal() {
@@ -997,7 +1045,7 @@
 
 	async function chooseGenerateLater() {
 		closeGenerateChoiceModal();
-		await continueGenerationInBackground(true);
+		await continueGenerationInBackground();
 	}
 
 	function isCorrectOption(opt: string, correctAnswer: string | null): boolean {
@@ -1019,12 +1067,18 @@
 		return isCorrectOption(selectedOpt, currentQuestion.correct_answer);
 	}
 
-	async function continueGenerationInBackground(skipConfirm = false) {
+	function promptContinueGenerationInBackground() {
+		openNavigationConfirm(
+			'Move Generation To Background?',
+			'You will be sent to Subjects while generation continues in the background.',
+			async () => {
+				await continueGenerationInBackground();
+			}
+		);
+	}
+
+	async function continueGenerationInBackground() {
 		if (!subjectId || handingOffGeneration) return;
-		if (!skipConfirm) {
-			const confirmed = confirm('Are you sure? You will be sent to the dashboard and generation will continue in background.');
-			if (!confirmed) return;
-		}
 		handingOffGeneration = true;
 		error = '';
 		try {
@@ -1037,7 +1091,8 @@
 				difficulty: 'medium',
 				allowWithoutReference: allowNoPdfGeneration,
 			});
-			goto('/teacher/dashboard');
+			skipNextLeaveConfirm = true;
+			goto('/teacher/subjects');
 		} catch (e: unknown) {
 			batchComplete = false;
 			error = e instanceof Error ? e.message : 'Failed to move generation to background';
@@ -1096,7 +1151,7 @@
 				</div>
 			{/if}
 			<p class="sub-text">Please Wait...</p>
-			<button class="glass-btn secondary-btn" onclick={() => continueGenerationInBackground()} disabled={handingOffGeneration}>
+			<button class="glass-btn secondary-btn" onclick={promptContinueGenerationInBackground} disabled={handingOffGeneration}>
 				{handingOffGeneration ? 'Switching…' : 'Generate In Background'}
 			</button>
 		</div>
@@ -1110,8 +1165,8 @@
 			{:else}
 				<p class="sub-text">Generate questions first using the new topic wizard</p>
 			{/if}
-			<button class="glass-btn secondary-btn" onclick={() => goto('/teacher/dashboard')}>
-				Back to Home
+			<button class="glass-btn secondary-btn" onclick={() => goto('/teacher/train')}>
+				Go Back
 			</button>
 		</div>
 	{:else if showBatchCompletePanel}
@@ -1120,7 +1175,7 @@
 			<h2 class="caught-up-title font-serif">All Caught Up</h2>
 			<p class="caught-up-copy">You finished reviewing this batch and paused generation for now.</p>
 			<div class="caught-up-actions">
-				<button class="glass-btn finish-btn" onclick={finish}>Back to dashboard</button>
+				<button class="glass-btn finish-btn" onclick={finish}>Go Back</button>
 			</div>
 		</div>
 	{:else}
@@ -1441,6 +1496,17 @@
 	/>
 {/if}
 
+<ConfirmDialog
+	open={navigationConfirmOpen}
+	title={navigationConfirmTitle}
+	message={navigationConfirmMessage}
+	confirmText="Leave"
+	cancelText="Stay"
+	tone="warning"
+	onConfirm={confirmNavigation}
+	onCancel={closeNavigationConfirm}
+/>
+
 <style>
 	.loop-page {
 		max-width: 600px;
@@ -1543,14 +1609,14 @@
 
 	.answer-modal {
 		width: min(520px, 100%);
-		padding: 1rem;
-		border-radius: 14px;
-		border: 1px solid var(--theme-modal-border);
-		background: var(--theme-modal-surface);
-		box-shadow: var(--theme-modal-shadow);
+		padding: 1.2rem;
+		border-radius: 18px;
+		border: 1px solid rgba(17, 24, 39, 0.16);
+		background: rgba(245, 249, 255, 0.97);
+		box-shadow: 0 24px 54px rgba(15, 23, 42, 0.24);
 		display: flex;
 		flex-direction: column;
-		gap: 0.6rem;
+		gap: 0.75rem;
 	}
 
 	.answer-modal-head {
@@ -1561,15 +1627,16 @@
 
 	.answer-modal-head h3 {
 		margin: 0;
-		font-size: 1rem;
+		font-size: 2rem;
+		color: #0f172a;
 	}
 
 	.answer-modal-close {
-		border: none;
-		background: rgba(255, 255, 255, 0.1);
-		color: var(--theme-text);
-		width: 28px;
-		height: 28px;
+		border: 1px solid rgba(17, 24, 39, 0.15);
+		background: rgba(255, 255, 255, 0.78);
+		color: #0f172a;
+		width: 40px;
+		height: 40px;
 		border-radius: 999px;
 		cursor: pointer;
 	}
@@ -1595,33 +1662,35 @@
 	.answer-result {
 		margin: 0;
 		font-weight: 700;
+		font-size: 0.95rem;
 	}
 
 	.answer-result.correct {
-		color: #48c050;
+		color: #0f766e;
 	}
 
 	.answer-result.wrong {
-		color: #f59aa8;
+		color: #d9466f;
 	}
 
 	.answer-chosen {
 		margin: 0;
-		font-size: 0.9rem;
+		font-size: 1rem;
+		color: #1f2937;
 	}
 
 	/* Answer box */
 	.answer-box {
-		padding: 0.75rem 1rem;
-		background: rgba(72, 192, 80, 0.1);
-		border-radius: 10px;
-		border: 0.5px solid rgba(72, 192, 80, 0.2);
+		padding: 0.9rem 1rem;
+		background: rgba(16, 185, 129, 0.1);
+		border-radius: 14px;
+		border: 1px solid rgba(16, 185, 129, 0.25);
 	}
 
 	.answer-label {
 		font-size: 0.75rem;
 		font-weight: 600;
-		color: var(--theme-text-muted);
+		color: #475569;
 		text-transform: uppercase;
 		letter-spacing: 0.05em;
 	}
@@ -1630,16 +1699,16 @@
 		display: block;
 		margin-top: 0.25rem;
 		font-weight: 600;
-		color: var(--theme-text);
+		color: #0f172a;
 	}
 
 	/* Explanation */
 	.explanation {
-		margin-top: 1rem;
-		padding: 0.75rem 1rem;
-		background: rgba(255, 255, 255, 0.02);
-		border-radius: 10px;
-		border-left: 3px solid rgba(var(--theme-primary-rgb), 0.4);
+		margin-top: 0.25rem;
+		padding: 0.95rem 1rem;
+		background: rgba(15, 23, 42, 0.05);
+		border-radius: 14px;
+		border-left: 4px solid rgba(var(--theme-primary-rgb), 0.45);
 	}
 
 	.expl-label {
@@ -1647,14 +1716,14 @@
 		font-weight: 700;
 		text-transform: uppercase;
 		letter-spacing: 0.05em;
-		color: var(--theme-text-muted);
+		color: #475569;
 	}
 
 	.expl-text {
 		margin: 0.3rem 0 0;
-		font-size: 0.88rem;
+		font-size: 1rem;
 		line-height: 1.5;
-		color: var(--theme-text-muted);
+		color: #1f2937;
 	}
 
 	/* Actions */
@@ -2261,6 +2330,8 @@
 		display: flex;
 		flex-direction: column;
 		align-items: center;
+		justify-content: center;
+		min-height: 56vh;
 		gap: 0.75rem;
 		padding: 4rem 1rem;
 		text-align: center;
@@ -2432,11 +2503,13 @@
 	}
 
 	.progress-pill {
+		position: static;
 		min-width: 11rem;
 		padding: 0.95rem 1.1rem;
 		border-radius: 999px;
-		background: rgba(255, 255, 255, 0.12);
-		border: 1px solid rgba(255, 255, 255, 0.12);
+		background: rgba(255, 255, 255, 0.78);
+		border: 1px solid rgba(17, 24, 39, 0.2);
+		box-shadow: 0 10px 24px rgba(15, 23, 42, 0.14), inset 0 1px 0 rgba(255, 255, 255, 0.85);
 		display: flex;
 		align-items: center;
 		gap: 0.85rem;
@@ -2445,7 +2518,7 @@
 	.progress-pill-count {
 		font-size: 1.35rem;
 		font-weight: 700;
-		color: var(--theme-text);
+		color: var(--theme-text-primary);
 		font-variant-numeric: tabular-nums;
 	}
 
@@ -2453,13 +2526,13 @@
 		flex: 1;
 		height: 0.5rem;
 		border-radius: 999px;
-		background: rgba(255, 255, 255, 0.12);
+		background: rgba(148, 163, 184, 0.45);
 		overflow: hidden;
 	}
 
 	.progress-pill-fill {
 		height: 100%;
-		background: linear-gradient(90deg, rgba(var(--theme-primary-rgb), 0.55), var(--theme-primary));
+		background: linear-gradient(90deg, rgba(var(--theme-primary-rgb), 0.75), var(--theme-primary));
 		border-radius: inherit;
 	}
 

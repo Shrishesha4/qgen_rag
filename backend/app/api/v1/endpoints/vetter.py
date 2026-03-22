@@ -15,6 +15,7 @@ from sqlalchemy import select, func, and_, or_
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import selectinload, joinedload
 from sqlalchemy.exc import ProgrammingError
+from sqlalchemy.dialects.postgresql import insert as pg_insert
 from pydantic import BaseModel, Field
 
 from app.core.database import get_db
@@ -380,48 +381,54 @@ async def upsert_teacher_vetting_progress(
     rejected_ids = _normalize_progress_ids(payload.rejected_question_ids)
     safe_current_index = max(0, min(payload.current_index, len(payload.questions) - 1))
 
-    existing_result = await db.execute(
-        select(TeacherVettingProgress).where(
-            TeacherVettingProgress.user_id == current_user.id,
-            TeacherVettingProgress.progress_key == clean_key,
+    now = datetime.now(timezone.utc)
+    insert_values = {
+        "id": str(uuid.uuid4()),
+        "user_id": current_user.id,
+        "progress_key": clean_key,
+        "subject_id": clean_subject_id,
+        "topic_id": clean_topic_id,
+        "mixed_topics_mode": payload.mixed_topics_mode,
+        "selected_mixed_topic_ids": selected_topic_ids,
+        "generation_batch_size": payload.generation_batch_size,
+        "allow_no_pdf_generation": payload.allow_no_pdf_generation,
+        "questions_snapshot": payload.questions,
+        "current_index": safe_current_index,
+        "approved_question_ids": approved_ids,
+        "rejected_question_ids": rejected_ids,
+        "batch_complete": payload.batch_complete,
+    }
+
+    upsert_stmt = (
+        pg_insert(TeacherVettingProgress)
+        .values(**insert_values)
+        .on_conflict_do_update(
+            index_elements=[TeacherVettingProgress.user_id, TeacherVettingProgress.progress_key],
+            set_={
+                "subject_id": clean_subject_id,
+                "topic_id": clean_topic_id,
+                "mixed_topics_mode": payload.mixed_topics_mode,
+                "selected_mixed_topic_ids": selected_topic_ids,
+                "generation_batch_size": payload.generation_batch_size,
+                "allow_no_pdf_generation": payload.allow_no_pdf_generation,
+                "questions_snapshot": payload.questions,
+                "current_index": safe_current_index,
+                "approved_question_ids": approved_ids,
+                "rejected_question_ids": rejected_ids,
+                "batch_complete": payload.batch_complete,
+                "updated_at": now,
+            },
         )
+        .returning(TeacherVettingProgress.id)
     )
-    snapshot = existing_result.scalar_one_or_none()
 
-    if snapshot is None:
-        snapshot = TeacherVettingProgress(
-            user_id=current_user.id,
-            progress_key=clean_key,
-            subject_id=clean_subject_id,
-            topic_id=clean_topic_id,
-            mixed_topics_mode=payload.mixed_topics_mode,
-            selected_mixed_topic_ids=selected_topic_ids,
-            generation_batch_size=payload.generation_batch_size,
-            allow_no_pdf_generation=payload.allow_no_pdf_generation,
-            questions_snapshot=payload.questions,
-            current_index=safe_current_index,
-            approved_question_ids=approved_ids,
-            rejected_question_ids=rejected_ids,
-            batch_complete=payload.batch_complete,
-        )
-        db.add(snapshot)
-    else:
-        snapshot.subject_id = clean_subject_id
-        snapshot.topic_id = clean_topic_id
-        snapshot.mixed_topics_mode = payload.mixed_topics_mode
-        snapshot.selected_mixed_topic_ids = selected_topic_ids
-        snapshot.generation_batch_size = payload.generation_batch_size
-        snapshot.allow_no_pdf_generation = payload.allow_no_pdf_generation
-        snapshot.questions_snapshot = payload.questions
-        snapshot.current_index = safe_current_index
-        snapshot.approved_question_ids = approved_ids
-        snapshot.rejected_question_ids = rejected_ids
-        snapshot.batch_complete = payload.batch_complete
-        snapshot.updated_at = datetime.now(timezone.utc)
-
-    await db.flush()
+    upsert_result = await db.execute(upsert_stmt)
+    snapshot_id = upsert_result.scalar_one()
     await db.commit()
-    await db.refresh(snapshot)
+
+    snapshot = await db.get(TeacherVettingProgress, snapshot_id)
+    if snapshot is None:
+        raise HTTPException(status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, detail="Failed to load saved progress")
     return _progress_to_response(snapshot)
 
 

@@ -75,7 +75,7 @@
 
 	.picker-menu {
 		position: absolute;
-		bottom: calc(100% + 0.5rem);
+		bottom: calc(100% + 1.5rem);
 		top: auto;
 		right: 0;
 		background: var(--theme-surface);

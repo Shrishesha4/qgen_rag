@@ -10,11 +10,12 @@
 		deleteDocumentById,
 		getDocumentStatus,
 		listReferenceDocuments,
+		scheduleBackgroundGeneration,
 		uploadDocument,
 	} from '$lib/api/documents';
 
 	const DRAFT_STORAGE_KEY = 'qgen:new-topic-wizard:draft:v1';
-	const MIN_QUESTION_COUNT = 1;
+	const MIN_QUESTION_COUNT = 30;
 	const MAX_QUESTION_COUNT = 30;
 
 	function clampStep(value: number) {
@@ -140,13 +141,20 @@
 	let anyDocsProcessing = $derived([...allTopicDocs, ...allTopicRefDocs].some(isDocProcessing));
 	let anyDocsFailed = $derived([...allTopicDocs, ...allTopicRefDocs].some(isDocFailed));
 	let allDocsReady = $derived(hasAnyDocs && !anyDocsProcessing && !anyDocsFailed);
+	let hasReferenceUploads = $derived(totalBookDocs > 0 || totalRefDocs > 0);
+
+	$effect(() => {
+		if (hasReferenceUploads && skipReferencePdf) {
+			skipReferencePdf = false;
+		}
+	});
 
 	let canProceed = $derived.by(() => {
 		switch (step) {
 			case 1: return disciplineName.trim().length > 0;
 			case 2: return topics.length > 0;
 			case 3:
-				return (skipReferencePdf || totalBookDocs > 0) &&
+				return (skipReferencePdf || hasReferenceUploads) &&
 					desiredQuestionCount >= MIN_QUESTION_COUNT &&
 					desiredQuestionCount <= MAX_QUESTION_COUNT &&
 					!anyDocsFailed;
@@ -695,12 +703,14 @@
 			setupStatus = 'Adding topics...';
 			// Get existing topics from pdf import (already created by extractChapters)
 			const existingTopicNames = new Set<string>();
+			const topicIdByName = new Map<string, string>();
 			if (tempSubjectId) {
 				// Topics from extractChapters are already created — just need to update syllabus content
 				try {
 					const detail = await getSubject(subjectId);
 					for (const t of detail.topics) {
 						existingTopicNames.add(t.name);
+						topicIdByName.set(topicKey(t.name), t.id);
 						// Update syllabus if user edited it
 						const local = topics.find(lt => lt.name === t.name);
 						if (local && local.syllabusContent.trim() && local.syllabusContent !== (t.syllabus_content || '')) {
@@ -715,17 +725,45 @@
 			// Create any manually-added topics not yet on server
 			for (let i = 0; i < topics.length; i++) {
 				if (!existingTopicNames.has(topics[i].name)) {
-					await createTopic(subjectId, {
+					const created = await createTopic(subjectId, {
 						name: topics[i].name,
 						order_index: i,
 						subject_id: subjectId,
 						syllabus_content: topics[i].syllabusContent || undefined,
 					});
+					topicIdByName.set(topicKey(topics[i].name), created.id);
 				}
 			}
-			setupProgress = 30;
+			setupProgress = 40;
 
-			// 3. Reference materials are already uploaded per-topic in Step 3.
+			// 3. Always queue one batch (30) per topic after setup completion.
+			setupStatus = 'Scheduling first question batches...';
+			const topicIdsForGeneration = topics
+				.map((topic) => topicIdByName.get(topicKey(topic.name)))
+				.filter((id): id is string => Boolean(id));
+			if (topicIdsForGeneration.length === 1) {
+				await scheduleBackgroundGeneration({
+					subjectId,
+					topicId: topicIdsForGeneration[0],
+					count: 30,
+					types: 'mcq',
+					difficulty: 'medium',
+					allowWithoutReference: skipReferencePdf,
+				});
+			} else if (topicIdsForGeneration.length > 1) {
+				await scheduleBackgroundGeneration({
+					subjectId,
+					topicIds: topicIdsForGeneration,
+					count: 30 * topicIdsForGeneration.length,
+					types: 'mcq',
+					difficulty: 'medium',
+					allowWithoutReference: skipReferencePdf,
+				});
+			}
+			backgroundGenerationScheduled = true;
+			backgroundGenerationMessage = `Scheduled 30 questions for ${topicIdsForGeneration.length} topic${topicIdsForGeneration.length === 1 ? '' : 's'}.`;
+
+			// 4. Reference materials are already uploaded per-topic in Step 3.
 			setupProgress = 80;
 
 			setupProgress = 100;
@@ -999,7 +1037,7 @@
 
 					<div class="step3-settings-row">
 						<div class="question-count-card">
-							<label class="field-label" for="question-count-input">Questions To Generate</label>
+							<label class="field-label" for="question-count-input">Questions To Generate Per Topic</label>
 							<div class="question-count-row">
 								<input
 									id="question-count-input"
@@ -1009,11 +1047,13 @@
 									max={MAX_QUESTION_COUNT}
 									bind:value={desiredQuestionCount}
 									oninput={handleQuestionCountInput}
+									disabled
 								/>
-								<span class="question-count-unit">questions</span>
+								<span class="question-count-unit">fixed at 30</span>
 							</div>
 						</div>
 
+						{#if !hasReferenceUploads}
 						<button
 							type="button"
 							class="glass-btn skip-pdf-btn"
@@ -1022,6 +1062,7 @@
 						>
 							{skipReferencePdf ? '✓ ' : ''}Generate without reference materials
 						</button>
+						{/if}
 					</div>
 
 					{#if skipReferencePdf}
@@ -1045,9 +1086,7 @@
 				{:else if completeOnlyMode || !allDocsReady}
 					<p class="step-hint">Reference materials are still processing. You can complete setup now and continue from dashboard later.</p>
 				{/if}
-				{#if !skipReferencePdf && !allDocsReady && hasAnyDocs}
-					<p class="step-hint">On Complete, background generation for {desiredQuestionCount} question{desiredQuestionCount !== 1 ? 's' : ''} will run automatically once processing is ready.</p>
-				{/if}
+				<p class="step-hint">On Complete, one 30-question batch will be scheduled for each topic.</p>
 				{#if backgroundGenerationMessage}
 					<p class="step-hint">{backgroundGenerationMessage}</p>
 				{/if}
@@ -1087,7 +1126,7 @@
 					</div>
 					<div class="review-section">
 						<span class="rs-label">Questions To Generate</span>
-						<span class="rs-value">{desiredQuestionCount}</span>
+						<span class="rs-value">30 per topic</span>
 					</div>
 				</div>
 				{#if setupError}
@@ -1869,7 +1908,9 @@
 	}
 
 	.step3-footer {
-		margin-top: 1.25rem;
+		margin-top: 2rem;
+		padding-bottom: 1.6rem;
+		margin-bottom: 0.8rem;
 		display: flex;
 		flex-direction: column;
 		gap: 0.75rem;
@@ -1928,26 +1969,27 @@
 		font-size: 1rem;
 		font-weight: 700;
 		letter-spacing: 0.01em;
+		color: var(--theme-text-primary);
 		cursor: pointer;
 		border-style: solid;
 		border-width: 1px;
-		border-color: rgba(255, 255, 255, 0.32);
-		background: linear-gradient(135deg, rgba(255, 255, 255, 0.12), rgba(255, 255, 255, 0.06));
-		box-shadow: 0 10px 20px rgba(0, 0, 0, 0.16);
+		border-color: rgba(var(--theme-primary-rgb), 0.42);
+		background: linear-gradient(135deg, rgba(var(--theme-primary-rgb), 0.2), rgba(var(--theme-primary-rgb), 0.11));
+		box-shadow: 0 10px 20px rgba(var(--theme-primary-rgb), 0.2);
 		transition: transform 0.16s ease, border-color 0.16s ease, background 0.16s ease;
 	}
 
 	.skip-pdf-btn:hover {
 		transform: translateY(-1px);
-		border-color: rgba(var(--theme-primary-rgb), 0.55);
-		background: linear-gradient(135deg, rgba(var(--theme-primary-rgb), 0.18), rgba(255, 255, 255, 0.08));
+		border-color: rgba(var(--theme-primary-rgb), 0.62);
+		background: linear-gradient(135deg, rgba(var(--theme-primary-rgb), 0.3), rgba(var(--theme-primary-rgb), 0.16));
 	}
 
 	.skip-pdf-btn.active {
-		background: linear-gradient(135deg, rgba(95, 212, 152, 0.28), rgba(95, 212, 152, 0.14));
-		border-color: rgba(95, 212, 152, 0.62);
-		color: #d8ffe9;
-		box-shadow: 0 10px 22px rgba(51, 153, 105, 0.22);
+		background: linear-gradient(135deg, rgba(var(--theme-primary-rgb), 0.36), rgba(var(--theme-primary-rgb), 0.22));
+		border-color: rgba(var(--theme-primary-rgb), 0.74);
+		color: var(--theme-text);
+		box-shadow: 0 10px 22px rgba(var(--theme-primary-rgb), 0.3);
 	}
 
 	.question-count-row {

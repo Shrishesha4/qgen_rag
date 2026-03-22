@@ -24,7 +24,7 @@
 {/if}
 
 <style>
-	.admin-shell-nav {
+	/* .admin-shell-nav {
 		position: sticky;
 		top: calc(env(safe-area-inset-top) + 0.75rem);
 		z-index: 60;
@@ -82,5 +82,5 @@
 			padding: 0.55rem 0.85rem;
 			font-size: 0.8rem;
 		}
-	}
+	} */
 </style>

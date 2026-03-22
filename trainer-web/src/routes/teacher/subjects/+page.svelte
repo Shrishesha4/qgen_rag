@@ -47,9 +47,12 @@
 			(acc, subject) => {
 				acc.totalTopics += subject.total_topics;
 				acc.totalQuestions += subject.total_questions;
+				acc.totalPending += subject.total_pending ?? 0;
+				acc.totalApproved += subject.total_approved ?? 0;
+				acc.totalRejected += subject.total_rejected ?? 0;
 				return acc;
 			},
-			{ totalTopics: 0, totalQuestions: 0 }
+			{ totalTopics: 0, totalQuestions: 0, totalPending: 0, totalApproved: 0, totalRejected: 0 }
 		);
 	});
 
@@ -58,7 +61,7 @@
 	}
 
 	function goToAddSubject() {
-		goto('/teacher/train/new');
+		goto('/teacher/subjects/new');
 	}
 
 	function formatDate(value: string) {
@@ -80,7 +83,11 @@
 	</div>
 
 	<div class="toolbar animate-slide-up">
-		<input class="search-input" bind:value={query} placeholder="Search by subject, code, or description" />
+		<input
+			class="search-input search-input-desktop"
+			bind:value={query}
+			placeholder="Search by subject, code, or description"
+		/>
 		<button class="add-subject-btn" onclick={goToAddSubject}>+ Add Subject</button>
 		<!-- <button class="refresh-btn" onclick={loadSubjects}>Refresh</button> -->
 	</div>
@@ -101,6 +108,18 @@
 		<div class="stat-card glass-panel">
 			<span class="stat-value white-text">{loading ? '…' : totals.totalQuestions}</span>
 			<span class="stat-label">Questions</span>
+		</div>
+		<div class="stat-card glass-panel">
+			<span class="stat-value orange-text">{loading ? '…' : totals.totalPending}</span>
+			<span class="stat-label">Pending</span>
+		</div>
+		<div class="stat-card glass-panel">
+			<span class="stat-value green-text">{loading ? '…' : totals.totalApproved}</span>
+			<span class="stat-label">Approved</span>
+		</div>
+		<div class="stat-card glass-panel">
+			<span class="stat-value red-text">{loading ? '…' : totals.totalRejected}</span>
+			<span class="stat-label">Rejected</span>
 		</div>
 	</div>
 
@@ -127,12 +146,24 @@
 					<div class="metrics-grid">
 						<div class="metric"><span>Topics</span><strong>{subject.total_topics}</strong></div>
 						<div class="metric"><span>Questions</span><strong>{subject.total_questions}</strong></div>
+						<div class="metric"><span>Pending</span><strong>{subject.total_pending ?? 0}</strong></div>
+						<div class="metric"><span>Approved</span><strong class="green-text">{subject.total_approved ?? 0}</strong></div>
+						<div class="metric"><span>Rejected</span><strong class="red-text">{subject.total_rejected ?? 0}</strong></div>
 						<div class="metric"><span>Created</span><strong>{formatDate(subject.created_at)}</strong></div>
 					</div>
 				</button>
 			{/each}
 		</div>
 	{/if}
+
+</div>
+
+<div class="mobile-search-dock">
+	<input
+		class="search-input mobile-search-input"
+		bind:value={query}
+		placeholder="Search by subject, code, or description"
+	/>
 </div>
 
 <style>
@@ -208,6 +239,10 @@
 		color: var(--theme-text-muted);
 	}
 
+	.mobile-search-dock {
+		display: none;
+	}
+
 	/* .refresh-btn {
 		padding: 0.85rem 1rem;
 		border-radius: 0.85rem;
@@ -229,7 +264,7 @@
 
 	.stats-row {
 		display: grid;
-		grid-template-columns: repeat(3, minmax(0, 1fr));
+		grid-template-columns: repeat(6, minmax(0, 1fr));
 		gap: 0.75rem;
 	}
 
@@ -314,7 +349,7 @@
 
 	.metrics-grid {
 		display: grid;
-		grid-template-columns: repeat(3, minmax(0, 1fr));
+		grid-template-columns: repeat(6, minmax(0, 1fr));
 		gap: 0.75rem;
 		margin-top: 1rem;
 	}
@@ -341,6 +376,8 @@
 		display: flex;
 		flex-direction: column;
 		align-items: center;
+		justify-content: center;
+		min-height: 56vh;
 		gap: 0.8rem;
 		padding: 3rem 1rem;
 		text-align: center;
@@ -360,6 +397,9 @@
 	.amber-text { color: var(--theme-primary); }
 	.blue-text { color: var(--theme-primary); }
 	.white-text { color: var(--theme-text-primary); }
+	.orange-text { color: var(--theme-primary); }
+	.green-text { color: #059669; }
+	.red-text { color: #dc2626; }
 
 	@keyframes spin {
 		to { transform: rotate(360deg); }
@@ -368,7 +408,7 @@
 	@media (max-width: 920px) {
 		.page {
 			gap: 0.85rem;
-			padding: 1.1rem 0.9rem 1.5rem;
+			padding: 1.1rem 0.9rem calc(5.6rem + env(safe-area-inset-bottom));
 		}
 
 		.toolbar {
@@ -399,6 +439,31 @@
 		.search-input {
 			padding: 0.72rem 0.8rem;
 			font-size: 0.9rem;
+		}
+
+		.search-input-desktop {
+			display: none;
+		}
+
+		.mobile-search-dock {
+			display: block;
+			position: fixed;
+			left: 0;
+			right: 0;
+			bottom: 0;
+			z-index: 90;
+			pointer-events: none;
+			display: flex;
+			justify-content: center;
+			padding: 0.7rem 0.9rem calc(0.7rem + env(safe-area-inset-bottom));
+			background: linear-gradient(to top, rgba(255, 255, 255, 0.97), rgba(255, 255, 255, 0.9));
+			backdrop-filter: blur(8px);
+			border-top: 1px solid rgba(17, 24, 39, 0.12);
+		}
+
+		.mobile-search-input {
+			width: min(100%, 640px);
+			pointer-events: auto;
 		}
 
 		/* .refresh-btn {

@@ -57,7 +57,7 @@
 			return [
 				{ href: '/teacher/subjects', label: 'Subjects', icon: '🧾' },
 				// { href: '/teacher/train', label: 'Train Topic', icon: '📚' },
-				{ href: '/teacher/train/loop', label: 'Training', icon: '🪟' },
+				{ href: '/teacher/train', label: 'Training', icon: '🪟' },
 				// { href: '/teacher/verify', label: 'Verify', icon: '🎙️' },
 				{ href: '/teacher/profile', label: 'Profile', icon: '👤' }
 			];
@@ -66,6 +66,7 @@
 			return [
 				{ href: '/vetter/dashboard', label: 'Home', icon: '🏠' },
 				{ href: '/vetter/subjects', label: 'Subjects', icon: '📚' },
+				{ href: '/vetter/profile', label: 'Profile', icon: '👤' },
 				// { href: '/vetter/loop', label: 'Vetting Loop', icon: '🎙️' }
 			];
 		}
@@ -192,7 +193,7 @@
 				<div class="brand-icon">🧠</div>
 				<div>
 					<p class="brand-title">VQuest</p>
-					<p class="brand-subtitle">Trainer Shell</p>
+					<p class="brand-subtitle">Trainer Console</p>
 				</div>
 			</div>
 			<nav class="sidebar-nav">

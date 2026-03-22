@@ -15,6 +15,8 @@
 	let subjects = $state<VetterSubjectSummary[]>([]);
 	let loading = $state(true);
 	let error = $state('');
+	let searchQuery = $state('');
+	let statusFilter = $state<'all' | 'pending' | 'reviewed'>('all');
 
 	async function loadSubjects() {
 		loading = true;
@@ -35,6 +37,22 @@
 	function startAllVetting() {
 		goto('/vetter/loop');
 	}
+
+	const filteredSubjects = $derived.by(() => {
+		const q = searchQuery.trim().toLowerCase();
+		return subjects.filter((subject) => {
+			const statusMatch =
+				statusFilter === 'all' ||
+				(statusFilter === 'pending' && subject.pending_count > 0) ||
+				(statusFilter === 'reviewed' && subject.pending_count === 0);
+			if (!statusMatch) return false;
+
+			if (!q) return true;
+			const subjectText = `${subject.name} ${subject.code} ${subject.description || ''}`.toLowerCase();
+			if (subjectText.includes(q)) return true;
+			return subject.topics.some((topic) => topic.name.toLowerCase().includes(q));
+		});
+	});
 </script>
 
 <svelte:head>
@@ -57,11 +75,25 @@
 		<div class="center-state">
 			<span class="empty-icon">📭</span>
 			<p>No subjects available for vetting</p>
-			<button class="glass-btn" onclick={() => goto('/vetter/dashboard')}>
-				Back to Dashboard
+			<button class="glass-btn" onclick={() => goto('/vetter/subjects')}>
+				Back to Subjects
 			</button>
 		</div>
 	{:else}
+		<div class="filters glass">
+			<input
+				class="search-input"
+				type="search"
+				bind:value={searchQuery}
+				placeholder="Search subject, code, or topic"
+			/>
+			<!-- <div class="filter-row">
+				<button class="filter-chip" class:active={statusFilter === 'all'} onclick={() => (statusFilter = 'all')}>All</button>
+				<button class="filter-chip" class:active={statusFilter === 'pending'} onclick={() => (statusFilter = 'pending')}>Pending</button>
+				<button class="filter-chip" class:active={statusFilter === 'reviewed'} onclick={() => (statusFilter = 'reviewed')}>Reviewed</button>
+			</div> -->
+		</div>
+
 		<!-- Vet all pending button -->
 		<button class="vet-all-btn glass" onclick={startAllVetting}>
 			<span class="vet-all-icon">📋</span>
@@ -77,7 +109,10 @@
 		</div>
 
 		<div class="subject-list">
-			{#each subjects as s}
+			{#if filteredSubjects.length === 0}
+				<div class="empty-filter">No subjects match your current search/filter.</div>
+			{/if}
+			{#each filteredSubjects as s}
 				<button class="subject-card glass" onclick={() => openSubject(s.id)}>
 					<div class="sc-top">
 						<span class="sc-code">{s.code}</span>
@@ -115,12 +150,66 @@
 		display: flex;
 		flex-direction: column;
 		align-items: center;
+		justify-content: center;
+		min-height: 56vh;
 		gap: 1rem;
 		padding: 4rem 1rem;
 		text-align: center;
 	}
 
 	.center-state p { color: var(--theme-text-muted); margin: 0; }
+
+	.filters {
+		border: 1px solid rgba(255, 255, 255, 0.12);
+		border-radius: 1rem;
+		padding: 0.75rem;
+		display: flex;
+		flex-direction: column;
+		gap: 0.6rem;
+	}
+
+	.search-input {
+		width: 100%;
+		padding: 0.68rem 0.78rem;
+		border-radius: 0.72rem;
+		border: 1px solid rgba(255, 255, 255, 0.16);
+		background: rgba(255, 255, 255, 0.12);
+		color: var(--theme-text);
+		font: inherit;
+	}
+
+	/* .filter-row {
+		display: flex;
+		gap: 0.45rem;
+		flex-wrap: wrap;
+	}
+
+	.filter-chip {
+		padding: 0.38rem 0.72rem;
+		border-radius: 999px;
+		border: 1px solid rgba(255, 255, 255, 0.15);
+		background: rgba(255, 255, 255, 0.08);
+		color: var(--theme-text-muted);
+		font: inherit;
+		font-size: 0.78rem;
+		font-weight: 700;
+		cursor: pointer;
+	}
+
+	.filter-chip.active {
+		border-color: rgba(var(--theme-primary-rgb), 0.42);
+		background: rgba(var(--theme-primary-rgb), 0.16);
+		color: var(--theme-text);
+	} */
+
+	.empty-filter {
+		padding: 1rem;
+		border-radius: 0.9rem;
+		border: 1px dashed rgba(255, 255, 255, 0.16);
+		color: var(--theme-text-muted);
+		font-size: 0.86rem;
+		text-align: center;
+	}
 
 	.spinner {
 		width: 32px; height: 32px;

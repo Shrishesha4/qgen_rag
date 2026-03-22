@@ -9,6 +9,8 @@
 	let subject = $state<VetterSubjectSummary | null>(null);
 	let loading = $state(true);
 	let error = $state('');
+	let topicQuery = $state('');
+	let topicStatus = $state<'all' | 'pending' | 'reviewed'>('all');
 
 	onMount(() => {
 		const unsub = session.subscribe((s) => {
@@ -41,6 +43,20 @@
 	function vetTopic(topicId: string) {
 		goto(`/vetter/loop?subject=${subjectId}&topic=${topicId}`);
 	}
+
+	const filteredTopics = $derived.by(() => {
+		if (!subject) return [];
+		const q = topicQuery.trim().toLowerCase();
+		return subject.topics.filter((topic) => {
+			const statusMatch =
+				topicStatus === 'all' ||
+				(topicStatus === 'pending' && topic.pending_count > 0) ||
+				(topicStatus === 'reviewed' && topic.pending_count === 0);
+			if (!statusMatch) return false;
+			if (!q) return true;
+			return topic.name.toLowerCase().includes(q);
+		});
+	});
 </script>
 
 <svelte:head>
@@ -93,12 +109,29 @@
 		{/if}
 
 		{#if subject.topics.length > 0}
+			<div class="filters glass">
+				<input
+					class="search-input"
+					type="search"
+					bind:value={topicQuery}
+					placeholder="Search topic"
+				/>
+				<div class="filter-row">
+					<button class="filter-chip" class:active={topicStatus === 'all'} onclick={() => (topicStatus = 'all')}>All</button>
+					<button class="filter-chip" class:active={topicStatus === 'pending'} onclick={() => (topicStatus = 'pending')}>Pending</button>
+					<button class="filter-chip" class:active={topicStatus === 'reviewed'} onclick={() => (topicStatus = 'reviewed')}>Reviewed</button>
+				</div>
+			</div>
+
 			<div class="divider">
 				<span class="divider-text">topics</span>
 			</div>
 
 			<div class="topic-list">
-				{#each subject.topics as topic, i}
+				{#if filteredTopics.length === 0}
+					<div class="empty-filter">No topics match your current search/filter.</div>
+				{/if}
+				{#each filteredTopics as topic, i}
 					<button class="topic-card glass" onclick={() => vetTopic(topic.id)}>
 						<div class="tc-left">
 							<span class="tc-number">{i + 1}</span>
@@ -144,6 +177,58 @@
 		text-align: center;
 	}
 	.center-state p { color: var(--theme-text-muted); margin: 0; }
+
+	.filters {
+		border: 1px solid rgba(255, 255, 255, 0.12);
+		border-radius: 1rem;
+		padding: 0.75rem;
+		display: flex;
+		flex-direction: column;
+		gap: 0.6rem;
+	}
+
+	.search-input {
+		width: 100%;
+		padding: 0.68rem 0.78rem;
+		border-radius: 0.72rem;
+		border: 1px solid rgba(255, 255, 255, 0.16);
+		background: rgba(255, 255, 255, 0.12);
+		color: var(--theme-text);
+		font: inherit;
+	}
+
+	.filter-row {
+		display: flex;
+		gap: 0.45rem;
+		flex-wrap: wrap;
+	}
+
+	.filter-chip {
+		padding: 0.38rem 0.72rem;
+		border-radius: 999px;
+		border: 1px solid rgba(255, 255, 255, 0.15);
+		background: rgba(255, 255, 255, 0.08);
+		color: var(--theme-text-muted);
+		font: inherit;
+		font-size: 0.78rem;
+		font-weight: 700;
+		cursor: pointer;
+	}
+
+	.filter-chip.active {
+		border-color: rgba(var(--theme-primary-rgb), 0.42);
+		background: rgba(var(--theme-primary-rgb), 0.16);
+		color: var(--theme-text);
+	}
+
+	.empty-filter {
+		padding: 1rem;
+		border-radius: 0.9rem;
+		border: 1px dashed rgba(255, 255, 255, 0.16);
+		color: var(--theme-text-muted);
+		font-size: 0.86rem;
+		text-align: center;
+	}
 
 	.spinner {
 		width: 32px; height: 32px;

@@ -9,7 +9,7 @@ import re
 from typing import Optional, List
 
 from fastapi import APIRouter, Depends, HTTPException, status, Query, UploadFile, File, BackgroundTasks
-from sqlalchemy import select, func
+from sqlalchemy import select, func, case
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import selectinload
 
@@ -96,6 +96,7 @@ async def list_subjects(
     # Compute live question counts per subject (non-archived, latest version only)
     subject_ids = [s.id for s in subjects]
     live_counts: dict = {}
+    status_counts_by_subject: dict = {}
     if subject_ids:
         live_counts_result = await db.execute(
             select(Question.subject_id, func.count(Question.id))
@@ -108,10 +109,35 @@ async def list_subjects(
         )
         live_counts = dict(live_counts_result.all())
 
+        status_counts_result = await db.execute(
+            select(
+                Question.subject_id,
+                func.count(case((Question.vetting_status == "pending", 1))).label("total_pending"),
+                func.count(case((Question.vetting_status == "approved", 1))).label("total_approved"),
+                func.count(case((Question.vetting_status == "rejected", 1))).label("total_rejected"),
+            )
+            .where(
+                Question.subject_id.in_(subject_ids),
+                Question.is_archived == False,
+                Question.is_latest == True,
+            )
+            .group_by(Question.subject_id)
+        )
+        for subject_id, total_pending, total_approved, total_rejected in status_counts_result.all():
+            status_counts_by_subject[subject_id] = {
+                "total_pending": int(total_pending or 0),
+                "total_approved": int(total_approved or 0),
+                "total_rejected": int(total_rejected or 0),
+            }
+
     subject_responses = []
     for s in subjects:
         sr = SubjectResponse.model_validate(s)
         sr.total_questions = live_counts.get(s.id, 0)
+        subject_status_counts = status_counts_by_subject.get(s.id, {})
+        sr.total_pending = int(subject_status_counts.get("total_pending", 0))
+        sr.total_approved = int(subject_status_counts.get("total_approved", 0))
+        sr.total_rejected = int(subject_status_counts.get("total_rejected", 0))
         subject_responses.append(sr)
 
     return SubjectListResponse(

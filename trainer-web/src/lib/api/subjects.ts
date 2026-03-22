@@ -35,6 +35,9 @@ export interface SubjectResponse {
 	course_outcomes: Record<string, unknown> | null;
 	total_questions: number;
 	total_topics: number;
+	total_pending?: number;
+	total_approved?: number;
+	total_rejected?: number;
 	syllabus_coverage: number;
 	created_at: string;
 	updated_at: string;

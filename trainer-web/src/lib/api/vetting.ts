@@ -93,7 +93,7 @@ let taxonomyLoadedAt = 0;
 let reasonCodeEntries: ReasonCodeEntry[] = [];
 let reasonLabelToCode = new Map<string, string>();
 let reasonCodeSet = new Set<string>();
-let fallbackReasonCode = 'OTHER';
+let fallbackReasonCode = 'quality_issue';
 
 export interface VetterQuestionUpdate {
 	marks?: number;
@@ -155,7 +155,7 @@ export async function warmVettingTaxonomy(force = false): Promise<void> {
 		const entries = await apiFetch<ReasonCodeEntry[]>('/vetter/reason-codes');
 		reasonCodeEntries = entries;
 		reasonLabelToCode = new Map();
-		reasonCodeSet = new Set(entries.map((entry) => entry.code));
+		reasonCodeSet = new Set(entries.map((entry) => entry.code.toLowerCase()));
 
 		for (const entry of entries) {
 			reasonLabelToCode.set(normalizeReasonLabel(entry.label), entry.code);
@@ -164,13 +164,13 @@ export async function warmVettingTaxonomy(force = false): Promise<void> {
 			}
 		}
 
-		fallbackReasonCode = reasonCodeSet.has('OTHER')
-			? 'OTHER'
-			: entries[0]?.code ?? 'OTHER';
+		fallbackReasonCode = reasonCodeSet.has('quality_issue')
+			? 'quality_issue'
+			: entries[0]?.code ?? 'quality_issue';
 		taxonomyLoadedAt = now;
 	} catch {
 		if (reasonCodeEntries.length === 0) {
-			fallbackReasonCode = 'OTHER';
+			fallbackReasonCode = 'quality_issue';
 		}
 	}
 }
@@ -190,7 +190,7 @@ async function mapReasonLabelsToCodes(labels?: string[]): Promise<string[]> {
 			continue;
 		}
 
-		const candidateCode = toCandidateCode(label);
+		const candidateCode = toCandidateCode(label).toLowerCase();
 		if (reasonCodeSet.has(candidateCode)) {
 			mapped.push(candidateCode);
 			continue;
@@ -266,9 +266,10 @@ export async function getQuestionsForVetting(opts: {
 	topic_id?: string;
 	search?: string;
 } = {}): Promise<QuestionListResult> {
+	const normalizedLimit = Math.max(1, Math.min(100, Math.trunc(opts.limit ?? 20)));
 	const params = new URLSearchParams();
 	params.set('page', String(opts.page ?? 1));
-	params.set('limit', String(opts.limit ?? 20));
+	params.set('limit', String(normalizedLimit));
 	if (opts.status) params.set('status', opts.status);
 	if (opts.subject_id) params.set('subject_id', opts.subject_id);
 	if (opts.topic_id) params.set('topic_id', opts.topic_id);
