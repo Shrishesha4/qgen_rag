@@ -38,13 +38,23 @@ class Settings(BaseSettings):
     REDIS_PORT: int = Field(default=6379)
     REDIS_DB: int = Field(default=0)
     REDIS_PASSWORD: Optional[str] = Field(default=None)
+    REDIS_URL_OVERRIDE: Optional[str] = Field(default=None)
     
     @property
     def REDIS_URL(self) -> str:
         """Construct Redis URL from individual components."""
+        if self.REDIS_URL_OVERRIDE:
+            return self.REDIS_URL_OVERRIDE
         if self.REDIS_PASSWORD:
             return f"redis://:{self.REDIS_PASSWORD}@{self.REDIS_HOST}:{self.REDIS_PORT}/{self.REDIS_DB}"
         return f"redis://{self.REDIS_HOST}:{self.REDIS_PORT}/{self.REDIS_DB}"
+
+    # Auto training schedule (daily)
+    AUTO_TRAINING_ENABLED: bool = Field(default=True)
+    AUTO_TRAINING_TIMEZONE: str = Field(default="Asia/Kolkata")
+    AUTO_TRAINING_HOUR: int = Field(default=11)
+    AUTO_TRAINING_MINUTE: int = Field(default=30)
+    AUTO_TRAINING_METHOD: str = Field(default="sft+dpo")
 
     # JWT Authentication
     SECRET_KEY: str = Field(default="your-super-secret-key-change-in-production")
