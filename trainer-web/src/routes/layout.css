@@ -17,7 +17,7 @@
   --theme-text-muted: rgba(0, 0, 0, 0.55);
   --theme-text-primary: #1a1a2e;
   --theme-text-secondary: rgba(0, 0, 0, 0.55);
-  --theme-glass-bg: rgba(255, 255, 255, 0.55);
+  --theme-glass-bg: rgba(255, 255, 255, 0.42);
   --theme-glass-border: rgba(255, 255, 255, 0.7);
   --theme-nav-glass: rgba(255, 255, 255, 0.5);
   --theme-surface: var(--theme-glass-bg);
@@ -1427,11 +1427,31 @@ a:hover {
 .glass-panel,
 .glass-card,
 .glass-sidebar {
+  /* Reassert blur in the final override layer to survive build-time cascade/minification. */
+  backdrop-filter: blur(12px) saturate(165%) brightness(1.03) !important;
+  -webkit-backdrop-filter: blur(12px) saturate(165%) brightness(1.03) !important;
   background: var(--theme-glass-bg) !important;
   border: 1px solid var(--theme-glass-border) !important;
   box-shadow:
     0 12px 40px rgba(0, 0, 0, 0.12),
     inset 0 1px 0 rgba(255, 255, 255, 0.42) !important;
+}
+
+/* Preserve cross-browser blur in production bundles where one variant may be optimized away. */
+@supports (backdrop-filter: blur(1px)) {
+  .glass-panel,
+  .glass-card,
+  .glass-sidebar {
+    backdrop-filter: blur(12px) saturate(165%) brightness(1.03) !important;
+  }
+}
+
+@supports (-webkit-backdrop-filter: blur(1px)) {
+  .glass-panel,
+  .glass-card,
+  .glass-sidebar {
+    -webkit-backdrop-filter: blur(12px) saturate(165%) brightness(1.03) !important;
+  }
 }
 
 .glass-panel::before,

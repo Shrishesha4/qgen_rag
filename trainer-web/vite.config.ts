@@ -10,6 +10,8 @@ export default defineConfig({
 	},
 	// Optimize CSS generation
 	css: {
+		// Keep unprefixed + prefixed backdrop-filter declarations in production output.
+		transformer: 'postcss',
 		postcss: {},
 		devSourcemap: false, // Disable source maps in dev for speed
 	},
