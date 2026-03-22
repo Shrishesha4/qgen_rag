@@ -1154,21 +1154,23 @@
 		align-items: center;
 		justify-content: center;
 		border-radius: 999px;
-		border: 1px solid rgba(17, 24, 39, 0.16);
-		background: rgba(255, 255, 255, 0.92);
+		border: 1px solid var(--theme-glass-border);
+		background: var(--theme-input-bg);
 		color: var(--theme-text-secondary);
 		cursor: pointer;
 		transition: all 0.2s ease;
 	}
 
 	.transcript-mic-btn:hover {
-		background: rgba(var(--theme-primary-rgb), 0.12);
+		background: color-mix(in srgb, var(--theme-input-bg) 76%, rgba(var(--theme-primary-rgb), 0.18));
+		color: var(--theme-text-primary);
+		border-color: rgba(var(--theme-primary-rgb), 0.45);
 	}
 
 	.transcript-mic-btn.active {
-		color: #ffffff;
-		background: rgba(16, 185, 129, 0.28);
-		border-color: rgba(16, 185, 129, 0.5);
+		color: var(--theme-primary);
+		background: rgba(var(--theme-primary-rgb), 0.2);
+		border-color: rgba(var(--theme-primary-rgb), 0.5);
 	}
 
 	.transcript-mic-btn:disabled {
@@ -1192,8 +1194,8 @@
 		flex: 1;
 		padding: 0.75rem;
 		border-radius: 12px;
-		border: 1px solid rgba(17, 24, 39, 0.16);
-		background: rgba(255, 255, 255, 0.92);
+		border: 1px solid var(--theme-glass-border);
+		background: var(--theme-input-bg);
 		color: var(--theme-text-primary);
 		font-size: 0.95rem;
 		font-weight: 600;
@@ -1203,7 +1205,8 @@
 	}
 
 	.recorder-cancel-btn:hover {
-		background: rgba(var(--theme-primary-rgb), 0.12);
+		background: color-mix(in srgb, var(--theme-input-bg) 72%, rgba(var(--theme-primary-rgb), 0.2));
+		border-color: rgba(var(--theme-primary-rgb), 0.45);
 	}
 
 	.recorder-secondary-btn {

@@ -791,12 +791,12 @@
 <div class="wizard">
 	<div class="wizard-meta animate-fade-in">
 		<p class="wizard-kicker"></p>
-		<div class="progress-pill" aria-label="Setup progress">
+		<!-- <div class="progress-pill" aria-label="Setup progress">
 			<span class="progress-pill-count">{step}/{totalSteps}</span>
 			<div class="progress-pill-track" aria-hidden="true">
 				<div class="progress-pill-fill" style:width={`${(step / totalSteps) * 100}%`}></div>
 			</div>
-		</div>
+		</div> -->
 	</div>
 	<!-- Step indicator -->
 	<div class="step-bar">
@@ -1244,7 +1244,7 @@
 		color: var(--theme-primary);
 	}
 
-	.progress-pill {
+	/* .progress-pill {
 		min-width: 11rem;
 		padding: 0.95rem 1.1rem;
 		border-radius: 999px;
@@ -1280,7 +1280,7 @@
 		background: linear-gradient(90deg, rgba(var(--theme-primary-rgb), 0.55), var(--theme-primary));
 		border-radius: inherit;
 		box-shadow: 0 0 10px rgba(var(--theme-primary-rgb), 0.55);
-	}
+	} */
 
 	/* Step bar */
 	.step-bar {

@@ -446,6 +446,7 @@
 			gap: 0.65rem;
 			padding: 0.7rem 0.8rem;
 			border-radius: 0.8rem;
+			border: 1px solid transparent;
 			text-decoration: none;
 			font-weight: 600;
 			color: var(--theme-text-secondary);
@@ -453,14 +454,22 @@
 		}
 
 		.sidebar-link:hover {
-			background: rgba(255, 255, 255, 0.42);
+			background: color-mix(in srgb, var(--theme-input-bg) 78%, rgba(var(--theme-primary-rgb), 0.12));
+			border-color: color-mix(in srgb, var(--theme-glass-border) 70%, rgba(var(--theme-primary-rgb), 0.3));
 			color: var(--theme-text-primary);
 		}
 
 		.sidebar-link.active {
-			background: rgba(255, 255, 255, 0.62);
-			color: var(--theme-text-primary);
-			box-shadow: inset 0 1px 1px rgba(255, 255, 255, 0.7);
+			background: linear-gradient(
+				135deg,
+				rgba(var(--theme-primary-rgb), 0.24),
+				rgba(var(--theme-primary-rgb), 0.14)
+			);
+			border-color: rgba(var(--theme-primary-rgb), 0.56);
+			color: var(--theme-primary);
+			box-shadow:
+				0 8px 18px rgba(var(--theme-primary-rgb), 0.2),
+				inset 0 1px 0 rgba(255, 255, 255, 0.34);
 		}
 
 		.sidebar-link-icon {
@@ -471,9 +480,9 @@
 			justify-content: center;
 			font-size: 1.08rem;
 			line-height: 1;
-			background: rgba(255, 255, 255, 0.8);
-			color: #121212;
-			border: 1px solid rgba(17, 24, 39, 0.16);
+			background: color-mix(in srgb, var(--theme-input-bg) 80%, rgba(255, 255, 255, 0.22));
+			color: var(--theme-text-primary);
+			border: 1px solid var(--theme-glass-border);
 			border-radius: 0.55rem;
 			box-shadow: 0 3px 10px rgba(15, 23, 42, 0.16);
 			filter: saturate(1.1) contrast(1.06);
@@ -481,8 +490,16 @@
 		}
 
 		.sidebar-link.active .sidebar-link-icon {
-			background: rgba(255, 255, 255, 0.92);
-			border-color: rgba(17, 24, 39, 0.24);
+			background: color-mix(in srgb, var(--theme-input-bg) 64%, rgba(var(--theme-primary-rgb), 0.26));
+			border-color: rgba(var(--theme-primary-rgb), 0.54);
+			color: var(--theme-primary);
+		}
+
+		:global([data-color-mode='dark']) .sidebar-link.active {
+			box-shadow:
+				0 10px 22px rgba(0, 0, 0, 0.34),
+				0 0 0 1px rgba(var(--theme-primary-rgb), 0.3),
+				inset 0 1px 0 rgba(255, 255, 255, 0.12);
 		}
 
 		.sidebar-footer {

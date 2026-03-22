@@ -709,6 +709,7 @@
 		grid-template-columns: 300px minmax(0, 1fr);
 		gap: 0.75rem;
 		margin-top: 0.35rem;
+		align-items: stretch;
 	}
 
 	.subjects-pane,
@@ -717,6 +718,9 @@
 		background: var(--theme-glass-bg);
 		border-radius: 0.95rem;
 		padding: 0.65rem;
+		display: flex;
+		flex-direction: column;
+		min-height: 0;
 	}
 
 	.pane-title {
@@ -742,7 +746,9 @@
 		display: flex;
 		flex-direction: column;
 		gap: 0.45rem;
-		max-height: 44vh;
+		flex: 1;
+		min-height: 0;
+		max-height: none;
 		overflow: auto;
 		margin-top: 0.6rem;
 		overscroll-behavior: contain;
