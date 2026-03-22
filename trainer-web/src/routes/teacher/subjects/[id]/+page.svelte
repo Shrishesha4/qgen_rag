@@ -923,10 +923,6 @@
 				<span class="stat-label">Generated</span>
 			</div>
 			<div class="stat-card glass-panel">
-				<span class="stat-value blue-text">{statsLoading ? '…' : subjectReviewStats.vetted}</span>
-				<span class="stat-label">Vetted</span>
-			</div>
-			<div class="stat-card glass-panel">
 				<span class="stat-value orange-text">{statsLoading ? '…' : subjectReviewStats.pending}</span>
 				<span class="stat-label">Pending</span>
 			</div>
@@ -1351,7 +1347,7 @@
 
 	.stats-grid {
 		display: grid;
-		grid-template-columns: repeat(7, minmax(0, 1fr));
+		grid-template-columns: repeat(6, minmax(0, 1fr));
 		gap: 0.75rem;
 	}
 
@@ -2044,7 +2040,7 @@
 	}
 
 	.amber-text { color: var(--theme-primary); }
-	.blue-text { color: var(--theme-primary); }
+	/* .blue-text { color: var(--theme-primary); } */
 	.white-text { color: var(--theme-text-primary); }
 	.orange-text { color: var(--theme-primary); }
 	.green-text { color: #059669; }
