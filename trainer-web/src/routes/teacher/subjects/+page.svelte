@@ -468,6 +468,9 @@
 			border-radius: 1.75rem 1.75rem 1.35rem 1.35rem;
 			overflow: visible;
 			pointer-events: auto;
+			background: var(--theme-glass-bg);
+			border: 1px solid var(--theme-glass-border);
+			box-shadow: 0 10px 28px rgba(0, 0, 0, 0.18);
 		}
 
 		.mobile-floating-dock__glass::before {
@@ -539,6 +542,8 @@
 			gap: 0.6rem;
 			padding: 0.75rem;
 			border-radius: 1.75rem;
+			background: var(--theme-surface);
+			border: 1px solid var(--theme-glass-border);
 		}
 
 		.mobile-search-input {
@@ -546,8 +551,9 @@
 			padding: 0.88rem 1rem;
 			font-size: 0.95rem;
 			border-radius: 1.35rem;
-			border: 1px solid rgba(17, 24, 39, 0.12);
-			background: rgba(255, 255, 255, 0.74);
+			border: 1px solid var(--theme-glass-border);
+			background: var(--theme-input-bg);
+			color: var(--theme-text-primary);
 			backdrop-filter: blur(8px) saturate(120%);
 			-webkit-backdrop-filter: blur(8px) saturate(120%);
 		}
@@ -564,6 +570,35 @@
 			cursor: pointer;
 			-webkit-tap-highlight-color: transparent;
 			box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.5), 0 8px 20px rgba(var(--theme-primary-rgb), 0.18);
+		}
+
+		:global([data-color-mode='dark']) .mobile-floating-dock__glass::before {
+			background: linear-gradient(
+				to top,
+				rgba(24, 27, 32, 0.95) 0%,
+				rgba(24, 27, 32, 0.88) 32%,
+				rgba(24, 27, 32, 0.64) 58%,
+				rgba(24, 27, 32, 0.22) 80%,
+				rgba(24, 27, 32, 0) 100%
+			);
+			border: 1px solid rgba(255, 255, 255, 0.2);
+			box-shadow:
+				0 -10px 40px rgba(0, 0, 0, 0.34),
+				0 -2px 16px rgba(0, 0, 0, 0.2),
+				inset 0 1px 0 rgba(255, 255, 255, 0.18);
+		}
+
+		:global([data-color-mode='dark']) .mobile-floating-dock__glass::after {
+			background: radial-gradient(
+				ellipse at center,
+				rgba(var(--theme-primary-rgb), 0.2) 0%,
+				rgba(var(--theme-primary-rgb), 0.1) 44%,
+				rgba(var(--theme-primary-rgb), 0) 82%
+			);
+		}
+
+		:global([data-color-mode='dark']) .mobile-add-btn {
+			box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.14), 0 8px 20px rgba(var(--theme-primary-rgb), 0.22);
 		}
 
 		.stat-card {

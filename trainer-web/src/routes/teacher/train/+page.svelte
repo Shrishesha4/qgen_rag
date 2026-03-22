@@ -649,8 +649,8 @@
 	.summary-item {
 		padding: 0.7rem 0.75rem;
 		border-radius: 0.85rem;
-		border: 1px solid rgba(17, 24, 39, 0.1);
-		background: rgba(255, 255, 255, 0.72);
+		border: 1px solid var(--theme-glass-border);
+		background: var(--theme-glass-bg);
 		display: flex;
 		flex-direction: column;
 		gap: 0.2rem;
@@ -713,8 +713,8 @@
 
 	.subjects-pane,
 	.topics-pane {
-		border: 1px solid rgba(17, 24, 39, 0.1);
-		background: rgba(255, 255, 255, 0.56);
+		border: 1px solid var(--theme-glass-border);
+		background: var(--theme-glass-bg);
 		border-radius: 0.95rem;
 		padding: 0.65rem;
 	}
@@ -732,8 +732,8 @@
 		width: 100%;
 		padding: 0.7rem 0.8rem;
 		border-radius: 0.75rem;
-		border: 1px solid rgba(17, 24, 39, 0.14);
-		background: rgba(255, 255, 255, 0.92);
+		border: 1px solid var(--theme-glass-border);
+		background: var(--theme-input-bg);
 		color: var(--theme-text-primary);
 		font: inherit;
 	}
@@ -753,8 +753,8 @@
 		padding: 0.62rem;
 		text-align: left;
 		border-radius: 0.8rem;
-		border: 1px solid rgba(17, 24, 39, 0.1);
-		background: rgba(255, 255, 255, 0.74);
+		border: 1px solid var(--theme-glass-border);
+		background: var(--theme-nav-glass);
 		cursor: pointer;
 		display: flex;
 		flex-direction: column;
@@ -845,8 +845,8 @@
 	}
 
 	.topic-card {
-		border: 1px solid rgba(17, 24, 39, 0.1);
-		background: rgba(255, 255, 255, 0.76);
+		border: 1px solid var(--theme-glass-border);
+		background: var(--theme-nav-glass);
 		border-radius: 0.85rem;
 		padding: 0.62rem;
 		display: flex;
@@ -1070,7 +1070,7 @@
 		.topics-pane {
 			padding: 0.55rem;
 			border-radius: 0.8rem;
-			background: rgba(255, 255, 255, 0.62);
+			background: var(--theme-glass-bg);
 		}
 
 		.subjects-pane {

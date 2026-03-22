@@ -1041,23 +1041,6 @@
 					<p class="step-hint">{topicsWithSyllabus}/{topics.length} topics have syllabus • {topicsWithDocs} have books • {topicsWithRefDocs} have ref questions</p>
 
 					<div class="step3-settings-row">
-						<div class="question-count-card">
-							<label class="field-label" for="question-count-input">Questions To Generate Per Topic</label>
-							<div class="question-count-row">
-								<input
-									id="question-count-input"
-									class="glass-input question-count-input"
-									type="number"
-									min={MIN_QUESTION_COUNT}
-									max={MAX_QUESTION_COUNT}
-									bind:value={desiredQuestionCount}
-									oninput={handleQuestionCountInput}
-									disabled
-								/>
-								<span class="question-count-unit">fixed at 30</span>
-							</div>
-						</div>
-
 						{#if !hasReferenceUploads}
 						<button
 							type="button"
@@ -1955,9 +1938,9 @@
 		flex-wrap: wrap;
 	}
 
-	.step3-settings-row .question-count-card {
+	/* .step3-settings-row .question-count-card {
 		flex: 0 0 auto;
-	}
+	} */
 
 	.step3-settings-row .skip-pdf-btn {
 		flex: 1;
@@ -1965,13 +1948,12 @@
 		min-width: 220px;
 	}
 
-	.question-count-card {
+	/* .question-count-card {
 		margin-top: 0.85rem;
 		padding: 0.8rem;
 		border: 1px solid rgba(var(--theme-primary-rgb), 0.28);
 		border-radius: var(--glass-radius);
 		background: rgba(var(--theme-primary-rgb), 0.08);
-		/* Enhanced blur effect - force override */
 		backdrop-filter: blur(10px) saturate(150%) brightness(1.02) !important;
 		-webkit-backdrop-filter: blur(10px) saturate(150%) brightness(1.02) !important;
 		background: linear-gradient(
@@ -1985,7 +1967,7 @@
 			inset 0 1px 1px rgba(255, 255, 255, 0.25),
 			inset 0 -1px 1px rgba(255, 255, 255, 0.08),
 			0 0 0 1px rgba(255, 255, 255, 0.12) !important;
-	}
+	} */
 
 
 	.success-hint {
@@ -2024,7 +2006,7 @@
 		box-shadow: 0 10px 22px rgba(var(--theme-primary-rgb), 0.3);
 	}
 
-	.question-count-row {
+	/* .question-count-row {
 		display: flex;
 		align-items: center;
 		gap: 0.6rem;
@@ -2041,7 +2023,7 @@
 		font-size: 0.85rem;
 		font-weight: 600;
 		color: var(--theme-text);
-	}
+	} */
 
 	/* Step 4: Review */
 	.review-card {
@@ -2296,14 +2278,14 @@
 			padding: 0.45rem 0.65rem;
 		}
 
-		.question-count-row {
+		/* .question-count-row {
 			flex-wrap: wrap;
 		}
 
 		.question-count-input {
 			width: 100%;
 			max-width: 160px;
-		}
+		} */
 
 		/* Modal mobile styles */
 		.modal-backdrop {

@@ -1,5 +1,5 @@
 <script lang="ts">
-	import { currentThemeName, setTheme } from '$lib/theme';
+	import { currentColorMode, setColorMode, currentThemeName, setTheme, type ColorMode } from '$lib/theme';
 	import { themeNames, themes } from '$lib/theme/themes';
 
 	let open = $state(false);
@@ -7,6 +7,10 @@
 	function select(name: (typeof themeNames)[number]) {
 		setTheme(name);
 		open = false;
+	}
+
+	function selectColorMode(mode: ColorMode) {
+		setColorMode(mode);
 	}
 </script>
 
@@ -25,6 +29,30 @@
 		<!-- svelte-ignore a11y_no_static_element_interactions -->
 		<div class="picker-backdrop" onclick={() => (open = false)}></div>
 		<div class="picker-menu" role="menu">
+			<div class="mode-section">
+				<p class="mode-label">Appearance</p>
+				<div class="mode-switch" role="group" aria-label="Select color mode">
+					<button
+						type="button"
+						class="mode-option"
+						class:active={$currentColorMode === 'light'}
+						onclick={() => selectColorMode('light')}
+					>
+						Light
+					</button>
+					<button
+						type="button"
+						class="mode-option"
+						class:active={$currentColorMode === 'dark'}
+						onclick={() => selectColorMode('dark')}
+					>
+						Dark
+					</button>
+				</div>
+			</div>
+
+			<div class="menu-divider" aria-hidden="true"></div>
+
 			{#each themeNames as name}
 				<button
 					class="picker-option"
@@ -50,15 +78,15 @@
 		width: 2.5rem;
 		height: 2.5rem;
 		border-radius: 50%;
-		background: var(--theme-surface);
-		border: 1px solid var(--theme-border);
+		background: var(--theme-nav-glass);
+		border: 1px solid var(--theme-glass-border);
 		cursor: pointer;
 		font-size: 1.2rem;
 		display: flex;
 		align-items: center;
 		justify-content: center;
 		transition: all 0.2s ease;
-		box-shadow: 0 2px 8px rgba(0, 0, 0, 0.1);
+		box-shadow: 0 4px 14px rgba(0, 0, 0, 0.18);
 	}
 
 	.picker-toggle:hover {
@@ -78,17 +106,69 @@
 		bottom: calc(100% + 1.5rem);
 		top: auto;
 		right: 0;
-		background: var(--theme-surface);
-		border: 1px solid var(--theme-border);
+		background: var(--theme-nav-glass);
+		border: 1px solid var(--theme-glass-border);
 		border-radius: 0.75rem;
 		padding: 0.5rem;
 		display: flex;
 		flex-direction: column;
 		gap: 0.25rem;
-		box-shadow: 0 8px 32px rgba(0, 0, 0, 0.15);
-		min-width: 9rem;
+		box-shadow: 0 14px 36px rgba(0, 0, 0, 0.28);
+		min-width: 12.5rem;
 		z-index: 100;
 		transform-origin: bottom right;
+		backdrop-filter: blur(14px) saturate(130%);
+		-webkit-backdrop-filter: blur(14px) saturate(130%);
+	}
+
+	.mode-section {
+		display: grid;
+		gap: 0.5rem;
+		padding: 0.35rem 0.25rem 0.45rem;
+	}
+
+	.mode-label {
+		margin: 0;
+		font-size: 0.7rem;
+		letter-spacing: 0.08em;
+		text-transform: uppercase;
+		font-weight: 700;
+		color: var(--theme-text-secondary);
+	}
+
+	.mode-switch {
+		display: grid;
+		grid-template-columns: repeat(2, minmax(0, 1fr));
+		gap: 0.35rem;
+	}
+
+	.mode-option {
+		padding: 0.38rem 0.45rem;
+		border-radius: 0.5rem;
+		border: 1px solid rgba(255, 255, 255, 0.16);
+		background: rgba(255, 255, 255, 0.06);
+		color: var(--theme-text);
+		font-size: 0.76rem;
+		font-weight: 700;
+		letter-spacing: 0.02em;
+		cursor: pointer;
+		transition: 120ms ease;
+	}
+
+	.mode-option:hover {
+		background: rgba(255, 255, 255, 0.12);
+	}
+
+	.mode-option.active {
+		background: linear-gradient(180deg, rgba(var(--theme-primary-rgb), 0.95), rgba(var(--theme-primary-rgb), 0.7));
+		border-color: rgba(var(--theme-primary-rgb), 0.9);
+		color: #ffffff;
+	}
+
+	.menu-divider {
+		height: 1px;
+		background: rgba(255, 255, 255, 0.16);
+		margin: 0.15rem 0 0.2rem;
 	}
 
 	.picker-option {
@@ -124,19 +204,19 @@
 			bottom: auto;
 			top: calc(100% + 0.5rem);
 			transform-origin: top right;
-			background: rgba(255, 255, 255, 0.92);
-			backdrop-filter: blur(20px) saturate(180%);
-			-webkit-backdrop-filter: blur(20px) saturate(180%);
-			border-color: rgba(0, 0, 0, 0.12);
+			background: var(--theme-nav-glass);
+			backdrop-filter: blur(16px) saturate(150%);
+			-webkit-backdrop-filter: blur(16px) saturate(150%);
+			border-color: var(--theme-glass-border);
 			box-shadow: 0 8px 32px rgba(0, 0, 0, 0.18);
 		}
 
 		.picker-option {
-			color: #1c1c1e;
+			color: var(--theme-text);
 		}
 
 		.picker-option:hover {
-			background: rgba(0, 0, 0, 0.06);
+			background: var(--theme-surface-hover);
 		}
 
 		.picker-option.active {

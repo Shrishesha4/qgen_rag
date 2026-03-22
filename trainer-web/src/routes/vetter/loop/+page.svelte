@@ -19,11 +19,8 @@
 
 	let subjectId = $state('');
 	let topicId = $state('');
-	let loadingMore = $state(false);
-	let hasMore = $state(true);
-	let currentPage = $state(1);
-	let allQuestions = $state<QuestionForVetting[]>([]);
 	let displayedQuestions = $state<QuestionForVetting[]>([]);
+	const QUESTION_PAGE_SIZE = 100;
 	let subjects = $state<{id: string, name: string}[]>([]);
 	let topics = $state<{id: string, name: string, subject_id: string}[]>([]);
 	let loadingSubjects = $state(false);
@@ -129,21 +126,24 @@
 		loading = true;
 		error = '';
 		try {
-			const res = await getQuestionsForVetting({
-				status: 'pending',
-				subject_id: subjectId || undefined,
-				topic_id: topicId || undefined,
-				limit: 20,
-				page: currentPage,
-			});
-			if (currentPage === 1) {
-				allQuestions = res.questions;
-				displayedQuestions = res.questions;
-			} else {
-				allQuestions = [...allQuestions, ...res.questions];
-				displayedQuestions = allQuestions;
+			let pageNum = 1;
+			const loaded: QuestionForVetting[] = [];
+			let shouldContinue = true;
+
+			while (shouldContinue) {
+				const res = await getQuestionsForVetting({
+					status: 'pending',
+					subject_id: subjectId || undefined,
+					topic_id: topicId || undefined,
+					limit: QUESTION_PAGE_SIZE,
+					page: pageNum,
+				});
+				loaded.push(...res.questions);
+				shouldContinue = res.questions.length === QUESTION_PAGE_SIZE;
+				pageNum += 1;
 			}
-			hasMore = res.questions.length === 20;
+
+			displayedQuestions = loaded;
 			currentIndex = 0;
 			approved = new Set();
 			rejected = new Set();
@@ -151,7 +151,6 @@
 			error = e instanceof Error ? e.message : 'Failed to load questions';
 		} finally {
 			loading = false;
-			loadingMore = false;
 		}
 	}
 
@@ -177,13 +176,6 @@
 		} finally {
 			loadingTopics = false;
 		}
-	}
-
-	async function loadMoreQuestions() {
-		if (loadingMore || !hasMore) return;
-		loadingMore = true;
-		currentPage++;
-		await loadQuestions();
 	}
 
 	function getOptionIdentifier(option: string, index: number): string {
@@ -482,25 +474,6 @@
 		return isCorrectOption(selectedOpt, currentQuestion.correct_answer);
 	}
 
-	// Intersection Observer for lazy loading
-	function intersectionObserver(node: HTMLElement, callback: () => void) {
-		const observer = new IntersectionObserver(
-			(entries) => {
-				if (entries[0].isIntersecting) {
-					callback();
-				}
-			},
-			{ threshold: 0.1 }
-		);
-		
-		observer.observe(node);
-		
-		return {
-			destroy() {
-				observer.disconnect();
-			}
-		};
-	}
 </script>
 
 <svelte:head>
@@ -763,20 +736,6 @@
 		{/if}
 	{/if}
 </div>
-
-<!-- Lazy Loading Trigger -->
-{#if hasMore && !loading && questions.length > 0}
-	<div class="lazy-load-trigger" use:intersectionObserver={loadMoreQuestions}>
-		{#if loadingMore}
-			<div class="loading-more">
-				<div class="spinner small"></div>
-				<p>Loading more questions...</p>
-			</div>
-		{:else}
-			<p class="load-more-hint">Scroll for more questions</p>
-		{/if}
-	</div>
-{/if}
 
 {#if showAnswerModal && currentQuestion}
 	<!-- svelte-ignore a11y_click_events_have_key_events a11y_no_static_element_interactions -->
@@ -1336,8 +1295,8 @@
 	.sources-toggle {
 		margin-top: 1rem;
 		padding: 0.62rem 0.9rem;
-		background: rgba(255, 255, 255, 0.76);
-		border: 1px solid rgba(17, 24, 39, 0.16);
+		background: var(--theme-input-bg);
+		border: 1px solid var(--theme-glass-border);
 		border-radius: 10px;
 		color: var(--theme-text-primary);
 		font-size: 0.82rem;
@@ -1361,8 +1320,8 @@
 		margin-top: 0.65rem;
 		padding: 0.65rem;
 		border-radius: 12px;
-		background: rgba(255, 255, 255, 0.52);
-		border: 1px solid rgba(17, 24, 39, 0.12);
+		background: color-mix(in srgb, var(--theme-surface) 82%, transparent);
+		border: 1px solid var(--theme-glass-border);
 	}
 
 	.source-reasoning {
@@ -1375,8 +1334,8 @@
 
 	.source-card {
 		padding: 0.72rem 0.86rem;
-		background: rgba(255, 255, 255, 0.86);
-		border: 1px solid rgba(17, 24, 39, 0.12);
+		background: color-mix(in srgb, var(--theme-surface) 90%, transparent);
+		border: 1px solid var(--theme-glass-border);
 		border-radius: 10px;
 		display: flex;
 		flex-direction: column;
@@ -1411,11 +1370,15 @@
 
 	.source-highlight {
 		font-size: 0.82rem;
-		color: #7c3aed;
+		color: var(--theme-primary);
 		font-style: italic;
 		margin: 0;
 		line-height: 1.4;
 		overflow-wrap: break-word;
+	}
+
+	:global([data-color-mode='dark']) .source-card {
+		box-shadow: 0 8px 18px rgba(0, 0, 0, 0.24);
 	}
 
 	.source-snippet {
@@ -1581,8 +1544,8 @@
 		min-width: 11rem;
 		padding: 0.95rem 1.1rem;
 		border-radius: 999px;
-		background: rgba(255, 255, 255, 0.78);
-		border: 1px solid rgba(17, 24, 39, 0.2);
+		background: var(--theme-nav-glass);
+		border: 1px solid var(--theme-glass-border);
 		box-shadow: 0 10px 24px rgba(15, 23, 42, 0.14), inset 0 1px 0 rgba(255, 255, 255, 0.85);
 		display: flex;
 		align-items: center;
@@ -1600,7 +1563,7 @@
 		flex: 1;
 		height: 0.5rem;
 		border-radius: 999px;
-		background: rgba(148, 163, 184, 0.45);
+		background: color-mix(in srgb, var(--theme-input-bg) 78%, rgba(var(--theme-primary-rgb), 0.12));
 		overflow: hidden;
 	}
 
@@ -1640,8 +1603,8 @@
 	.q-pill {
 		padding: 0.7rem 1rem;
 		border-radius: 999px;
-		background: rgba(255, 255, 255, 0.62);
-		border: 1px solid rgba(17, 24, 39, 0.14);
+		background: var(--theme-input-bg);
+		border: 1px solid var(--theme-glass-border);
 	}
 
 	.q-topic-label {
@@ -1695,8 +1658,8 @@
 		min-height: 5.5rem;
 		padding: 1.2rem 1.35rem;
 		border-radius: 1rem;
-		border: 1px solid rgba(17, 24, 39, 0.18);
-		background: rgba(226, 232, 240, 0.78);
+		border: 1px solid var(--theme-glass-border);
+		background: color-mix(in srgb, var(--theme-surface) 82%, rgba(var(--theme-primary-rgb), 0.08));
 		font-size: 1.05rem;
 		color: var(--theme-text-primary);
 		opacity: 0.96;
@@ -1709,7 +1672,15 @@
 		align-items: center;
 		justify-content: center;
 		border-radius: 999px;
-		background: rgba(17, 24, 39, 0.08);
+		background: color-mix(in srgb, var(--theme-input-bg) 86%, transparent);
+	}
+
+	:global([data-color-mode='dark']) .progress-pill {
+		box-shadow: 0 10px 26px rgba(0, 0, 0, 0.34), inset 0 1px 0 rgba(255, 255, 255, 0.1);
+	}
+
+	:global([data-color-mode='dark']) .option {
+		box-shadow: 0 8px 18px rgba(0, 0, 0, 0.24);
 	}
 
 	.option.selectable.selected {
@@ -1746,12 +1717,12 @@
 	.grade-card {
 		min-height: 9rem;
 		border-radius: 1.4rem;
-		border: 1px solid rgba(17, 24, 39, 0.12);
-		background: rgba(255, 255, 255, 0.72);
+		border: 1px solid var(--theme-glass-border);
+		background: color-mix(in srgb, var(--theme-surface) 86%, transparent);
 		backdrop-filter: blur(14px) saturate(145%) !important;
 		-webkit-backdrop-filter: blur(14px) saturate(145%) !important;
 		box-shadow: 0 10px 26px rgba(15, 23, 42, 0.14), inset 0 1px 0 rgba(255, 255, 255, 0.6) !important;
-		color: var(--theme-text-primary);
+		color: var(--grade-text, var(--theme-text-primary));
 		display: flex;
 		flex-direction: column;
 		align-items: center;
@@ -1765,6 +1736,7 @@
 
 	.grade-card:hover {
 		transform: translateY(-2px);
+		border-color: color-mix(in srgb, var(--theme-glass-border) 65%, rgba(var(--grade-rgb, 56, 152, 224), 0.4));
 	}
 
 	.grade-badge {
@@ -1776,7 +1748,9 @@
 		justify-content: center;
 		font-size: 1.9rem;
 		font-weight: 800;
-		border: 1px solid rgba(17, 24, 39, 0.16);
+		border: 1px solid color-mix(in srgb, var(--theme-glass-border) 78%, rgba(var(--grade-rgb, 56, 152, 224), 0.45));
+		background: color-mix(in srgb, var(--theme-input-bg) 76%, rgba(var(--grade-rgb, 56, 152, 224), 0.22));
+		color: var(--grade-text, var(--theme-primary));
 	}
 
 	.grade-label {
@@ -1785,40 +1759,44 @@
 		letter-spacing: 0.01em;
 	}
 
-	.grade-card.easy .grade-badge,
 	.grade-card.easy {
-		color: #0f766e;
+		--grade-rgb: 16, 185, 129;
+		--grade-text: #0f766e;
 	}
 
-	.grade-card.easy .grade-badge {
-		background: rgba(16, 185, 129, 0.24);
-	}
-
-	.grade-card.medium .grade-badge,
 	.grade-card.medium {
-		color: #a16207;
+		--grade-rgb: 245, 158, 11;
+		--grade-text: #a16207;
 	}
 
-	.grade-card.medium .grade-badge {
-		background: rgba(245, 158, 11, 0.24);
-	}
-
-	.grade-card.hard .grade-badge,
 	.grade-card.hard {
-		color: #be185d;
+		--grade-rgb: 244, 63, 94;
+		--grade-text: #be185d;
 	}
 
-	.grade-card.hard .grade-badge {
-		background: rgba(244, 63, 94, 0.22);
-	}
-
-	.grade-card.reject .grade-badge,
 	.grade-card.reject {
-		color: #b91c1c;
+		--grade-rgb: 239, 68, 68;
+		--grade-text: #b91c1c;
 	}
 
-	.grade-card.reject .grade-badge {
-		background: rgba(239, 68, 68, 0.22);
+	:global([data-color-mode='dark']) .grade-card {
+		box-shadow: 0 12px 28px rgba(0, 0, 0, 0.36), inset 0 1px 0 rgba(255, 255, 255, 0.1) !important;
+	}
+
+	:global([data-color-mode='dark']) .grade-card.easy {
+		--grade-text: #34d399;
+	}
+
+	:global([data-color-mode='dark']) .grade-card.medium {
+		--grade-text: #fbbf24;
+	}
+
+	:global([data-color-mode='dark']) .grade-card.hard {
+		--grade-text: #fb7185;
+	}
+
+	:global([data-color-mode='dark']) .grade-card.reject {
+		--grade-text: #f87171;
 	}
 
 	@media (max-width: 768px) {
@@ -2244,34 +2222,6 @@
 
 		.regen-text {
 			font-size: 0.88rem;
-		}
-
-		/* Lazy Loading */
-		.lazy-load-trigger {
-			text-align: center;
-			padding: 2rem 1rem;
-			color: var(--theme-text-muted);
-		}
-
-		.loading-more {
-			display: flex;
-			align-items: center;
-			justify-content: center;
-			gap: 0.5rem;
-		}
-
-		.spinner.small {
-			width: 20px;
-			height: 20px;
-			border: 2px solid rgba(255, 255, 255, 0.1);
-			border-top: 2px solid var(--theme-primary);
-			border-radius: 50%;
-			animation: spin 1s linear infinite;
-		}
-
-		.load-more-hint {
-			font-size: 0.9rem;
-			opacity: 0.7;
 		}
 
 		@keyframes spin {

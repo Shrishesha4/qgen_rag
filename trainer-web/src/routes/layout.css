@@ -20,8 +20,15 @@
   --theme-glass-bg: rgba(255, 255, 255, 0.55);
   --theme-glass-border: rgba(255, 255, 255, 0.7);
   --theme-nav-glass: rgba(255, 255, 255, 0.5);
+  --theme-surface: var(--theme-glass-bg);
+  --theme-surface-hover: rgba(255, 255, 255, 0.18);
   --theme-border: rgba(255,255,255,0.14);
   --theme-glow: rgba(56,152,224,0.35);
+  --theme-input-bg: rgba(255, 255, 255, 0.08);
+  --theme-mobile-frost-gradient: linear-gradient(180deg, rgba(255, 255, 255, 0.62) 0%, rgba(255, 255, 255, 0.56) 38%, rgba(255, 255, 255, 0.52) 100%);
+  --theme-mobile-glass-bg: rgba(255, 255, 255, 0.08);
+  --theme-mobile-glass-bg-heavy: rgba(255, 255, 255, 0.12);
+  --theme-mobile-input-bg: rgba(255, 255, 255, 0.06);
   --theme-modal-backdrop: rgba(6, 12, 24, 0.62);
   --theme-modal-backdrop-blur: blur(8px) saturate(130%);
   --theme-modal-surface: linear-gradient(
@@ -82,9 +89,26 @@
   --fresnel-width: 1.5px;
 
   /* Surface aliases */
-  --theme-surface: var(--glass-bg);
-  --theme-surface-hover: var(--glass-bg-hover);
-  --theme-input-bg: rgba(255, 255, 255, 0.08);
+  --theme-surface: var(--theme-glass-bg);
+  --theme-surface-hover: rgba(255, 255, 255, 0.18);
+}
+
+:root[data-color-mode='dark'] {
+  --theme-text: #f2eadb;
+  --theme-text-muted: rgba(235, 225, 207, 0.78);
+  --theme-text-primary: #f2eadb;
+  --theme-text-secondary: rgba(235, 225, 207, 0.74);
+  --theme-glass-bg: rgba(38, 41, 48, 0.74);
+  --theme-glass-border: rgba(108, 113, 124, 0.54);
+  --theme-nav-glass: rgba(34, 37, 44, 0.78);
+  --theme-border: rgba(255, 255, 255, 0.22);
+  --theme-surface: var(--theme-glass-bg);
+  --theme-surface-hover: rgba(70, 74, 84, 0.74);
+  --theme-input-bg: rgba(30, 33, 39, 0.86);
+  --theme-mobile-frost-gradient: linear-gradient(180deg, rgba(36, 39, 46, 0.9) 0%, rgba(34, 37, 44, 0.86) 38%, rgba(31, 34, 40, 0.83) 100%);
+  --theme-mobile-glass-bg: rgba(35, 38, 45, 0.72);
+  --theme-mobile-glass-bg-heavy: rgba(40, 43, 50, 0.8);
+  --theme-mobile-input-bg: rgba(30, 33, 39, 0.84);
 }
 
 /* ── Base resets ── */
@@ -1022,12 +1046,7 @@ a:hover {
     inset: 0;
     z-index: 2;
     pointer-events: none;
-    background: linear-gradient(
-      180deg,
-      rgba(255, 255, 255, 0.62) 0%,
-      rgba(255, 255, 255, 0.56) 38%,
-      rgba(255, 255, 255, 0.52) 100%
-    );
+    background: var(--theme-mobile-frost-gradient);
     backdrop-filter: blur(12px) saturate(120%);
     -webkit-backdrop-filter: blur(12px) saturate(120%);
   }
@@ -1148,7 +1167,7 @@ a:hover {
     /* Disable blur on mobile for performance */
     backdrop-filter: none !important;
     -webkit-backdrop-filter: none !important;
-    background: rgba(255, 255, 255, 0.08) !important;
+    background: var(--theme-mobile-glass-bg) !important;
   }
 
   .glass-card {
@@ -1156,7 +1175,7 @@ a:hover {
     /* Disable blur on mobile for performance */
     backdrop-filter: none !important;
     -webkit-backdrop-filter: none !important;
-    background: rgba(255, 255, 255, 0.08) !important;
+    background: var(--theme-mobile-glass-bg) !important;
   }
 
   .glass-input {
@@ -1167,7 +1186,7 @@ a:hover {
     /* Disable blur on mobile */
     backdrop-filter: none !important;
     -webkit-backdrop-filter: none !important;
-    background: rgba(255, 255, 255, 0.06) !important;
+    background: var(--theme-mobile-input-bg) !important;
   }
 
   .font-serif {
@@ -1216,24 +1235,24 @@ a:hover {
   }
 
   .glass {
-    background: rgba(255, 255, 255, 0.08) !important;
+    background: var(--theme-mobile-glass-bg) !important;
   }
 
   .glass-heavy {
-    background: rgba(255, 255, 255, 0.12) !important;
+    background: var(--theme-mobile-glass-bg-heavy) !important;
   }
 
   .glass-card,
   .glass-panel {
-    background: rgba(255, 255, 255, 0.08) !important;
+    background: var(--theme-mobile-glass-bg) !important;
   }
 
   .glass-sidebar {
-    background: rgba(255, 255, 255, 0.06) !important;
+    background: var(--theme-mobile-input-bg) !important;
   }
 
   .glass-input {
-    background: rgba(255, 255, 255, 0.06) !important;
+    background: var(--theme-mobile-input-bg) !important;
   }
 
   .glass-btn,
@@ -1346,25 +1365,25 @@ a:hover {
 
   /* Simplified backgrounds for Android */
   .glass {
-    background: rgba(255, 255, 255, 0.08) !important;
+    background: var(--theme-mobile-glass-bg) !important;
 
   }
 
   .glass-heavy {
-    background: rgba(255, 255, 255, 0.12) !important;
+    background: var(--theme-mobile-glass-bg-heavy) !important;
   }
 
   .glass-card,
   .glass-panel {
-    background: rgba(255, 255, 255, 0.08) !important;
+    background: var(--theme-mobile-glass-bg) !important;
   }
 
   .glass-sidebar {
-    background: rgba(255, 255, 255, 0.06) !important;
+    background: var(--theme-mobile-input-bg) !important;
   }
 
   .glass-input {
-    background: rgba(255, 255, 255, 0.06) !important;
+    background: var(--theme-mobile-input-bg) !important;
   }
 
   /* Remove all pseudo-elements for performance */
@@ -1434,21 +1453,103 @@ a:hover {
 }
 
 .glass-btn-secondary {
-  background: rgba(255, 255, 255, 0.45);
+  background: var(--theme-nav-glass);
   color: var(--theme-text);
   border-radius: 12px;
-  border: 1px solid rgba(255, 255, 255, 0.6);
+  border: 1px solid var(--theme-glass-border);
   box-shadow:
     0 6px 16px rgba(0, 0, 0, 0.08),
     inset 0 1px 1px rgba(255, 255, 255, 0.6);
 }
 
 .glass-input {
-  background: rgba(255, 255, 255, 0.65) !important;
+  background: var(--theme-input-bg) !important;
   color: var(--theme-text);
-  border: 1px solid rgba(255, 255, 255, 0.7);
+  border: 1px solid var(--theme-glass-border);
 }
 
 .glass-input::placeholder {
   color: var(--theme-text-secondary);
+}
+
+/* ── Universal dark-mode hard override layer for component-local light cards ── */
+:root[data-color-mode='dark'] .glass-panel,
+:root[data-color-mode='dark'] .glass-card,
+:root[data-color-mode='dark'] .glass-sidebar,
+:root[data-color-mode='dark'] .profile-card,
+:root[data-color-mode='dark'] .auth-card,
+:root[data-color-mode='dark'] .content-panel,
+:root[data-color-mode='dark'] .resume-strip,
+:root[data-color-mode='dark'] .mode-banner,
+:root[data-color-mode='dark'] .step-card,
+:root[data-color-mode='dark'] .status-card,
+:root[data-color-mode='dark'] .metrics-card,
+:root[data-color-mode='dark'] .metric-item,
+:root[data-color-mode='dark'] .info-card,
+:root[data-color-mode='dark'] .summary-box,
+:root[data-color-mode='dark'] .wizard-navigation,
+:root[data-color-mode='dark'] .settings-form,
+:root[data-color-mode='dark'] .detail-item,
+:root[data-color-mode='dark'] .stat-card,
+:root[data-color-mode='dark'] .subject-card,
+:root[data-color-mode='dark'] .topic-card,
+:root[data-color-mode='dark'] .queue-item,
+:root[data-color-mode='dark'] .search-section,
+:root[data-color-mode='dark'] .center-state,
+:root[data-color-mode='dark'] .card {
+  background: linear-gradient(150deg, rgba(40, 43, 50, 0.82), rgba(31, 34, 40, 0.8)) !important;
+  border: 1px solid rgba(118, 123, 134, 0.55) !important;
+  color: var(--theme-text-primary) !important;
+  box-shadow:
+    0 14px 36px rgba(0, 0, 0, 0.35),
+    inset 0 1px 0 rgba(255, 255, 255, 0.08) !important;
+}
+
+:root[data-color-mode='dark'] .field span,
+:root[data-color-mode='dark'] .section-title,
+:root[data-color-mode='dark'] .detail-label,
+:root[data-color-mode='dark'] .muted,
+:root[data-color-mode='dark'] .profile-email,
+:root[data-color-mode='dark'] .mode-desc,
+:root[data-color-mode='dark'] .step-description,
+:root[data-color-mode='dark'] .metric-label,
+:root[data-color-mode='dark'] .summary-title,
+:root[data-color-mode='dark'] .drawer-brand-subtitle {
+  color: var(--theme-text-secondary) !important;
+}
+
+:root[data-color-mode='dark'] .detail-value,
+:root[data-color-mode='dark'] .profile-name,
+:root[data-color-mode='dark'] .mode-title,
+:root[data-color-mode='dark'] .step-title,
+:root[data-color-mode='dark'] .summary-text,
+:root[data-color-mode='dark'] .metric-value,
+:root[data-color-mode='dark'] .hero-title,
+:root[data-color-mode='dark'] .hero-sub,
+:root[data-color-mode='dark'] .mnb-title,
+:root[data-color-mode='dark'] .drawer-brand-title,
+:root[data-color-mode='dark'] .drawer-link {
+  color: var(--theme-text-primary) !important;
+}
+
+:root[data-color-mode='dark'] input,
+:root[data-color-mode='dark'] textarea,
+:root[data-color-mode='dark'] select,
+:root[data-color-mode='dark'] .glass-input,
+:root[data-color-mode='dark'] .picker-toggle,
+:root[data-color-mode='dark'] .picker-menu,
+:root[data-color-mode='dark'] .picker-option,
+:root[data-color-mode='dark'] .mnb-back,
+:root[data-color-mode='dark'] .drawer-link-icon,
+:root[data-color-mode='dark'] .drawer-brand-icon,
+:root[data-color-mode='dark'] .drawer-close {
+  background: rgba(30, 33, 39, 0.88) !important;
+  border-color: rgba(116, 121, 132, 0.56) !important;
+  color: var(--theme-text-primary) !important;
+}
+
+:root[data-color-mode='dark'] input::placeholder,
+:root[data-color-mode='dark'] textarea::placeholder,
+:root[data-color-mode='dark'] .glass-input::placeholder {
+  color: var(--theme-text-secondary) !important;
 }
