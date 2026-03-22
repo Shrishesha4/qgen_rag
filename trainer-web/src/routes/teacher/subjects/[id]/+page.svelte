@@ -3,7 +3,14 @@
 	import { goto } from '$app/navigation';
 	import { page } from '$app/stores';
 	import { session } from '$lib/session';
-	import { createTopic, getSubject, updateTopic, type SubjectDetailResponse, type TopicResponse } from '$lib/api/subjects';
+	import {
+		createTopic,
+		deleteSubject,
+		getSubject,
+		updateTopic,
+		type SubjectDetailResponse,
+		type TopicResponse,
+	} from '$lib/api/subjects';
 	import {
 		deleteDocumentById,
 		getDocumentStatus,
@@ -50,6 +57,7 @@
 
 	let showEditTopicModal = $state(false);
 	let editingTopic = $state(false);
+	let deletingSubject = $state(false);
 	let editTopicId = $state('');
 	let editTopicName = $state('');
 	let editTopicDescription = $state('');
@@ -615,6 +623,25 @@
 			deletingRefId = '';
 		}
 	}
+
+	async function onDeleteSubject() {
+		if (!subject || deletingSubject) return;
+		const confirmed = window.confirm(
+			`Delete subject "${subject.name}"? This will remove the subject and related topics.`
+		);
+		if (!confirmed) return;
+
+		deletingSubject = true;
+		error = '';
+		try {
+			await deleteSubject(subject.id);
+			goto('/teacher/subjects');
+		} catch (e: unknown) {
+			error = e instanceof Error ? e.message : 'Failed to delete subject';
+		} finally {
+			deletingSubject = false;
+		}
+	}
 </script>
 
 <svelte:head>
@@ -632,10 +659,16 @@
 	{:else if subject}
 		<div class="hero glass-panel animate-fade-in">
 			<div class="hero-top">
+				<button class="back-btn" onclick={() => goto('/teacher/subjects')} aria-label="Go back">
+					←
+				</button>
 				<div>
 					<p class="eyebrow">{subject.code}</p>
 					<h1 class="title font-serif">{subject.name}</h1>
 				</div>
+				<!-- <button class="action-btn action-danger" onclick={onDeleteSubject} disabled={deletingSubject}>
+					{deletingSubject ? 'Deleting…' : 'Delete Subject'}
+				</button> -->
 			</div>
 			{#if subject.description}
 				<p class="description">{subject.description}</p>
@@ -690,7 +723,7 @@
 					<p>No topics available for this subject yet.</p>
 				</div>
 			{:else}
-				<div class="topics-table-shell">
+				<div class="topics-table-shell desktop-only">
 					<table class="topics-table">
 						<colgroup>
 							<col class="topic-col" />
@@ -700,6 +733,7 @@
 							<col class="metric-col" />
 							<col class="metric-col" />
 							<col class="metric-col" />
+							<col class="actions-col" />
 						</colgroup>
 						<thead>
 							<tr>
@@ -710,6 +744,7 @@
 								<th>A</th>
 								<th>R</th>
 								<th>AR</th>
+								<th>Actions</th>
 							</tr>
 						</thead>
 						<tbody>
@@ -726,20 +761,6 @@
 													{/if}
 												</div>
 											</div>
-											<div class="topic-inline-actions">
-												{#if canGenerateTopic(topic.id, topic.total_questions, topic.total_questions)}
-													<button class="action-btn action-generate" class:generating={!!topicGeneratingById[topic.id]} onclick={() => generateTopic(topic.id)} disabled={!!topicGeneratingById[topic.id] || !!generationPollingTopicId}>
-														{#if topicGeneratingById[topic.id]}
-															<span class="btn-spinner" aria-hidden="true"></span>
-															<span>Generating {topicGenerationProgressById[topic.id] || ''}</span>
-														{:else}
-															<span>Generate</span>
-														{/if}
-													</button>
-												{/if}
-												<button class="action-btn action-vet" onclick={() => vetTopic(topic.id)}>Vet</button>
-												<button class="action-btn action-edit" onclick={() => openEditTopicModal(topic)}>Edit</button>
-											</div>
 										</div>
 									</td>
 									<td>{topicReviewStats[topic.id]?.generated ?? topic.total_questions}</td>
@@ -748,10 +769,64 @@
 									<td class="green-text">{topicReviewStats[topic.id]?.approved ?? 0}</td>
 									<td class="red-text">{topicReviewStats[topic.id]?.rejected ?? 0}</td>
 									<td class="violet-text">{topicReviewStats[topic.id]?.approvalRate ?? 0}%</td>
+									<td class="action-cell">
+										<div class="topic-inline-actions">
+											{#if canGenerateTopic(topic.id, topic.total_questions, topic.total_questions)}
+												<button class="action-btn action-generate" class:generating={!!topicGeneratingById[topic.id]} onclick={() => generateTopic(topic.id)} disabled={!!topicGeneratingById[topic.id] || !!generationPollingTopicId}>
+													{#if topicGeneratingById[topic.id]}
+														<span class="btn-spinner" aria-hidden="true"></span>
+														<span>Generating {topicGenerationProgressById[topic.id] || ''}</span>
+													{:else}
+														<span>Generate</span>
+													{/if}
+												</button>
+											{/if}
+											<button class="action-btn action-vet" onclick={() => vetTopic(topic.id)}>Vet</button>
+											<button class="action-btn action-edit" onclick={() => openEditTopicModal(topic)}>Edit</button>
+										</div>
+									</td>
 								</tr>
 							{/each}
 						</tbody>
 					</table>
+				</div>
+
+				<div class="mobile-topic-list mobile-only">
+					{#each subject.topics as topic, index}
+						<div class="mobile-topic-card">
+							<div class="topic-title-row">
+								<span class="topic-index">{index + 1}</span>
+								<div class="topic-copy">
+									<h3 class="topic-name">{topic.name}</h3>
+									{#if topic.description}
+										<p class="topic-description">{topic.description}</p>
+									{/if}
+								</div>
+							</div>
+							<div class="mobile-metrics">
+								<span>G <strong>{topicReviewStats[topic.id]?.generated ?? topic.total_questions}</strong></span>
+								<span>V <strong>{topicReviewStats[topic.id]?.vetted ?? 0}</strong></span>
+								<span>P <strong>{topicReviewStats[topic.id]?.pending ?? topic.total_questions}</strong></span>
+								<span class="green-text">A <strong>{topicReviewStats[topic.id]?.approved ?? 0}</strong></span>
+								<span class="red-text">R <strong>{topicReviewStats[topic.id]?.rejected ?? 0}</strong></span>
+								<span class="violet-text">AR <strong>{topicReviewStats[topic.id]?.approvalRate ?? 0}%</strong></span>
+							</div>
+							<div class="topic-inline-actions">
+								{#if canGenerateTopic(topic.id, topic.total_questions, topic.total_questions)}
+									<button class="action-btn action-generate" class:generating={!!topicGeneratingById[topic.id]} onclick={() => generateTopic(topic.id)} disabled={!!topicGeneratingById[topic.id] || !!generationPollingTopicId}>
+										{#if topicGeneratingById[topic.id]}
+											<span class="btn-spinner" aria-hidden="true"></span>
+											<span>Generating {topicGenerationProgressById[topic.id] || ''}</span>
+										{:else}
+											<span>Generate</span>
+										{/if}
+									</button>
+								{/if}
+								<button class="action-btn action-vet" onclick={() => vetTopic(topic.id)}>Vet</button>
+								<button class="action-btn action-edit" onclick={() => openEditTopicModal(topic)}>Edit</button>
+							</div>
+						</div>
+					{/each}
 				</div>
 			{/if}
 		</div>
@@ -818,21 +893,9 @@
 				<button class="modal-close" onclick={closeEditTopicModal} aria-label="Close">✕</button>
 			</div>
 			<div class="modal-body">
-				<label class="input-label" for="editTopicName">Topic name</label>
 				<input id="editTopicName" class="input" placeholder="Topic name" bind:value={editTopicName} />
-				<label class="input-label" for="editTopicDescription">Description</label>
-				<input id="editTopicDescription" class="input" placeholder="Description" bind:value={editTopicDescription} />
-				<label class="input-label" for="editTopicSyllabus">Syllabus content</label>
+				<input id="editTopicDescription" class="input" placeholder="Description (optional)" bind:value={editTopicDescription} />
 				<textarea id="editTopicSyllabus" class="input textarea" rows="4" placeholder="Syllabus content" bind:value={editTopicSyllabus}></textarea>
-
-				<div class="topic-material-tabs edit-material-tabs">
-					<button type="button" class="topic-material-tab" class:active={referenceTab === 'pdfs'} onclick={() => (referenceTab = 'pdfs')}>
-						Reference Books
-					</button>
-					<button type="button" class="topic-material-tab" class:active={referenceTab === 'questions'} onclick={() => (referenceTab = 'questions')}>
-						Reference Questions
-					</button>
-				</div>
 
 				{#if referenceError}
 					<p class="modal-error inline-error">{referenceError}</p>
@@ -840,19 +903,18 @@
 
 				{#if referenceLoading}
 					<div class="topics-loading"><div class="spinner-sm"></div><span>Loading materials…</span></div>
-				{:else if referenceTab === 'pdfs'}
-					<p class="topic-upload-copy">Upload books/templates for this topic.</p>
-					<label class="upload-dropzone glass-panel-frosted compact-dropzone">
-						<input type="file" accept=".pdf,.doc,.docx,.txt" oninput={(e) => uploadTopicPdf(e, pdfUploadType)} disabled={referenceUploading} />
-						<div class="upload-dropzone-title">{referenceUploading ? 'Uploading…' : 'Drop files or click to upload'}</div>
-						<div class="upload-dropzone-subtitle">PDF, Word, PowerPoint, or Text</div>
-					</label>
-					<!-- <div class="upload-type-row">
-						<select bind:value={pdfUploadType} class="select-input topic-inline-select">
-							<option value="reference_book">Reference Book PDF</option>
-							<option value="template_paper">Template Paper PDF</option>
-						</select>
-					</div> -->
+				{:else}
+					<div class="file-input-group">
+						<label class="file-label" for="editBookPdf">Book/Template PDF</label>
+						<input
+							id="editBookPdf"
+							class="file-input"
+							type="file"
+							accept=".pdf,.doc,.docx,.txt"
+							oninput={(e) => uploadTopicPdf(e, pdfUploadType)}
+							disabled={referenceUploading}
+						/>
+					</div>
 					<div class="doc-list topic-doc-list">
 						{#if editTopicReferenceDocs.length}
 							{#each editTopicReferenceDocs as doc}
@@ -878,13 +940,18 @@
 							<p class="topics-empty">No reference books uploaded yet.</p>
 						{/if}
 					</div>
-				{:else}
-					<p class="topic-upload-copy">Upload question files for this topic.</p>
-					<label class="upload-dropzone glass-panel-frosted question-dropzone compact-dropzone">
-						<input type="file" accept=".pdf,.xlsx,.csv" oninput={(e) => uploadTopicPdf(e, 'reference_questions')} disabled={referenceUploading} />
-						<div class="upload-dropzone-title">{referenceUploading ? 'Uploading…' : 'Drop files or click to upload'}</div>
-						<div class="upload-dropzone-subtitle">PDF, XLSX, or CSV</div>
-					</label>
+
+					<div class="file-input-group">
+						<label class="file-label" for="editQuestionPdf">Question PDF (optional)</label>
+						<input
+							id="editQuestionPdf"
+							class="file-input"
+							type="file"
+							accept=".pdf,.xlsx,.csv"
+							oninput={(e) => uploadTopicPdf(e, 'reference_questions')}
+							disabled={referenceUploading}
+						/>
+					</div>
 					<div class="doc-list topic-doc-list">
 						{#if editTopicQuestionDocs.length}
 							{#each editTopicQuestionDocs as doc}
@@ -929,7 +996,7 @@
 
 <style>
 	.page {
-		max-width: 1120px;
+		max-width: 1320px;
 		margin: 0 auto;
 		padding: 2rem 1.5rem 2.5rem;
 		display: flex;
@@ -950,9 +1017,30 @@
 
 	.hero-top {
 		display: flex;
-		justify-content: space-between;
-		align-items: flex-start;
-		gap: 1rem;
+		justify-content: flex-start;
+		align-items: center;
+		gap: 2rem;
+	}
+
+	.back-btn {
+		width: 44px;
+		height: 44px;
+		border-radius: 999px;
+		border: 1px solid rgba(var(--theme-primary-rgb), 0.3);
+		background: rgba(var(--theme-primary-rgb), 0.1);
+		color: var(--theme-primary);
+		font-size: 1.4rem;
+		cursor: pointer;
+		display: flex;
+		align-items: center;
+		justify-content: center;
+		flex-shrink: 0;
+		transition: background 0.15s ease, border-color 0.15s ease;
+	}
+
+	.back-btn:hover {
+		background: rgba(var(--theme-primary-rgb), 0.16);
+		border-color: rgba(var(--theme-primary-rgb), 0.45);
 	}
 
 	.eyebrow {
@@ -1052,11 +1140,15 @@
 	}
 
 	.topic-col {
-		width: 52%;
+		width: 45%;
 	}
 
 	.metric-col {
-		width: 8%;
+		width: 7.5%;
+	}
+
+	.actions-col {
+		width: 16%;
 	}
 
 	.topics-table th {
@@ -1097,6 +1189,11 @@
 		text-align: center;
 	}
 
+	.action-cell {
+		text-align: center;
+		vertical-align: middle;
+	}
+
 	.topics-table tbody tr:last-child td {
 		border-bottom: none;
 	}
@@ -1104,7 +1201,7 @@
 	.topic-main-cell {
 		display: flex;
 		flex-direction: column;
-		gap: 0.55rem;
+		gap: 0.25rem;
 	}
 
 	.topic-title-row {
@@ -1146,18 +1243,33 @@
 
 	.topic-inline-actions {
 		display: flex;
-		flex-wrap: nowrap;
+		flex-wrap: wrap;
 		gap: 0.45rem;
-		overflow-x: auto;
-		padding-bottom: 0.12rem;
+		justify-content: center;
+		align-items: center;
+		overflow: visible;
+	}
+
+	.topics-table .topic-inline-actions {
+		flex-direction: column;
+		flex-wrap: nowrap;
 	}
 
 	.topic-inline-actions .action-btn {
 		width: auto;
-		min-width: 96px;
+		min-width: 84px;
 		height: 36px;
-		padding: 0.4rem 0.75rem;
+		padding: 0.4rem 0.68rem;
 		font-size: 0.78rem;
+	}
+
+	.topics-table .topic-inline-actions .action-btn {
+		width: min(132px, 100%);
+	}
+
+	.mobile-topic-list .topic-inline-actions {
+		justify-content: flex-start;
+		align-items: center;
 	}
 
 	.action-btn {
@@ -1237,6 +1349,18 @@
 		border-color: var(--theme-glass-border);
 		color: var(--theme-text-primary);
 	}
+
+	/* .action-danger {
+		width: auto;
+		min-width: 148px;
+		background: rgba(239, 68, 68, 0.14);
+		border-color: rgba(220, 38, 38, 0.42);
+		color: #dc2626;
+	}
+
+	.action-danger:hover {
+		background: rgba(239, 68, 68, 0.2);
+	} */
 
 	.modal-backdrop {
 		position: fixed;
@@ -1325,12 +1449,6 @@
 		min-height: 120px;
 	}
 
-	.input-label {
-		font-size: 0.8rem;
-		font-weight: 700;
-		color: var(--theme-text-secondary);
-	}
-
 	.file-input-group {
 		display: flex;
 		flex-direction: column;
@@ -1365,11 +1483,6 @@
 		flex: 1;
 	}
 
-	.glass-panel-frosted {
-		backdrop-filter: blur(10px) saturate(150%);
-		-webkit-backdrop-filter: blur(10px) saturate(150%);
-	}
-
 	.topics-loading {
 		display: flex;
 		align-items: center;
@@ -1394,6 +1507,7 @@
 		justify-content: space-between;
 		gap: 0.75rem;
 		padding: 0.65rem 1rem;
+		border-radius: 0.8rem;
 		border-top: 1px solid var(--theme-glass-border);
 		background: color-mix(in srgb, var(--theme-surface) 90%, var(--theme-input-bg));
 	}
@@ -1457,60 +1571,6 @@
 	}
 
 
-	.topic-material-tabs {
-		display: grid;
-		grid-template-columns: 1fr 1fr;
-		align-items: end;
-		border-bottom: 1px solid var(--theme-glass-border);
-	}
-
-	.topic-material-tab {
-		border: 0;
-		background: transparent;
-		padding: 1rem 1rem 0.9rem;
-		color: var(--theme-text-primary);
-		font: inherit;
-		font-size: 1rem;
-		font-weight: 800;
-		text-align: left;
-		cursor: pointer;
-		border-bottom: 3px solid transparent;
-		opacity: 0.7;
-	}
-
-	.topic-material-tab.active {
-		background: color-mix(in srgb, rgba(var(--theme-primary-rgb), 0.26) 58%, transparent);
-		border-bottom-color: var(--theme-primary);
-		opacity: 1;
-		color: var(--theme-primary);
-	}
-
-	.topic-upload-copy {
-		margin: 0;
-		font-size: 0.98rem;
-		color: var(--theme-text-secondary);
-	}
-
-	.upload-dropzone {
-		position: relative;
-		display: flex;
-		flex-direction: column;
-		align-items: center;
-		justify-content: center;
-		gap: 0.7rem;
-		min-height: 170px;
-		padding: 1.75rem;
-		border-radius: 1.7rem;
-		border: 2px dashed color-mix(in srgb, var(--theme-glass-border) 85%, rgba(var(--theme-primary-rgb), 0.22));
-		background: linear-gradient(
-			180deg,
-			color-mix(in srgb, var(--theme-surface) 84%, rgba(var(--theme-primary-rgb), 0.12)) 0%,
-			color-mix(in srgb, var(--theme-input-bg) 82%, rgba(var(--theme-primary-rgb), 0.08)) 100%
-		);
-		text-align: center;
-		cursor: pointer;
-		overflow: hidden;
-	}
 
 	:global([data-color-mode='dark']) .modal-card {
 		border-color: rgba(255, 255, 255, 0.18);
@@ -1521,10 +1581,6 @@
 	:global([data-color-mode='dark']) .file-input,
 	:global([data-color-mode='dark']) .doc-row {
 		box-shadow: none;
-	}
-
-	:global([data-color-mode='dark']) .upload-dropzone {
-		border-color: rgba(var(--theme-primary-rgb), 0.32);
 	}
 
 	:global([data-color-mode='light']) .modal-backdrop {
@@ -1566,31 +1622,8 @@
 		background: rgba(255, 255, 255, 0.9);
 	}
 
-	.upload-dropzone input {
-		position: absolute;
-		inset: 0;
-		opacity: 0;
-		cursor: pointer;
-	}
-
-	.upload-dropzone-title {
-		font-size: 1.1rem;
-		font-weight: 800;
-		color: var(--theme-text-primary);
-	}
-
-	.upload-dropzone-subtitle {
-		font-size: 0.95rem;
-		color: var(--theme-text-secondary);
-	}
-
 	.topic-doc-list {
 		margin-top: 0.25rem;
-	}
-
-	.compact-dropzone {
-		min-height: 148px;
-		padding: 1.1rem;
 	}
 
 	.spinner-sm {
@@ -1618,6 +1651,41 @@
 		flex-direction: column;
 		flex: 1;
 		min-height: 0;
+	}
+
+	.desktop-only {
+		display: block !important;
+	}
+
+	.mobile-only {
+		display: none !important;
+	}
+
+	.mobile-topic-list {
+		display: grid;
+		gap: 0.7rem;
+	}
+
+	.mobile-topic-card {
+		border: 1px solid color-mix(in srgb, var(--theme-glass-border) 86%, transparent);
+		border-radius: 0.9rem;
+		padding: 0.72rem;
+		display: flex;
+		flex-direction: column;
+		gap: 0.6rem;
+		background: color-mix(in srgb, var(--theme-glass-bg) 90%, transparent);
+	}
+
+	.mobile-metrics {
+		display: grid;
+		grid-template-columns: repeat(3, minmax(0, 1fr));
+		gap: 0.3rem 0.65rem;
+		font-size: 0.8rem;
+		color: var(--theme-text-muted);
+	}
+
+	.mobile-metrics strong {
+		color: var(--theme-text-primary);
 	}
 
 	:global([data-color-mode='dark']) .topics-table-shell {
@@ -1667,6 +1735,14 @@
 	}
 
 	@media (max-width: 920px) {
+		.desktop-only {
+			display: none !important;
+		}
+
+		.mobile-only {
+			display: grid !important;
+		}
+
 		.page {
 			height: auto;
 			overflow: visible;
@@ -1704,6 +1780,11 @@
 		}
 
 		.section-head {
+			flex-direction: column;
+			align-items: flex-start;
+		}
+
+		.hero-top {
 			flex-direction: column;
 			align-items: flex-start;
 		}

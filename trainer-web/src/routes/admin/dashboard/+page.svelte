@@ -229,7 +229,7 @@
 			{:else if activeTab === 'users'}
 				<div class="section glass-panel">
 					<h2 class="section-title">All Users ({stats.users.length})</h2>
-					<div class="table-wrapper">
+					<div class="table-wrapper desktop-only">
 						<table class="data-table">
 							<thead>
 								<tr>
@@ -266,6 +266,26 @@
 							</tbody>
 						</table>
 					</div>
+					<div class="admin-mobile-list mobile-only">
+						{#each stats.users as u}
+							<div class="admin-mobile-card">
+								<div class="user-cell">
+									<span class="user-name">{u.full_name || u.username}</span>
+									<span class="user-email">{u.email}</span>
+								</div>
+								<div><span class="role-tag {u.role}">{u.role}</span></div>
+								<div class="admin-mobile-metrics">
+									<span>Generated <strong>{u.total_generated}</strong></span>
+									<span class="green-text">Approved <strong>{u.total_approved}</strong></span>
+									<span class="red-text">Rejected <strong>{u.total_rejected}</strong></span>
+									<span class="orange-text">Pending <strong>{u.total_pending}</strong></span>
+									<span>Vet Rate <strong>{vetRate(u)}</strong></span>
+									<span>Subjects <strong>{u.subjects_count}</strong></span>
+									<span>Topics <strong>{u.topics_count}</strong></span>
+								</div>
+							</div>
+						{/each}
+					</div>
 				</div>
 
 			{:else if activeTab === 'vetters'}
@@ -274,7 +294,7 @@
 					{#if stats.vetters.length === 0}
 						<p class="empty-msg">No vetting activity yet.</p>
 					{:else}
-						<div class="table-wrapper">
+						<div class="table-wrapper desktop-only">
 							<table class="data-table">
 								<thead>
 									<tr>
@@ -302,6 +322,22 @@
 									{/each}
 								</tbody>
 							</table>
+						</div>
+						<div class="admin-mobile-list mobile-only">
+							{#each stats.vetters as v}
+								<div class="admin-mobile-card">
+									<div class="user-cell">
+										<span class="user-name">{v.full_name || v.username}</span>
+										<span class="user-email">{v.email}</span>
+									</div>
+									<div class="admin-mobile-metrics">
+										<span>Total Vetted <strong>{v.total_vetted}</strong></span>
+										<span class="green-text">Approved <strong>{v.total_approved}</strong></span>
+										<span class="red-text">Rejected <strong>{v.total_rejected}</strong></span>
+										<span>Approval <strong>{v.total_vetted > 0 ? Math.round((v.total_approved / v.total_vetted) * 100) : 0}%</strong></span>
+									</div>
+								</div>
+							{/each}
 						</div>
 					{/if}
 				</div>
@@ -797,6 +833,41 @@
 		padding: 0 0.5rem;
 	}
 
+	.desktop-only {
+		display: block !important;
+	}
+
+	.mobile-only {
+		display: none !important;
+	}
+
+	.admin-mobile-list {
+		display: grid;
+		gap: 0.65rem;
+	}
+
+	.admin-mobile-card {
+		border: 1px solid rgba(255, 255, 255, 0.12);
+		border-radius: 0.82rem;
+		padding: 0.68rem;
+		display: flex;
+		flex-direction: column;
+		gap: 0.45rem;
+		background: rgba(255, 255, 255, 0.04);
+	}
+
+	.admin-mobile-metrics {
+		display: grid;
+		grid-template-columns: repeat(2, minmax(0, 1fr));
+		gap: 0.28rem 0.62rem;
+		font-size: 0.8rem;
+		color: var(--theme-text-muted);
+	}
+
+	.admin-mobile-metrics strong {
+		color: var(--theme-text);
+	}
+
 	.data-table {
 		width: 100%;
 		border-collapse: collapse;
@@ -921,6 +992,14 @@
 
 	/* Responsive */
 	@media (max-width: 768px) {
+		.desktop-only {
+			display: none !important;
+		}
+
+		.mobile-only {
+			display: grid !important;
+		}
+
 		.admin-dash {
 			padding: 4rem 1rem 1.5rem;
 			gap: 1.25rem;

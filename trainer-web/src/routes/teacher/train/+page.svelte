@@ -493,7 +493,7 @@
 				<input class="search-input" bind:value={searchQuery} placeholder="Search subjects or topics" />
 			</div>
 
-			<div class="table-shell">
+			<div class="table-shell desktop-only">
 				<table class="training-table">
 					<colgroup>
 						<col class="name-col" />
@@ -619,6 +619,76 @@
 						{/if}
 					</tbody>
 				</table>
+			</div>
+
+			<div class="training-mobile-list mobile-only">
+				{#if filteredSubjects.length === 0}
+					<div class="mobile-card glass-panel empty-cell">No matching subjects.</div>
+				{:else}
+					{#each filteredSubjects as subject}
+						<div class="mobile-card glass-panel">
+							<div class="mobile-card-head">
+								<div class="name-header">
+									<span class="code-chip">{subject.code}</span>
+									<strong>{subject.name}</strong>
+								</div>
+								<button class="table-btn" onclick={() => toggleSubject(subject.id)}>
+									{isExpanded(subject.id) ? 'Hide Topics' : 'Show Topics'}
+								</button>
+							</div>
+							<div class="mobile-metrics">
+								<span>Questions <strong>{subject.total_questions}</strong></span>
+								<span>Pending <strong>{subject.total_pending ?? 0}</strong></span>
+								<span class="green-text">Approved <strong>{subject.total_approved ?? 0}</strong></span>
+								<span class="red-text">Rejected <strong>{subject.total_rejected ?? 0}</strong></span>
+							</div>
+							<div class="inline-actions">
+								<button class="table-btn primary" onclick={() => startSubjectVetting(subject.id)} disabled={loadingPendingCounts}>Start Vetting</button>
+								{#if progressBySubject[subject.id] && !isProgressComplete(progressBySubject[subject.id])}
+									<button class="table-btn" onclick={resumeLastProgress}>Resume</button>
+								{/if}
+							</div>
+
+							{#if isExpanded(subject.id)}
+								{#if loadingTopics === subject.id}
+									<div class="topic-loading"><span class="spinner-sm"></span> Loading topics...</div>
+								{:else if (topicsMap[subject.id] || []).length === 0}
+									<div class="empty-cell">No topics found for this subject.</div>
+								{:else}
+									<div class="mobile-topic-list">
+										{#each topicsMap[subject.id] || [] as topic}
+											{@const pendingCount = getTopicPendingCount(topic.id)}
+											{@const generationState = getTopicGenerationState(topic.id)}
+											{@const subjectGenerationState = getSubjectGenerationState(subject.id)}
+											{@const canStart = pendingCount > 0}
+											<div class="mobile-topic-card">
+												<div class="topic-title-line">
+													<span class="topic-branch">↳</span>
+													<strong>{topic.name}</strong>
+												</div>
+												<div class="mobile-metrics">
+													<span>Questions <strong>{topic.total_questions}</strong></span>
+													<span>Pending <strong>{pendingCount}</strong></span>
+												</div>
+												<div class="inline-actions">
+													{#if generationState}
+														<button class="table-btn" disabled>{getTopicGenerationLabel(topic.id)}</button>
+													{:else if subjectGenerationState?.in_progress && pendingCount === 0}
+														<button class="table-btn" disabled>{getSubjectGenerationLabel(subject.id)}</button>
+													{:else if canStart}
+														<button class="table-btn primary" onclick={() => startTopicVetting(subject.id, topic.id)}>Start Vetting</button>
+													{:else}
+														<button class="table-btn" onclick={() => generateTopicBatch(subject.id, topic.id)}>Generate</button>
+													{/if}
+												</div>
+											</div>
+										{/each}
+									</div>
+								{/if}
+							{/if}
+						</div>
+					{/each}
+				{/if}
 			</div>
 		</section>
 	{/if}
@@ -760,6 +830,62 @@
 		min-height: 0;
 	}
 
+	.desktop-only {
+		display: block !important;
+	}
+
+	.mobile-only {
+		display: none !important;
+	}
+
+	.training-mobile-list {
+		display: grid;
+		gap: 0.75rem;
+	}
+
+	.mobile-card {
+		border: 1px solid var(--theme-glass-border);
+		border-radius: 0.95rem;
+		padding: 0.8rem;
+		display: flex;
+		flex-direction: column;
+		gap: 0.55rem;
+	}
+
+	.mobile-card-head {
+		display: flex;
+		justify-content: space-between;
+		align-items: center;
+		gap: 0.6rem;
+	}
+
+	.mobile-topic-list {
+		display: grid;
+		gap: 0.5rem;
+		padding-top: 0.3rem;
+	}
+
+	.mobile-topic-card {
+		border: 1px solid var(--theme-glass-border);
+		border-radius: 0.75rem;
+		padding: 0.62rem;
+		display: flex;
+		flex-direction: column;
+		gap: 0.42rem;
+	}
+
+	.mobile-metrics {
+		display: grid;
+		grid-template-columns: repeat(2, minmax(0, 1fr));
+		gap: 0.3rem 0.8rem;
+		font-size: 0.81rem;
+		color: var(--theme-text-muted);
+	}
+
+	.mobile-metrics strong {
+		color: var(--theme-text-primary);
+	}
+
 	.training-table {
 		width: 100%;
 		table-layout: fixed;
@@ -887,8 +1013,9 @@
 		font-weight: 700;
 		letter-spacing: 0.05em;
 		text-transform: uppercase;
-		background: rgba(34, 197, 94, 0.16);
-		color: #166534;
+		background: rgba(var(--theme-primary-rgb), 0.16);
+		border: 1px solid rgba(var(--theme-primary-rgb), 0.34);
+		color: var(--theme-primary);
 	}
 
 	.topic-row td {
@@ -913,13 +1040,14 @@
 	}
 
 	.topic-branch {
-		color: var(--theme-text-muted);
+		color: color-mix(in srgb, var(--theme-primary) 72%, var(--theme-text-primary));
 		font-weight: 700;
 	}
 
 	.topic-title-line strong {
 		font-size: 0.96rem;
-		color: #475569;
+		color: var(--theme-text-primary);
+		font-weight: 700;
 	}
 
 	.inline-actions {
@@ -1042,7 +1170,27 @@
 		border-right-color: rgba(148, 163, 184, 0.38);
 	}
 
+	:global([data-color-mode='light']) .code-chip {
+		background: rgba(var(--theme-primary-rgb), 0.14);
+		border-color: rgba(var(--theme-primary-rgb), 0.34);
+		color: color-mix(in srgb, var(--theme-primary) 84%, #111827);
+	}
+
+	:global([data-color-mode='dark']) .code-chip {
+		background: rgba(var(--theme-primary-rgb), 0.26);
+		border-color: rgba(var(--theme-primary-rgb), 0.5);
+		color: color-mix(in srgb, var(--theme-primary) 72%, #ffffff);
+	}
+
 	@media (max-width: 960px) {
+		.desktop-only {
+			display: none !important;
+		}
+
+		.mobile-only {
+			display: grid !important;
+		}
+
 		.page {
 			height: auto;
 			overflow: visible;

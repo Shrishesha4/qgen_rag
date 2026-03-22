@@ -164,8 +164,15 @@
 
 <div class="page">
 	<div class="hero">
-		<p class="kicker">Teacher Console</p>
-		<h1 class="title font-serif">Stats</h1>
+		<div class="hero-head">
+			<button class="back-btn" onclick={() => goto('/teacher/subjects')} aria-label="Go back">
+				←
+			</button>
+			<div>
+				<p class="kicker">Teacher Console</p>
+				<h1 class="title font-serif">Stats</h1>
+			</div>
+		</div>
 		<p class="subtitle">Track your question vetting progress across subjects and topics.</p>
 	</div>
 
@@ -187,13 +194,13 @@
 					<p class="stat-label">Total Questions</p>
 				</div>
 			</div>
-			<div class="stat-card glass-panel">
+			<!-- <div class="stat-card glass-panel">
 				<div class="stat-icon">📊</div>
 				<div>
 					<p class="stat-value">{totalVetted}</p>
 					<p class="stat-label">Total Vetted</p>
 				</div>
-			</div>
+			</div> -->
 			<div class="stat-card glass-panel">
 				<div class="stat-icon amber">🕒</div>
 				<div>
@@ -235,7 +242,7 @@
 
 		<section class="table-panel glass-panel">
 			<h2>Breakdown by Subject</h2>
-			<div class="table-wrap">
+			<div class="table-wrap desktop-only">
 				<table>
 					<thead>
 						<tr>
@@ -254,11 +261,9 @@
 							<tr><td colspan="8" class="empty-row">No subjects yet.</td></tr>
 						{:else}
 							{#each rows as row}
-								<tr>
-									<td>
-										<button class="expand-btn" onclick={() => toggleRow(row.id)} aria-label="Toggle details">
-											{expandedSubjectId === row.id ? '▾' : '▸'}
-										</button>
+							<tr class="expandable-row" onclick={() => toggleRow(row.id)} role="button" tabindex="0" onkeydown={(e) => (e.key === 'Enter' || e.key === ' ') && toggleRow(row.id)}>
+								<td>
+									<span class="expand-indicator">{expandedSubjectId === row.id ? '▾' : '▸'}</span>
 									</td>
 									<td><span class="code-chip">{row.code}</span></td>
 									<td class="name-cell">{row.name}</td>
@@ -319,6 +324,56 @@
 					</tbody>
 				</table>
 			</div>
+
+			<div class="stats-mobile-list mobile-only">
+				{#if rows.length === 0}
+					<div class="mobile-card empty-row">No subjects yet.</div>
+				{:else}
+					{#each rows as row}
+						<div class="mobile-card">
+							<div class="mobile-card-head">
+								<div class="name-header">
+									<span class="code-chip">{row.code}</span>
+									<span class="name-cell">{row.name}</span>
+								</div>
+								<button class="table-btn" onclick={() => toggleRow(row.id)}>{expandedSubjectId === row.id ? 'Hide Topics' : 'Show Topics'}</button>
+							</div>
+							<div class="mobile-metrics">
+								<span>Questions <strong>{row.total}</strong></span>
+								<span class="amber-text">Pending <strong>{row.pending}</strong></span>
+								<span class="green-text">Approved <strong>{row.approved}</strong></span>
+								<span class="red-text">Rejected <strong>{row.rejected}</strong></span>
+								<span>Vetted <strong>{row.vettedPct}%</strong></span>
+							</div>
+
+							{#if expandedSubjectId === row.id}
+								{#if loadingTopicRowsForSubject === row.id}
+									<div class="topic-substate">Loading topics...</div>
+								{:else if topicRowsError}
+									<div class="topic-substate error">{topicRowsError}</div>
+								{:else if (topicRowsBySubject[row.id] || []).length === 0}
+									<div class="topic-substate">No topics found.</div>
+								{:else}
+									<div class="mobile-topic-list">
+										{#each topicRowsBySubject[row.id] || [] as topicRow}
+											<div class="mobile-topic-card">
+												<strong>{topicRow.name}</strong>
+												<div class="mobile-metrics">
+													<span>G <strong>{topicRow.generated}</strong></span>
+													<span class="amber-text">P <strong>{topicRow.pending}</strong></span>
+													<span class="green-text">A <strong>{topicRow.approved}</strong></span>
+													<span class="red-text">R <strong>{topicRow.rejected}</strong></span>
+													<span>Vetted <strong>{topicRow.vettedPct}%</strong></span>
+												</div>
+											</div>
+										{/each}
+									</div>
+								{/if}
+							{/if}
+						</div>
+					{/each}
+				{/if}
+			</div>
 		</section>
 	{/if}
 </div>
@@ -351,6 +406,33 @@
 		color: var(--theme-text-primary);
 	}
 
+	.hero-head {
+		display: flex;
+		align-items: center;
+		gap: 0.8rem;
+	}
+
+	.back-btn {
+		width: 44px;
+		height: 44px;
+		border-radius: 999px;
+		border: 1px solid rgba(var(--theme-primary-rgb), 0.3);
+		background: rgba(var(--theme-primary-rgb), 0.1);
+		color: var(--theme-primary);
+		font-size: 1.4rem;
+		cursor: pointer;
+		display: flex;
+		align-items: center;
+		justify-content: center;
+		flex-shrink: 0;
+		transition: background 0.15s ease, border-color 0.15s ease;
+	}
+
+	.back-btn:hover {
+		background: rgba(var(--theme-primary-rgb), 0.16);
+		border-color: rgba(var(--theme-primary-rgb), 0.45);
+	}
+
 	.subtitle {
 		margin: 0.5rem 0 0;
 		color: var(--theme-text-secondary);
@@ -358,7 +440,7 @@
 
 	.stats-row {
 		display: grid;
-		grid-template-columns: repeat(5, minmax(0, 1fr));
+		grid-template-columns: repeat(4, minmax(0, 1fr));
 		gap: 0.75rem;
 	}
 
@@ -467,6 +549,75 @@
 		min-height: 0;
 	}
 
+	.desktop-only {
+		display: block !important;
+	}
+
+	.mobile-only {
+		display: none !important;
+	}
+
+	.stats-mobile-list {
+		display: grid;
+		gap: 0.75rem;
+		margin-top: 0.75rem;
+	}
+
+	.mobile-card {
+		border: 1px solid rgba(148, 163, 184, 0.24);
+		border-radius: 0.85rem;
+		padding: 0.75rem;
+		display: flex;
+		flex-direction: column;
+		gap: 0.55rem;
+		background: color-mix(in srgb, var(--theme-glass-bg) 92%, transparent);
+	}
+
+	.mobile-card-head {
+		display: flex;
+		justify-content: space-between;
+		align-items: center;
+		gap: 0.5rem;
+	}
+
+	.mobile-metrics {
+		display: grid;
+		grid-template-columns: repeat(2, minmax(0, 1fr));
+		gap: 0.28rem 0.7rem;
+		font-size: 0.82rem;
+		color: var(--theme-text-muted);
+	}
+
+	.mobile-metrics strong {
+		color: var(--theme-text-primary);
+	}
+
+	.mobile-topic-list {
+		display: grid;
+		gap: 0.45rem;
+	}
+
+	.mobile-topic-card {
+		border: 1px solid rgba(148, 163, 184, 0.22);
+		border-radius: 0.7rem;
+		padding: 0.58rem;
+		display: flex;
+		flex-direction: column;
+		gap: 0.35rem;
+	}
+
+	.table-btn {
+		padding: 0.36rem 0.64rem;
+		border-radius: 999px;
+		border: 1px solid rgba(var(--theme-primary-rgb), 0.35);
+		background: rgba(var(--theme-primary-rgb), 0.1);
+		color: var(--theme-primary);
+		font: inherit;
+		font-size: 0.76rem;
+		font-weight: 700;
+		cursor: pointer;
+	}
+
 	table {
 		width: 100%;
 		border-collapse: collapse;
@@ -534,12 +685,22 @@
 		color: var(--theme-text-primary);
 	}
 
-	.expand-btn {
-		border: none;
-		background: transparent;
+	.expandable-row {
+		cursor: pointer;
+		transition: background 0.15s ease;
+	}
+
+	.expandable-row:hover {
+		background: rgba(var(--theme-primary-rgb), 0.08);
+	}
+
+	.expand-indicator {
+		display: inline-flex;
+		align-items: center;
+		justify-content: center;
 		color: var(--theme-text-muted);
 		font-size: 1rem;
-		cursor: pointer;
+		user-select: none;
 	}
 
 	.expanded-row td {
@@ -655,6 +816,14 @@
 	}
 
 	@media (max-width: 920px) {
+		.desktop-only {
+			display: none !important;
+		}
+
+		.mobile-only {
+			display: grid !important;
+		}
+
 		.page {
 			height: auto;
 			overflow: visible;

@@ -159,7 +159,7 @@
 			<p>Loading subjects...</p>
 		</div>
 	{:else}
-		<div class="table-shell glass-panel animate-fade-in">
+		<div class="table-shell glass-panel animate-fade-in desktop-only">
 			<table class="subjects-table">
 				<colgroup>
 					<col class="name-col" />
@@ -231,6 +231,43 @@
 					{/if}
 				</tbody>
 			</table>
+		</div>
+
+		<div class="subjects-mobile-list mobile-only animate-fade-in">
+			{#if addingRow}
+				<div class="subject-mobile-card glass-panel">
+					<div class="inline-inputs">
+						<input class="cell-input code-input" bind:value={draftCode} placeholder="SUB101" maxlength="24" />
+						<input class="cell-input" bind:value={draftName} placeholder="Subject Name" maxlength="120" />
+					</div>
+					<div class="inline-actions">
+						<button class="table-btn primary" onclick={saveAddRow} disabled={saving}>{saving ? 'Saving...' : 'Save'}</button>
+						<button class="table-btn" onclick={cancelAddRow} disabled={saving}>Cancel</button>
+					</div>
+				</div>
+			{/if}
+
+			{#if filteredSubjects.length === 0}
+				<div class="subject-mobile-card glass-panel empty-cell">No subjects matched your search.</div>
+			{:else}
+				{#each filteredSubjects as subject}
+					<button class="subject-mobile-card glass-panel" onclick={() => openSubject(subject.id)}>
+						<div class="name-header">
+							<span class="code-chip">{subject.code}</span>
+							<strong>{subject.name}</strong>
+						</div>
+						{#if subject.description}
+							<span class="description">{subject.description}</span>
+						{/if}
+						<div class="mobile-metrics">
+							<span>Questions <strong>{subject.total_questions}</strong></span>
+							<span>Pending <strong>{subject.total_pending ?? 0}</strong></span>
+							<span class="green-text">Approved <strong>{subject.total_approved ?? 0}</strong></span>
+							<span class="red-text">Rejected <strong>{subject.total_rejected ?? 0}</strong></span>
+						</div>
+					</button>
+				{/each}
+			{/if}
 		</div>
 	{/if}
 </div>
@@ -346,6 +383,47 @@
 	.table-shell {
 		border-radius: 1rem;
 		overflow: hidden;
+	}
+
+	.desktop-only {
+		display: block !important;
+	}
+
+	.mobile-only {
+		display: none !important;
+	}
+
+	.subjects-mobile-list {
+		display: grid;
+		gap: 0.75rem;
+	}
+
+	.subject-mobile-card {
+		border: 1px solid var(--theme-glass-border);
+		border-radius: 0.95rem;
+		padding: 0.8rem;
+		display: flex;
+		flex-direction: column;
+		gap: 0.55rem;
+		text-align: left;
+		color: var(--theme-text-primary);
+	}
+
+	button.subject-mobile-card {
+		cursor: pointer;
+		background: transparent;
+	}
+
+	.mobile-metrics {
+		display: grid;
+		grid-template-columns: repeat(2, minmax(0, 1fr));
+		gap: 0.35rem 0.8rem;
+		font-size: 0.82rem;
+		color: var(--theme-text-muted);
+	}
+
+	.mobile-metrics strong {
+		color: var(--theme-text-primary);
 	}
 
 	.subjects-table {
@@ -555,6 +633,14 @@
 	}
 
 	@media (max-width: 920px) {
+		.desktop-only {
+			display: none !important;
+		}
+
+		.mobile-only {
+			display: grid !important;
+		}
+
 		.page {
 			padding: 0.9rem 0.95rem 1.25rem;
 			gap: 0.8rem;

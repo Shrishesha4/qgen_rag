@@ -133,7 +133,7 @@
 			<p>No vetters matched your search.</p>
 		</div>
 	{:else}
-		<div class="table-wrap glass-panel animate-fade-in">
+		<div class="table-wrap glass-panel animate-fade-in desktop-only">
 			<table class="data-table">
 				<thead>
 					<tr>
@@ -169,6 +169,27 @@
 					{/each}
 				</tbody>
 			</table>
+		</div>
+
+		<div class="vetter-mobile-list mobile-only animate-fade-in">
+			{#each vetterRows as row}
+				<div class="mobile-card glass-panel">
+					<div class="user-cell">
+						<span class="user-name">{row.vetter.full_name || row.vetter.username}</span>
+						<span class="user-email">{row.vetter.email}</span>
+					</div>
+					<div class="mobile-metrics">
+						<span>Total <strong>{row.vetter.total_vetted}</strong></span>
+						<span class="green-text">Approved <strong>{row.vetter.total_approved}</strong></span>
+						<span class="red-text">Rejected <strong>{row.vetter.total_rejected}</strong></span>
+						<span>Approval <strong>{row.approvalRate}%</strong></span>
+						<span>Rejection <strong>{row.rejectionRate}%</strong></span>
+						<span>Share <strong>{row.platformShare}%</strong></span>
+						<span>Subjects <strong>{row.userRecord?.subjects_count ?? 0}</strong></span>
+						<span>Topics <strong>{row.userRecord?.topics_count ?? 0}</strong></span>
+					</div>
+				</div>
+			{/each}
 		</div>
 	{/if}
 </div>
@@ -272,6 +293,40 @@
 		border-radius: 1rem;
 	}
 
+	.desktop-only {
+		display: block !important;
+	}
+
+	.mobile-only {
+		display: none !important;
+	}
+
+	.vetter-mobile-list {
+		display: grid;
+		gap: 0.75rem;
+	}
+
+	.mobile-card {
+		padding: 0.8rem;
+		border: 1px solid var(--theme-glass-border);
+		border-radius: 0.9rem;
+		display: flex;
+		flex-direction: column;
+		gap: 0.55rem;
+	}
+
+	.mobile-metrics {
+		display: grid;
+		grid-template-columns: repeat(2, minmax(0, 1fr));
+		gap: 0.28rem 0.7rem;
+		font-size: 0.82rem;
+		color: var(--theme-text-muted);
+	}
+
+	.mobile-metrics strong {
+		color: var(--theme-text-primary);
+	}
+
 	.data-table {
 		width: 100%;
 		border-collapse: collapse;
@@ -344,6 +399,14 @@
 	}
 
 	@media (max-width: 640px) {
+		.desktop-only {
+			display: none !important;
+		}
+
+		.mobile-only {
+			display: grid !important;
+		}
+
 		.page {
 			padding: 1.25rem 0.95rem 1.8rem;
 		}
