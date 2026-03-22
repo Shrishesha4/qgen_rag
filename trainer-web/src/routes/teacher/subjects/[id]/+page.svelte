@@ -3,6 +3,7 @@
 	import { goto } from '$app/navigation';
 	import { page } from '$app/stores';
 	import { session } from '$lib/session';
+	import { apiUrl, getStoredSession } from '$lib/api/client';
 	import {
 		createTopic,
 		deleteSubject,
@@ -54,6 +55,9 @@
 	let addTopicSyllabus = $state('');
 	let addTopicBookPdf = $state<File | null>(null);
 	let addTopicQuestionPdf = $state<File | null>(null);
+	let addTopicUploadProgress = $state<Record<string, number>>({});
+	let addTopicUploadProgressDetail = $state<Record<string, string>>({});
+	let addTopicUploadingFiles = $state<Record<string, boolean>>({});
 
 	let showEditTopicModal = $state(false);
 	let editingTopic = $state(false);
@@ -418,12 +422,114 @@
 		addTopicSyllabus = '';
 		addTopicBookPdf = null;
 		addTopicQuestionPdf = null;
+		addTopicUploadProgress = {};
+		addTopicUploadProgressDetail = {};
+		addTopicUploadingFiles = {};
 		showAddTopicModal = true;
 	}
 
 	function closeAddTopicModal() {
-		if (addingTopic) return;
+		if (addingTopic || Object.keys(addTopicUploadingFiles).length > 0) return;
 		showAddTopicModal = false;
+	}
+
+	async function uploadWithProgress(file: File, subjectId: string, indexType: string, topicId: string, progressKey: string): Promise<void> {
+		return new Promise((resolve, reject) => {
+			const xhr = new XMLHttpRequest();
+			const form = new FormData();
+			form.append('file', file);
+			form.append('subject_id', subjectId);
+			form.append('index_type', indexType);
+			form.append('topic_id', topicId);
+
+			// Track if upload portion is complete
+			let uploadComplete = false;
+
+			xhr.upload.addEventListener('progress', (e) => {
+				if (e.lengthComputable) {
+					// Upload progress is 0-50% of total progress
+					const uploadPercent = Math.round((e.loaded / e.total) * 50);
+					addTopicUploadProgress = { ...addTopicUploadProgress, [progressKey]: uploadPercent };
+					addTopicUploadProgressDetail = { ...addTopicUploadProgressDetail, [progressKey]: 'Uploading file...' };
+				}
+			});
+
+			xhr.addEventListener('load', async () => {
+				if (xhr.status >= 200 && xhr.status < 300) {
+					uploadComplete = true;
+					const response = JSON.parse(xhr.responseText);
+					const documentId = response.document_id;
+
+					if (documentId) {
+						// Start polling backend for processing status
+						let processingDone = false;
+						const pollInterval = setInterval(async () => {
+							if (processingDone) {
+								clearInterval(pollInterval);
+								return;
+							}
+
+							try {
+								const status = await getDocumentStatus(documentId);
+								// Overall progress: upload 50% + processing 50%
+								const processingProgress = (status.processing_progress ?? 0);
+								const overallProgress = 50 + Math.round(processingProgress * 0.5);
+								addTopicUploadProgress = { ...addTopicUploadProgress, [progressKey]: overallProgress };
+								addTopicUploadProgressDetail = { ...addTopicUploadProgressDetail, [progressKey]: status.processing_detail || status.processing_step || 'Processing...' };
+
+								// Check if processing is complete
+								if (status.status === 'completed') {
+									processingDone = true;
+									addTopicUploadProgress = { ...addTopicUploadProgress, [progressKey]: 100 };
+									addTopicUploadProgressDetail = { ...addTopicUploadProgressDetail, [progressKey]: 'Completed' };
+									clearInterval(pollInterval);
+									const next = { ...addTopicUploadingFiles };
+									delete next[progressKey];
+									addTopicUploadingFiles = next;
+									resolve();
+								}
+							} catch (e) {
+								// Polling failed, but upload succeeded - still resolve
+								if (!processingDone) {
+									processingDone = true;
+									clearInterval(pollInterval);
+									const next = { ...addTopicUploadingFiles };
+									delete next[progressKey];
+									addTopicUploadingFiles = next;
+									resolve();
+								}
+							}
+						}, 1000); // Poll every 1 second
+					} else {
+						const next = { ...addTopicUploadingFiles };
+						delete next[progressKey];
+						addTopicUploadingFiles = next;
+						resolve();
+					}
+				} else {
+					const next = { ...addTopicUploadingFiles };
+					delete next[progressKey];
+					addTopicUploadingFiles = next;
+					reject(new Error(`Upload failed with status ${xhr.status}`));
+				}
+			});
+
+			xhr.addEventListener('error', () => {
+				const next = { ...addTopicUploadingFiles };
+				delete next[progressKey];
+				addTopicUploadingFiles = next;
+				reject(new Error('Upload error'));
+			});
+
+			xhr.open('POST', apiUrl('/documents/reference/upload'));
+			// Add authorization header
+			const storedSession = getStoredSession();
+			if (storedSession?.access_token) {
+				xhr.setRequestHeader('Authorization', `Bearer ${storedSession.access_token}`);
+			}
+			
+			xhr.send(form);
+		});
 	}
 
 	async function submitAddTopic() {
@@ -441,10 +547,18 @@
 
 			const uploadTasks: Promise<unknown>[] = [];
 			if (addTopicBookPdf) {
-				uploadTasks.push(uploadDocument(addTopicBookPdf, subjectId, 'reference_book', createdTopic.id));
+				const bookKey = 'book_pdf';
+				addTopicUploadingFiles = { ...addTopicUploadingFiles, [bookKey]: true };
+				uploadTasks.push(
+					uploadWithProgress(addTopicBookPdf, subjectId, 'reference_book', createdTopic.id, bookKey)
+				);
 			}
 			if (addTopicQuestionPdf) {
-				uploadTasks.push(uploadDocument(addTopicQuestionPdf, subjectId, 'reference_questions', createdTopic.id));
+				const questionKey = 'question_pdf';
+				addTopicUploadingFiles = { ...addTopicUploadingFiles, [questionKey]: true };
+				uploadTasks.push(
+					uploadWithProgress(addTopicQuestionPdf, subjectId, 'reference_questions', createdTopic.id, questionKey)
+				);
 			}
 			if (uploadTasks.length > 0) {
 				await Promise.all(uploadTasks);
@@ -463,6 +577,7 @@
 			}
 		} finally {
 			addingTopic = false;
+			addTopicUploadingFiles = {};
 		}
 	}
 
@@ -585,10 +700,133 @@
 		const file = input.files?.[0];
 		if (!file || !subjectId || !editTopicId || referenceUploading) return;
 
+		const progressKey = `edit_${indexType}`;
 		referenceUploading = true;
 		referenceError = '';
+
 		try {
-			await uploadDocument(file, subjectId, indexType, editTopicId);
+			await new Promise<void>((resolve, reject) => {
+				const xhr = new XMLHttpRequest();
+				const form = new FormData();
+				form.append('file', file);
+				form.append('subject_id', subjectId);
+				form.append('index_type', indexType);
+				form.append('topic_id', editTopicId);
+
+				xhr.upload.addEventListener('progress', (e) => {
+					if (e.lengthComputable) {
+						// Upload progress is 0-50% of total
+						const uploadPercent = Math.round((e.loaded / e.total) * 50);
+						referenceProgressByDoc = { ...referenceProgressByDoc, [progressKey]: uploadPercent };
+						referenceProgressDetailByDoc = { ...referenceProgressDetailByDoc, [progressKey]: 'Uploading file...' };
+					}
+				});
+
+				xhr.addEventListener('load', async () => {
+					if (xhr.status >= 200 && xhr.status < 300) {
+						const response = JSON.parse(xhr.responseText);
+						const documentId = response.document_id;
+
+						if (documentId) {
+							// Start polling for processing status
+							let processingDone = false;
+							const pollInterval = setInterval(async () => {
+								if (processingDone) {
+									clearInterval(pollInterval);
+									return;
+								}
+
+								try {
+									const status = await getDocumentStatus(documentId);
+									// Overall progress: upload 50% + processing 50%
+								const processingProgress = (status.processing_progress ?? 0);
+
+									// Show detailed status from backend
+									const detailText = status.processing_detail || status.processing_step || 'Processing...';
+									referenceProgressDetailByDoc = { ...referenceProgressDetailByDoc, [progressKey]: detailText };
+
+									if (status.status === 'completed') {
+										processingDone = true;
+										referenceProgressByDoc = { ...referenceProgressByDoc, [progressKey]: 100 };
+										referenceProgressDetailByDoc = { ...referenceProgressDetailByDoc, [progressKey]: 'Completed' };
+										clearInterval(pollInterval);
+										const nextProgress = { ...referenceProgressByDoc };
+										delete nextProgress[progressKey];
+										referenceProgressByDoc = nextProgress;
+										const nextDetail = { ...referenceProgressDetailByDoc };
+										delete nextDetail[progressKey];
+										referenceProgressDetailByDoc = nextDetail;
+										resolve();
+									} else if (status.status === 'failed') {
+										processingDone = true;
+										clearInterval(pollInterval);
+										const error = status.error || 'Processing failed';
+										const nextProgress = { ...referenceProgressByDoc };
+										delete nextProgress[progressKey];
+										referenceProgressByDoc = nextProgress;
+										const nextDetail = { ...referenceProgressDetailByDoc };
+										delete nextDetail[progressKey];
+										referenceProgressDetailByDoc = nextDetail;
+										reject(new Error(error));
+									}
+								} catch (e) {
+									// Polling failed but upload succeeded - still resolve
+									if (!processingDone) {
+										processingDone = true;
+										clearInterval(pollInterval);
+										const nextProgress = { ...referenceProgressByDoc };
+										delete nextProgress[progressKey];
+										referenceProgressByDoc = nextProgress;
+										const nextDetail = { ...referenceProgressDetailByDoc };
+										delete nextDetail[progressKey];
+										referenceProgressDetailByDoc = nextDetail;
+										resolve();
+									}
+								}
+							}, 1000); // Poll every 1 second
+						} else {
+							setTimeout(() => {
+								const nextProgress = { ...referenceProgressByDoc };
+								delete nextProgress[progressKey];
+								referenceProgressByDoc = nextProgress;
+								const nextDetail = { ...referenceProgressDetailByDoc };
+								delete nextDetail[progressKey];
+								referenceProgressDetailByDoc = nextDetail;
+							}, 800);
+							resolve();
+						}
+					} else {
+						const nextProgress = { ...referenceProgressByDoc };
+						delete nextProgress[progressKey];
+						referenceProgressByDoc = nextProgress;
+						const nextDetail = { ...referenceProgressDetailByDoc };
+						delete nextDetail[progressKey];
+						referenceProgressDetailByDoc = nextDetail;
+						reject(new Error(`Upload failed with status ${xhr.status}`));
+					}
+				});
+
+				xhr.addEventListener('error', () => {
+					const nextProgress = { ...referenceProgressByDoc };
+					delete nextProgress[progressKey];
+					referenceProgressByDoc = nextProgress;
+					const nextDetail = { ...referenceProgressDetailByDoc };
+					delete nextDetail[progressKey];
+					referenceProgressDetailByDoc = nextDetail;
+					reject(new Error('Upload error'));
+				});
+
+				xhr.open('POST', apiUrl('/documents/reference/upload'));
+				
+				// Add authorization header
+				const storedSession = getStoredSession();
+				if (storedSession?.access_token) {
+					xhr.setRequestHeader('Authorization', `Bearer ${storedSession.access_token}`);
+				}
+				
+				xhr.send(form);
+			});
+
 			await loadReferenceMaterials();
 			await loadSubject();
 		} catch (e: unknown) {
@@ -853,11 +1091,23 @@
 						class="file-input"
 						type="file"
 						accept=".pdf,application/pdf"
+						disabled={addTopicUploadingFiles['book_pdf']}
 						onchange={(e) => {
 							const target = e.currentTarget as HTMLInputElement;
 							addTopicBookPdf = target.files?.[0] ?? null;
 						}}
 					/>
+					{#if addTopicUploadingFiles['book_pdf']}
+						<div class="upload-progress">
+							<div class="progress-bar-track">
+								<div class="progress-bar-fill" style={`width: ${addTopicUploadProgress['book_pdf'] ?? 0}%`}></div>
+							</div>
+							<span class="progress-text">{addTopicUploadProgress['book_pdf'] ?? 0}%</span>
+							{#if addTopicUploadProgressDetail['book_pdf']}
+								<div class="progress-detail">{addTopicUploadProgressDetail['book_pdf']}</div>
+							{/if}
+						</div>
+					{/if}
 				</div>
 				<div class="file-input-group">
 					<label class="file-label" for="questionPdf">Question PDF (optional)</label>
@@ -866,11 +1116,23 @@
 						class="file-input"
 						type="file"
 						accept=".pdf,application/pdf"
+						disabled={addTopicUploadingFiles['question_pdf']}
 						onchange={(e) => {
 							const target = e.currentTarget as HTMLInputElement;
 							addTopicQuestionPdf = target.files?.[0] ?? null;
 						}}
 					/>
+					{#if addTopicUploadingFiles['question_pdf']}
+						<div class="upload-progress">
+							<div class="progress-bar-track">
+								<div class="progress-bar-fill" style={`width: ${addTopicUploadProgress['question_pdf'] ?? 0}%`}></div>
+							</div>
+							<span class="progress-text">{addTopicUploadProgress['question_pdf'] ?? 0}%</span>
+							{#if addTopicUploadProgressDetail['question_pdf']}
+								<div class="progress-detail">{addTopicUploadProgressDetail['question_pdf']}</div>
+							{/if}
+						</div>
+					{/if}
 				</div>
 			</div>
 			<div class="modal-actions">
@@ -914,6 +1176,17 @@
 							oninput={(e) => uploadTopicPdf(e, pdfUploadType)}
 							disabled={referenceUploading}
 						/>
+						{#if referenceProgressByDoc[`edit_${pdfUploadType}`] !== undefined}
+							<div class="upload-progress">
+								<div class="progress-bar-track">
+									<div class="progress-bar-fill" style={`width: ${referenceProgressByDoc[`edit_${pdfUploadType}`] ?? 0}%`}></div>
+								</div>
+								<span class="progress-text">{referenceProgressByDoc[`edit_${pdfUploadType}`] ?? 0}%</span>
+								{#if referenceProgressDetailByDoc[`edit_${pdfUploadType}`]}
+									<div class="progress-detail">{referenceProgressDetailByDoc[`edit_${pdfUploadType}`]}</div>
+								{/if}
+							</div>
+						{/if}
 					</div>
 					<div class="doc-list topic-doc-list">
 						{#if editTopicReferenceDocs.length}
@@ -951,6 +1224,17 @@
 							oninput={(e) => uploadTopicPdf(e, 'reference_questions')}
 							disabled={referenceUploading}
 						/>
+						{#if referenceProgressByDoc['edit_reference_questions'] !== undefined}
+							<div class="upload-progress">
+								<div class="progress-bar-track">
+									<div class="progress-bar-fill" style={`width: ${referenceProgressByDoc['edit_reference_questions'] ?? 0}%`}></div>
+								</div>
+								<span class="progress-text">{referenceProgressByDoc['edit_reference_questions'] ?? 0}%</span>
+								{#if referenceProgressDetailByDoc['edit_reference_questions']}
+									<div class="progress-detail">{referenceProgressDetailByDoc['edit_reference_questions']}</div>
+								{/if}
+							</div>
+						{/if}
 					</div>
 					<div class="doc-list topic-doc-list">
 						{#if editTopicQuestionDocs.length}
@@ -1470,6 +1754,43 @@
 		color: var(--theme-text-primary);
 		font: inherit;
 		box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.28);
+	}
+
+	.upload-progress {
+		display: flex;
+		align-items: center;
+		gap: 0.55rem;
+		margin-top: 0.3rem;
+	}
+
+	.progress-bar-track {
+		flex: 1;
+		height: 6px;
+		border-radius: 999px;
+		overflow: hidden;
+		background: rgba(var(--theme-primary-rgb), 0.2);
+	}
+
+	.progress-bar-fill {
+		height: 100%;
+		background: linear-gradient(90deg, var(--theme-primary), var(--theme-primary-hover));
+		transition: width 0.2s ease;
+	}
+
+	.progress-text {
+		font-size: 0.75rem;
+		font-weight: 700;
+		color: var(--theme-text-secondary);
+		min-width: 30px;
+		text-align: right;
+	}
+
+	.progress-detail {
+		width: 100%;
+		font-size: 0.7rem;
+		color: var(--theme-text-secondary);
+		margin-top: 0.3rem;
+		font-style: italic;
 	}
 
 	.modal-actions {

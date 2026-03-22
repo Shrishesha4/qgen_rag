@@ -145,10 +145,10 @@ body::-webkit-scrollbar,
 body {
   margin: 0;
   font-family:
-    'SF Pro Text',
-    'Helvetica Neue',
     Helvetica,
+    'Helvetica Neue',
     Arial,
+    'SF Pro Text',
     'Inter',
     system-ui,
     -apple-system,
