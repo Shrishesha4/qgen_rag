@@ -93,28 +93,30 @@
 
 <style>
 	.step-card {
-		background: rgba(255, 255, 255, 0.03);
-		border: 1px solid rgba(255, 255, 255, 0.1);
+		background: linear-gradient(145deg, rgba(255, 255, 255, 0.78), rgba(255, 255, 255, 0.62));
+		border: 1px solid rgba(255, 255, 255, 0.45);
 		border-radius: 1rem;
 		padding: 1.5rem;
 		margin-bottom: 1.5rem;
 		transition: all 0.3s ease;
 		backdrop-filter: blur(10px);
+		-webkit-backdrop-filter: blur(10px);
+		box-shadow: 0 8px 24px rgba(10, 17, 29, 0.12);
 	}
 
 	.step-card.active {
-		background: rgba(59, 130, 246, 0.1);
-		border-color: rgba(59, 130, 246, 0.3);
-		box-shadow: 0 0 20px rgba(59, 130, 246, 0.2);
+		background: linear-gradient(145deg, rgba(var(--theme-primary-rgb), 0.2), rgba(255, 255, 255, 0.72));
+		border-color: rgba(var(--theme-primary-rgb), 0.35);
+		box-shadow: 0 12px 28px rgba(var(--theme-primary-rgb), 0.2);
 	}
 
 	.step-card.completed {
-		background: rgba(16, 185, 129, 0.05);
-		border-color: rgba(16, 185, 129, 0.2);
+		background: linear-gradient(145deg, rgba(16, 185, 129, 0.15), rgba(255, 255, 255, 0.7));
+		border-color: rgba(16, 185, 129, 0.32);
 	}
 
 	.step-card.error {
-		background: rgba(239, 68, 68, 0.1);
+		background: linear-gradient(145deg, rgba(239, 68, 68, 0.16), rgba(255, 255, 255, 0.72));
 		border-color: rgba(239, 68, 68, 0.3);
 	}
 
@@ -148,14 +150,14 @@
 		margin: 0 0 0.5rem 0;
 		font-size: 1.1rem;
 		font-weight: 600;
-		color: rgba(255, 255, 255, 0.95);
+		color: var(--theme-text-primary, #1a1a2e);
 		line-height: 1.3;
 	}
 
 	.step-description {
 		margin: 0;
 		font-size: 0.9rem;
-		color: rgba(255, 255, 255, 0.7);
+		color: var(--theme-text-secondary, rgba(0, 0, 0, 0.58));
 		line-height: 1.4;
 	}
 
@@ -192,8 +194,8 @@
 	}
 
 	.status-badge.waiting {
-		background: rgba(107, 114, 128, 0.2);
-		color: #9ca3af;
+		background: rgba(107, 114, 128, 0.14);
+		color: #4b5563;
 		border: 1px solid rgba(107, 114, 128, 0.3);
 	}
 
@@ -205,18 +207,18 @@
 		display: flex;
 		justify-content: flex-end;
 		padding-top: 1rem;
-		border-top: 1px solid rgba(255, 255, 255, 0.1);
+		border-top: 1px solid rgba(18, 28, 45, 0.12);
 	}
 
 	.action-btn {
 		display: flex;
 		align-items: center;
 		gap: 0.5rem;
-		padding: 0.75rem 1.5rem;
-		border-radius: 0.5rem;
-		border: 1px solid rgba(255, 255, 255, 0.2);
+		padding: 0.72rem 1.4rem;
+		border-radius: 0.65rem;
+		border: 1px solid transparent;
 		font-size: 0.9rem;
-		font-weight: 600;
+		font-weight: 700;
 		cursor: pointer;
 		transition: all 0.3s ease;
 		min-width: 140px;
@@ -224,27 +226,29 @@
 	}
 
 	.action-btn.primary {
-		background: linear-gradient(135deg, rgba(59, 130, 246, 0.5), rgba(59, 130, 246, 0.3));
+		background: linear-gradient(180deg, rgba(var(--theme-primary-rgb), 0.94), rgba(var(--theme-primary-rgb), 0.76));
 		color: white;
-		border-color: rgba(59, 130, 246, 0.5);
+		border-color: rgba(var(--theme-primary-rgb), 0.6);
+		box-shadow: 0 8px 18px rgba(var(--theme-primary-rgb), 0.3);
 	}
 
 	.action-btn.primary:hover:not(:disabled) {
-		background: linear-gradient(135deg, rgba(59, 130, 246, 0.6), rgba(59, 130, 246, 0.4));
+		filter: brightness(1.06);
 		transform: translateY(-1px);
-		box-shadow: 0 4px 12px rgba(59, 130, 246, 0.3);
+		box-shadow: 0 10px 22px rgba(var(--theme-primary-rgb), 0.32);
 	}
 
 	.action-btn.danger {
-		background: linear-gradient(135deg, rgba(239, 68, 68, 0.5), rgba(239, 68, 68, 0.3));
+		background: linear-gradient(180deg, rgba(220, 38, 38, 0.92), rgba(153, 27, 27, 0.86));
 		color: white;
-		border-color: rgba(239, 68, 68, 0.5);
+		border-color: rgba(239, 68, 68, 0.55);
+		box-shadow: 0 8px 18px rgba(239, 68, 68, 0.28);
 	}
 
 	.action-btn.danger:hover:not(:disabled) {
-		background: linear-gradient(135deg, rgba(239, 68, 68, 0.6), rgba(239, 68, 68, 0.4));
+		filter: brightness(1.06);
 		transform: translateY(-1px);
-		box-shadow: 0 4px 12px rgba(239, 68, 68, 0.3);
+		box-shadow: 0 10px 22px rgba(239, 68, 68, 0.34);
 	}
 
 	.action-btn:disabled {

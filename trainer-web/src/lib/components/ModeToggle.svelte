@@ -35,33 +35,34 @@
 		display: flex;
 		align-items: center;
 		gap: 0.5rem;
-		padding: 0.5rem 1rem;
+		padding: 0.52rem 1rem;
 		border-radius: 2rem;
-		border: 1px solid rgba(255, 255, 255, 0.2);
-		background: rgba(255, 255, 255, 0.1);
-		color: rgba(255, 255, 255, 0.9);
+		border: 1px solid rgba(255, 255, 255, 0.28);
+		background: linear-gradient(160deg, rgba(51, 65, 85, 0.9), rgba(30, 41, 59, 0.84));
+		color: #f8fafc;
 		font-size: 0.85rem;
-		font-weight: 500;
+		font-weight: 600;
 		cursor: pointer;
 		transition: all 0.3s ease;
-		backdrop-filter: blur(10px);
+		backdrop-filter: blur(12px);
+		box-shadow: 0 8px 20px rgba(9, 15, 27, 0.2);
 	}
 
 	.toggle-btn:hover {
-		background: rgba(255, 255, 255, 0.15);
-		border-color: rgba(255, 255, 255, 0.3);
+		background: linear-gradient(160deg, rgba(71, 85, 105, 0.95), rgba(51, 65, 85, 0.88));
+		border-color: rgba(255, 255, 255, 0.42);
 		transform: translateY(-1px);
 	}
 
 	.toggle-btn.advanced {
-		background: rgba(59, 130, 246, 0.2);
-		border-color: rgba(59, 130, 246, 0.4);
-		color: #93c5fd;
+		background: linear-gradient(160deg, rgba(var(--theme-primary-rgb), 0.95), rgba(var(--theme-primary-rgb), 0.78));
+		border-color: rgba(var(--theme-primary-rgb), 0.95);
+		color: #ffffff;
 	}
 
 	.toggle-btn.advanced:hover {
-		background: rgba(59, 130, 246, 0.3);
-		border-color: rgba(59, 130, 246, 0.6);
+		background: linear-gradient(160deg, rgba(var(--theme-primary-rgb), 1), rgba(var(--theme-primary-rgb), 0.86));
+		border-color: rgba(var(--theme-primary-rgb), 1);
 	}
 
 	.toggle-icon {
@@ -76,13 +77,15 @@
 	}
 
 	@media (max-width: 640px) {
-		.toggle-text {
-			display: none;
+		.toggle-btn {
+			padding: 0.48rem 0.78rem;
+			min-width: auto;
+			font-size: 0.76rem;
+			gap: 0.4rem;
 		}
 
-		.toggle-btn {
-			padding: 0.5rem;
-			min-width: auto;
+		.toggle-text {
+			font-size: 0.72rem;
 		}
 	}
 </style>

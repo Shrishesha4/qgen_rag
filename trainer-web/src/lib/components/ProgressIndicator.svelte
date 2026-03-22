@@ -71,12 +71,17 @@
 <style>
 	.progress-indicator {
 		margin-bottom: 2rem;
+		padding: 0.8rem 0.95rem;
+		border-radius: 1rem;
+		background: linear-gradient(145deg, rgba(255, 255, 255, 0.74), rgba(255, 255, 255, 0.6));
+		border: 1px solid rgba(255, 255, 255, 0.5);
+		box-shadow: 0 8px 24px rgba(9, 14, 26, 0.1);
 	}
 
 	.progress-bar {
 		width: 100%;
 		height: 4px;
-		background: rgba(255, 255, 255, 0.1);
+		background: rgba(31, 41, 55, 0.18);
 		border-radius: 2px;
 		margin-bottom: 1.5rem;
 		overflow: hidden;
@@ -140,7 +145,7 @@
 	.step-name {
 		font-size: 0.75rem;
 		font-weight: 600;
-		color: rgba(255, 255, 255, 0.9);
+		color: var(--theme-text-primary, #1a1a2e);
 		margin-bottom: 0.2rem;
 		line-height: 1.2;
 	}

@@ -206,7 +206,7 @@
 		color: var(--theme-text-muted);
 	}
 
-	.refresh-btn {
+	/* .refresh-btn {
 		padding: 0.85rem 1rem;
 		border-radius: 0.85rem;
 		border: 1px solid rgba(245, 158, 11, 0.3);
@@ -215,7 +215,7 @@
 		font: inherit;
 		font-weight: 700;
 		cursor: pointer;
-	}
+	} */
 
 	.error-banner {
 		padding: 0.9rem 1rem;
@@ -280,23 +280,29 @@
 		gap: 0.75rem;
 	}
 
-	.subject-code,
-	.coverage-chip {
+	.subject-code {
 		font-size: 0.72rem;
 		font-weight: 700;
 		padding: 0.28rem 0.6rem;
 		border-radius: 999px;
 	}
+	/* .subject-code,
+	.coverage-chip {
+		font-size: 0.72rem;
+		font-weight: 700;
+		padding: 0.28rem 0.6rem;
+		border-radius: 999px;
+	} */
 
 	.subject-code {
 		background: rgba(96, 165, 250, 0.16);
 		color: #93c5fd;
 	}
 
-	.coverage-chip {
+	/* .coverage-chip {
 		background: rgba(245, 158, 11, 0.16);
 		color: #fbbf24;
-	}
+	} */
 
 	.subject-name {
 		margin: 0.9rem 0 0.35rem;

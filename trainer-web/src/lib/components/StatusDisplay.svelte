@@ -61,6 +61,16 @@
 			default: return '#6b7280';
 		}
 	}
+
+	function getStatusTone(status: string) {
+		switch (status) {
+			case 'completed': return 'tone-completed';
+			case 'running': return 'tone-running';
+			case 'failed': return 'tone-failed';
+			case 'pending': return 'tone-pending';
+			default: return 'tone-default';
+		}
+	}
 </script>
 
 <div class="status-display">
@@ -99,7 +109,7 @@
 			<div class="status-card">
 				<div class="status-header">
 					<h3>📊 Training Status</h3>
-					<div class="status-indicator" style="color: {getStatusColor((status as any)?.latest_job?.status || 'pending')}">
+					<div class="status-indicator {getStatusTone((status as any)?.latest_job?.status || 'pending')}" style="color: {getStatusColor((status as any)?.latest_job?.status || 'pending')}">
 						{#if (status as any)?.latest_job?.status === 'running'}
 							<div class="pulse-dot"></div>
 						{/if}
@@ -141,7 +151,7 @@
 		align-items: center;
 		gap: 0.5rem;
 		padding: 1rem;
-		color: rgba(255, 255, 255, 0.7);
+		color: var(--theme-text-secondary, rgba(0, 0, 0, 0.62));
 		font-style: italic;
 	}
 
@@ -161,17 +171,17 @@
 	}
 
 	.status-section {
-		background: rgba(0, 0, 0, 0.2);
+		background: linear-gradient(150deg, rgba(12, 21, 36, 0.6), rgba(8, 14, 25, 0.48));
 		border-radius: 0.75rem;
 		padding: 1rem;
-		border: 1px solid rgba(255, 255, 255, 0.1);
+		border: 1px solid rgba(255, 255, 255, 0.2);
 	}
 
 	.status-section h3 {
 		margin: 0 0 0.75rem 0;
 		font-size: 0.9rem;
 		font-weight: 600;
-		color: rgba(255, 255, 255, 0.9);
+		color: rgba(248, 252, 255, 0.96);
 	}
 
 	.json-display {
@@ -182,9 +192,9 @@
 		line-height: 1.3;
 		padding: 0.75rem;
 		border-radius: 0.5rem;
-		background: rgba(0, 0, 0, 0.3);
-		color: rgba(232, 242, 255, 0.9);
-		border: 1px solid rgba(255, 255, 255, 0.1);
+		background: rgba(7, 11, 19, 0.65);
+		color: rgba(236, 244, 255, 0.95);
+		border: 1px solid rgba(255, 255, 255, 0.14);
 	}
 
 	.simple-status {
@@ -194,11 +204,13 @@
 	}
 
 	.status-card, .metrics-card {
-		background: rgba(255, 255, 255, 0.05);
+		background: linear-gradient(140deg, rgba(255, 255, 255, 0.72), rgba(255, 255, 255, 0.58));
 		border-radius: 1rem;
 		padding: 1.25rem;
-		border: 1px solid rgba(255, 255, 255, 0.1);
+		border: 1px solid rgba(255, 255, 255, 0.34);
 		backdrop-filter: blur(10px);
+		-webkit-backdrop-filter: blur(10px);
+		box-shadow: 0 8px 26px rgba(7, 12, 22, 0.1);
 	}
 
 	.status-header {
@@ -212,7 +224,7 @@
 		margin: 0;
 		font-size: 1rem;
 		font-weight: 600;
-		color: rgba(255, 255, 255, 0.95);
+		color: var(--theme-text-primary, #1a1a2e);
 	}
 
 	.status-indicator {
@@ -220,10 +232,31 @@
 		align-items: center;
 		gap: 0.5rem;
 		font-size: 0.85rem;
-		font-weight: 500;
-		padding: 0.25rem 0.75rem;
+		font-weight: 600;
+		padding: 0.34rem 0.75rem;
 		border-radius: 1rem;
-		background: rgba(255, 255, 255, 0.1);
+		border: 1px solid transparent;
+	}
+
+	.status-indicator.tone-completed {
+		background: rgba(16, 185, 129, 0.14);
+		border-color: rgba(16, 185, 129, 0.3);
+	}
+
+	.status-indicator.tone-running {
+		background: rgba(59, 130, 246, 0.14);
+		border-color: rgba(59, 130, 246, 0.3);
+	}
+
+	.status-indicator.tone-failed {
+		background: rgba(239, 68, 68, 0.14);
+		border-color: rgba(239, 68, 68, 0.3);
+	}
+
+	.status-indicator.tone-pending,
+	.status-indicator.tone-default {
+		background: rgba(245, 158, 11, 0.12);
+		border-color: rgba(245, 158, 11, 0.28);
 	}
 
 	.pulse-dot {
@@ -243,7 +276,7 @@
 		margin: 0 0 1rem 0;
 		font-size: 1rem;
 		font-weight: 600;
-		color: rgba(255, 255, 255, 0.95);
+		color: var(--theme-text-primary, #1a1a2e);
 	}
 
 	.metrics-grid {
@@ -255,14 +288,14 @@
 	.metric-item {
 		text-align: center;
 		padding: 0.75rem;
-		background: rgba(255, 255, 255, 0.05);
+		background: rgba(255, 255, 255, 0.48);
 		border-radius: 0.75rem;
-		border: 1px solid rgba(255, 255, 255, 0.1);
+		border: 1px solid rgba(255, 255, 255, 0.5);
 	}
 
 	.metric-label {
 		font-size: 0.75rem;
-		color: rgba(255, 255, 255, 0.7);
+		color: var(--theme-text-secondary, rgba(0, 0, 0, 0.58));
 		margin-bottom: 0.25rem;
 		font-weight: 500;
 	}
@@ -270,7 +303,7 @@
 	.metric-value {
 		font-size: 0.9rem;
 		font-weight: 600;
-		color: rgba(255, 255, 255, 0.95);
+		color: var(--theme-text-primary, #1a1a2e);
 	}
 
 	@media (max-width: 640px) {
