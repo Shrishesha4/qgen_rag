@@ -703,9 +703,9 @@
 				</button>
 				<div class="name-stack">
 					<div class="name-header">
-						{#if depth > 0}
-							<span class="subject-in-group-branch" aria-hidden="true">↳</span>
-						{/if}
+						<!-- {#if depth > 0}
+							<span class="subject-in-group-branch" aria-hidden="true"> </span>
+						{/if} -->
 						<strong>{subject.name}</strong>
 						<span class="code-chip">{subject.code}</span>
 					</div>
@@ -755,7 +755,7 @@
 						<div class="topic-name-stack" style="padding-left: {depth * 1.2 + 1.2}rem">
 							<div class="topic-title-line">
 							<!-- ↳ -->
-								<span class="topic-branch">  </span> 
+								<!-- <span class="topic-branch">  </span>  -->
 								<strong>{topic.name}</strong>
 							</div>
 						</div>
