@@ -3,7 +3,14 @@
 	import { slide } from 'svelte/transition';
 	import { goto } from '$app/navigation';
 	import { session } from '$lib/session';
-	import { getSubject, listSubjects, type SubjectResponse, type TopicResponse } from '$lib/api/subjects';
+	import {
+		getSubject,
+		getSubjectsTree,
+		type SubjectResponse,
+		type SubjectGroupTreeNode,
+		type SubjectTreeResponse,
+		type TopicResponse
+	} from '$lib/api/subjects';
 	import { getBackgroundGenerationStatuses, scheduleBackgroundGeneration } from '$lib/api/documents';
 	import { getQuestionsForVetting } from '$lib/api/vetting';
 	import {
@@ -16,7 +23,9 @@
 	let loading = $state(true);
 	let error = $state('');
 	let latestProgress = $state<TeacherVettingProgressSnapshot | null>(null);
+	let treeData = $state<SubjectTreeResponse | null>(null);
 	let subjects = $state<SubjectResponse[]>([]);
+	let expandedGroups = $state<Set<string>>(new Set());
 	let topicsMap = $state<Record<string, TopicResponse[]>>({});
 	let loadingTopics = $state('');
 	let expandedSubjectId = $state('');
@@ -115,15 +124,27 @@
 	async function loadSubjects() {
 		loading = true;
 		try {
-			const res = await listSubjects(1, 100);
-			subjects = res.subjects;
-			await refreshSubjectGenerationStatuses(res.subjects);
+			const treeRes = await getSubjectsTree();
+			treeData = treeRes;
+			subjects = flattenSubjects(treeRes.groups, treeRes.ungrouped_subjects);
+			expandedGroups = new Set(treeRes.groups.map((group) => group.id));
+			await refreshSubjectGenerationStatuses(subjects);
 			ensureSubjectGenerationPolling();
 		} catch (e: unknown) {
 			error = e instanceof Error ? e.message : 'Failed to load subjects';
 		} finally {
 			loading = false;
 		}
+	}
+
+	function flattenSubjects(groups: SubjectGroupTreeNode[], ungrouped: SubjectResponse[]): SubjectResponse[] {
+		const result: SubjectResponse[] = [...ungrouped];
+		function traverse(group: SubjectGroupTreeNode) {
+			result.push(...group.subjects);
+			group.children.forEach(traverse);
+		}
+		groups.forEach(traverse);
+		return result;
 	}
 
 	async function refreshSubjectGenerationStatuses(subjectList: SubjectResponse[] = subjects) {
@@ -394,8 +415,20 @@
 		});
 	});
 
+	const hasSearchQuery = $derived.by(() => searchQuery.trim().length > 0);
+
 	function isExpanded(subjectId: string): boolean {
 		return expandedSubjectId === subjectId;
+	}
+
+	function toggleGroup(groupId: string) {
+		const next = new Set(expandedGroups);
+		if (next.has(groupId)) {
+			next.delete(groupId);
+		} else {
+			next.add(groupId);
+		}
+		expandedGroups = next;
 	}
 
 	function getSubjectGenerationState(subjectId: string): SubjectGenerationState | null {
@@ -519,107 +552,26 @@
 						</tr>
 					</thead>
 					<tbody>
-						{#if filteredSubjects.length === 0}
+						{#if hasSearchQuery}
+							{#if filteredSubjects.length === 0}
+								<tr>
+									<td colspan="6" class="empty-cell">No matching subjects.</td>
+								</tr>
+							{:else}
+								{#each filteredSubjects as subject}
+									{@render vettingSubjectRow(subject, 0)}
+								{/each}
+							{/if}
+						{:else if !treeData || (treeData.groups.length === 0 && treeData.ungrouped_subjects.length === 0)}
 							<tr>
-								<td colspan="6" class="empty-cell">No matching subjects.</td>
+								<td colspan="6" class="empty-cell">No subjects yet.</td>
 							</tr>
 						{:else}
-							{#each filteredSubjects as subject}
-								<tr class="subject-row" role="button" tabindex="0" onclick={() => toggleSubject(subject.id)} onkeydown={(event) => {
-									if (event.key === 'Enter' || event.key === ' ') {
-										event.preventDefault();
-										void toggleSubject(subject.id);
-									}
-								}}>
-									<td>
-										<div class="row-trigger">
-											<button class="expand-btn" type="button" aria-label="Toggle topics">
-												<span class="chevron" class:open={isExpanded(subject.id)}>▸</span>
-											</button>
-											<div class="name-stack">
-												<div class="name-header">
-													<strong>{subject.name}</strong>
-													<span class="code-chip">{subject.code}</span>
-												</div>
-											</div>
-										</div>
-									</td>
-									<td>{subject.total_questions}</td>
-									<td>{subject.total_pending ?? 0}</td>
-									<td class="green-text">{subject.total_approved ?? 0}</td>
-									<td class="red-text">{subject.total_rejected ?? 0}</td>
-									<td class="action-cell">
-										<div class="inline-actions">
-											<button class="table-btn primary" onclick={(event) => {
-												event.stopPropagation();
-												startSubjectVetting(subject.id);
-											}} disabled={loadingPendingCounts}>
-												Start Vetting
-											</button>
-											{#if progressBySubject[subject.id] && !isProgressComplete(progressBySubject[subject.id])}
-												<button class="table-btn" onclick={(event) => {
-													event.stopPropagation();
-													resumeLastProgress();
-												}}>Resume</button>
-											{/if}
-											{#if getSubjectGenerationState(subject.id)?.in_progress}
-												<span class="status-text">{getSubjectGenerationLabel(subject.id)}</span>
-											{/if}
-										</div>
-									</td>
-								</tr>
-
-								{#if isExpanded(subject.id)}
-									{#if loadingTopics === subject.id}
-											<tr class="topic-row" transition:slide={{ duration: 180 }}>
-												<td colspan="6" class="topic-loading"><span class="spinner-sm"></span> Loading topics...</td>
-										</tr>
-									{:else if (topicsMap[subject.id] || []).length === 0}
-											<tr class="topic-row" transition:slide={{ duration: 180 }}>
-												<td colspan="6" class="empty-cell">No topics found for this subject.</td>
-										</tr>
-									{:else}
-										{#each topicsMap[subject.id] || [] as topic}
-											{@const pendingCount = getTopicPendingCount(topic.id)}
-											{@const generationState = getTopicGenerationState(topic.id)}
-											{@const subjectGenerationState = getSubjectGenerationState(subject.id)}
-											{@const canStart = pendingCount > 0 || topic.total_questions > 0}
-												<tr class="topic-row" transition:slide={{ duration: 180 }}>
-												<td>
-													<div class="topic-name-stack">
-														<div class="topic-title-line">
-															<span class="topic-branch">↳</span>
-															<strong>{topic.name}</strong>
-														</div>
-													</div>
-												</td>
-												<td>{topic.total_questions}</td>
-												<td>{pendingCount}</td>
-												<td class="green-text">{estimateTopicApproved(topic)}</td>
-												<td class="red-text">0</td>
-													<td class="action-cell">
-														<div class="inline-actions">
-															{#if generationState}
-																<button class="table-btn" disabled>{getTopicGenerationLabel(topic.id)}</button>
-															{:else if subjectGenerationState?.in_progress && pendingCount === 0}
-																<button class="table-btn" disabled>{getSubjectGenerationLabel(subject.id)}</button>
-															{:else if canStart}
-																<button class="table-btn primary" onclick={(event) => {
-																	event.stopPropagation();
-																	startTopicVetting(subject.id, topic.id);
-																}}>Start Vetting</button>
-															{:else}
-																<button class="table-btn" onclick={(event) => {
-																	event.stopPropagation();
-																	generateTopicBatch(subject.id, topic.id);
-																}}>Generate</button>
-															{/if}
-														</div>
-													</td>
-											</tr>
-										{/each}
-									{/if}
-								{/if}
+							{#each treeData.groups as group}
+								{@render vettingGroupRow(group, 0)}
+							{/each}
+							{#each treeData.ungrouped_subjects as subject}
+								{@render vettingSubjectRow(subject, 0)}
 							{/each}
 						{/if}
 					</tbody>
@@ -698,6 +650,148 @@
 		</section>
 	{/if}
 </div>
+
+{#snippet vettingGroupRow(group: SubjectGroupTreeNode, depth: number)}
+	<tr class="group-row" role="button" tabindex="0" onclick={() => toggleGroup(group.id)} onkeydown={(event) => {
+		if (event.key === 'Enter' || event.key === ' ') {
+			event.preventDefault();
+			toggleGroup(group.id);
+		}
+	}}>
+		<td>
+			<div class="row-trigger">
+				<button class="expand-btn" type="button" aria-label="Toggle subgroup visibility" onclick={(event) => {
+					event.stopPropagation();
+					toggleGroup(group.id);
+				}}>
+					<span class="chevron" class:open={expandedGroups.has(group.id)}>▸</span>
+				</button>
+				<div class="name-stack" style="padding-left: {depth * 1.2}rem">
+					<div class="name-header">
+						<strong>📁 {group.name}</strong>
+						<span class="code-chip">GROUP</span>
+					</div>
+				</div>
+			</div>
+		</td>
+		<td>{group.total_questions}</td>
+		<td>{group.total_pending}</td>
+		<td class="green-text">{group.total_approved}</td>
+		<td class="red-text">{group.total_rejected}</td>
+		<td class="action-cell">
+			<span class="status-text">⌄</span>
+		</td>
+	</tr>
+	{#if expandedGroups.has(group.id)}
+		{#each group.children as child}
+			{@render vettingGroupRow(child, depth + 1)}
+		{/each}
+		{#each group.subjects as subject}
+			{@render vettingSubjectRow(subject, depth + 1)}
+		{/each}
+	{/if}
+{/snippet}
+
+{#snippet vettingSubjectRow(subject: SubjectResponse, depth: number)}
+	<tr class="subject-row" role="button" tabindex="0" onclick={() => toggleSubject(subject.id)} onkeydown={(event) => {
+		if (event.key === 'Enter' || event.key === ' ') {
+			event.preventDefault();
+			void toggleSubject(subject.id);
+		}
+	}}>
+		<td>
+			<div class="row-trigger">
+				<button class="expand-btn" type="button" aria-label="Toggle topics" onclick={(event) => {
+					event.stopPropagation();
+					void toggleSubject(subject.id);
+				}}>
+					<span class="chevron" class:open={isExpanded(subject.id)}>▸</span>
+				</button>
+				<div class="name-stack" style="padding-left: {depth * 1.2}rem">
+					<div class="name-header">
+						<strong>{subject.name}</strong>
+						<span class="code-chip">{subject.code}</span>
+					</div>
+				</div>
+			</div>
+		</td>
+		<td>{subject.total_questions}</td>
+		<td>{subject.total_pending ?? 0}</td>
+		<td class="green-text">{subject.total_approved ?? 0}</td>
+		<td class="red-text">{subject.total_rejected ?? 0}</td>
+		<td class="action-cell">
+			<div class="inline-actions">
+				<button class="table-btn primary" onclick={(event) => {
+					event.stopPropagation();
+					startSubjectVetting(subject.id);
+				}} disabled={loadingPendingCounts}>
+					Start Vetting
+				</button>
+				{#if progressBySubject[subject.id] && !isProgressComplete(progressBySubject[subject.id])}
+					<button class="table-btn" onclick={(event) => {
+						event.stopPropagation();
+						resumeLastProgress();
+					}}>Resume</button>
+				{/if}
+				{#if getSubjectGenerationState(subject.id)?.in_progress}
+					<span class="status-text">{getSubjectGenerationLabel(subject.id)}</span>
+				{/if}
+			</div>
+		</td>
+	</tr>
+
+	{#if isExpanded(subject.id)}
+		{#if loadingTopics === subject.id}
+			<tr class="topic-row" transition:slide={{ duration: 180 }}>
+				<td colspan="6" class="topic-loading"><span class="spinner-sm"></span> Loading topics...</td>
+			</tr>
+		{:else if (topicsMap[subject.id] || []).length === 0}
+			<tr class="topic-row" transition:slide={{ duration: 180 }}>
+				<td colspan="6" class="empty-cell">No topics found for this subject.</td>
+			</tr>
+		{:else}
+			{#each topicsMap[subject.id] || [] as topic}
+				{@const pendingCount = getTopicPendingCount(topic.id)}
+				{@const generationState = getTopicGenerationState(topic.id)}
+				{@const subjectGenerationState = getSubjectGenerationState(subject.id)}
+				{@const canStart = pendingCount > 0 || topic.total_questions > 0}
+				<tr class="topic-row" transition:slide={{ duration: 180 }}>
+					<td>
+						<div class="topic-name-stack" style="padding-left: {depth * 1.2 + 1.2}rem">
+							<div class="topic-title-line">
+								<span class="topic-branch">↳</span>
+								<strong>{topic.name}</strong>
+							</div>
+						</div>
+					</td>
+					<td>{topic.total_questions}</td>
+					<td>{pendingCount}</td>
+					<td class="green-text">{estimateTopicApproved(topic)}</td>
+					<td class="red-text">0</td>
+					<td class="action-cell">
+						<div class="inline-actions">
+							{#if generationState}
+								<button class="table-btn" disabled>{getTopicGenerationLabel(topic.id)}</button>
+							{:else if subjectGenerationState?.in_progress && pendingCount === 0}
+								<button class="table-btn" disabled>{getSubjectGenerationLabel(subject.id)}</button>
+							{:else if canStart}
+								<button class="table-btn primary" onclick={(event) => {
+									event.stopPropagation();
+									startTopicVetting(subject.id, topic.id);
+								}}>Start Vetting</button>
+							{:else}
+								<button class="table-btn" onclick={(event) => {
+									event.stopPropagation();
+									generateTopicBatch(subject.id, topic.id);
+								}}>Generate</button>
+							{/if}
+						</div>
+					</td>
+				</tr>
+			{/each}
+		{/if}
+	{/if}
+{/snippet}
 
 <style>
 	.page {

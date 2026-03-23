@@ -3,12 +3,20 @@
 	import { goto } from '$app/navigation';
 	import { session } from '$lib/session';
 	import { getQuestionsForVetting, getVetterDashboard, type VetterDashboard } from '$lib/api/vetting';
-	import { getSubject, listSubjects, type SubjectResponse } from '$lib/api/subjects';
+	import {
+		getSubject,
+		getSubjectsTree,
+		type SubjectResponse,
+		type SubjectGroupTreeNode,
+		type SubjectTreeResponse
+	} from '$lib/api/subjects';
 
 	let loading = $state(true);
 	let error = $state('');
 	let stats = $state<VetterDashboard | null>(null);
+	let treeData = $state<SubjectTreeResponse | null>(null);
 	let subjects = $state<SubjectResponse[]>([]);
+	let expandedGroups = $state<Set<string>>(new Set());
 	let expandedSubjectId = $state('');
 	let loadingTopicRowsForSubject = $state('');
 	let topicRowsBySubject = $state<Record<string, TopicStatsRow[]>>({});
@@ -38,9 +46,11 @@
 		loading = true;
 		error = '';
 		try {
-			const [dashRes, subjectRes] = await Promise.all([getVetterDashboard(), listSubjects(1, 100)]);
+			const [dashRes, treeRes] = await Promise.all([getVetterDashboard(), getSubjectsTree()]);
 			stats = dashRes;
-			subjects = subjectRes.subjects;
+			treeData = treeRes;
+			subjects = flattenSubjects(treeRes.groups, treeRes.ungrouped_subjects);
+			expandedGroups = new Set(treeRes.groups.map((group) => group.id));
 		} catch (e: unknown) {
 			error = e instanceof Error ? e.message : 'Failed to load teacher stats';
 		} finally {
@@ -48,29 +58,49 @@
 		}
 	}
 
+	function flattenSubjects(groups: SubjectGroupTreeNode[], ungrouped: SubjectResponse[]): SubjectResponse[] {
+		const result: SubjectResponse[] = [...ungrouped];
+		function traverse(group: SubjectGroupTreeNode) {
+			result.push(...group.subjects);
+			group.children.forEach(traverse);
+		}
+		groups.forEach(traverse);
+		return result;
+	}
+
+	function toStatsRow(subject: SubjectResponse) {
+		const approved = subject.total_approved ?? 0;
+		const rejected = subject.total_rejected ?? 0;
+		const pending = subject.total_pending ?? 0;
+		const vetted = approved + rejected;
+		const total = subject.total_questions ?? vetted + pending;
+		const vettedPct = total > 0 ? Math.round((vetted / total) * 100) : 0;
+		return {
+			...subject,
+			approved,
+			rejected,
+			pending,
+			vetted,
+			total,
+			vettedPct,
+		};
+	}
+
 	const rows = $derived.by(() => {
 		return subjects
-			.map((subject) => {
-				const approved = subject.total_approved ?? 0;
-				const rejected = subject.total_rejected ?? 0;
-				const pending = subject.total_pending ?? 0;
-				const vetted = approved + rejected;
-				const total = subject.total_questions ?? vetted + pending;
-				const vettedPct = total > 0 ? Math.round((vetted / total) * 100) : 0;
-				return {
-					...subject,
-					approved,
-					rejected,
-					pending,
-					vetted,
-					total,
-					vettedPct,
-				};
-			})
+			.map((subject) => toStatsRow(subject))
 			.sort((a, b) => b.total - a.total);
 	});
 
 	const totals = $derived.by(() => {
+		if (treeData) {
+			return {
+				totalQuestions: treeData.totals.total_questions,
+				totalPending: treeData.totals.total_pending,
+				totalApproved: treeData.totals.total_approved,
+				totalRejected: treeData.totals.total_rejected,
+			};
+		}
 		return rows.reduce(
 			(acc, row) => {
 				acc.totalQuestions += row.total;
@@ -156,6 +186,16 @@
 			await loadTopicRows(expandedSubjectId);
 		}
 	}
+
+	function toggleGroup(groupId: string) {
+		const next = new Set(expandedGroups);
+		if (next.has(groupId)) {
+			next.delete(groupId);
+		} else {
+			next.add(groupId);
+		}
+		expandedGroups = next;
+	}
 </script>
 
 <svelte:head>
@@ -231,68 +271,14 @@
 						</tr>
 					</thead>
 					<tbody>
-						{#if rows.length === 0}
+						{#if !treeData || (treeData.groups.length === 0 && treeData.ungrouped_subjects.length === 0)}
 							<tr><td colspan="8" class="empty-row">No subjects yet.</td></tr>
 						{:else}
-							{#each rows as row}
-							<tr class="expandable-row" onclick={() => toggleRow(row.id)} role="button" tabindex="0" onkeydown={(e) => (e.key === 'Enter' || e.key === ' ') && toggleRow(row.id)}>
-								<td>
-									<span class="expand-indicator">{expandedSubjectId === row.id ? '▾' : '▸'}</span>
-									</td>
-									<td><span class="code-chip">{row.code}</span></td>
-									<td class="name-cell">{row.name}</td>
-									<td>{row.total}</td>
-									<td class="amber-text">{row.pending}</td>
-									<td class="green-text">{row.approved}</td>
-									<td class="red-text">{row.rejected}</td>
-									<td>
-										<div class="inline-progress">
-											<div class="inline-progress-fill" style={`width: ${row.vettedPct}%`}></div>
-										</div>
-										<span class="pct">{row.vettedPct}%</span>
-									</td>
-								</tr>
-								{#if expandedSubjectId === row.id}
-									<tr class="expanded-row">
-										<td></td>
-										<td colspan="7">
-											<div class="topic-subtable-wrap">
-												{#if loadingTopicRowsForSubject === row.id}
-													<div class="topic-substate">Loading topics...</div>
-												{:else if topicRowsError}
-													<div class="topic-substate error">{topicRowsError}</div>
-												{:else if (topicRowsBySubject[row.id] || []).length === 0}
-													<div class="topic-substate">No topics found.</div>
-												{:else}
-													<table class="topic-subtable">
-														<thead>
-															<tr>
-																<th>Topic</th>
-																<th>Generated</th>
-																<th>Pending</th>
-																<th>Approved</th>
-																<th>Rejected</th>
-																<th>Vetted %</th>
-															</tr>
-														</thead>
-														<tbody>
-															{#each topicRowsBySubject[row.id] || [] as topicRow}
-																<tr>
-																	<td>{topicRow.name}</td>
-																	<td>{topicRow.generated}</td>
-																	<td class="amber-text">{topicRow.pending}</td>
-																	<td class="green-text">{topicRow.approved}</td>
-																	<td class="red-text">{topicRow.rejected}</td>
-																	<td>{topicRow.vettedPct}%</td>
-																</tr>
-															{/each}
-														</tbody>
-													</table>
-												{/if}
-											</div>
-										</td>
-									</tr>
-								{/if}
+							{#each treeData.groups as group}
+								{@render statsGroupRow(group, 0)}
+							{/each}
+							{#each treeData.ungrouped_subjects as subject}
+								{@render statsSubjectRow(subject, 0)}
 							{/each}
 						{/if}
 					</tbody>
@@ -351,6 +337,103 @@
 		</section>
 	{/if}
 </div>
+
+{#snippet statsGroupRow(group: SubjectGroupTreeNode, depth: number)}
+	<tr class="group-row" onclick={() => toggleGroup(group.id)} role="button" tabindex="0" onkeydown={(event) => {
+		if (event.key === 'Enter' || event.key === ' ') {
+			event.preventDefault();
+			toggleGroup(group.id);
+		}
+	}}>
+		<td>
+			<span class="expand-indicator">{expandedGroups.has(group.id) ? '▾' : '▸'}</span>
+		</td>
+		<td>—</td>
+		<td class="name-cell" style="padding-left: {depth * 1.2}rem">
+			<span class="group-label">📁 {group.name}</span>
+		</td>
+		<td>{group.total_questions}</td>
+		<td class="amber-text">{group.total_pending}</td>
+		<td class="green-text">{group.total_approved}</td>
+		<td class="red-text">{group.total_rejected}</td>
+		<td>—</td>
+	</tr>
+	{#if expandedGroups.has(group.id)}
+		{#each group.children as child}
+			{@render statsGroupRow(child, depth + 1)}
+		{/each}
+		{#each group.subjects as subject}
+			{@render statsSubjectRow(subject, depth + 1)}
+		{/each}
+	{/if}
+{/snippet}
+
+{#snippet statsSubjectRow(subject: SubjectResponse, depth: number)}
+	{@const row = toStatsRow(subject)}
+	<tr class="expandable-row" onclick={() => toggleRow(row.id)} role="button" tabindex="0" onkeydown={(event) => {
+		if (event.key === 'Enter' || event.key === ' ') {
+			event.preventDefault();
+			void toggleRow(row.id);
+		}
+	}}>
+		<td>
+			<span class="expand-indicator">{expandedSubjectId === row.id ? '▾' : '▸'}</span>
+		</td>
+		<td><span class="code-chip">{row.code}</span></td>
+		<td class="name-cell" style="padding-left: {depth * 1.2}rem">{row.name}</td>
+		<td>{row.total}</td>
+		<td class="amber-text">{row.pending}</td>
+		<td class="green-text">{row.approved}</td>
+		<td class="red-text">{row.rejected}</td>
+		<td>
+			<div class="inline-progress">
+				<div class="inline-progress-fill" style={`width: ${row.vettedPct}%`}></div>
+			</div>
+			<span class="pct">{row.vettedPct}%</span>
+		</td>
+	</tr>
+	{#if expandedSubjectId === row.id}
+		<tr class="expanded-row">
+			<td></td>
+			<td colspan="7">
+				<div class="topic-subtable-wrap">
+					{#if loadingTopicRowsForSubject === row.id}
+						<div class="topic-substate">Loading topics...</div>
+					{:else if topicRowsError}
+						<div class="topic-substate error">{topicRowsError}</div>
+					{:else if (topicRowsBySubject[row.id] || []).length === 0}
+						<div class="topic-substate">No topics found.</div>
+					{:else}
+						<table class="topic-subtable">
+							<thead>
+								<tr>
+									<th>Topic</th>
+									<th>Generated</th>
+									<th>Pending</th>
+									<th>Approved</th>
+									<th>Rejected</th>
+									<th>Vetted %</th>
+								</tr>
+							</thead>
+							<tbody>
+								{#each topicRowsBySubject[row.id] || [] as topicRow}
+									<tr>
+										<td>{topicRow.name}</td>
+										<td>{topicRow.generated}</td>
+										<td class="amber-text">{topicRow.pending}</td>
+										<td class="green-text">{topicRow.approved}</td>
+										<td class="red-text">{topicRow.rejected}</td>
+										<td>{topicRow.vettedPct}%</td>
+									</tr>
+								{/each}
+							</tbody>
+						</table>
+					{/if}
+				</div>
+			</td>
+		</tr>
+	{/if}
+{/snippet}
 
 <style>
 	.page {
@@ -686,6 +769,19 @@
 	.expandable-row {
 		cursor: pointer;
 		transition: background 0.15s ease;
+	}
+
+	.group-row {
+		cursor: pointer;
+		background: rgba(var(--theme-primary-rgb), 0.06);
+	}
+
+	.group-row:hover {
+		background: rgba(var(--theme-primary-rgb), 0.11);
+	}
+
+	.group-label {
+		font-weight: 700;
 	}
 
 	.expandable-row:hover {

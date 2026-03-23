@@ -1,5 +1,5 @@
 <script lang="ts">
-	import { onMount } from 'svelte';
+	import { onMount, tick } from 'svelte';
 	import { goto } from '$app/navigation';
 	import { session } from '$lib/session';
 	import {
@@ -42,6 +42,7 @@
 	let moveTargetId = $state<string>('');
 	let moveTargetName = $state<string>('');
 	let movingItem = $state(false);
+	let moveExpandedGroups = $state<Set<string>>(new Set());
 	
 	// Drag state
 	let draggedItem = $state<{ type: 'subject' | 'group'; id: string; name: string } | null>(null);
@@ -51,6 +52,17 @@
 	// Context menu state
 	let contextMenuGroupId = $state<string | null>(null);
 	let contextMenuPosition = $state<{ x: number; y: number } | null>(null);
+	let contextMenuElement = $state<HTMLDivElement | null>(null);
+	let contextMenuOverlayElement = $state<HTMLDivElement | null>(null);
+
+	// Custom confirmation modal state
+	let showConfirmModal = $state(false);
+	let confirmTitle = $state('Confirm action');
+	let confirmMessage = $state('');
+	let confirmConfirmLabel = $state('Confirm');
+	let confirmCancelLabel = $state('Cancel');
+	let confirmDanger = $state(false);
+	let confirmResolver: ((accepted: boolean) => void) | null = null;
 
 	onMount(() => {
 		const unsub = session.subscribe((s) => {
@@ -131,44 +143,66 @@
 	}
 
 	// Context menu handlers
-	function showContextMenu(event: MouseEvent, groupId: string) {
+	function getContextMenuAnchorPoint(event: MouseEvent): { x: number; y: number } {
+		if (event.clientX !== 0 || event.clientY !== 0) {
+			return { x: event.clientX, y: event.clientY };
+		}
+
+		const target = event.currentTarget;
+		if (target instanceof HTMLElement) {
+			const rect = target.getBoundingClientRect();
+			return { x: rect.right, y: rect.bottom };
+		}
+
+		return {
+			x: Math.max(window.innerWidth / 2, 16),
+			y: Math.max(window.innerHeight / 2, 16)
+		};
+	}
+
+	function clampContextMenuPosition(anchorX: number, anchorY: number) {
+		const offset = 4;
+		const padding = 8;
+		const fallbackWidth = 180;
+		const fallbackHeight = 100;
+
+		const overlayRect = contextMenuOverlayElement?.getBoundingClientRect();
+		const overlayLeft = overlayRect?.left ?? 0;
+		const overlayTop = overlayRect?.top ?? 0;
+		const overlayWidth = overlayRect?.width ?? window.innerWidth;
+		const overlayHeight = overlayRect?.height ?? window.innerHeight;
+
+		const menuRect = contextMenuElement?.getBoundingClientRect();
+		const menuWidth = menuRect?.width ?? fallbackWidth;
+		const menuHeight = menuRect?.height ?? fallbackHeight;
+
+		const localAnchorX = anchorX - overlayLeft;
+		const localAnchorY = anchorY - overlayTop;
+
+		let x = localAnchorX + offset;
+		let y = localAnchorY + offset;
+
+		const maxX = overlayWidth - menuWidth - padding;
+		const maxY = overlayHeight - menuHeight - padding;
+		const minX = padding;
+		const minY = padding;
+
+		x = Math.min(Math.max(x, minX), maxX);
+		y = Math.min(Math.max(y, minY), maxY);
+
+		contextMenuPosition = { x, y };
+	}
+
+	async function showContextMenu(event: MouseEvent, groupId: string) {
 		event.preventDefault();
 		event.stopPropagation();
-		
-		// Calculate position with viewport boundary detection
-		const menuWidth = 180; // min-width from CSS
-		const menuHeight = 100; // approximate height
-		const padding = 8;
-		const offset = 4; // Small offset from cursor
-		
-		let x = event.clientX + offset;
-		let y = event.clientY + offset;
-		
-		// Prevent overflow on right
-		if (x + menuWidth + padding > window.innerWidth) {
-			x = event.clientX - menuWidth - offset;
-		}
-		
-		// Prevent overflow on bottom
-		if (y + menuHeight + padding > window.innerHeight) {
-			y = event.clientY - menuHeight - offset;
-		}
-		
-		// Prevent overflow on left
-		if (x < padding) {
-			x = padding;
-		}
-		
-		// Prevent overflow on top
-		if (y < padding) {
-			y = padding;
-		}
-		
-		// Set state after calculating position
+
+		const anchor = getContextMenuAnchorPoint(event);
 		contextMenuGroupId = groupId;
-		contextMenuPosition = { x, y };
-		
-		console.log('Context menu opened:', { groupId, x, y, clientX: event.clientX, clientY: event.clientY });
+		contextMenuPosition = anchor;
+
+		await tick();
+		clampContextMenuPosition(anchor.x, anchor.y);
 	}
 
 	function hideContextMenu() {
@@ -274,6 +308,7 @@
 		moveTargetType = type;
 		moveTargetId = id;
 		moveTargetName = name;
+		moveExpandedGroups = new Set(treeData?.groups.map((group) => group.id) ?? []);
 		showMoveModal = true;
 	}
 
@@ -281,10 +316,84 @@
 		showMoveModal = false;
 		moveTargetId = '';
 		moveTargetName = '';
+		moveExpandedGroups = new Set();
+	}
+
+	function toggleMoveGroup(groupId: string) {
+		const next = new Set(moveExpandedGroups);
+		if (next.has(groupId)) {
+			next.delete(groupId);
+		} else {
+			next.add(groupId);
+		}
+		moveExpandedGroups = next;
+	}
+
+	function containsGroup(groups: SubjectGroupTreeNode[], groupId: string): boolean {
+		for (const group of groups) {
+			if (group.id === groupId) return true;
+			if (containsGroup(group.children, groupId)) return true;
+		}
+		return false;
+	}
+
+	function isMoveDestinationDisabled(groupId: string): boolean {
+		if (moveTargetType !== 'group' || !treeData) return false;
+		if (groupId === moveTargetId) return true;
+		const movingGroup = findGroupById(treeData.groups, moveTargetId);
+		if (!movingGroup) return false;
+		return containsGroup(movingGroup.children, groupId);
+	}
+
+	function getGroupLabel(groupId: string | null): string {
+		if (groupId === null) return 'Root (No Group)';
+		if (!treeData) return 'Selected Group';
+		const group = findGroupById(treeData.groups, groupId);
+		return group?.name ?? 'Selected Group';
+	}
+
+	function requestConfirmation(options: {
+		title: string;
+		message: string;
+		confirmLabel?: string;
+		cancelLabel?: string;
+		danger?: boolean;
+	}): Promise<boolean> {
+		confirmTitle = options.title;
+		confirmMessage = options.message;
+		confirmConfirmLabel = options.confirmLabel ?? 'Confirm';
+		confirmCancelLabel = options.cancelLabel ?? 'Cancel';
+		confirmDanger = options.danger ?? false;
+		showConfirmModal = true;
+
+		return new Promise((resolve) => {
+			confirmResolver = resolve;
+		});
+	}
+
+	function resolveConfirmation(accepted: boolean) {
+		const resolver = confirmResolver;
+		confirmResolver = null;
+		showConfirmModal = false;
+		if (resolver) resolver(accepted);
+	}
+
+	function cancelConfirmation() {
+		resolveConfirmation(false);
 	}
 
 	async function handleMoveToGroup(groupId: string | null) {
 		if (movingItem) return;
+		if (groupId && isMoveDestinationDisabled(groupId)) return;
+		if (moveTargetType === 'subject') {
+			const destination = getGroupLabel(groupId);
+			const ok = await requestConfirmation({
+				title: 'Move Subject',
+				message: `Move subject "${moveTargetName}" to "${destination}"?`,
+				confirmLabel: 'Move'
+			});
+			if (!ok) return;
+		}
 		movingItem = true;
 		try {
 			if (moveTargetType === 'subject') {
@@ -345,6 +454,19 @@
 			return;
 		}
 
+		if (draggedItem.type === 'subject') {
+			const destination = getGroupLabel(targetGroupId);
+			const ok = await requestConfirmation({
+				title: 'Move Subject',
+				message: `Move subject "${draggedItem.name}" to "${destination}"?`,
+				confirmLabel: 'Move'
+			});
+			if (!ok) {
+				handleDragEnd();
+				return;
+			}
+		}
+
 		try {
 			if (draggedItem.type === 'subject') {
 				await moveSubject(draggedItem.id, targetGroupId);
@@ -361,7 +483,13 @@
 
 	// Delete group
 	async function handleDeleteGroup(groupId: string, groupName: string) {
-		if (!confirm(`Delete group "${groupName}"? Subjects will be moved to root.`)) return;
+		const ok = await requestConfirmation({
+			title: 'Delete Group',
+			message: `Delete group "${groupName}"? Subjects will be moved to root.`,
+			confirmLabel: 'Delete',
+			danger: true
+		});
+		if (!ok) return;
 		try {
 			await deleteGroup(groupId, true);
 			if (selectedGroupId === groupId) selectedGroupId = null;
@@ -369,17 +497,6 @@
 		} catch (e: unknown) {
 			error = e instanceof Error ? e.message : 'Failed to delete group';
 		}
-	}
-
-	// Get all groups for move modal
-	function getAllGroups(groups: SubjectGroupTreeNode[]): { id: string; name: string; depth: number }[] {
-		const result: { id: string; name: string; depth: number }[] = [];
-		function traverse(group: SubjectGroupTreeNode, depth: number) {
-			result.push({ id: group.id, name: group.name, depth });
-			group.children.forEach(c => traverse(c, depth + 1));
-		}
-		groups.forEach(g => traverse(g, 0));
-		return result;
 	}
 
 	// Find group by ID in tree
@@ -675,27 +792,72 @@
 			<p class="modal-hint">Select destination group:</p>
 			<div class="modal-options">
 				<button 
-					class="modal-option" 
+					class="modal-option root-option" 
 					onclick={() => handleMoveToGroup(null)}
 					disabled={movingItem}
 				>
 					📂 Root (No Group)
 				</button>
-				{#each getAllGroups(treeData.groups) as group}
-					{#if !(moveTargetType === 'group' && moveTargetId === group.id)}
-						<button 
-							class="modal-option" 
-							style="padding-left: {1 + group.depth * 1.5}rem"
-							onclick={() => handleMoveToGroup(group.id)}
-							disabled={movingItem}
-						>
-							📁 {group.name}
-						</button>
-					{/if}
+				{#each treeData.groups as group}
+					{@render moveGroupOption(group, 0)}
 				{/each}
 			</div>
 			<div class="modal-actions">
 				<button class="table-btn" onclick={closeMoveModal} disabled={movingItem}>Cancel</button>
+			</div>
+		</section>
+	</div>
+{/if}
+
+{#snippet moveGroupOption(group: SubjectGroupTreeNode, depth: number)}
+	{@const hasChildren = group.children.length > 0}
+	{@const expanded = moveExpandedGroups.has(group.id)}
+	{@const disabledDestination = isMoveDestinationDisabled(group.id)}
+	<div class="move-tree-node" style="margin-left: {depth * 0.9}rem">
+		<div class="move-tree-row" class:disabled={disabledDestination}>
+			<button
+				class="move-tree-toggle"
+				type="button"
+				onclick={(event) => {
+					event.stopPropagation();
+					if (hasChildren) toggleMoveGroup(group.id);
+				}}
+				disabled={!hasChildren}
+				aria-label={hasChildren ? (expanded ? 'Collapse group' : 'Expand group') : 'No subgroups'}
+			>
+				{#if hasChildren}
+					<span class="move-tree-chevron" class:open={expanded}>▸</span>
+				{:else}
+					<span class="move-tree-dot">•</span>
+				{/if}
+			</button>
+			<button
+				class="modal-option move-tree-option"
+				onclick={() => handleMoveToGroup(group.id)}
+				disabled={movingItem || disabledDestination}
+			>
+				📁 {group.name}
+			</button>
+		</div>
+	</div>
+	{#if hasChildren && expanded}
+		{#each group.children as child}
+			{@render moveGroupOption(child, depth + 1)}
+		{/each}
+	{/if}
+{/snippet}
+
+<!-- Confirm Modal -->
+{#if showConfirmModal}
+	<div class="modal-overlay" role="dialog" aria-modal="true" aria-labelledby="confirm-modal-title" tabindex="-1" onclick={cancelConfirmation} onkeydown={(e) => { if (e.key === 'Escape') cancelConfirmation(); }}>
+		<!-- svelte-ignore a11y_click_events_have_key_events -->
+		<!-- svelte-ignore a11y_no_noninteractive_element_interactions -->
+		<section class="modal-content confirm-modal-content glass-panel" aria-label="Confirmation" onclick={(e) => e.stopPropagation()}>
+			<h3 id="confirm-modal-title">{confirmTitle}</h3>
+			<p class="modal-hint confirm-message">{confirmMessage}</p>
+			<div class="modal-actions confirm-actions">
+				<button class="table-btn" onclick={() => resolveConfirmation(false)}>{confirmCancelLabel}</button>
+				<button class={`table-btn ${confirmDanger ? 'danger' : 'primary'}`} onclick={() => resolveConfirmation(true)}>{confirmConfirmLabel}</button>
 			</div>
 		</section>
 	</div>
@@ -707,10 +869,11 @@
 	{#if group}
 		<!-- svelte-ignore a11y_click_events_have_key_events -->
 		<!-- svelte-ignore a11y_no_static_element_interactions -->
-		<div class="context-menu-overlay" onclick={hideContextMenu}>
+		<div class="context-menu-overlay" onclick={hideContextMenu} bind:this={contextMenuOverlayElement}>
 			<div 
 				class="context-menu glass-panel" 
 				style="left: {contextMenuPosition.x}px; top: {contextMenuPosition.y}px"
+				bind:this={contextMenuElement}
 				onclick={(e) => e.stopPropagation()}
 			>
 				<button class="context-menu-item" onclick={() => handleContextMenuMove(group.id, group.name)}>
@@ -1467,6 +1630,63 @@
 		margin-bottom: 1rem;
 	}
 
+	.root-option {
+		font-weight: 700;
+	}
+
+	.move-tree-node {
+		display: flex;
+		flex-direction: column;
+		gap: 0.25rem;
+	}
+
+	.move-tree-row {
+		display: grid;
+		grid-template-columns: auto minmax(0, 1fr);
+		gap: 0.35rem;
+		align-items: center;
+	}
+
+	.move-tree-row.disabled {
+		opacity: 0.6;
+	}
+
+	.move-tree-toggle {
+		width: 1.7rem;
+		height: 1.7rem;
+		border-radius: 0.45rem;
+		border: 1px solid var(--theme-glass-border);
+		background: rgba(var(--theme-primary-rgb), 0.08);
+		color: var(--theme-text-muted);
+		display: inline-flex;
+		align-items: center;
+		justify-content: center;
+		cursor: pointer;
+	}
+
+	.move-tree-toggle:disabled {
+		cursor: default;
+		opacity: 0.45;
+	}
+
+	.move-tree-chevron {
+		display: inline-block;
+		transition: transform 0.15s ease;
+	}
+
+	.move-tree-chevron.open {
+		transform: rotate(90deg);
+	}
+
+	.move-tree-dot {
+		font-size: 0.95rem;
+		line-height: 1;
+	}
+
+	.move-tree-option {
+		margin: 0;
+	}
+
 	.modal-option {
 		padding: 0.7rem 1rem;
 		border-radius: 0.6rem;
@@ -1490,6 +1710,29 @@
 	.modal-actions {
 		display: flex;
 		justify-content: flex-end;
+	}
+
+	.confirm-modal-content {
+		max-width: 460px;
+	}
+
+	.confirm-message {
+		margin-bottom: 1.2rem;
+		line-height: 1.45;
+	}
+
+	.confirm-actions {
+		gap: 0.55rem;
+	}
+
+	.table-btn.danger {
+		background: rgba(220, 38, 38, 0.18);
+		border-color: rgba(220, 38, 38, 0.45);
+		color: #991b1b;
+	}
+
+	.table-btn.danger:hover {
+		background: rgba(220, 38, 38, 0.24);
 	}
 
 	/* Mobile group styles */
