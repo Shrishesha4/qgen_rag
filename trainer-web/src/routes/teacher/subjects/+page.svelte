@@ -232,6 +232,11 @@
 		return flattenSubjects(treeData.groups, treeData.ungrouped_subjects);
 	});
 
+	const groupedSubjectsFromTree = $derived.by(() => {
+		if (!treeData) return [];
+		return flattenSubjects(treeData.groups, []);
+	});
+
 	// Filtered subjects for subjects view
 	const filteredSubjectsView = $derived.by(() => {
 		const search = query.trim().toLowerCase();
@@ -247,7 +252,7 @@
 	const filteredGroupsView = $derived.by(() => {
 		const search = query.trim().toLowerCase();
 		if (!search) return null;
-		return allSubjectsFromTree.filter((subject) => {
+		return groupedSubjectsFromTree.filter((subject) => {
 			return [subject.name, subject.code, subject.description ?? ''].some((value) =>
 				value.toLowerCase().includes(search)
 			);
@@ -1162,14 +1167,9 @@
 							{@render groupRow(group, 0)}
 						{/each}
 
-						<!-- Ungrouped Subjects -->
-						{#each treeData.ungrouped_subjects as subject}
-							{@render subjectRow(subject, 0)}
-						{/each}
-
-						{#if treeData.groups.length === 0 && treeData.ungrouped_subjects.length === 0}
+						{#if treeData.groups.length === 0}
 							<tr>
-								<td colspan="6" class="empty-cell">No subjects yet. Create a group or add a subject to get started.</td>
+								<td colspan="6" class="empty-cell">No groups yet. Create a group, then add subjects to it.</td>
 							</tr>
 						{/if}
 					{/if}
@@ -1192,9 +1192,9 @@
 				</div>
 			{/if}
 
-			{#if filteredGroupsView !== null}
+				{#if filteredGroupsView !== null}
 				{#if filteredGroupsView.length === 0}
-					<div class="subject-mobile-card glass-panel empty-cell">No subjects matched your search.</div>
+						<div class="subject-mobile-card glass-panel empty-cell">No grouped subjects matched your search.</div>
 				{:else}
 					{#each filteredGroupsView as subject}
 						<button class="subject-mobile-card glass-panel" onclick={() => openSubject(subject.id)}>
@@ -1216,11 +1216,8 @@
 				{#each treeData.groups as group}
 					{@render mobileGroupCard(group, 0)}
 				{/each}
-				{#each treeData.ungrouped_subjects as subject}
-					{@render mobileSubjectCard(subject, 0)}
-				{/each}
-				{#if treeData.groups.length === 0 && treeData.ungrouped_subjects.length === 0}
-					<div class="subject-mobile-card glass-panel empty-cell">No subjects yet.</div>
+					{#if treeData.groups.length === 0}
+						<div class="subject-mobile-card glass-panel empty-cell">No groups yet.</div>
 				{/if}
 			{/if}
 		</div>
