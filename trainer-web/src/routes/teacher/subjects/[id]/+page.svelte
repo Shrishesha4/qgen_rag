@@ -990,9 +990,9 @@
 												<span class="topic-index">{index + 1}</span>
 												<div class="topic-copy">
 													<h3 class="topic-name">{topic.name}</h3>
-													{#if topic.description}
+													<!-- {#if topic.description}
 														<p class="topic-description">{topic.description}</p>
-													{/if}
+													{/if} -->
 												</div>
 											</div>
 										</div>

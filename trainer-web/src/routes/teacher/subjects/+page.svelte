@@ -113,7 +113,6 @@
 		<div>
 			<p class="eyebrow">Teacher Console</p>
 			<h1 class="title font-serif">Subjects</h1>
-			<p class="subtitle">Browse subjects and manage them directly from the table.</p>
 		</div>
 		<button class="add-subject-btn" onclick={startAddRow} disabled={saving || addingRow}>+ Add Subject</button>
 	</div>
@@ -217,9 +216,9 @@
 											<strong>{subject.name}</strong>
 											<span class="code-chip">{subject.code}</span>
 										</div>
-										{#if subject.description}
+										<!-- {#if subject.description}
 											<span class="description">{subject.description}</span>
-										{/if}
+										{/if} -->
 									</div>
 								</td>
 								<td>{subject.total_questions}</td>
@@ -305,12 +304,12 @@
 		color: var(--theme-text);
 	}
 
-	.subtitle {
+	/* .subtitle {
 		margin: 0.5rem 0 0;
 		max-width: 48rem;
 		color: var(--theme-text-muted);
 		line-height: 1.55;
-	}
+	} */
 
 	.toolbar {
 		display: flex;

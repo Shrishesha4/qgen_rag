@@ -163,19 +163,6 @@
 </svelte:head>
 
 <div class="page">
-	<div class="hero">
-		<div class="hero-head">
-			<button class="back-btn" onclick={() => goto('/teacher/subjects')} aria-label="Go back">
-				←
-			</button>
-			<div>
-				<p class="kicker">Teacher Console</p>
-				<h1 class="title font-serif">Stats</h1>
-			</div>
-		</div>
-		<p class="subtitle">Track your question vetting progress across subjects and topics.</p>
-	</div>
-
 	{#if loading}
 		<div class="center-state glass-panel">
 			<div class="spinner"></div>
@@ -186,45 +173,7 @@
 			<div class="error-banner" role="alert">{error}</div>
 		{/if}
 
-		<div class="stats-row">
-			<div class="stat-card glass-panel">
-				<div class="stat-icon">❔</div>
-				<div>
-					<p class="stat-value">{totals.totalQuestions}</p>
-					<p class="stat-label">Total Questions</p>
-				</div>
-			</div>
-			<!-- <div class="stat-card glass-panel">
-				<div class="stat-icon">📊</div>
-				<div>
-					<p class="stat-value">{totalVetted}</p>
-					<p class="stat-label">Total Vetted</p>
-				</div>
-			</div> -->
-			<div class="stat-card glass-panel">
-				<div class="stat-icon amber">🕒</div>
-				<div>
-					<p class="stat-value amber-text">{totals.totalPending}</p>
-					<p class="stat-label">Pending</p>
-				</div>
-			</div>
-			<div class="stat-card glass-panel">
-				<div class="stat-icon green">✅</div>
-				<div>
-					<p class="stat-value green-text">{totals.totalApproved}</p>
-					<p class="stat-label">Approved</p>
-				</div>
-			</div>
-			<div class="stat-card glass-panel">
-				<div class="stat-icon red">⛔</div>
-				<div>
-					<p class="stat-value red-text">{totals.totalRejected}</p>
-					<p class="stat-label">Rejected</p>
-				</div>
-			</div>
-		</div>
-
-		<section class="progress-panel glass-panel">
+		<!-- <section class="progress-panel glass-panel">
 			<div class="progress-head">
 				<h2>Overall Vetting Progress</h2>
 				<strong>{overallProgress}% vetted</strong>
@@ -238,10 +187,35 @@
 				<span class="dot red"></span> Rejected ({totals.totalRejected})
 				<span class="dot amber"></span> Pending ({totals.totalPending})
 			</div>
-		</section>
+		</section> -->
 
 		<section class="table-panel glass-panel">
-			<h2>Breakdown by Subject</h2>
+			<div class="table-header">
+				<div class="table-header-left">
+					<button class="back-btn" onclick={() => goto('/teacher/subjects')} aria-label="Go back">
+						←
+					</button>
+					<h1 class="title font-serif">Stats</h1>
+				</div>
+				<div class="header-stats" aria-label="Summary totals">
+					<div class="stat-chip">
+						<span class="chip-value">{totals.totalQuestions}</span>
+						<span class="chip-label">Total</span>
+					</div>
+					<div class="stat-chip amber">
+						<span class="chip-value">{totals.totalPending}</span>
+						<span class="chip-label">Pending</span>
+					</div>
+					<div class="stat-chip green">
+						<span class="chip-value">{totals.totalApproved}</span>
+						<span class="chip-label">Approved</span>
+					</div>
+					<div class="stat-chip red">
+						<span class="chip-value">{totals.totalRejected}</span>
+						<span class="chip-label">Rejected</span>
+					</div>
+				</div>
+			</div>
 			<div class="table-wrap desktop-only">
 				<table>
 					<thead>
@@ -382,34 +356,13 @@
 	.page {
 		max-width: 1120px;
 		margin: 0 auto;
-		padding: 2rem 1.5rem 2.5rem;
+		padding: 1.25rem 1.5rem 2rem;
 		display: flex;
 		flex-direction: column;
 		gap: 1rem;
 		height: 100%;
 		min-height: 0;
 		overflow: hidden;
-	}
-
-	.kicker {
-		margin: 0 0 0.35rem;
-		font-size: 0.78rem;
-		font-weight: 700;
-		letter-spacing: 0.08em;
-		text-transform: uppercase;
-		color: var(--theme-primary);
-	}
-
-	.title {
-		margin: 0;
-		font-size: 2rem;
-		color: var(--theme-text-primary);
-	}
-
-	.hero-head {
-		display: flex;
-		align-items: center;
-		gap: 0.8rem;
 	}
 
 	.back-btn {
@@ -433,52 +386,83 @@
 		border-color: rgba(var(--theme-primary-rgb), 0.45);
 	}
 
-	.subtitle {
-		margin: 0.5rem 0 0;
-		color: var(--theme-text-secondary);
-	}
-
-	.stats-row {
-		display: grid;
-		grid-template-columns: repeat(4, minmax(0, 1fr));
-		gap: 0.75rem;
-	}
-
-	.stat-card {
+	.table-header {
 		display: flex;
 		align-items: center;
-		gap: 0.8rem;
-		padding: 1rem;
-		border-radius: 1rem;
+		justify-content: space-between;
+		gap: 0.9rem;
 	}
 
-	.stat-icon {
-		width: 2.6rem;
-		height: 2.6rem;
-		border-radius: 0.8rem;
-		display: grid;
-		place-items: center;
-		background: rgba(var(--theme-primary-rgb), 0.12);
+	.table-header-left {
+		display: inline-flex;
+		align-items: center;
+		gap: 0.7rem;
+		min-width: 0;
 	}
 
-	.stat-value {
-		margin: 0;
-		font-size: 2rem;
+	.header-stats {
+		display: flex;
+		align-items: center;
+		justify-content: flex-end;
+		gap: 0.5rem;
+		flex-wrap: wrap;
+	}
+
+	.stat-chip {
+		display: inline-flex;
+		flex-direction: column;
+		align-items: center;
+		justify-content: center;
+		min-width: 84px;
+		padding: 0.45rem 0.7rem;
+		border-radius: 0.85rem;
+		border: 1px solid rgba(var(--theme-primary-rgb), 0.24);
+		background: rgba(var(--theme-primary-rgb), 0.1);
 		line-height: 1;
+	}
+
+	.stat-chip.amber {
+		border-color: rgba(245, 158, 11, 0.3);
+		background: rgba(245, 158, 11, 0.1);
+	}
+
+	.stat-chip.green {
+		border-color: rgba(16, 185, 129, 0.3);
+		background: rgba(16, 185, 129, 0.1);
+	}
+
+	.stat-chip.red {
+		border-color: rgba(239, 68, 68, 0.3);
+		background: rgba(239, 68, 68, 0.1);
+	}
+
+	.chip-value {
+		font-size: 1.9rem;
 		font-weight: 800;
 		color: var(--theme-text-primary);
 	}
 
-	.stat-label {
-		margin: 0.25rem 0 0;
-		font-size: 0.75rem;
-		letter-spacing: 0.08em;
-		text-transform: uppercase;
-		color: var(--theme-text-muted);
-		font-weight: 700;
+	.stat-chip.amber .chip-value {
+		color: #d97706;
 	}
 
-	.progress-panel,
+	.stat-chip.green .chip-value {
+		color: #059669;
+	}
+
+	.stat-chip.red .chip-value {
+		color: #dc2626;
+	}
+
+	.chip-label {
+		margin-top: 0.2rem;
+		font-size: 0.66rem;
+		font-weight: 700;
+		letter-spacing: 0.07em;
+		text-transform: uppercase;
+		color: var(--theme-text-muted);
+	}
+
 	.table-panel {
 		padding: 1.2rem;
 		border-radius: 1rem;
@@ -486,31 +470,45 @@
 		flex-direction: column;
 		min-height: 0;
 	}
+	/* .progress-panel,
+	.table-panel {
+		padding: 1.2rem;
+		border-radius: 1rem;
+		display: flex;
+		flex-direction: column;
+		min-height: 0;
+	} */
 
-	.progress-panel {
+	/* .progress-panel {
 		flex: 0 0 auto;
 		min-height: auto;
+	} */
+
+	.title {
+		margin: 0;
+		font-size: 2rem;
+		color: var(--theme-text-primary);
 	}
 
 	.table-panel {
 		flex: 1;
 	}
 
-	.progress-head {
+	/* .progress-head {
 		display: flex;
 		justify-content: space-between;
 		align-items: baseline;
 		gap: 0.75rem;
-	}
+	} */
 
-	.progress-head h2,
+	/* .progress-head h2,
 	.table-panel h2 {
 		margin: 0;
 		font-size: 1.2rem;
 		color: var(--theme-text-primary);
-	}
+	} */
 
-	.progress-track {
+	/* .progress-track {
 		margin-top: 0.8rem;
 		height: 14px;
 		border-radius: 999px;
@@ -540,7 +538,7 @@
 
 	.dot.green { background: #10b981; }
 	.dot.red { background: #ef4444; }
-	.dot.amber { background: #f59e0b; }
+	.dot.amber { background: #f59e0b; } */
 
 	.table-wrap {
 		overflow: auto;
@@ -829,10 +827,25 @@
 			overflow: visible;
 			padding: 0.9rem 1rem 1.25rem;
 		}
-		.kicker { display: none; }
-		.title { font-size: 1.65rem; }
-		.stats-row { grid-template-columns: repeat(2, minmax(0, 1fr)); }
-		.legend { flex-wrap: wrap; gap: 0.6rem 1rem; }
+		.table-header {
+			align-items: flex-start;
+			flex-direction: column;
+		}
+		.table-header-left {
+			width: 100%;
+		}
+		.header-stats {
+			justify-content: flex-start;
+			width: 100%;
+		}
+		.stat-chip {
+			min-width: 78px;
+			padding: 0.42rem 0.62rem;
+		}
+		.chip-value {
+			font-size: 1.55rem;
+		}
+		/* .legend { flex-wrap: wrap; gap: 0.6rem 1rem; } */
 		.table-panel { flex: initial; min-height: auto; }
 		.table-wrap { flex: initial; min-height: auto; }
 	}

@@ -445,11 +445,11 @@
 </svelte:head>
 
 <div class="page">
-	<div class="hero">
+	<!-- <div class="hero">
 		<p class="kicker">Teacher Console</p>
 		<h1 class="title font-serif">Vetting</h1>
 		<p class="subtitle">Pick a subject, expand rows, and start vetting directly from the table.</p>
-	</div>
+	</div> -->
 
 	{#if loading}
 		<div class="center-state glass-panel">
@@ -489,7 +489,12 @@
 
 		<section class="content-panel glass-panel">
 			<div class="panel-head">
-				<h2>Start New Vetting</h2>
+				<div class="panel-head-left">
+					<button class="table-back-btn" onclick={() => goto('/teacher/subjects')} aria-label="Go back to subjects">
+						←
+					</button>
+					<h2>Start New Vetting</h2>
+				</div>
 				<input class="search-input" bind:value={searchQuery} placeholder="Search subjects or topics" />
 			</div>
 
@@ -707,7 +712,7 @@
 		overflow: hidden;
 	}
 
-	.hero {
+	/* .hero {
 		display: flex;
 		flex-direction: column;
 		gap: 0.4rem;
@@ -731,7 +736,7 @@
 	.subtitle {
 		margin: 0;
 		color: var(--theme-text-secondary);
-	}
+	} */
 
 	.center-state {
 		display: flex;
@@ -805,10 +810,45 @@
 		gap: 0.8rem;
 	}
 
+	.panel-head-left {
+		display: inline-flex;
+		align-items: center;
+		gap: 0.6rem;
+		min-width: 0;
+	}
+
 	.panel-head h2 {
 		margin: 0;
 		font-size: 1.18rem;
 		color: var(--theme-text-primary);
+	}
+
+	.table-back-btn {
+		width: 2rem;
+		height: 2rem;
+		border-radius: 999px;
+		border: 1px solid rgba(var(--theme-primary-rgb), 0.35);
+		background: rgba(var(--theme-primary-rgb), 0.1);
+		color: var(--theme-primary);
+		font-size: 1rem;
+		font-weight: 700;
+		line-height: 1;
+		display: inline-flex;
+		align-items: center;
+		justify-content: center;
+		cursor: pointer;
+		flex-shrink: 0;
+		transition: background 0.15s ease, border-color 0.15s ease, transform 0.12s ease;
+	}
+
+	.table-back-btn:hover {
+		background: rgba(var(--theme-primary-rgb), 0.16);
+		border-color: rgba(var(--theme-primary-rgb), 0.5);
+		transform: translateY(-1px);
+	}
+
+	.table-back-btn:active {
+		transform: translateY(0);
 	}
 
 	.search-input {
@@ -819,6 +859,10 @@
 		background: var(--theme-input-bg);
 		color: var(--theme-text-primary);
 		font: inherit;
+	}
+
+	.search-input::placeholder {
+		color: color-mix(in srgb, var(--theme-text-primary) 46%, #64748b);
 	}
 
 	.table-shell {
@@ -1170,6 +1214,23 @@
 		border-right-color: rgba(148, 163, 184, 0.38);
 	}
 
+	:global([data-color-mode='light']) .search-input {
+		background: rgba(255, 255, 255, 0.96);
+		border-color: rgba(100, 116, 139, 0.5);
+		color: #1f2937;
+		box-shadow: 0 1px 0 rgba(255, 255, 255, 0.85), 0 0 0 1px rgba(255, 255, 255, 0.35) inset;
+	}
+
+	:global([data-color-mode='light']) .search-input::placeholder {
+		color: #64748b;
+	}
+
+	:global([data-color-mode='light']) .search-input:focus {
+		outline: none;
+		border-color: rgba(var(--theme-primary-rgb), 0.62);
+		box-shadow: 0 0 0 3px rgba(var(--theme-primary-rgb), 0.18);
+	}
+
 	:global([data-color-mode='light']) .code-chip {
 		background: rgba(var(--theme-primary-rgb), 0.14);
 		border-color: rgba(var(--theme-primary-rgb), 0.34);
@@ -1198,13 +1259,13 @@
 			gap: 0.85rem;
 		}
 
-		.kicker {
+		/* .kicker {
 			display: none;
 		}
 
 		.title {
 			font-size: 1.6rem;
-		}
+		} */
 
 		.summary-grid {
 			grid-template-columns: 1fr;
@@ -1214,6 +1275,10 @@
 		.panel-head {
 			flex-direction: column;
 			align-items: stretch;
+		}
+
+		.panel-head-left {
+			width: 100%;
 		}
 
 		.search-input {
