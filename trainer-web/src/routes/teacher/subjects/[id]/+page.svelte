@@ -87,6 +87,12 @@
 	let completedGenerationHoldByTopicId = $state<Record<string, boolean>>({});
 	let showGenerationNoticeModal = $state(false);
 	let generationNoticeMessage = $state('');
+	let showMissingSyllabusModal = $state(false);
+	let missingSyllabusTopicName = $state('');
+	let missingSyllabusTopicId = $state('');
+	let showGenerateBeforeVettingModal = $state(false);
+	let generateBeforeVettingTopicId = $state('');
+	let generateBeforeVettingTopicName = $state('');
 	let generationPollTimer: ReturnType<typeof setInterval> | null = null;
 	let generationPollingTopicId = $state<string | null>(null);
 	let generationPollingRunId = $state<string | null>(null);
@@ -550,8 +556,33 @@
 		}
 	}
 
+	function openGenerateBeforeVettingModal(topicId: string, topicName: string) {
+		generateBeforeVettingTopicId = topicId;
+		generateBeforeVettingTopicName = topicName;
+		showGenerateBeforeVettingModal = true;
+	}
+
+	function closeGenerateBeforeVettingModal() {
+		showGenerateBeforeVettingModal = false;
+		generateBeforeVettingTopicId = '';
+		generateBeforeVettingTopicName = '';
+	}
+
+	function generateFromVettingModal() {
+		const topicId = generateBeforeVettingTopicId;
+		closeGenerateBeforeVettingModal();
+		if (!topicId) return;
+		void generateTopic(topicId);
+	}
+
 	function vetTopic(topicId: string) {
 		if (!subjectId) return;
+		const topic = subject?.topics.find((item) => item.id === topicId);
+		const generatedCount = topicReviewStats[topicId]?.generated ?? topic?.total_questions ?? 0;
+		if (generatedCount <= 0) {
+			openGenerateBeforeVettingModal(topicId, topic?.name ?? 'This topic');
+			return;
+		}
 		const params = new URLSearchParams({ subject: subjectId, topic: topicId, resume: '0' });
 		goto(`/teacher/train/loop?${params.toString()}`);
 	}
@@ -560,10 +591,40 @@
 		showGenerationNoticeModal = false;
 	}
 
+	function openMissingSyllabusModal(topicId: string, topicName: string) {
+		missingSyllabusTopicId = topicId;
+		missingSyllabusTopicName = topicName;
+		showMissingSyllabusModal = true;
+	}
+
+	function closeMissingSyllabusModal() {
+		showMissingSyllabusModal = false;
+		missingSyllabusTopicId = '';
+		missingSyllabusTopicName = '';
+	}
+
+	function openTopicEditorFromSyllabusModal() {
+		if (!missingSyllabusTopicId || !subject) {
+			closeMissingSyllabusModal();
+			return;
+		}
+
+		const topic = subject.topics.find((item) => item.id === missingSyllabusTopicId);
+		closeMissingSyllabusModal();
+		if (topic) openEditTopicModal(topic);
+	}
+
 	async function generateTopic(topicId: string) {
 		if (!subjectId || topicGeneratingById[topicId] || !!generationPollingTopicId) return;
 
-		const topicName = subject?.topics.find((topic) => topic.id === topicId)?.name ?? 'this topic';
+		const topic = subject?.topics.find((item) => item.id === topicId);
+		const topicName = topic?.name ?? 'this topic';
+		const syllabusContent = topic?.syllabus_content?.trim() ?? '';
+		if (!syllabusContent) {
+			openMissingSyllabusModal(topicId, topicName);
+			return;
+		}
+
 		generationNoticeMessage = `Question generation for "${topicName}" has started in the background. This may take a few minutes. You can navigate away and come back later to vet the generated questions.`;
 		showGenerationNoticeModal = true;
 		
@@ -1297,6 +1358,50 @@
 			</div>
 			<div class="modal-actions">
 				<button class="action-btn action-add-topic" onclick={closeGenerationNoticeModal}>Okay</button>
+			</div>
+		</div>
+	</div>
+{/if}
+
+{#if showGenerateBeforeVettingModal}
+	<!-- svelte-ignore a11y_click_events_have_key_events a11y_no_static_element_interactions -->
+	<div class="modal-backdrop" role="button" tabindex="0" aria-label="Close" onclick={closeGenerateBeforeVettingModal}>
+		<!-- svelte-ignore a11y_click_events_have_key_events a11y_no_static_element_interactions -->
+		<div class="modal-card" role="dialog" aria-modal="true" tabindex="-1" onclick={(e) => e.stopPropagation()}>
+			<div class="modal-head">
+				<h3>No Questions To Vet</h3>
+				<button class="modal-close" onclick={closeGenerateBeforeVettingModal} aria-label="Close">✕</button>
+			</div>
+			<div class="modal-body">
+				<p class="generation-notice-message">
+					{generateBeforeVettingTopicName} has no generated questions yet. Generate first, then start vetting.
+				</p>
+			</div>
+			<div class="modal-actions">
+				<button class="action-btn action-muted" onclick={closeGenerateBeforeVettingModal}>Cancel</button>
+				<button class="action-btn action-add-topic" onclick={generateFromVettingModal}>Generate First</button>
+			</div>
+		</div>
+	</div>
+{/if}
+
+{#if showMissingSyllabusModal}
+	<!-- svelte-ignore a11y_click_events_have_key_events a11y_no_static_element_interactions -->
+	<div class="modal-backdrop" role="button" tabindex="0" aria-label="Close" onclick={closeMissingSyllabusModal}>
+		<!-- svelte-ignore a11y_click_events_have_key_events a11y_no_static_element_interactions -->
+		<div class="modal-card" role="dialog" aria-modal="true" tabindex="-1" onclick={(e) => e.stopPropagation()}>
+			<div class="modal-head">
+				<h3>Add Syllabus Content First</h3>
+				<button class="modal-close" onclick={closeMissingSyllabusModal} aria-label="Close">✕</button>
+			</div>
+			<div class="modal-body">
+				<p class="generation-notice-message">
+					{missingSyllabusTopicName} has no syllabus content yet. Add some syllabus content to this topic before generating a question batch.
+				</p>
+			</div>
+			<div class="modal-actions">
+				<button class="action-btn action-muted" onclick={closeMissingSyllabusModal}>Cancel</button>
+				<button class="action-btn action-edit" onclick={openTopicEditorFromSyllabusModal}>Add Syllabus</button>
 			</div>
 		</div>
 	</div>
