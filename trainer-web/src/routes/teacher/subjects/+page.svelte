@@ -896,7 +896,7 @@
 				<button class="add-btn" onclick={startAddSubject} disabled={savingSubject || addingSubject}>+ Add Subject</button>
 			{:else if activeTab === 'groups'}
 				{#if selectedGroupId}
-					<button class="add-btn secondary" onclick={startAddGroup} disabled={savingGroup || addingGroup}>+ Add Subgroup</button>
+					<!-- <button class="add-btn secondary" onclick={startAddGroup} disabled={savingGroup || addingGroup}>+ Add Subgroup</button> -->
 				{:else}
 					<button class="add-btn secondary" onclick={startAddGroup} disabled={savingGroup || addingGroup}>+ Add Group</button>
 				{/if}
