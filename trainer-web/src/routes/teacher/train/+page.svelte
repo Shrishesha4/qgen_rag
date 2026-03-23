@@ -179,7 +179,7 @@
 			const treeRes = await getSubjectsTree();
 			treeData = treeRes;
 			subjects = flattenSubjects(treeRes.groups, treeRes.ungrouped_subjects);
-			expandedGroups = new Set(treeRes.groups.map((group) => group.id));
+			expandedGroups = new Set();
 			await refreshSubjectGenerationStatuses(subjects);
 			ensureSubjectGenerationPolling();
 		} catch (e: unknown) {
@@ -403,13 +403,11 @@
 	}
 
 	function toggleGroup(groupId: string) {
-		const next = new Set(expandedGroups);
-		if (next.has(groupId)) {
-			next.delete(groupId);
-		} else {
-			next.add(groupId);
+		if (expandedGroups.has(groupId)) {
+			expandedGroups = new Set();
+			return;
 		}
-		expandedGroups = next;
+		expandedGroups = new Set([groupId]);
 	}
 
 	function getSubjectGenerationState(subjectId: string): SubjectGenerationState | null {
@@ -620,7 +618,7 @@
 											{@const subjectGenerationState = getSubjectGenerationState(subject.id)}
 											<div class="mobile-topic-card">
 												<div class="topic-title-line">
-													<span class="topic-branch">↳</span>
+													<span class="topic-branch">  </span>
 													<strong>{topic.name}</strong>
 												</div>
 												<div class="mobile-metrics">
@@ -696,15 +694,18 @@
 		}
 	}}>
 		<td>
-			<div class="row-trigger">
+			<div class="row-trigger" style="padding-left: {depth * 2.2}rem">
 				<button class="expand-btn" type="button" aria-label="Toggle topics" onclick={(event) => {
 					event.stopPropagation();
 					void toggleSubject(subject.id);
 				}}>
 					<span class="chevron" class:open={isExpanded(subject.id)}>▸</span>
 				</button>
-				<div class="name-stack" style="padding-left: {depth * 1.2}rem">
+				<div class="name-stack">
 					<div class="name-header">
+						{#if depth > 0}
+							<span class="subject-in-group-branch" aria-hidden="true">↳</span>
+						{/if}
 						<strong>{subject.name}</strong>
 						<span class="code-chip">{subject.code}</span>
 					</div>
@@ -753,7 +754,8 @@
 					<td>
 						<div class="topic-name-stack" style="padding-left: {depth * 1.2 + 1.2}rem">
 							<div class="topic-title-line">
-								<span class="topic-branch">↳</span>
+							<!-- ↳ -->
+								<span class="topic-branch">  </span> 
 								<strong>{topic.name}</strong>
 							</div>
 						</div>
@@ -1229,6 +1231,16 @@
 		font-size: 0.96rem;
 		color: var(--theme-text-primary);
 		font-weight: 700;
+	}
+
+	.subject-in-group-branch {
+		display: inline-flex;
+		align-items: center;
+		justify-content: center;
+		font-size: 0.9rem;
+		font-weight: 700;
+		color: color-mix(in srgb, var(--theme-primary) 68%, var(--theme-text-muted));
+		margin-right: 0.2rem;
 	}
 
 	.inline-actions {

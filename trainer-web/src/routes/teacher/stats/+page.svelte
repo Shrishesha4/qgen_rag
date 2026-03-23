@@ -427,7 +427,7 @@
 		<td class="name-cell" style="padding-left: {depth * 1.75}rem">
 			<span class="group-label">
 				{#if depth > 0}
-					<span class="tree-branch">↳</span>
+					<span class="tree-branch">  </span>
 				{/if}
 				📁 {group.name}
 			</span>
@@ -463,7 +463,7 @@
 		<td class="name-cell" style="padding-left: {depth * 1.75}rem">
 			<span class="subject-label" class:nested={depth > 0}>
 				{#if depth > 0}
-					<span class="tree-branch">↳</span>
+					<span class="tree-branch">  </span>
 				{/if}
 				{row.name} 
 				<span class="code-chip">{row.code}</span>

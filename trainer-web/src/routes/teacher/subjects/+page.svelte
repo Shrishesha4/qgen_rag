@@ -284,13 +284,11 @@
 	}
 
 	function toggleGroup(groupId: string) {
-		const newSet = new Set(expandedGroups);
-		if (newSet.has(groupId)) {
-			newSet.delete(groupId);
-		} else {
-			newSet.add(groupId);
+		if (expandedGroups.has(groupId)) {
+			expandedGroups = new Set();
+			return;
 		}
-		expandedGroups = newSet;
+		expandedGroups = new Set([groupId]);
 	}
 
 	function selectGroup(groupId: string, event: MouseEvent) {
@@ -466,7 +464,7 @@
 			draftGroupName = '';
 			// Expand parent if creating subgroup
 			if (selectedGroupId) {
-				expandedGroups = new Set([...expandedGroups, selectedGroupId]);
+				expandedGroups = new Set([selectedGroupId]);
 			}
 			await loadTree();
 		} catch (e: unknown) {

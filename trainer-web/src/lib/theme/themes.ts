@@ -3,7 +3,7 @@
  * Each theme has an Unsplash background image and a CSS gradient fallback.
  */
 
-export type ThemeName = 'ice' | 'water' | 'fire' | 'earth' | 'night';
+export type ThemeName = 'aurora' | 'water' | 'fire' | 'earth' | 'night' | 'dusk' | 'sunset' | 'purplesands';
 
 export interface ThemeConfig {
 	name: ThemeName;
@@ -38,10 +38,10 @@ export interface ThemeConfig {
 }
 
 export const themes: Record<ThemeName, ThemeConfig> = {
-	ice: {
-		name: 'ice',
+	aurora: {
+		name: 'aurora',
 		label: 'Aurora',
-		icon: '❄️',
+		icon: '🌌',
 		bgImage: '/theme-pictures/aurora.webp',
 		wallpaperOverlay:
 			'linear-gradient(180deg, rgba(0,0,0,0.08) 0%, rgba(0,0,0,0.04) 48%, rgba(0,0,0,0.14) 100%)',
@@ -173,7 +173,88 @@ export const themes: Record<ThemeName, ThemeConfig> = {
 		navGlass: 'rgba(255, 255, 255, 0.4)',
 		border: 'rgba(255,255,255,0.12)',
 		glow: 'rgba(233,69,96,0.35)'
+	},
+	dusk: {
+		name: 'dusk',
+		label: 'Dusk',
+		icon: '🌆',
+		bgImage: '/theme-pictures/dusk.webp',
+		wallpaperOverlay:
+			'linear-gradient(180deg, rgba(0,0,0,0.15) 0%, rgba(0,0,0,0.1) 50%, rgba(0,0,0,0.2) 100%)',
+		bg: [
+			'radial-gradient(ellipse at 20% 60%, rgba(80,40,140,0.25) 0%, transparent 50%)',
+			'radial-gradient(ellipse at 80% 80%, rgba(40,20,100,0.2) 0%, transparent 45%)',
+			'linear-gradient(175deg, #08081a 0%, #0e0e2a 20%, #14143a 40%, #1a1a4a 60%, #12123a 80%, #181842 100%)'
+		].join(', '),
+		bgColor: '#14143a',
+		primary: '#e94560',
+		primaryHover: '#d83550',
+		accentGradient: '#560bad',
+		primaryRgb: '233, 69, 96',
+		text: '#e8e8f4',
+		textMuted: '#9a9ac0',
+		textPrimary: '#1a1a2e',
+		textSecondary: 'rgba(0,0,0,0.5)',
+		glassBg: 'rgba(255, 255, 255, 0.45)',
+		glassBorder: 'rgba(255, 255, 255, 0.6)',
+		navGlass: 'rgba(255, 255, 255, 0.4)',
+		border: 'rgba(255,255,255,0.12)',
+		glow: 'rgba(233,69,96,0.35)'
+	},
+	sunset: {
+		name: 'sunset',
+		label: 'Sunset',
+		icon: '🌅',
+		bgImage: '/theme-pictures/sunset.webp',
+		wallpaperOverlay:
+			'linear-gradient(180deg, rgba(0,0,0,0.15) 0%, rgba(0,0,0,0.1) 50%, rgba(0,0,0,0.2) 100%)',
+		bg: [
+			'radial-gradient(ellipse at 20% 60%, rgba(80,40,140,0.25) 0%, transparent 50%)',
+			'radial-gradient(ellipse at 80% 80%, rgba(40,20,100,0.2) 0%, transparent 45%)',
+			'linear-gradient(175deg, #08081a 0%, #0e0e2a 20%, #14143a 40%, #1a1a4a 60%, #12123a 80%, #181842 100%)'
+		].join(', '),
+		bgColor: '#14143a',
+		primary: '#e94560',
+		primaryHover: '#d83550',
+		accentGradient: '#560bad',
+		primaryRgb: '233, 69, 96',
+		text: '#e8e8f4',
+		textMuted: '#9a9ac0',
+		textPrimary: '#1a1a2e',
+		textSecondary: 'rgba(0,0,0,0.5)',
+		glassBg: 'rgba(255, 255, 255, 0.45)',
+		glassBorder: 'rgba(255, 255, 255, 0.6)',
+		navGlass: 'rgba(255, 255, 255, 0.4)',
+		border: 'rgba(255,255,255,0.12)',
+		glow: 'rgba(233,69,96,0.35)'
+	},
+	purplesands: {
+		name: 'purplesands',
+		label: 'Purple Sands',
+		icon: '🏜️',
+		bgImage: '/theme-pictures/purple-sands.webp',
+		wallpaperOverlay:
+			'linear-gradient(180deg, rgba(0,0,0,0.15) 0%, rgba(0,0,0,0.1) 50%, rgba(0,0,0,0.2) 100%)',
+		bg: [
+			'radial-gradient(ellipse at 20% 60%, rgba(80,40,140,0.25) 0%, transparent 50%)',
+			'radial-gradient(ellipse at 80% 80%, rgba(40,20,100,0.2) 0%, transparent 45%)',
+			'linear-gradient(175deg, #08081a 0%, #0e0e2a 20%, #14143a 40%, #1a1a4a 60%, #12123a 80%, #181842 100%)'
+		].join(', '),
+		bgColor: '#14143a',
+		primary: '#e94560',
+		primaryHover: '#d83550',
+		accentGradient: '#560bad',
+		primaryRgb: '233, 69, 96',
+		text: '#e8e8f4',
+		textMuted: '#9a9ac0',
+		textPrimary: '#1a1a2e',
+		textSecondary: 'rgba(0,0,0,0.5)',
+		glassBg: 'rgba(255, 255, 255, 0.45)',
+		glassBorder: 'rgba(255, 255, 255, 0.6)',
+		navGlass: 'rgba(255, 255, 255, 0.4)',
+		border: 'rgba(255,255,255,0.12)',
+		glow: 'rgba(233,69,96,0.35)'
 	}
 };
 
-export const themeNames: ThemeName[] = ['ice', 'water', 'fire', 'earth', 'night'];
+export const themeNames: ThemeName[] = ['aurora', 'water', 'fire', 'earth', 'night', 'dusk', 'sunset', 'purplesands'];
