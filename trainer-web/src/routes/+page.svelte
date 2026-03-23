@@ -58,7 +58,7 @@
 			</div>
 			<h1 class="hero-title font-serif">VQuest</h1>
 			<p class="hero-sub">
-				Self-correcting AI for educational content, refined by teacher and vetter feedback loops.
+				AI That Thinks Like an Examiner 0 Powered by Vianasoft.
 			</p>
 		</div>
 

@@ -482,7 +482,7 @@
 	</tr>
 	{#if expandedSubjectId === row.id}
 		<tr class="expanded-row">
-			<td></td>
+			<!-- <td></td> -->
 			<td colspan="7">
 				<div class="topic-subtable-wrap">
 					{#if loadingTopicRowsForSubject === row.id}

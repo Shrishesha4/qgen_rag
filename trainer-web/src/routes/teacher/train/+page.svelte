@@ -34,6 +34,11 @@
 	let progressBySubject = $state<Record<string, TeacherVettingProgressSnapshot>>({});
 	let pendingByTopic = $state<Record<string, number>>({});
 	let loadingPendingCounts = $state(false);
+	let showGenerateFirstModal = $state(false);
+	let generateFirstSubjectId = $state('');
+	let generateFirstTopicId = $state('');
+	let generateFirstTitle = $state('');
+	let generateFirstMessage = $state('');
 	type ViewTab = 'subjects' | 'groups';
 	let activeViewTab = $state<ViewTab>('subjects');
 
@@ -300,12 +305,60 @@
 		goto(`/teacher/train/loop?${params.toString()}`);
 	}
 
-	function startSubjectVetting(subjectId: string) {
+	function openGenerateFirstModal(subjectId: string, topicId: string | null, title: string, message: string) {
+		generateFirstSubjectId = subjectId;
+		generateFirstTopicId = topicId ?? '';
+		generateFirstTitle = title;
+		generateFirstMessage = message;
+		showGenerateFirstModal = true;
+	}
+
+	function closeGenerateFirstModal() {
+		showGenerateFirstModal = false;
+		generateFirstSubjectId = '';
+		generateFirstTopicId = '';
+		generateFirstTitle = '';
+		generateFirstMessage = '';
+	}
+
+	function goToGenerationPageFromModal() {
+		if (!generateFirstSubjectId) {
+			closeGenerateFirstModal();
+			return;
+		}
+		const targetSubjectId = generateFirstSubjectId;
+		const targetTopicId = generateFirstTopicId;
+		const query = new URLSearchParams();
+		if (targetTopicId) query.set('topic', targetTopicId);
+		const suffix = query.toString() ? `?${query.toString()}` : '';
+		closeGenerateFirstModal();
+		goto(`/teacher/subjects/${targetSubjectId}${suffix}`);
+	}
+
+	function startSubjectVetting(subjectId: string, totalQuestions: number) {
+		if ((totalQuestions ?? 0) <= 0) {
+			openGenerateFirstModal(
+				subjectId,
+				null,
+				'No questions available',
+				'This subject has no generated questions yet. Generate first, then start vetting.'
+			);
+			return;
+		}
 		const params = new URLSearchParams({ subject: subjectId, resume: '0', auto_generate: '1' });
 		goto(`/teacher/train/loop?${params.toString()}`);
 	}
 
-	function startTopicVetting(subjectId: string, topicId: string) {
+	function startTopicVetting(subjectId: string, topicId: string, topicName: string, totalQuestions: number) {
+		if ((totalQuestions ?? 0) <= 0) {
+			openGenerateFirstModal(
+				subjectId,
+				topicId,
+				'No questions in this topic',
+				`${topicName} has no generated questions yet. Generate first, then start vetting.`
+			);
+			return;
+		}
 		const params = new URLSearchParams({ subject: subjectId, topic: topicId, resume: '0', auto_generate: '1' });
 		goto(`/teacher/train/loop?${params.toString()}`);
 	}
@@ -549,7 +602,7 @@
 								<span class="red-text">Rejected <strong>{subject.total_rejected ?? 0}</strong></span>
 							</div>
 							<div class="inline-actions">
-								<button class="table-btn primary" onclick={() => startSubjectVetting(subject.id)} disabled={loadingPendingCounts}>Start Vetting</button>
+								<button class="table-btn primary" onclick={() => startSubjectVetting(subject.id, subject.total_questions ?? 0)} disabled={loadingPendingCounts}>Start Vetting</button>
 								{#if progressBySubject[subject.id] && !isProgressComplete(progressBySubject[subject.id])}
 									<button class="table-btn" onclick={resumeLastProgress}>Resume</button>
 								{/if}
@@ -565,7 +618,6 @@
 										{#each topicsMap[subject.id] || [] as topic}
 											{@const pendingCount = getTopicPendingCount(topic.id)}
 											{@const subjectGenerationState = getSubjectGenerationState(subject.id)}
-											{@const canStart = pendingCount > 0 || topic.total_questions > 0}
 											<div class="mobile-topic-card">
 												<div class="topic-title-line">
 													<span class="topic-branch">↳</span>
@@ -579,7 +631,7 @@
 													{#if subjectGenerationState?.in_progress && pendingCount === 0}
 														<span class="status-text generation-status"><span class="spinner-sm"></span>{getSubjectGenerationLabel(subject.id)}</span>
 													{:else}
-														<button class="table-btn primary" onclick={() => startTopicVetting(subject.id, topic.id)} disabled={!canStart || loadingPendingCounts}>Start Vetting</button>
+														<button class="table-btn primary" onclick={() => startTopicVetting(subject.id, topic.id, topic.name, topic.total_questions ?? 0)} disabled={loadingPendingCounts}>Start Vetting</button>
 													{/if}
 												</div>
 											</div>
@@ -667,7 +719,7 @@
 			<div class="inline-actions action-stack">
 				<button class="table-btn primary" onclick={(event) => {
 					event.stopPropagation();
-					startSubjectVetting(subject.id);
+					startSubjectVetting(subject.id, subject.total_questions ?? 0);
 				}} disabled={loadingPendingCounts}>
 					Start Vetting
 				</button>
@@ -697,7 +749,6 @@
 			{#each topicsMap[subject.id] || [] as topic}
 				{@const pendingCount = getTopicPendingCount(topic.id)}
 				{@const subjectGenerationState = getSubjectGenerationState(subject.id)}
-				{@const canStart = pendingCount > 0 || topic.total_questions > 0}
 				<tr class="topic-row" transition:slide={{ duration: 180 }}>
 					<td>
 						<div class="topic-name-stack" style="padding-left: {depth * 1.2 + 1.2}rem">
@@ -718,8 +769,8 @@
 							{:else}
 								<button class="table-btn primary" onclick={(event) => {
 									event.stopPropagation();
-									startTopicVetting(subject.id, topic.id);
-								}} disabled={!canStart || loadingPendingCounts}>Start Vetting</button>
+									startTopicVetting(subject.id, topic.id, topic.name, topic.total_questions ?? 0);
+								}} disabled={loadingPendingCounts}>Start Vetting</button>
 							{/if}
 						</div>
 					</td>
@@ -728,6 +779,21 @@
 		{/if}
 	{/if}
 {/snippet}
+
+{#if showGenerateFirstModal}
+	<div class="modal-backdrop" role="presentation" onclick={(event) => {
+		if (event.target === event.currentTarget) closeGenerateFirstModal();
+	}}>
+		<div class="generate-modal glass-panel" role="dialog" tabindex="-1" aria-modal="true" aria-labelledby="generate-first-title">
+			<h3 id="generate-first-title">{generateFirstTitle}</h3>
+			<p>{generateFirstMessage}</p>
+			<div class="modal-actions">
+				<button class="table-btn" onclick={closeGenerateFirstModal}>Cancel</button>
+				<button class="table-btn primary" onclick={goToGenerationPageFromModal}>Go to Generate</button>
+			</div>
+		</div>
+	</div>
+{/if}
 
 <style>
 	.page {
@@ -1268,6 +1334,43 @@
 		background: rgba(239, 68, 68, 0.12);
 		border: 1px solid rgba(239, 68, 68, 0.3);
 		color: #b91c1c;
+	}
+
+	.modal-backdrop {
+		position: fixed;
+		inset: 0;
+		background: rgba(15, 23, 42, 0.52);
+		display: grid;
+		place-items: center;
+		z-index: 120;
+		padding: 1rem;
+	}
+
+	.generate-modal {
+		width: min(420px, 100%);
+		padding: 1rem;
+		border-radius: 1rem;
+		display: flex;
+		flex-direction: column;
+		gap: 0.8rem;
+	}
+
+	.generate-modal h3 {
+		margin: 0;
+		font-size: 1.1rem;
+		color: var(--theme-text-primary);
+	}
+
+	.generate-modal p {
+		margin: 0;
+		color: var(--theme-text-secondary);
+		line-height: 1.45;
+	}
+
+	.modal-actions {
+		display: flex;
+		justify-content: flex-end;
+		gap: 0.5rem;
 	}
 
 	.green-text {
