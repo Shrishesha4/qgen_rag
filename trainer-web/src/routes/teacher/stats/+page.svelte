@@ -261,7 +261,7 @@
 					<thead>
 						<tr>
 							<th></th>
-							<th>Code</th>
+							<!-- <th>Code</th> -->
 							<th>Name</th>
 							<th>Questions</th>
 							<th>Pending</th>
@@ -348,9 +348,14 @@
 		<td>
 			<span class="expand-indicator">{expandedGroups.has(group.id) ? '▾' : '▸'}</span>
 		</td>
-		<td>—</td>
-		<td class="name-cell" style="padding-left: {depth * 1.2}rem">
-			<span class="group-label">📁 {group.name}</span>
+		<!-- <td>—</td> -->
+		<td class="name-cell" style="padding-left: {depth * 1.75}rem">
+			<span class="group-label">
+				{#if depth > 0}
+					<span class="tree-branch">↳</span>
+				{/if}
+				📁 {group.name}
+			</span>
 		</td>
 		<td>{group.total_questions}</td>
 		<td class="amber-text">{group.total_pending}</td>
@@ -379,8 +384,16 @@
 		<td>
 			<span class="expand-indicator">{expandedSubjectId === row.id ? '▾' : '▸'}</span>
 		</td>
-		<td><span class="code-chip">{row.code}</span></td>
-		<td class="name-cell" style="padding-left: {depth * 1.2}rem">{row.name}</td>
+		<!-- <td><span class="code-chip">{row.code}</span></td> -->
+		<td class="name-cell" style="padding-left: {depth * 1.75}rem">
+			<span class="subject-label" class:nested={depth > 0}>
+				{#if depth > 0}
+					<span class="tree-branch">↳</span>
+				{/if}
+				{row.name} 
+				<span class="code-chip">{row.code}</span>
+			</span>
+		</td>
 		<td>{row.total}</td>
 		<td class="amber-text">{row.pending}</td>
 		<td class="green-text">{row.approved}</td>
@@ -782,6 +795,20 @@
 
 	.group-label {
 		font-weight: 700;
+		margin-left: 0.6rem;
+	}
+
+	.subject-label,
+	.group-label {
+		display: inline-flex;
+		align-items: center;
+		gap: 0.35rem;
+		margin-left: 0.6rem;
+	}
+
+	.tree-branch {
+		color: var(--theme-text-muted);
+		font-weight: 600;
 	}
 
 	.expandable-row:hover {
