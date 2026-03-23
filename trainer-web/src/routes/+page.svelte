@@ -1,7 +1,43 @@
 <script lang="ts">
+	import { goto } from '$app/navigation';
 	import { onMount } from 'svelte';
+	import { login } from '$lib/api/auth';
+	import { session } from '$lib/session';
 
 	let introReady = $state(false);
+	let email = $state('');
+	let password = $state('');
+	let signingIn = $state(false);
+	let signInError = $state('');
+
+	function redirectByRole(role: string) {
+		switch (role) {
+			case 'admin':
+				goto('/admin/dashboard');
+				break;
+			case 'vetter':
+				goto('/vetter/dashboard');
+				break;
+			case 'teacher':
+			default:
+				goto('/teacher/subjects');
+				break;
+		}
+	}
+
+	async function handleLandingSignIn() {
+		signInError = '';
+		signingIn = true;
+		try {
+			const response = await login({ email, password });
+			session.refresh();
+			redirectByRole(response.user.role);
+		} catch (e: unknown) {
+			signInError = e instanceof Error ? e.message : 'Sign in failed';
+		} finally {
+			signingIn = false;
+		}
+	}
 
 	onMount(() => {
 		const rafId = requestAnimationFrame(() => {
@@ -26,21 +62,37 @@
 			</p>
 		</div>
 
-		<div class="cards single-card">
-			<a href="/login" class="role-card glass-panel login-card">
-			<div class="role-icon login-icon">
-				<svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
-					<path d="M15 3h4a2 2 0 0 1 2 2v14a2 2 0 0 1-2 2h-4"></path>
-					<polyline points="10 17 15 12 10 7"></polyline>
-					<line x1="15" y1="12" x2="3" y2="12"></line>
-				</svg>
-			</div>
-			<h2 class="card-title">Sign In</h2>
-			<p class="card-desc">
-				Access your dashboard as a Teacher, Vetter, or Admin. Your role will be detected automatically.
-			</p>
-			<span class="card-cta">Continue to Sign In →</span>
-			</a>
+		<div class="signin-wrap">
+			<form class="signin-form" onsubmit={(e) => { e.preventDefault(); handleLandingSignIn(); }}>
+				{#if signInError}
+					<p class="signin-error" role="alert">{signInError}</p>
+				{/if}
+				<label class="signin-field">
+					<span class="signin-label">Email</span>
+					<input
+						type="email"
+						class="signin-input"
+						bind:value={email}
+						placeholder="your email address"
+						autocomplete="email"
+						required
+					/>
+				</label>
+				<label class="signin-field">
+					<span class="signin-label">Password</span>
+					<input
+						type="password"
+						class="signin-input"
+						bind:value={password}
+						placeholder="••••••••"
+						autocomplete="current-password"
+						required
+					/>
+				</label>
+				<button type="submit" class="signin-submit" disabled={signingIn}>
+					{signingIn ? 'Signing In...' : 'Sign In'}
+				</button>
+			</form>
 		</div>
 	</section>
 </div>
@@ -56,6 +108,7 @@
 
 	.landing-shell {
 		width: min(980px, 100%);
+		min-height: clamp(500px, 64vh, 640px);
 		display: flex;
 		flex-direction: column;
 		gap: 1rem;
@@ -137,7 +190,7 @@
 	.hero-icon,
 	.hero-title,
 	.hero-sub,
-	.login-card {
+	.signin-wrap {
 		opacity: 0;
 		transform: translateY(14px);
 		filter: blur(8px);
@@ -155,7 +208,7 @@
 		animation: contentFadeUp 0.6s ease 1.22s both;
 	}
 
-	.landing-shell.intro-ready .login-card {
+	.landing-shell.intro-ready .signin-wrap {
 		animation: contentFadeUp 0.62s ease 1.34s both;
 	}
 
@@ -223,7 +276,7 @@
 		.hero-icon,
 		.hero-title,
 		.hero-sub,
-		.login-card {
+		.signin-wrap {
 			opacity: 1;
 			transform: none;
 			filter: none;
@@ -286,111 +339,120 @@
 		max-width: 48ch;
 	}
 
-	.cards {
-		display: grid;
-		grid-template-columns: repeat(2, minmax(0, 1fr));
-		gap: 1rem;
-		align-items: stretch;
+	.signin-wrap {
+		display: flex;
+		justify-content: center;
+		margin-top: 0.55rem;
 	}
 
-	.cards.single-card {
-		grid-template-columns: 1fr;
-		max-width: 420px;
-		margin: 0 auto;
-	}
-
-	.role-card {
+	.signin-form {
+		width: min(360px, 94vw);
 		display: flex;
 		flex-direction: column;
-		align-items: flex-start;
-		justify-content: space-between;
-		gap: 0.75rem;
-		text-align: left;
-		padding: 2rem 1.5rem;
-		text-decoration: none;
-		color: inherit;
-		border-radius: 1.5rem;
-		transition: all 0.3s ease;
-		cursor: pointer;
-		min-height: 260px;
-		width: 100%;
-		/* Enhanced blur effect */
-		backdrop-filter: blur(10px) saturate(150%) brightness(1.02);
-		-webkit-backdrop-filter: blur(10px) saturate(150%) brightness(1.02);
+		gap: 0.56rem;
+	}
+
+	.signin-field {
+		display: flex;
+		flex-direction: column;
+		gap: 0.2rem;
+	}
+
+	.signin-label {
+		font-size: 0.74rem;
+		font-weight: 700;
+		color: rgba(15, 23, 42, 0.78);
+	}
+
+	.signin-input {
+		padding: 0.62rem 0.74rem;
+		border-radius: 0.7rem;
+		border: 1px solid rgba(255, 255, 255, 0.55);
 		background: linear-gradient(
-			145deg,
-			rgba(255,255,255,0.1) 0%,
-			rgba(255,255,255,0.05) 50%,
-			rgba(255,255,255,0.08) 100%
+			160deg,
+			rgba(255, 255, 255, 0.5) 0%,
+			rgba(255, 255, 255, 0.34) 100%
+		);
+		color: #111827;
+		font-size: 0.9rem;
+		outline: none;
+		backdrop-filter: blur(12px) saturate(135%);
+		-webkit-backdrop-filter: blur(12px) saturate(135%);
+		box-shadow:
+			inset 0 1px 0 rgba(255, 255, 255, 0.65),
+			inset 0 -1px 0 rgba(255, 255, 255, 0.2);
+		transition: border-color 0.18s ease, box-shadow 0.18s ease, background 0.18s ease;
+	}
+
+	.signin-input::placeholder {
+		color: rgba(31, 41, 55, 0.48);
+	}
+
+	.signin-input:hover {
+		background: linear-gradient(
+			160deg,
+			rgba(255, 255, 255, 0.56) 0%,
+			rgba(255, 255, 255, 0.38) 100%
+		);
+	}
+
+	.signin-input:focus {
+		border-color: rgba(255, 255, 255, 0.8);
+		background: linear-gradient(
+			160deg,
+			rgba(255, 255, 255, 0.62) 0%,
+			rgba(255, 255, 255, 0.44) 100%
 		);
 		box-shadow:
-			0 8px 40px rgba(0, 0, 0, 0.25),
-			inset 0 1px 1px rgba(255, 255, 255, 0.25),
-			inset 0 -1px 1px rgba(255, 255, 255, 0.08),
-			0 0 0 1px rgba(255, 255, 255, 0.12);
+			0 0 0 3px rgba(255, 255, 255, 0.28),
+			0 0 0 5px rgba(var(--theme-primary-rgb), 0.14);
 	}
 
-	.login-card {
-		background: linear-gradient(160deg, rgba(var(--theme-primary-rgb), 0.14), rgba(255, 255, 255, 0.76));
-	}
-
-	.role-card:hover {
-		transform: translateY(-4px);
-		background: linear-gradient(
-			145deg,
-			rgba(255,255,255,0.18) 0%,
-			rgba(255,255,255,0.12) 50%,
-			rgba(255,255,255,0.15) 100%
-		);
-		box-shadow: 
-			0 12px 40px rgba(0, 0, 0, 0.3),
-			inset 0 1px 1px rgba(255, 255, 255, 0.3),
-			inset 0 -1px 1px rgba(255, 255, 255, 0.12),
-			0 0 0 1px rgba(255, 255, 255, 0.18);
-		/* Maintain blur on hover */
-		backdrop-filter: blur(10px) saturate(150%) brightness(1.02);
-		-webkit-backdrop-filter: blur(10px) saturate(150%) brightness(1.02);
-	}
-
-	.role-icon {
-		width: 56px;
-		height: 56px;
-		border-radius: 50%;
-		display: flex;
+	.signin-submit {
+		display: inline-flex;
 		align-items: center;
 		justify-content: center;
-	}
-
-	.login-icon {
-		background: rgba(var(--theme-primary-rgb), 0.18);
-		color: var(--theme-primary);
-		border: 1px solid rgba(var(--theme-primary-rgb), 0.38);
-	}
-
-	.card-title {
-		font-size: 1.35rem;
-		font-weight: 700;
-		margin: 0;
-		color: var(--theme-text-primary);
-	}
-
-	.card-desc {
-		font-size: 0.9rem;
-		color: var(--theme-text-secondary);
-		margin: 0;
-		line-height: 1.5;
-	}
-
-	.card-cta {
-		font-size: 0.9rem;
+		font-size: 0.98rem;
 		font-weight: 700;
 		color: var(--theme-primary);
-		margin-top: 0.25rem;
+		margin-top: 0.2rem;
+		padding: 0.72rem 1.1rem;
+		border-radius: 999px;
+		border: 1px solid rgba(var(--theme-primary-rgb), 0.28);
+		background: rgba(255, 255, 255, 0.3);
+		cursor: pointer;
+		backdrop-filter: blur(6px);
+		-webkit-backdrop-filter: blur(6px);
+		transition: transform 0.2s ease, background 0.2s ease;
+	}
+
+	.signin-submit:hover:enabled {
+		transform: translateY(-1px);
+		background: rgba(255, 255, 255, 0.38);
+	}
+
+	.signin-submit:disabled {
+		opacity: 0.7;
+		cursor: wait;
+	}
+
+	.signin-error {
+		margin: 0;
+		padding: 0.48rem 0.6rem;
+		font-size: 0.78rem;
+		color: #b91c1c;
+		background: rgba(254, 226, 226, 0.6);
+		border: 1px solid rgba(239, 68, 68, 0.24);
+		border-radius: 0.62rem;
 	}
 
 	@media (max-width: 768px) {
 		.landing {
 			padding: 1rem 0.85rem;
+		}
+
+		.landing-shell {
+			min-height: clamp(440px, 60vh, 560px);
 		}
 
 		.hero {
@@ -413,41 +475,23 @@
 			max-width: 100%;
 		}
 
-		.role-card {
-			padding: 1.2rem 1rem;
-			min-height: 220px;
+		.signin-form {
+			width: min(350px, 94vw);
 		}
 
-		.role-icon {
-			width: 50px;
-			height: 50px;
-		}
-
-		.role-icon svg {
-			width: 22px;
-			height: 22px;
-		}
-
-		.card-title {
-			font-size: 1.25rem;
-		}
-
-		.card-desc {
-			font-size: 0.88rem;
-		}
-
-		.card-cta {
-			font-size: 0.85rem;
-		}
-
-		.cards {
-			grid-template-columns: 1fr;
+		.signin-submit {
+			font-size: 0.92rem;
+			padding: 0.64rem 1.02rem;
 		}
 	}
 
 	@media (max-width: 480px) {
 		.landing {
 			padding: 0.85rem 0.65rem;
+		}
+
+		.landing-shell {
+			min-height: 420px;
 		}
 
 		.hero {
@@ -471,36 +515,13 @@
 			font-size: 0.92rem;
 		}
 
-		.cards {
-			gap: 0.75rem;
+		.signin-form {
+			width: min(320px, 95vw);
 		}
 
-		.role-card {
-			padding: 1.25rem 1rem;
-			border-radius: 1.25rem;
-			gap: 0.5rem;
-		}
-
-		.role-icon {
-			width: 46px;
-			height: 46px;
-		}
-
-		.role-icon svg {
-			width: 20px;
-			height: 20px;
-		}
-
-		.card-title {
-			font-size: 1.15rem;
-		}
-
-		.card-desc {
-			font-size: 0.82rem;
-		}
-
-		.card-cta {
-			font-size: 0.8rem;
+		.signin-submit {
+			font-size: 0.84rem;
+			padding: 0.56rem 0.92rem;
 		}
 	}
 </style>

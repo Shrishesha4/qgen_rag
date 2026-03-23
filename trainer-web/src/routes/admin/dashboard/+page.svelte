@@ -156,13 +156,13 @@
 	</div>
 
 	<!-- User role breakdown -->
-	{#if !loading && stats}
+	<!-- {#if !loading && stats}
 		<div class="role-bar animate-slide-up">
 			<span class="role-chip teacher-chip">{stats.total_teachers} Teachers</span>
 			<span class="role-chip vetter-chip">{stats.total_vetters} Vetters</span>
 			<span class="role-chip admin-chip">{stats.total_admins} Admins</span>
 		</div>
-	{/if}
+	{/if} -->
 
 	<div class="quick-links animate-slide-up">
 		<a href="/admin/subjects" class="quick-link glass-panel">

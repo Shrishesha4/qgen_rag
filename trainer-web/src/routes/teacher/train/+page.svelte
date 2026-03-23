@@ -11,7 +11,7 @@
 		type SubjectTreeResponse,
 		type TopicResponse
 	} from '$lib/api/subjects';
-	import { getBackgroundGenerationStatuses, scheduleBackgroundGeneration } from '$lib/api/documents';
+	import { getBackgroundGenerationStatuses } from '$lib/api/documents';
 	import { getQuestionsForVetting } from '$lib/api/vetting';
 	import {
 		createTeacherVettingLoopUrl,
@@ -34,6 +34,8 @@
 	let progressBySubject = $state<Record<string, TeacherVettingProgressSnapshot>>({});
 	let pendingByTopic = $state<Record<string, number>>({});
 	let loadingPendingCounts = $state(false);
+	type ViewTab = 'subjects' | 'groups';
+	let activeViewTab = $state<ViewTab>('subjects');
 
 	type SubjectGenerationState = {
 		in_progress: boolean;
@@ -43,18 +45,7 @@
 		total_questions?: number | null;
 	};
 
-	type TopicGenerationState = {
-		subjectId: string;
-		status: string;
-		progress: number;
-		current: number;
-		total: number;
-		stalePolls: number;
-	};
-
 	let subjectGenerationStateBySubject = $state<Record<string, SubjectGenerationState>>({});
-	let topicGenerationStateByTopic = $state<Record<string, TopicGenerationState>>({});
-	let generationPollTimer: ReturnType<typeof setInterval> | null = null;
 	let subjectGenerationPollTimer: ReturnType<typeof setInterval> | null = null;
 	
 	// WebSocket for live stats updates
@@ -101,10 +92,6 @@
 	});
 
 	onDestroy(() => {
-		if (generationPollTimer) {
-			clearInterval(generationPollTimer);
-			generationPollTimer = null;
-		}
 		if (subjectGenerationPollTimer) {
 			clearInterval(subjectGenerationPollTimer);
 			subjectGenerationPollTimer = null;
@@ -323,125 +310,6 @@
 		goto(`/teacher/train/loop?${params.toString()}`);
 	}
 
-	async function generateTopicBatch(subjectId: string, topicId: string) {
-		if (topicGenerationStateByTopic[topicId]) return;
-		topicGenerationStateByTopic = {
-			...topicGenerationStateByTopic,
-			[topicId]: {
-				subjectId,
-				status: 'queued',
-				progress: 0,
-				current: 0,
-				total: 30,
-				stalePolls: 0,
-			},
-		};
-		error = '';
-		try {
-			const scheduleRes = await scheduleBackgroundGeneration({
-				subjectId,
-				count: 30,
-				types: 'mcq',
-				difficulty: 'medium',
-				topicId,
-			});
-			topicGenerationStateByTopic = {
-				...topicGenerationStateByTopic,
-				[topicId]: {
-					...(topicGenerationStateByTopic[topicId] ?? {
-						subjectId,
-						status: 'queued',
-						progress: 0,
-						current: 0,
-						total: 30,
-						stalePolls: 0,
-					}),
-					status: scheduleRes.status || 'queued',
-					total: Math.max(1, scheduleRes.count || 30),
-					stalePolls: 0,
-				},
-			};
-			await pollTopicGenerationStates();
-			ensureTopicGenerationPolling();
-		} catch (e: unknown) {
-			const nextStates = { ...topicGenerationStateByTopic };
-			delete nextStates[topicId];
-			topicGenerationStateByTopic = nextStates;
-			error = e instanceof Error ? e.message : 'Failed to schedule topic generation';
-		}
-	}
-
-	function ensureTopicGenerationPolling() {
-		if (generationPollTimer) {
-			clearInterval(generationPollTimer);
-			generationPollTimer = null;
-		}
-		if (Object.keys(topicGenerationStateByTopic).length === 0) return;
-		generationPollTimer = setInterval(() => {
-			void pollTopicGenerationStates();
-		}, 2500);
-	}
-
-	async function pollTopicGenerationStates() {
-		const activeEntries = Object.entries(topicGenerationStateByTopic);
-		if (activeEntries.length === 0) return;
-
-		const subjectIds = [...new Set(activeEntries.map(([, state]) => state.subjectId))];
-		let statusesBySubject: Record<
-			string,
-			{ in_progress: boolean; status: string; progress: number; current_question: number; total_questions?: number | null }
-		> = {};
-		try {
-			const statusRes = await getBackgroundGenerationStatuses(subjectIds);
-			statusesBySubject = statusRes.statuses;
-		} catch {
-			return;
-		}
-
-		const nextStates: Record<string, TopicGenerationState> = {};
-
-		for (const [topicId, state] of activeEntries) {
-			const subjectStatus = statusesBySubject[state.subjectId];
-			if (subjectStatus?.in_progress) {
-				nextStates[topicId] = {
-					...state,
-					status: subjectStatus.status || state.status,
-					progress: Math.max(0, Math.min(100, subjectStatus.progress ?? state.progress)),
-					current: Math.max(0, subjectStatus.current_question ?? state.current),
-					total: Math.max(1, subjectStatus.total_questions ?? state.total),
-					stalePolls: 0,
-				};
-				continue;
-			}
-
-			const topics = topicsMap[state.subjectId] || [];
-			await loadPendingCountsForSubject(state.subjectId, topics);
-			const pendingCount = pendingByTopic[topicId] ?? 0;
-			const serverStatus = (subjectStatus?.status || '').toLowerCase();
-			if (subjectStatus && ['failed', 'error'].includes(serverStatus)) {
-				error = 'Generation failed for this topic. Please retry.';
-				continue;
-			}
-			if (subjectStatus && ['complete', 'completed'].includes(serverStatus) && pendingCount > 0) {
-				continue;
-			}
-
-			const nextStalePolls = (state.stalePolls ?? 0) + 1;
-			if (!subjectStatus && pendingCount > 0 && nextStalePolls >= 4) {
-				continue;
-			}
-
-			nextStates[topicId] = {
-				...state,
-				status: subjectStatus?.status || state.status,
-				stalePolls: subjectStatus ? 0 : nextStalePolls,
-			};
-		}
-
-		topicGenerationStateByTopic = nextStates;
-		ensureTopicGenerationPolling();
-	}
-
 	const currentProgressLabel = $derived.by(() => {
 		if (!latestProgress) return 'No active progress';
 		const total = latestProgress.questions.length;
@@ -499,21 +367,6 @@
 		return pendingByTopic[topicId] ?? 0;
 	}
 
-	function getTopicGenerationState(topicId: string): TopicGenerationState | null {
-		return topicGenerationStateByTopic[topicId] ?? null;
-	}
-
-	function getTopicGenerationLabel(topicId: string): string {
-		const state = topicGenerationStateByTopic[topicId];
-		if (!state) return 'Generate';
-		const status = (state.status || '').toLowerCase();
-		if (status === 'queued') return 'Queued';
-		if (status === 'waiting_for_documents') return 'Waiting...';
-		if (state.total > 0 && state.current > 0) return `Gen ${Math.min(state.current, state.total)}/${state.total}`;
-		if (state.progress > 0) return `Gen ${state.progress}%`;
-		return 'Generating...';
-	}
-
 	function getSubjectGenerationLabel(subjectId: string): string {
 		const state = subjectGenerationStateBySubject[subjectId];
 		if (!state || !state.in_progress) return '';
@@ -554,29 +407,25 @@
 			<div class="error-banner" role="alert">{error}</div>
 		{/if}
 
-		{#if !latestProgress || !latestProgressIsComplete}
+		{#if latestProgress && !latestProgressIsComplete}
 			<section class="resume-strip glass-panel">
-				{#if latestProgress}
-					<div class="summary-grid">
-						<div class="summary-item">
-							<span class="summary-label">Subject</span>
-							<strong>{latestProgressSubjectLabel}</strong>
-						</div>
-						<div class="summary-item">
-							<span class="summary-label">Progress</span>
-							<strong>{currentProgressLabel}</strong>
-						</div>
-						<div class="summary-item">
-							<span class="summary-label">Last Updated</span>
-							<strong>{formatDateTime(latestProgress.updatedAt)}</strong>
-						</div>
+				<div class="summary-grid">
+					<div class="summary-item">
+						<span class="summary-label">Subject</span>
+						<strong>{latestProgressSubjectLabel}</strong>
 					</div>
-					<div class="actions-row">
-						<button class="primary-btn" onclick={resumeLastProgress}>Resume Vetting</button>
+					<div class="summary-item">
+						<span class="summary-label">Progress</span>
+						<strong>{currentProgressLabel}</strong>
 					</div>
-				{:else}
-					<p class="muted">No saved vetting progress found yet. Start a new vetting session below.</p>
-				{/if}
+					<div class="summary-item">
+						<span class="summary-label">Last Updated</span>
+						<strong>{formatDateTime(latestProgress.updatedAt)}</strong>
+					</div>
+				</div>
+				<div class="actions-row">
+					<button class="primary-btn" onclick={resumeLastProgress}>Resume Vetting</button>
+				</div>
 			</section>
 		{/if}
 
@@ -587,6 +436,34 @@
 						←
 					</button>
 					<h2>Start New Vetting</h2>
+				</div>
+				<div class="panel-head-center">
+					<div class="tab-bar" role="tablist" aria-label="Vetting views">
+						<button
+							class="tab-btn"
+							class:active={activeViewTab === 'subjects'}
+							role="tab"
+							aria-selected={activeViewTab === 'subjects'}
+							onclick={() => {
+								activeViewTab = 'subjects';
+								searchQuery = '';
+							}}
+						>
+							Subjects
+						</button>
+						<button
+							class="tab-btn"
+							class:active={activeViewTab === 'groups'}
+							role="tab"
+							aria-selected={activeViewTab === 'groups'}
+							onclick={() => {
+								activeViewTab = 'groups';
+								searchQuery = '';
+							}}
+						>
+							Groups
+						</button>
+					</div>
 				</div>
 				<input class="search-input" bind:value={searchQuery} placeholder="Search subjects or topics" />
 			</div>
@@ -612,7 +489,7 @@
 						</tr>
 					</thead>
 					<tbody>
-						{#if hasSearchQuery}
+						{#if activeViewTab === 'subjects'}
 							{#if filteredSubjects.length === 0}
 								<tr>
 									<td colspan="6" class="empty-cell">No matching subjects.</td>
@@ -622,17 +499,29 @@
 									{@render vettingSubjectRow(subject, 0)}
 								{/each}
 							{/if}
-						{:else if !treeData || (treeData.groups.length === 0 && treeData.ungrouped_subjects.length === 0)}
-							<tr>
-								<td colspan="6" class="empty-cell">No subjects yet.</td>
-							</tr>
 						{:else}
-							{#each treeData.groups as group}
-								{@render vettingGroupRow(group, 0)}
-							{/each}
-							{#each treeData.ungrouped_subjects as subject}
-								{@render vettingSubjectRow(subject, 0)}
-							{/each}
+							{#if hasSearchQuery}
+								{#if filteredSubjects.length === 0}
+									<tr>
+										<td colspan="6" class="empty-cell">No matching subjects.</td>
+									</tr>
+								{:else}
+									{#each filteredSubjects as subject}
+										{@render vettingSubjectRow(subject, 0)}
+									{/each}
+								{/if}
+							{:else if !treeData || (treeData.groups.length === 0 && treeData.ungrouped_subjects.length === 0)}
+								<tr>
+									<td colspan="6" class="empty-cell">No subjects yet.</td>
+								</tr>
+							{:else}
+								{#each treeData.groups as group}
+									{@render vettingGroupRow(group, 0)}
+								{/each}
+								{#each treeData.ungrouped_subjects as subject}
+									{@render vettingSubjectRow(subject, 0)}
+								{/each}
+							{/if}
 						{/if}
 					</tbody>
 				</table>
@@ -675,7 +564,6 @@
 									<div class="mobile-topic-list">
 										{#each topicsMap[subject.id] || [] as topic}
 											{@const pendingCount = getTopicPendingCount(topic.id)}
-											{@const generationState = getTopicGenerationState(topic.id)}
 											{@const subjectGenerationState = getSubjectGenerationState(subject.id)}
 											{@const canStart = pendingCount > 0 || topic.total_questions > 0}
 											<div class="mobile-topic-card">
@@ -688,14 +576,10 @@
 													<span>Pending <strong>{pendingCount}</strong></span>
 												</div>
 												<div class="inline-actions">
-													{#if generationState}
-														<button class="table-btn" disabled>{getTopicGenerationLabel(topic.id)}</button>
-													{:else if subjectGenerationState?.in_progress && pendingCount === 0}
-														<button class="table-btn" disabled>{getSubjectGenerationLabel(subject.id)}</button>
-													{:else if canStart}
-														<button class="table-btn primary" onclick={() => startTopicVetting(subject.id, topic.id)}>Start Vetting</button>
+													{#if subjectGenerationState?.in_progress && pendingCount === 0}
+														<span class="status-text generation-status"><span class="spinner-sm"></span>{getSubjectGenerationLabel(subject.id)}</span>
 													{:else}
-														<button class="table-btn" onclick={() => generateTopicBatch(subject.id, topic.id)}>Generate</button>
+														<button class="table-btn primary" onclick={() => startTopicVetting(subject.id, topic.id)} disabled={!canStart || loadingPendingCounts}>Start Vetting</button>
 													{/if}
 												</div>
 											</div>
@@ -812,7 +696,6 @@
 		{:else}
 			{#each topicsMap[subject.id] || [] as topic}
 				{@const pendingCount = getTopicPendingCount(topic.id)}
-				{@const generationState = getTopicGenerationState(topic.id)}
 				{@const subjectGenerationState = getSubjectGenerationState(subject.id)}
 				{@const canStart = pendingCount > 0 || topic.total_questions > 0}
 				<tr class="topic-row" transition:slide={{ duration: 180 }}>
@@ -830,20 +713,13 @@
 					<td class="red-text">0</td>
 					<td class="action-cell">
 						<div class="inline-actions action-stack">
-							{#if generationState}
-								<button class="table-btn" disabled>{getTopicGenerationLabel(topic.id)}</button>
-							{:else if subjectGenerationState?.in_progress && pendingCount === 0}
-								<button class="table-btn" disabled>{getSubjectGenerationLabel(subject.id)}</button>
-							{:else if canStart}
+							{#if subjectGenerationState?.in_progress && pendingCount === 0}
+								<span class="status-text generation-status"><span class="spinner-sm"></span>{getSubjectGenerationLabel(subject.id)}</span>
+							{:else}
 								<button class="table-btn primary" onclick={(event) => {
 									event.stopPropagation();
 									startTopicVetting(subject.id, topic.id);
-								}}>Start Vetting</button>
-							{:else}
-								<button class="table-btn" onclick={(event) => {
-									event.stopPropagation();
-									generateTopicBatch(subject.id, topic.id);
-								}}>Generate</button>
+								}} disabled={!canStart || loadingPendingCounts}>Start Vetting</button>
 							{/if}
 						</div>
 					</td>
@@ -957,9 +833,44 @@
 		min-height: 0;
 	}
 
+	.tab-bar {
+		display: inline-flex;
+		align-items: center;
+		gap: 0.25rem;
+		padding: 0.25rem;
+		border-radius: 0.75rem;
+		background: rgba(var(--theme-primary-rgb), 0.08);
+		width: fit-content;
+		align-self: center;
+		margin: 0 auto;
+	}
+
+	.tab-btn {
+		padding: 0.56rem 1.08rem;
+		border-radius: 0.55rem;
+		border: none;
+		background: transparent;
+		color: var(--theme-text-muted);
+		font: inherit;
+		font-size: 0.86rem;
+		font-weight: 700;
+		cursor: pointer;
+		transition: all 0.15s ease;
+	}
+
+	.tab-btn:hover {
+		background: rgba(var(--theme-primary-rgb), 0.08);
+		color: var(--theme-text-primary);
+	}
+
+	.tab-btn.active {
+		background: rgba(var(--theme-primary-rgb), 0.18);
+		color: var(--theme-text-primary);
+	}
+
 	.panel-head {
-		display: flex;
-		justify-content: space-between;
+		display: grid;
+		grid-template-columns: auto 1fr auto;
 		align-items: center;
 		gap: 0.8rem;
 	}
@@ -975,6 +886,12 @@
 		margin: 0;
 		font-size: 1.18rem;
 		color: var(--theme-text-primary);
+	}
+
+	.panel-head-center {
+		display: flex;
+		justify-content: center;
+		min-width: 0;
 	}
 
 	.table-back-btn {
@@ -1345,11 +1262,6 @@
 		padding: 0.95rem 0.7rem;
 	}
 
-	.muted {
-		margin: 0;
-		color: var(--theme-text-muted);
-	}
-
 	.error-banner {
 		padding: 0.9rem 1rem;
 		border-radius: 1rem;
@@ -1452,6 +1364,11 @@
 		.panel-head {
 			flex-direction: column;
 			align-items: stretch;
+			display: flex;
+		}
+
+		.tab-bar {
+			align-self: center;
 		}
 
 		.panel-head-left {

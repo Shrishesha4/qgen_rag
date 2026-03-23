@@ -78,7 +78,8 @@
 				{ href: '/admin/dashboard', label: 'Dashboard', icon: '📊' },
 				{ href: '/admin/subjects', label: 'Subjects', icon: '🧾' },
 				{ href: '/admin/teachers', label: 'Teachers', icon: '🧑‍🏫' },
-				{ href: '/admin/vetters', label: 'Vetters', icon: '✅' }
+				{ href: '/admin/vetters', label: 'Vetters', icon: '✅' },
+				{ href: '/admin/profile', label: 'Profile', icon: '👤' }
 			];
 		}
 		return [];
@@ -108,6 +109,7 @@
 	});
 
 	let enableVettingLoopScroll = $derived(pathname.startsWith('/teacher/train/loop'));
+	let enableAdminWindowScroll = $derived(pathname.startsWith('/admin') && !pathname.includes('/login'));
 
 	// Role-based routing: redirect to dashboard on root path
 	$effect(() => {
@@ -212,7 +214,7 @@
 	</button>
 {/if}
 
-<div class="app-shell" class:with-desktop-chrome={showDesktopChrome} class:profile-window-scroll={pathname.endsWith('/profile')} class:vetting-loop-scroll={enableVettingLoopScroll}>
+<div class="app-shell" class:with-desktop-chrome={showDesktopChrome} class:profile-window-scroll={pathname.endsWith('/profile')} class:vetting-loop-scroll={enableVettingLoopScroll} class:admin-window-scroll={enableAdminWindowScroll}>
 	{#if showDesktopChrome}
 		<aside class="desktop-sidebar glass-panel">
 			<div class="sidebar-brand">
@@ -633,6 +635,12 @@
 
 		.app-shell.profile-window-scroll .desktop-window-content {
 			overflow: auto;
+		}
+
+		.app-shell.admin-window-scroll .desktop-window-content {
+			overflow-y: auto;
+			overflow-x: hidden;
+			-webkit-overflow-scrolling: touch;
 		}
 
 		.app-shell.vetting-loop-scroll {
