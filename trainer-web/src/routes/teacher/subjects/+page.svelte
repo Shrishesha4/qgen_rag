@@ -214,8 +214,8 @@
 								<td>
 									<div class="name-stack">
 										<div class="name-header">
-											<span class="code-chip">{subject.code}</span>
 											<strong>{subject.name}</strong>
+											<span class="code-chip">{subject.code}</span>
 										</div>
 										{#if subject.description}
 											<span class="description">{subject.description}</span>

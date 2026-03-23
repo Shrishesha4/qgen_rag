@@ -3315,6 +3315,7 @@ Output valid JSON only."""
                 )
 
             primary_doc_ids = [d.id for d in primary_docs]
+            fallback_document_id = primary_doc_ids[0] if primary_doc_ids else None
             logger.info(
                 f"quick_generate_from_subject: found {len(primary_doc_ids)} primary docs; "
                 f"no_reference_mode={no_reference_mode}"
@@ -3745,7 +3746,11 @@ Output valid JSON only."""
                             # Save discarded question to DB for traceability
                             try:
                                 discarded_q = Question(
-                                    document_id=getattr(selected_chunks[0], 'document_id', None) if selected_chunks else None,
+                                    document_id=(
+                                        getattr(selected_chunks[0], 'document_id', None)
+                                        if selected_chunks
+                                        else fallback_document_id
+                                    ),
                                     session_id=session_id,
                                     subject_id=subject_id,
                                     topic_id=topic_id,
@@ -3785,9 +3790,9 @@ Output valid JSON only."""
                             )
 
                         # Derive document_id from the chunk's parent document
-                        chunk_doc_id = None
+                        chunk_doc_id = fallback_document_id
                         if selected_chunks:
-                            chunk_doc_id = getattr(selected_chunks[0], 'document_id', None)
+                            chunk_doc_id = getattr(selected_chunks[0], 'document_id', None) or fallback_document_id
 
                         question, question_response = await self._save_question(
                             document_id=chunk_doc_id,
