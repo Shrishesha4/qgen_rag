@@ -9,7 +9,7 @@ import re
 from typing import Optional, List
 
 from fastapi import APIRouter, Depends, HTTPException, status, Query, UploadFile, File, BackgroundTasks
-from sqlalchemy import select, func, case
+from sqlalchemy import select, func, case, update, delete
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import selectinload
 
@@ -422,11 +422,11 @@ async def update_group(
 @router.delete("/groups/{group_id}", status_code=status.HTTP_204_NO_CONTENT)
 async def delete_group(
     group_id: str,
-    move_subjects_to_root: bool = Query(True, description="Move subjects to root instead of deleting"),
+    move_subjects_to_root: bool = Query(True, description="Move direct subjects one level up instead of relying on DB nulling"),
     current_user: User = Depends(get_current_user),
     db: AsyncSession = Depends(get_db),
 ):
-    """Delete a subject group. Subjects are moved to root by default."""
+    """Delete a subject group and lift direct children and subjects one level up."""
     result = await db.execute(
         select(SubjectGroup).where(SubjectGroup.id == group_id)
     )
@@ -438,24 +438,37 @@ async def delete_group(
             detail="Group not found",
         )
     
-    # Check for child groups
+    parent_group_id = group.parent_id
+
+    # Re-parent direct child groups to the deleted group's parent so hierarchy is lifted by one level.
     children_result = await db.execute(
-        select(func.count()).where(SubjectGroup.parent_id == group_id)
+        select(SubjectGroup)
+        .where(SubjectGroup.parent_id == group_id)
+        .order_by(SubjectGroup.order_index, SubjectGroup.created_at)
     )
-    if children_result.scalar_one() > 0:
-        raise HTTPException(
-            status_code=status.HTTP_400_BAD_REQUEST,
-            detail="Cannot delete group with child groups. Delete or move children first.",
+    direct_children = children_result.scalars().all()
+    if direct_children:
+        max_order_result = await db.execute(
+            select(func.max(SubjectGroup.order_index)).where(
+                SubjectGroup.parent_id == parent_group_id,
+                SubjectGroup.id != group_id,
+            )
         )
-    
+        max_order = max_order_result.scalar_one()
+        next_order = (max_order if max_order is not None else -1) + 1
+        for child in direct_children:
+            child.parent_id = parent_group_id
+            child.order_index = next_order
+            next_order += 1
+
     if move_subjects_to_root:
-        # Move all subjects in this group to root
-        from sqlalchemy import update
+        # Move subjects from the deleted group to its parent (or root if parent is null).
         await db.execute(
-            update(Subject).where(Subject.group_id == group_id).values(group_id=None)
+            update(Subject).where(Subject.group_id == group_id).values(group_id=parent_group_id)
         )
-    
-    await db.delete(group)
+
+    # Use SQL delete to avoid ORM relationship cascade deleting re-parented child groups.
+    await db.execute(delete(SubjectGroup).where(SubjectGroup.id == group_id))
     await db.commit()
 
 

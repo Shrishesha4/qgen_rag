@@ -403,11 +403,13 @@
 	}
 
 	function toggleGroup(groupId: string) {
-		if (expandedGroups.has(groupId)) {
-			expandedGroups = new Set();
-			return;
+		const next = new Set(expandedGroups);
+		if (next.has(groupId)) {
+			next.delete(groupId);
+		} else {
+			next.add(groupId);
 		}
-		expandedGroups = new Set([groupId]);
+		expandedGroups = next;
 	}
 
 	function getSubjectGenerationState(subjectId: string): SubjectGenerationState | null {
@@ -653,14 +655,14 @@
 		}
 	}}>
 		<td>
-			<div class="row-trigger">
+			<div class="row-trigger" style="padding-left: {depth * 1.8}rem">
 				<button class="expand-btn" type="button" aria-label="Toggle subgroup visibility" onclick={(event) => {
 					event.stopPropagation();
 					toggleGroup(group.id);
 				}}>
 					<span class="chevron" class:open={expandedGroups.has(group.id)}>▸</span>
 				</button>
-				<div class="name-stack" style="padding-left: {depth * 1.2}rem">
+				<div class="name-stack">
 					<div class="name-header">
 						<strong>📁 {group.name}</strong>
 						<span class="code-chip">GROUP</span>
