@@ -16,7 +16,7 @@ from sqlalchemy.orm import selectinload
 from app.core.database import get_db
 from app.core.auth_database import AuthSessionLocal
 from app.core.config import settings
-from app.models.subject import Subject, Topic
+from app.models.subject import Subject, Topic, SubjectGroup
 from app.models.question import Question
 from app.models.user import User
 from app.models.document import Document, DocumentChunk
@@ -30,6 +30,11 @@ from app.schemas.subject import (
     TopicUpdate,
     TopicResponse,
     TopicListResponse,
+    SubjectGroupCreate,
+    SubjectGroupUpdate,
+    SubjectGroupResponse,
+    SubjectGroupTreeNode,
+    SubjectTreeResponse,
 )
 from app.api.v1.deps import get_current_user
 from app.services.llm_service import LLMService
@@ -151,6 +156,374 @@ async def list_subjects(
         }
     )
 
+
+# ============== Subject Groups (must be before /{subject_id} routes) ==============
+
+@router.get("/tree", response_model=SubjectTreeResponse)
+async def get_subjects_tree(
+    current_user: User = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+):
+    """Get hierarchical tree of groups and subjects with aggregated stats."""
+    # Fetch all groups
+    groups_result = await db.execute(
+        select(SubjectGroup).order_by(SubjectGroup.order_index)
+    )
+    all_groups = groups_result.scalars().all()
+    
+    # Fetch all subjects with live question counts
+    subjects_result = await db.execute(select(Subject).order_by(Subject.name))
+    all_subjects = subjects_result.scalars().all()
+    
+    subject_ids = [s.id for s in all_subjects]
+    
+    # Compute live question counts
+    live_counts: dict = {}
+    status_counts_by_subject: dict = {}
+    if subject_ids:
+        live_counts_result = await db.execute(
+            select(Question.subject_id, func.count(Question.id))
+            .where(
+                Question.subject_id.in_(subject_ids),
+                Question.is_archived == False,
+                Question.is_latest == True,
+            )
+            .group_by(Question.subject_id)
+        )
+        live_counts = dict(live_counts_result.all())
+
+        status_counts_result = await db.execute(
+            select(
+                Question.subject_id,
+                func.count(case((Question.vetting_status == "pending", 1))).label("total_pending"),
+                func.count(case((Question.vetting_status == "approved", 1))).label("total_approved"),
+                func.count(case((Question.vetting_status == "rejected", 1))).label("total_rejected"),
+            )
+            .where(
+                Question.subject_id.in_(subject_ids),
+                Question.is_archived == False,
+                Question.is_latest == True,
+            )
+            .group_by(Question.subject_id)
+        )
+        for subject_id, total_pending, total_approved, total_rejected in status_counts_result.all():
+            status_counts_by_subject[subject_id] = {
+                "total_pending": int(total_pending or 0),
+                "total_approved": int(total_approved or 0),
+                "total_rejected": int(total_rejected or 0),
+            }
+    
+    # Build subject responses with stats
+    subject_responses_map: dict = {}
+    for s in all_subjects:
+        sr = SubjectResponse.model_validate(s)
+        sr.total_questions = live_counts.get(s.id, 0)
+        subject_status_counts = status_counts_by_subject.get(s.id, {})
+        sr.total_pending = int(subject_status_counts.get("total_pending", 0))
+        sr.total_approved = int(subject_status_counts.get("total_approved", 0))
+        sr.total_rejected = int(subject_status_counts.get("total_rejected", 0))
+        subject_responses_map[s.id] = sr
+    
+    # Group subjects by group_id
+    subjects_by_group: dict = {}
+    ungrouped_subjects = []
+    for s in all_subjects:
+        sr = subject_responses_map[s.id]
+        if s.group_id:
+            subjects_by_group.setdefault(s.group_id, []).append(sr)
+        else:
+            ungrouped_subjects.append(sr)
+    
+    # Build group tree with aggregated stats
+    groups_by_id = {g.id: g for g in all_groups}
+    children_by_parent: dict = {}
+    for g in all_groups:
+        children_by_parent.setdefault(g.parent_id, []).append(g)
+    
+    def build_group_node(group: SubjectGroup) -> SubjectGroupTreeNode:
+        """Recursively build group tree node with aggregated stats."""
+        children = children_by_parent.get(group.id, [])
+        child_nodes = [build_group_node(c) for c in sorted(children, key=lambda x: x.order_index)]
+        
+        group_subjects = subjects_by_group.get(group.id, [])
+        
+        # Aggregate stats from direct subjects
+        total_subjects = len(group_subjects)
+        total_questions = sum(s.total_questions for s in group_subjects)
+        total_pending = sum(s.total_pending for s in group_subjects)
+        total_approved = sum(s.total_approved for s in group_subjects)
+        total_rejected = sum(s.total_rejected for s in group_subjects)
+        
+        # Add stats from child groups
+        for child in child_nodes:
+            total_subjects += child.total_subjects
+            total_questions += child.total_questions
+            total_pending += child.total_pending
+            total_approved += child.total_approved
+            total_rejected += child.total_rejected
+        
+        return SubjectGroupTreeNode(
+            id=group.id,
+            name=group.name,
+            parent_id=group.parent_id,
+            order_index=group.order_index,
+            created_at=group.created_at,
+            updated_at=group.updated_at,
+            total_subjects=total_subjects,
+            total_questions=total_questions,
+            total_pending=total_pending,
+            total_approved=total_approved,
+            total_rejected=total_rejected,
+            children=child_nodes,
+            subjects=group_subjects,
+        )
+    
+    # Build root-level groups
+    root_groups = children_by_parent.get(None, [])
+    root_group_nodes = [build_group_node(g) for g in sorted(root_groups, key=lambda x: x.order_index)]
+    
+    # Calculate totals
+    all_totals = {
+        "total_groups": len(all_groups),
+        "total_subjects": len(all_subjects),
+        "total_questions": sum(sr.total_questions for sr in subject_responses_map.values()),
+        "total_pending": sum(sr.total_pending for sr in subject_responses_map.values()),
+        "total_approved": sum(sr.total_approved for sr in subject_responses_map.values()),
+        "total_rejected": sum(sr.total_rejected for sr in subject_responses_map.values()),
+    }
+    
+    return SubjectTreeResponse(
+        groups=root_group_nodes,
+        ungrouped_subjects=ungrouped_subjects,
+        totals=all_totals,
+    )
+
+
+@router.post("/groups", response_model=SubjectGroupResponse, status_code=status.HTTP_201_CREATED)
+async def create_group(
+    group_data: SubjectGroupCreate,
+    current_user: User = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+):
+    """Create a new subject group/folder."""
+    # Validate parent exists if provided
+    if group_data.parent_id:
+        parent_result = await db.execute(
+            select(SubjectGroup).where(SubjectGroup.id == group_data.parent_id)
+        )
+        if not parent_result.scalar_one_or_none():
+            raise HTTPException(
+                status_code=status.HTTP_404_NOT_FOUND,
+                detail="Parent group not found",
+            )
+    
+    # Get max order_index for siblings
+    sibling_query = select(func.max(SubjectGroup.order_index)).where(
+        SubjectGroup.parent_id == group_data.parent_id
+    )
+    max_order_result = await db.execute(sibling_query)
+    max_order = max_order_result.scalar_one() or -1
+    
+    group = SubjectGroup(
+        name=group_data.name,
+        parent_id=group_data.parent_id,
+        order_index=max_order + 1,
+    )
+    db.add(group)
+    await db.commit()
+    await db.refresh(group)
+    
+    return SubjectGroupResponse.model_validate(group)
+
+
+@router.get("/groups", response_model=List[SubjectGroupResponse])
+async def list_groups(
+    current_user: User = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+):
+    """List all subject groups (flat list)."""
+    result = await db.execute(
+        select(SubjectGroup).order_by(SubjectGroup.parent_id.nullsfirst(), SubjectGroup.order_index)
+    )
+    groups = result.scalars().all()
+    return [SubjectGroupResponse.model_validate(g) for g in groups]
+
+
+@router.get("/groups/{group_id}", response_model=SubjectGroupResponse)
+async def get_group(
+    group_id: str,
+    current_user: User = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+):
+    """Get a specific subject group."""
+    result = await db.execute(
+        select(SubjectGroup).where(SubjectGroup.id == group_id)
+    )
+    group = result.scalar_one_or_none()
+    
+    if not group:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="Group not found",
+        )
+    
+    return SubjectGroupResponse.model_validate(group)
+
+
+@router.put("/groups/{group_id}", response_model=SubjectGroupResponse)
+async def update_group(
+    group_id: str,
+    group_data: SubjectGroupUpdate,
+    current_user: User = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+):
+    """Update a subject group."""
+    result = await db.execute(
+        select(SubjectGroup).where(SubjectGroup.id == group_id)
+    )
+    group = result.scalar_one_or_none()
+    
+    if not group:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="Group not found",
+        )
+    
+    # Validate new parent if provided
+    if group_data.parent_id is not None:
+        if group_data.parent_id == group_id:
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail="A group cannot be its own parent",
+            )
+        if group_data.parent_id:
+            # Check for circular reference
+            current_parent_id = group_data.parent_id
+            while current_parent_id:
+                if current_parent_id == group_id:
+                    raise HTTPException(
+                        status_code=status.HTTP_400_BAD_REQUEST,
+                        detail="Circular parent reference detected",
+                    )
+                parent_result = await db.execute(
+                    select(SubjectGroup.parent_id).where(SubjectGroup.id == current_parent_id)
+                )
+                current_parent_id = parent_result.scalar_one_or_none()
+    
+    update_data = group_data.model_dump(exclude_unset=True)
+    for field, value in update_data.items():
+        setattr(group, field, value)
+    
+    await db.commit()
+    await db.refresh(group)
+    return SubjectGroupResponse.model_validate(group)
+
+
+@router.delete("/groups/{group_id}", status_code=status.HTTP_204_NO_CONTENT)
+async def delete_group(
+    group_id: str,
+    move_subjects_to_root: bool = Query(True, description="Move subjects to root instead of deleting"),
+    current_user: User = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+):
+    """Delete a subject group. Subjects are moved to root by default."""
+    result = await db.execute(
+        select(SubjectGroup).where(SubjectGroup.id == group_id)
+    )
+    group = result.scalar_one_or_none()
+    
+    if not group:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="Group not found",
+        )
+    
+    # Check for child groups
+    children_result = await db.execute(
+        select(func.count()).where(SubjectGroup.parent_id == group_id)
+    )
+    if children_result.scalar_one() > 0:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="Cannot delete group with child groups. Delete or move children first.",
+        )
+    
+    if move_subjects_to_root:
+        # Move all subjects in this group to root
+        from sqlalchemy import update
+        await db.execute(
+            update(Subject).where(Subject.group_id == group_id).values(group_id=None)
+        )
+    
+    await db.delete(group)
+    await db.commit()
+
+
+@router.post("/groups/{group_id}/move", response_model=SubjectGroupResponse)
+async def move_group(
+    group_id: str,
+    new_parent_id: Optional[str] = Query(None, description="New parent group ID, or null for root"),
+    current_user: User = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+):
+    """Move a group to a new parent (or root)."""
+    result = await db.execute(
+        select(SubjectGroup).where(SubjectGroup.id == group_id)
+    )
+    group = result.scalar_one_or_none()
+    
+    if not group:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="Group not found",
+        )
+    
+    # Validate new parent
+    if new_parent_id:
+        if new_parent_id == group_id:
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail="A group cannot be its own parent",
+            )
+        
+        parent_result = await db.execute(
+            select(SubjectGroup).where(SubjectGroup.id == new_parent_id)
+        )
+        if not parent_result.scalar_one_or_none():
+            raise HTTPException(
+                status_code=status.HTTP_404_NOT_FOUND,
+                detail="New parent group not found",
+            )
+        
+        # Check for circular reference
+        current_parent_id = new_parent_id
+        while current_parent_id:
+            if current_parent_id == group_id:
+                raise HTTPException(
+                    status_code=status.HTTP_400_BAD_REQUEST,
+                    detail="Cannot move group into its own descendant",
+                )
+            parent_check = await db.execute(
+                select(SubjectGroup.parent_id).where(SubjectGroup.id == current_parent_id)
+            )
+            current_parent_id = parent_check.scalar_one_or_none()
+    
+    # Get max order_index for new siblings
+    sibling_query = select(func.max(SubjectGroup.order_index)).where(
+        SubjectGroup.parent_id == new_parent_id
+    )
+    max_order_result = await db.execute(sibling_query)
+    max_order = max_order_result.scalar_one() or -1
+    
+    group.parent_id = new_parent_id
+    group.order_index = max_order + 1
+    
+    await db.commit()
+    await db.refresh(group)
+    return SubjectGroupResponse.model_validate(group)
+
+
+# ============== Subject Detail Endpoints ==============
 
 @router.get("/{subject_id}", response_model=SubjectDetailResponse)
 async def get_subject(
@@ -1210,6 +1583,44 @@ async def generate_learning_outcomes(
         los = list(_GENERIC_LOS)  # generic fallback
 
     subject.learning_outcomes = {"outcomes": los}
+    await db.commit()
+    await db.refresh(subject)
+    return SubjectResponse.model_validate(subject)
+
+
+# ============== Subject Move Endpoint ==============
+
+@router.put("/{subject_id}/move", response_model=SubjectResponse)
+async def move_subject(
+    subject_id: str,
+    group_id: Optional[str] = Query(None, description="Target group ID, or null for root"),
+    current_user: User = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+):
+    """Move a subject to a different group (or root)."""
+    result = await db.execute(
+        select(Subject).where(Subject.id == subject_id)
+    )
+    subject = result.scalar_one_or_none()
+    
+    if not subject:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="Subject not found",
+        )
+    
+    # Validate target group if provided
+    if group_id:
+        group_result = await db.execute(
+            select(SubjectGroup).where(SubjectGroup.id == group_id)
+        )
+        if not group_result.scalar_one_or_none():
+            raise HTTPException(
+                status_code=status.HTTP_404_NOT_FOUND,
+                detail="Target group not found",
+            )
+    
+    subject.group_id = group_id
     await db.commit()
     await db.refresh(subject)
     return SubjectResponse.model_validate(subject)

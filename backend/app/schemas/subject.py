@@ -3,7 +3,7 @@ Subject and Topic Pydantic schemas.
 """
 
 from datetime import datetime
-from typing import Optional, List
+from typing import Optional, List, ForwardRef
 from pydantic import BaseModel, Field
 
 
@@ -115,6 +115,7 @@ class SubjectResponse(SubjectBase):
     id: str
     user_id: Optional[str] = None
     creator_username: Optional[str] = None
+    group_id: Optional[str] = None
     learning_outcomes: Optional[dict]
     course_outcomes: Optional[dict]
     total_questions: int
@@ -138,3 +139,55 @@ class SubjectListResponse(BaseModel):
 class SubjectDetailResponse(SubjectResponse):
     """Schema for detailed Subject response with topics."""
     topics: List[TopicResponse] = []
+
+
+# Subject Group schemas
+class SubjectGroupBase(BaseModel):
+    """Base schema for Subject Group."""
+    name: str = Field(..., min_length=1, max_length=255)
+
+
+class SubjectGroupCreate(SubjectGroupBase):
+    """Schema for creating a Subject Group."""
+    parent_id: Optional[str] = None
+
+
+class SubjectGroupUpdate(BaseModel):
+    """Schema for updating a Subject Group."""
+    name: Optional[str] = Field(None, min_length=1, max_length=255)
+    parent_id: Optional[str] = None
+    order_index: Optional[int] = None
+
+
+class SubjectGroupResponse(SubjectGroupBase):
+    """Schema for Subject Group response."""
+    id: str
+    parent_id: Optional[str] = None
+    order_index: int = 0
+    created_at: datetime
+    updated_at: datetime
+    # Aggregated stats (computed at query time)
+    total_subjects: int = 0
+    total_questions: int = 0
+    total_pending: int = 0
+    total_approved: int = 0
+    total_rejected: int = 0
+
+    model_config = {"from_attributes": True}
+
+
+class SubjectGroupTreeNode(SubjectGroupResponse):
+    """Recursive schema for Subject Group tree with children."""
+    children: List["SubjectGroupTreeNode"] = []
+    subjects: List["SubjectResponse"] = []
+
+
+class SubjectTreeResponse(BaseModel):
+    """Schema for hierarchical subjects response with groups."""
+    groups: List[SubjectGroupTreeNode] = []
+    ungrouped_subjects: List[SubjectResponse] = []
+    totals: dict = {}
+
+
+# Update forward references
+SubjectGroupTreeNode.model_rebuild()

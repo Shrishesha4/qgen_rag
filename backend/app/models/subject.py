@@ -12,6 +12,37 @@ import uuid
 from app.core.database import Base
 
 
+class SubjectGroup(Base):
+    """Subject Group/Folder model for organizing subjects hierarchically."""
+    
+    __tablename__ = "subject_groups"
+
+    id: Mapped[str] = mapped_column(
+        String(36), primary_key=True, default=lambda: str(uuid.uuid4())
+    )
+    name: Mapped[str] = mapped_column(String(255), nullable=False)
+    parent_id: Mapped[Optional[str]] = mapped_column(
+        String(36), ForeignKey("subject_groups.id", ondelete="CASCADE"), nullable=True, index=True
+    )
+    order_index: Mapped[int] = mapped_column(Integer, default=0)
+    
+    # Timestamps
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), server_default=func.now()
+    )
+    updated_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), server_default=func.now(), onupdate=func.now()
+    )
+    
+    # Relationships
+    parent = relationship("SubjectGroup", remote_side="SubjectGroup.id", back_populates="children")
+    children = relationship("SubjectGroup", back_populates="parent", cascade="all, delete-orphan")
+    subjects = relationship("Subject", back_populates="group")
+    
+    def __repr__(self) -> str:
+        return f"<SubjectGroup {self.name}>"
+
+
 class Subject(Base):
     """Subject/Course model."""
     
@@ -22,6 +53,9 @@ class Subject(Base):
     )
     user_id: Mapped[str] = mapped_column(
         String(36), nullable=False, index=True
+    )
+    group_id: Mapped[Optional[str]] = mapped_column(
+        String(36), ForeignKey("subject_groups.id", ondelete="SET NULL"), nullable=True, index=True
     )
     
     # Subject info
@@ -49,6 +83,7 @@ class Subject(Base):
     )
     
     # Relationships (user is cross-database, no ORM relationship)
+    group = relationship("SubjectGroup", back_populates="subjects")
     topics = relationship("Topic", back_populates="subject", cascade="all, delete-orphan")
     rubrics = relationship("Rubric", back_populates="subject", cascade="all, delete-orphan")
     questions = relationship("Question", back_populates="subject")

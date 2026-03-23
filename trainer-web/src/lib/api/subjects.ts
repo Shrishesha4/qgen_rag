@@ -127,3 +127,95 @@ export async function generateLearningOutcomes(subjectId: string): Promise<Subje
 		method: 'POST',
 	});
 }
+
+// ── Subject Groups ──
+
+export interface SubjectGroupCreate {
+	name: string;
+	parent_id?: string | null;
+}
+
+export interface SubjectGroupUpdate {
+	name?: string;
+	parent_id?: string | null;
+	order_index?: number;
+}
+
+export interface SubjectGroupResponse {
+	id: string;
+	name: string;
+	parent_id: string | null;
+	order_index: number;
+	created_at: string;
+	updated_at: string;
+	total_subjects: number;
+	total_questions: number;
+	total_pending: number;
+	total_approved: number;
+	total_rejected: number;
+}
+
+export interface SubjectGroupTreeNode extends SubjectGroupResponse {
+	children: SubjectGroupTreeNode[];
+	subjects: SubjectResponse[];
+}
+
+export interface SubjectTreeResponse {
+	groups: SubjectGroupTreeNode[];
+	ungrouped_subjects: SubjectResponse[];
+	totals: {
+		total_groups: number;
+		total_subjects: number;
+		total_questions: number;
+		total_pending: number;
+		total_approved: number;
+		total_rejected: number;
+	};
+}
+
+export async function listGroups(): Promise<SubjectGroupResponse[]> {
+	return apiFetch<SubjectGroupResponse[]>('/subjects/groups');
+}
+
+export async function getGroup(id: string): Promise<SubjectGroupResponse> {
+	return apiFetch<SubjectGroupResponse>(`/subjects/groups/${id}`);
+}
+
+export async function createGroup(data: SubjectGroupCreate): Promise<SubjectGroupResponse> {
+	return apiFetch<SubjectGroupResponse>('/subjects/groups', {
+		method: 'POST',
+		body: JSON.stringify(data),
+	});
+}
+
+export async function updateGroup(id: string, data: SubjectGroupUpdate): Promise<SubjectGroupResponse> {
+	return apiFetch<SubjectGroupResponse>(`/subjects/groups/${id}`, {
+		method: 'PUT',
+		body: JSON.stringify(data),
+	});
+}
+
+export async function deleteGroup(id: string, moveSubjectsToRoot = true): Promise<void> {
+	const params = new URLSearchParams({ move_subjects_to_root: String(moveSubjectsToRoot) });
+	await apiFetch(`/subjects/groups/${id}?${params}`, { method: 'DELETE' });
+}
+
+export async function moveGroup(groupId: string, newParentId: string | null): Promise<SubjectGroupResponse> {
+	const params = new URLSearchParams();
+	if (newParentId) params.set('new_parent_id', newParentId);
+	return apiFetch<SubjectGroupResponse>(`/subjects/groups/${groupId}/move?${params}`, {
+		method: 'POST',
+	});
+}
+
+export async function moveSubject(subjectId: string, groupId: string | null): Promise<SubjectResponse> {
+	const params = new URLSearchParams();
+	if (groupId) params.set('group_id', groupId);
+	return apiFetch<SubjectResponse>(`/subjects/${subjectId}/move?${params}`, {
+		method: 'PUT',
+	});
+}
+
+export async function getSubjectsTree(): Promise<SubjectTreeResponse> {
+	return apiFetch<SubjectTreeResponse>('/subjects/tree');
+}
