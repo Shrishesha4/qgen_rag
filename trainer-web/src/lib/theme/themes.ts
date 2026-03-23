@@ -52,9 +52,9 @@ export const themes: Record<ThemeName, ThemeConfig> = {
 			'linear-gradient(173deg, #04111d 0%, #0a2434 24%, #12384d 46%, #11495f 66%, #0e3147 82%, #081e2f 100%)'
 		].join(', '),
 		bgColor: '#0f3347',
-		primary: '#17a673',
-		primaryHover: '#2dc592',
-		accentGradient: '#27d4c8',
+		primary: '#006a45',
+		primaryHover: '#0ea371',
+		accentGradient: '#008b81',
 		primaryRgb: '23, 166, 115',
 		text: '#e7f6f4',
 		textMuted: '#a5c8cd',
@@ -160,7 +160,7 @@ export const themes: Record<ThemeName, ThemeConfig> = {
 			'linear-gradient(175deg, #08081a 0%, #0e0e2a 20%, #14143a 40%, #1a1a4a 60%, #12123a 80%, #181842 100%)'
 		].join(', '),
 		bgColor: '#14143a',
-		primary: '#e94560',
+		primary: '#981e32',
 		primaryHover: '#d83550',
 		accentGradient: '#560bad',
 		primaryRgb: '233, 69, 96',
@@ -187,7 +187,7 @@ export const themes: Record<ThemeName, ThemeConfig> = {
 			'linear-gradient(174deg, #1b1944 0%, #2a2f6f 24%, #444199 46%, #6f4aa8 66%, #99509c 82%, #cf6f9f 100%)'
 		].join(', '),
 		bgColor: '#444199',
-		primary: '#e15aa7',
+		primary: '#c15175',
 		primaryHover: '#f07cbc',
 		accentGradient: '#8b6cff',
 		primaryRgb: '225, 90, 167',

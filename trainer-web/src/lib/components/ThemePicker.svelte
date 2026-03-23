@@ -1,8 +1,25 @@
 <script lang="ts">
+	import { onMount } from 'svelte';
 	import { currentColorMode, setColorMode, currentThemeName, setTheme, type ColorMode } from '$lib/theme';
 	import { themeNames, themes } from '$lib/theme/themes';
 
 	let open = $state(false);
+	let rootEl: HTMLDivElement | null = null;
+
+	function handleGlobalPointerDown(event: PointerEvent) {
+		if (!open || !rootEl) return;
+		const target = event.target as Node | null;
+		if (target && !rootEl.contains(target)) {
+			open = false;
+		}
+	}
+
+	onMount(() => {
+		document.addEventListener('pointerdown', handleGlobalPointerDown, true);
+		return () => {
+			document.removeEventListener('pointerdown', handleGlobalPointerDown, true);
+		};
+	});
 
 	function select(name: (typeof themeNames)[number]) {
 		setTheme(name);
@@ -14,7 +31,7 @@
 	}
 </script>
 
-<div class="theme-picker">
+<div class="theme-picker" bind:this={rootEl}>
 	<button
 		class="picker-toggle"
 		onclick={() => (open = !open)}
