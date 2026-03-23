@@ -904,9 +904,9 @@
 					<p class="eyebrow">{subject.code}  {#if subject.creator_username} · {subject.creator_username}{/if}</p>
 					<h1 class="title font-serif">{subject.name}</h1>
 				</div>
-				<button class="action-btn action-danger" onclick={onDeleteSubject} disabled={deletingSubject}>
+				<!-- <button class="action-btn action-danger" onclick={onDeleteSubject} disabled={deletingSubject}>
 					{deletingSubject ? 'Deleting…' : 'Delete Subject'}
-				</button>
+				</button> -->
 			</div>
 			{#if subject.description}
 				<p class="description">{subject.description}</p>
