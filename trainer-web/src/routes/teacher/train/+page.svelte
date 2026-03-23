@@ -1233,7 +1233,7 @@
 		font-weight: 700;
 	}
 
-	.subject-in-group-branch {
+	/* .subject-in-group-branch {
 		display: inline-flex;
 		align-items: center;
 		justify-content: center;
@@ -1241,7 +1241,7 @@
 		font-weight: 700;
 		color: color-mix(in srgb, var(--theme-primary) 68%, var(--theme-text-muted));
 		margin-right: 0.2rem;
-	}
+	} */
 
 	.inline-actions {
 		display: flex;
