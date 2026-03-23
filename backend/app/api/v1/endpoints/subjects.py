@@ -14,6 +14,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import selectinload
 
 from app.core.database import get_db
+from app.core.auth_database import AuthSessionLocal
 from app.core.config import settings
 from app.models.subject import Subject, Topic
 from app.models.question import Question
@@ -74,8 +75,8 @@ async def list_subjects(
     current_user: User = Depends(get_current_user),
     db: AsyncSession = Depends(get_db),
 ):
-    """List all subjects for the current user."""
-    query = select(Subject).where(Subject.user_id == current_user.id)
+    """List all subjects visible to teachers."""
+    query = select(Subject)
     
     if search:
         query = query.where(
@@ -161,10 +162,7 @@ async def get_subject(
     result = await db.execute(
         select(Subject)
         .options(selectinload(Subject.topics))
-        .where(
-            Subject.id == subject_id,
-            Subject.user_id == current_user.id,
-        )
+        .where(Subject.id == subject_id)
     )
     subject = result.scalar_one_or_none()
     
@@ -206,6 +204,17 @@ async def get_subject(
 
     subject_resp = SubjectResponse.model_validate(subject)
     subject_resp.total_questions = live_subject_total
+    
+    # Fetch creator username from auth database (SQLite)
+    creator_username = None
+    if subject.user_id:
+        async with AuthSessionLocal() as auth_db:
+            user_result = await auth_db.execute(
+                select(User.username).where(User.id == subject.user_id)
+            )
+            creator_username = user_result.scalar_one_or_none()
+    subject_resp.creator_username = creator_username
+    
     return SubjectDetailResponse(
         **subject_resp.model_dump(),
         topics=topic_responses
@@ -221,10 +230,7 @@ async def update_subject(
 ):
     """Update a subject."""
     result = await db.execute(
-        select(Subject).where(
-            Subject.id == subject_id,
-            Subject.user_id == current_user.id,
-        )
+        select(Subject).where(Subject.id == subject_id)
     )
     subject = result.scalar_one_or_none()
     
@@ -285,12 +291,9 @@ async def create_topic(
     db: AsyncSession = Depends(get_db),
 ):
     """Create a new topic in a subject."""
-    # Verify subject ownership
+    # Verify subject exists (shared across teachers)
     result = await db.execute(
-        select(Subject).where(
-            Subject.id == subject_id,
-            Subject.user_id == current_user.id,
-        )
+        select(Subject).where(Subject.id == subject_id)
     )
     subject = result.scalar_one_or_none()
     
@@ -333,12 +336,9 @@ async def list_topics(
     db: AsyncSession = Depends(get_db),
 ):
     """List all topics for a subject."""
-    # Verify subject ownership
+    # Verify subject exists (shared across teachers)
     result = await db.execute(
-        select(Subject).where(
-            Subject.id == subject_id,
-            Subject.user_id == current_user.id,
-        )
+        select(Subject).where(Subject.id == subject_id)
     )
     if not result.scalar_one_or_none():
         raise HTTPException(
@@ -401,12 +401,9 @@ async def update_topic(
     db: AsyncSession = Depends(get_db),
 ):
     """Update a topic."""
-    # Verify subject ownership
+    # Verify subject exists (shared across teachers)
     result = await db.execute(
-        select(Subject).where(
-            Subject.id == subject_id,
-            Subject.user_id == current_user.id,
-        )
+        select(Subject).where(Subject.id == subject_id)
     )
     if not result.scalar_one_or_none():
         raise HTTPException(
@@ -445,12 +442,9 @@ async def delete_topic(
     db: AsyncSession = Depends(get_db),
 ):
     """Delete a topic."""
-    # Verify subject ownership
+    # Verify subject exists (shared across teachers)
     result = await db.execute(
-        select(Subject).where(
-            Subject.id == subject_id,
-            Subject.user_id == current_user.id,
-        )
+        select(Subject).where(Subject.id == subject_id)
     )
     subject = result.scalar_one_or_none()
     if not subject:
@@ -491,12 +485,9 @@ async def upload_topic_syllabus(
     Upload a document (PDF, DOCX, TXT) and extract its content as syllabus for the topic.
     The extracted text will be saved to the topic's syllabus_content field.
     """
-    # Verify subject ownership
+    # Verify subject exists (shared across teachers)
     result = await db.execute(
-        select(Subject).where(
-            Subject.id == subject_id,
-            Subject.user_id == current_user.id,
-        )
+        select(Subject).where(Subject.id == subject_id)
     )
     subject = result.scalar_one_or_none()
     if not subject:
@@ -594,7 +585,7 @@ async def _bg_generate_los(subject_id: str, user_id: str) -> None:
     try:
         async with AsyncSessionLocal() as db:
             subj_result = await db.execute(
-                select(Subject).where(Subject.id == subject_id, Subject.user_id == user_id)
+                select(Subject).where(Subject.id == subject_id)
             )
             subject = subj_result.scalar_one_or_none()
             if not subject:
@@ -649,7 +640,7 @@ async def _bg_generate_cos(subject_id: str, user_id: str) -> None:
     try:
         async with AsyncSessionLocal() as db:
             subj_result = await db.execute(
-                select(Subject).where(Subject.id == subject_id, Subject.user_id == user_id)
+                select(Subject).where(Subject.id == subject_id)
             )
             subject = subj_result.scalar_one_or_none()
             if not subject:
@@ -961,12 +952,9 @@ async def extract_chapters_from_syllabus(
     3. Creates Topic entries for each identified chapter
     4. Returns the list of created topics
     """
-    # Verify subject ownership
+    # Verify subject exists (shared across teachers)
     result = await db.execute(
-        select(Subject).where(
-            Subject.id == subject_id,
-            Subject.user_id == current_user.id,
-        )
+        select(Subject).where(Subject.id == subject_id)
     )
     subject = result.scalar_one_or_none()
     if not subject:
@@ -1160,9 +1148,7 @@ async def generate_learning_outcomes(
     2. Reference book chunks linked to this subject (up to 30 chunks × 400 chars each)
     3. Generic fallback LOs if nothing meaningful is found or the LLM fails
     """
-    subj_result = await db.execute(
-        select(Subject).where(Subject.id == subject_id, Subject.user_id == current_user.id)
-    )
+    subj_result = await db.execute(select(Subject).where(Subject.id == subject_id))
     subject = subj_result.scalar_one_or_none()
     if not subject:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Subject not found")

@@ -205,7 +205,6 @@ async def _wait_for_subject_docs_ready(
     while asyncio.get_event_loop().time() - started_at < timeout_seconds:
         res = await db.execute(
             select(Document.processing_status).where(
-                Document.user_id == user_id,
                 Document.subject_id == subject_id,
                 Document.index_type.in_(["reference_book", "template_paper"]),
             )
@@ -257,7 +256,7 @@ async def _run_background_subject_generation(
     try:
         async with AsyncSessionLocal() as task_db:
             subject_res = await task_db.execute(
-                select(Subject).where(Subject.id == subject_id, Subject.user_id == user_id)
+                select(Subject).where(Subject.id == subject_id)
             )
             subject = subject_res.scalar_one_or_none()
             if not subject:
@@ -444,7 +443,6 @@ async def _run_background_subject_generation(
                     subject_total_res = await task_db.execute(
                         select(Subject.total_questions).where(
                             Subject.id == subject_id,
-                            Subject.user_id == user_id,
                         )
                     )
                     current_subject_total = int(subject_total_res.scalar_one_or_none() or started_total_questions)
@@ -467,7 +465,6 @@ async def _run_background_subject_generation(
                 subject_total_res = await task_db.execute(
                     select(Subject.total_questions).where(
                         Subject.id == subject_id,
-                        Subject.user_id == user_id,
                     )
                 )
                 current_subject_total = int(subject_total_res.scalar_one_or_none() or started_total_questions)
@@ -1231,7 +1228,7 @@ async def estimate_question_capacity(
     # Get subject
     subject_res = await db.execute(
         select(Subject)
-        .where(Subject.id == parsed_subject_id, Subject.user_id == current_user.id)
+        .where(Subject.id == parsed_subject_id)
     )
     subject = subject_res.scalar_one_or_none()
     if not subject:
@@ -1242,7 +1239,6 @@ async def estimate_question_capacity(
     direct_primary_res = await db.execute(
         select(Document).where(
             Document.subject_id == parsed_subject_id,
-            Document.user_id == current_user.id,
             Document.index_type == "primary",
             Document.processing_status == "completed",
         )
@@ -1259,9 +1255,7 @@ async def estimate_question_capacity(
             .distinct()
             .join(GenerationSession, GenerationSession.document_id == Document.id)
             .where(
-                GenerationSession.user_id == current_user.id,
                 GenerationSession.subject_id == parsed_subject_id,
-                Document.user_id == current_user.id,
                 Document.processing_status == "completed",
             )
         )
@@ -1274,7 +1268,6 @@ async def estimate_question_capacity(
         any_completed_res = await db.execute(
             select(Document).where(
                 Document.subject_id == parsed_subject_id,
-                Document.user_id == current_user.id,
                 Document.processing_status == "completed",
             )
         )
@@ -1334,7 +1327,7 @@ async def schedule_background_generation(
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Invalid subject_id format")
 
     subject_res = await db.execute(
-        select(Subject).where(Subject.id == parsed_subject_id, Subject.user_id == current_user.id)
+        select(Subject).where(Subject.id == parsed_subject_id)
     )
     subject = subject_res.scalar_one_or_none()
     if not subject:
@@ -3763,30 +3756,27 @@ async def update_question(
         subject_result = await db.execute(
             select(Subject).where(
                 Subject.id == update_data['subject_id'],
-                Subject.user_id == current_user.id
             )
         )
         if not subject_result.scalar_one_or_none():
             raise HTTPException(
                 status_code=status.HTTP_400_BAD_REQUEST,
-                detail="Subject not found or doesn't belong to you",
+                detail="Subject not found",
             )
     
     # Validate topic_id if provided
     if 'topic_id' in update_data and update_data['topic_id']:
         topic_result = await db.execute(
             select(Topic)
-            .join(Subject, Topic.subject_id == Subject.id)
             .where(
                 Topic.id == update_data['topic_id'],
-                Subject.user_id == current_user.id
             )
         )
         topic = topic_result.scalar_one_or_none()
         if not topic:
             raise HTTPException(
                 status_code=status.HTTP_400_BAD_REQUEST,
-                detail="Topic not found or doesn't belong to you",
+                detail="Topic not found",
             )
         # If topic is provided but subject isn't, auto-set the subject
         if 'subject_id' not in update_data or not update_data['subject_id']:

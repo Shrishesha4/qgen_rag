@@ -3136,7 +3136,6 @@ Output valid JSON only."""
                 # Strategy 1: Direct subject linkage with primary index
                 q1 = select(Document).where(
                     and_(
-                        Document.user_id == user_id,
                         Document.subject_id == subject_id,
                         Document.index_type == "primary",
                         Document.processing_status == "completed",
@@ -3155,15 +3154,11 @@ Output valid JSON only."""
                         GenerationSession,
                         and_(
                             GenerationSession.document_id == Document.id,
-                            GenerationSession.user_id == user_id,
                             GenerationSession.subject_id == subject_id,
                         ),
                     )
                     .where(
-                        and_(
-                            Document.user_id == user_id,
-                            Document.processing_status == "completed",
-                        )
+                        Document.processing_status == "completed",
                     )
                 )
                 r2 = await self.db.execute(q2)
@@ -3174,7 +3169,6 @@ Output valid JSON only."""
                 # Strategy 3: Any completed document for this subject
                 q3 = select(Document).where(
                     and_(
-                        Document.user_id == user_id,
                         Document.subject_id == subject_id,
                         Document.processing_status == "completed",
                     )
@@ -3186,7 +3180,6 @@ Output valid JSON only."""
                 """Find subject primary docs that are still pending/processing."""
                 processing_query = select(Document).where(
                     and_(
-                        Document.user_id == user_id,
                         Document.subject_id == subject_id,
                         Document.index_type == "primary",
                         Document.processing_status.in_(["processing", "pending"]),
@@ -3198,7 +3191,7 @@ Output valid JSON only."""
             async def _build_subject_outline() -> str:
                 """Build a text-only fallback context from subject + topic syllabus."""
                 subject_res = await self.db.execute(
-                    select(Subject).where(Subject.id == subject_id, Subject.user_id == user_id)
+                    select(Subject).where(Subject.id == subject_id)
                 )
                 current_subject = subject_res.scalar_one_or_none()
                 if not current_subject:

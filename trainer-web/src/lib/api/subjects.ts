@@ -27,7 +27,8 @@ export interface TopicResponse {
 
 export interface SubjectResponse {
 	id: string;
-	user_id: string;
+	user_id: string | null;
+	creator_username: string | null;
 	name: string;
 	code: string;
 	description: string | null;

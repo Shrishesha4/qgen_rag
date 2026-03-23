@@ -113,7 +113,8 @@ class SubjectUpdate(BaseModel):
 class SubjectResponse(SubjectBase):
     """Schema for Subject response."""
     id: str
-    user_id: str
+    user_id: Optional[str] = None
+    creator_username: Optional[str] = None
     learning_outcomes: Optional[dict]
     course_outcomes: Optional[dict]
     total_questions: int
