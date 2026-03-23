@@ -289,11 +289,13 @@
 	}
 
 	function toggleGroup(groupId: string) {
-		if (expandedGroups.has(groupId)) {
-			expandedGroups = new Set();
-			return;
+		const next = new Set(expandedGroups);
+		if (next.has(groupId)) {
+			next.delete(groupId);
+		} else {
+			next.add(groupId);
 		}
-		expandedGroups = new Set([groupId]);
+		expandedGroups = next;
 	}
 
 	function selectGroup(groupId: string, event: MouseEvent) {
@@ -670,7 +672,7 @@
 	async function handleDeleteGroup(groupId: string, groupName: string) {
 		const ok = await requestConfirmation({
 			title: 'Delete Group',
-			message: `Delete group "${groupName}"? Subjects will be moved to root.`,
+			message: `Delete group "${groupName}"? Its direct children and subjects will move one level up.`,
 			confirmLabel: 'Delete',
 			danger: true
 		});
@@ -1494,7 +1496,7 @@
 		ondragleave={handleDragLeave}
 		ondrop={(e) => handleDrop(e, group.id)}
 		onclick={(e) => { toggleGroup(group.id); selectGroup(group.id, e); }}
-		oncontextmenu={(e) => showContextMenu(e, group.id)}
+		// oncontextmenu={(e) => showContextMenu(e, group.id)}
 	>
 		<td>
 			<div class="name-stack" style="padding-left: {depth * 1.5}rem">
@@ -1511,7 +1513,16 @@
 		<td class="muted-text green-text">{group.total_approved}</td>
 		<td class="muted-text red-text">{group.total_rejected}</td>
 		<td>
-			<button class="context-menu-btn" title="Options" onclick={(e) => { e.stopPropagation(); showContextMenu(e, group.id); }}>⋮</button>
+			<button class="context-menu-btn" aria-label="Group options" title="Options" onclick={(e) => { e.stopPropagation(); showContextMenu(e, group.id); }}>
+				<svg class="options-icon" viewBox="0 0 24 24" aria-hidden="true" focusable="false">
+					<path d="M4 6.5H16" />
+					<path d="M8 12H20" />
+					<path d="M4 17.5H16" />
+					<circle cx="18" cy="6.5" r="2" />
+					<circle cx="6" cy="12" r="2" />
+					<circle cx="14" cy="17.5" r="2" />
+				</svg>
+			</button>
 		</td>
 	</tr>
 	{#if expandedGroups.has(group.id)}
@@ -1574,7 +1585,7 @@
 		style="margin-left: {depth * 0.75}rem"
 		role="group"
 		aria-label="Group: {group.name}"
-		oncontextmenu={(e) => showContextMenu(e, group.id)}
+		// oncontextmenu={(e) => showContextMenu(e, group.id)}
 	>
 		<button class="group-header-btn" onclick={(e) => { toggleGroup(group.id); selectGroup(group.id, e); }}>
 			<span class="expand-icon">{expandedGroups.has(group.id) ? '▼' : '▶'}</span>
@@ -1586,7 +1597,16 @@
 			<span>Questions <strong>{group.total_questions}</strong></span>
 			<span>Pending <strong>{group.total_pending}</strong></span>
 		</div>
-		<button class="context-menu-btn mobile" onclick={(e) => { e.stopPropagation(); showContextMenu(e, group.id); }}>⋮</button>
+		<button class="context-menu-btn mobile" aria-label="Group options" title="Options" onclick={(e) => { e.stopPropagation(); showContextMenu(e, group.id); }}>
+			<svg class="options-icon" viewBox="0 0 24 24" aria-hidden="true" focusable="false">
+				<path d="M4 6.5H16" />
+				<path d="M8 12H20" />
+				<path d="M4 17.5H16" />
+				<circle cx="18" cy="6.5" r="2" />
+				<circle cx="6" cy="12" r="2" />
+				<circle cx="14" cy="17.5" r="2" />
+			</svg>
+		</button>
 	</div>
 	{#if expandedGroups.has(group.id)}
 		{#each group.children as child}
@@ -2092,14 +2112,16 @@
 	}
 
 	.context-menu-btn {
-		padding: 0.3rem 0.5rem;
+		padding: 0.35rem;
 		border-radius: 0.4rem;
 		border: 1px solid rgba(var(--theme-primary-rgb), 0.2);
 		background: transparent;
 		color: var(--theme-text-muted);
-		font-size: 1.1rem;
 		cursor: pointer;
-		line-height: 1;
+		line-height: 0;
+		display: inline-flex;
+		align-items: center;
+		justify-content: center;
 	}
 
 	.context-menu-btn:hover {
@@ -2111,7 +2133,22 @@
 		position: absolute;
 		top: 0.8rem;
 		right: 0.8rem;
-		padding: 0.4rem 0.6rem;
+		padding: 0.42rem;
+	}
+
+	.options-icon {
+		width: 1.1rem;
+		height: 1.1rem;
+		stroke: currentColor;
+		fill: none;
+		stroke-width: 1.9;
+		stroke-linecap: round;
+		stroke-linejoin: round;
+	}
+
+	.options-icon circle {
+		fill: currentColor;
+		stroke: none;
 	}
 
 	.context-menu-overlay {
