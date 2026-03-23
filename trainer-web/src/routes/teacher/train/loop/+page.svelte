@@ -266,6 +266,7 @@
 	let subjectDetail = $state<SubjectDetailResponse | null>(null);
 	let genCtx = $state('');
 	let nextGenAt = $state(0); // totalReviewed count that triggers next batch (0 = disarmed)
+	let completingBatch = $state(false);
 	let topicCycleIds = $state<string[]>([]);
 	let topicCycleCursor = $state(0);
 	const POST_TRIGGER_UNLOCK_COUNT = 3;
@@ -281,6 +282,16 @@
 			nextGenAt = 0; // disarm before async to prevent double-trigger
 			void doNextBatch();
 		}
+	});
+
+	// When the current batch is fully vetted, automatically roll into the next batch.
+	$effect(() => {
+		if (!allowAutoGeneration || !subjectId) return;
+		if (loading || generating || submitting || regenerating || completingBatch) return;
+		if (batchComplete) return;
+		if (questions.length === 0) return;
+		if (totalReviewed < questions.length) return;
+		void completeBatch(true);
 	});
 
 	// Edit mode
@@ -783,11 +794,13 @@
 		throw new Error('Documents are still processing. Please wait a moment and retry generation.');
 	}
 
-	function completeBatch() {
+	async function completeBatch(autoAdvance = false) {
+		if (completingBatch) return;
+		completingBatch = true;
 		// stopBackgroundGen();
 		generating = false;
 		genMessage = '';
-		showBatchCompleteNotice = true;
+		nextGenAt = 0;
 		
 		// Always clear progress when completing batch
 		const key = currentProgressKey();
@@ -797,10 +810,24 @@
 		}
 		
 		// Reset local state
+		questions = [];
 		currentIndex = 0;
 		approved.clear();
 		rejected.clear();
+
+		if (autoAdvance && allowAutoGeneration && subjectId) {
+			showBatchCompleteNotice = false;
+			batchComplete = false;
+			postTriggerGenerationActive = false;
+			postTriggerBaseQuestionCount = 0;
+			completingBatch = false;
+			await startBackgroundGeneration();
+			return;
+		}
+
+		showBatchCompleteNotice = true;
 		batchComplete = true;
+		completingBatch = false;
 	}
 
 	function openNavigationConfirm(title: string, message: string, onConfirm: () => void | Promise<void>) {
@@ -1546,7 +1573,7 @@
 		{/if}
 
 		{#if !editing && !generating && !regenerating && !batchComplete && subjectId}
-			<button class="complete-batch-fab" onclick={completeBatch}>
+			<button class="complete-batch-fab" onclick={() => { void completeBatch(); }}>
 				✓ Complete Batch
 			</button>
 		{/if}

@@ -19,6 +19,7 @@
 		latestTeacherVettingProgressBySubject,
 		type TeacherVettingProgressSnapshot,
 	} from '$lib/vetting-progress';
+	import { getGenerationWebSocketClient, type StatsData } from '$lib/api/generation-websocket';
 
 	let loading = $state(true);
 	let error = $state('');
@@ -55,6 +56,9 @@
 	let topicGenerationStateByTopic = $state<Record<string, TopicGenerationState>>({});
 	let generationPollTimer: ReturnType<typeof setInterval> | null = null;
 	let subjectGenerationPollTimer: ReturnType<typeof setInterval> | null = null;
+	
+	// WebSocket for live stats updates
+	let wsUnsubscribers: (() => void)[] = [];
 
 	function toMillis(iso: string): number {
 		const ts = Date.parse(iso);
@@ -92,6 +96,7 @@
 		});
 
 		void initializePage();
+		setupWebSocket();
 		return unsub;
 	});
 
@@ -104,7 +109,62 @@
 			clearInterval(subjectGenerationPollTimer);
 			subjectGenerationPollTimer = null;
 		}
+		// Clean up WebSocket subscriptions
+		wsUnsubscribers.forEach(unsub => unsub());
+		wsUnsubscribers = [];
 	});
+	
+	function setupWebSocket() {
+		const wsClient = getGenerationWebSocketClient();
+		wsClient.connect();
+		wsClient.subscribeGlobalStats();
+		
+		// Handle global stats updates - update totals in treeData
+		const globalUnsub = wsClient.onGlobalStats((statsData: StatsData) => {
+			if (treeData) {
+				treeData = {
+					...treeData,
+					totals: {
+						...treeData.totals,
+						total_questions: statsData.total_questions ?? treeData.totals.total_questions,
+						total_approved: statsData.total_approved ?? treeData.totals.total_approved,
+						total_rejected: statsData.total_rejected ?? treeData.totals.total_rejected,
+						total_pending: statsData.total_pending ?? treeData.totals.total_pending,
+					}
+				};
+			}
+		});
+		wsUnsubscribers.push(globalUnsub);
+		
+		// Handle subject-specific stats updates
+		const subjectUnsub = wsClient.onSubjectStats((subjectId: string, statsData: StatsData) => {
+			// Update the subject in the subjects array
+			subjects = subjects.map(s => {
+				if (s.id === subjectId) {
+					return {
+						...s,
+						total_questions: statsData.total_questions ?? s.total_questions,
+						total_approved: statsData.total_approved ?? s.total_approved,
+						total_rejected: statsData.total_rejected ?? s.total_rejected,
+						total_pending: statsData.total_pending ?? s.total_pending,
+					};
+				}
+				return s;
+			});
+		});
+		wsUnsubscribers.push(subjectUnsub);
+		
+		// Handle topic-specific stats updates - update pending counts
+		const topicUnsub = wsClient.onTopicStats((subjectId: string, topicId: string, statsData: StatsData) => {
+			if (statsData.pending !== undefined) {
+				pendingByTopic = {
+					...pendingByTopic,
+					[topicId]: statsData.pending,
+				};
+			}
+		});
+		wsUnsubscribers.push(topicUnsub);
+	}
 
 	async function initializePage() {
 		await Promise.all([loadProgress(), loadSubjects()]);
@@ -249,17 +309,17 @@
 			resumeKey: latestProgress.key,
 		});
 		const params = new URLSearchParams(loopUrl.split('?')[1] ?? '');
-		params.set('auto_generate', '0');
+		params.set('auto_generate', '1');
 		goto(`/teacher/train/loop?${params.toString()}`);
 	}
 
 	function startSubjectVetting(subjectId: string) {
-		const params = new URLSearchParams({ subject: subjectId, resume: '0', auto_generate: '0' });
+		const params = new URLSearchParams({ subject: subjectId, resume: '0', auto_generate: '1' });
 		goto(`/teacher/train/loop?${params.toString()}`);
 	}
 
 	function startTopicVetting(subjectId: string, topicId: string) {
-		const params = new URLSearchParams({ subject: subjectId, topic: topicId, resume: '0', auto_generate: '0' });
+		const params = new URLSearchParams({ subject: subjectId, topic: topicId, resume: '0', auto_generate: '1' });
 		goto(`/teacher/train/loop?${params.toString()}`);
 	}
 
@@ -720,7 +780,7 @@
 		<td class="green-text">{subject.total_approved ?? 0}</td>
 		<td class="red-text">{subject.total_rejected ?? 0}</td>
 		<td class="action-cell">
-			<div class="inline-actions">
+			<div class="inline-actions action-stack">
 				<button class="table-btn primary" onclick={(event) => {
 					event.stopPropagation();
 					startSubjectVetting(subject.id);
@@ -734,7 +794,7 @@
 					}}>Resume</button>
 				{/if}
 				{#if getSubjectGenerationState(subject.id)?.in_progress}
-					<span class="status-text">{getSubjectGenerationLabel(subject.id)}</span>
+					<span class="status-text generation-status">{getSubjectGenerationLabel(subject.id)}</span>
 				{/if}
 			</div>
 		</td>
@@ -769,7 +829,7 @@
 					<td class="green-text">{estimateTopicApproved(topic)}</td>
 					<td class="red-text">0</td>
 					<td class="action-cell">
-						<div class="inline-actions">
+						<div class="inline-actions action-stack">
 							{#if generationState}
 								<button class="table-btn" disabled>{getTopicGenerationLabel(topic.id)}</button>
 							{:else if subjectGenerationState?.in_progress && pendingCount === 0}
@@ -1039,7 +1099,7 @@
 	}
 
 	.action-col {
-		width: 16%;
+		width: 19%;
 	}
 
 	.training-table th {
@@ -1198,8 +1258,18 @@
 		align-items: center;
 	}
 
+	.action-stack {
+		flex-direction: column;
+		align-items: center;
+		justify-content: center;
+		overflow: visible;
+		padding-bottom: 0;
+		gap: 0.42rem;
+	}
+
 	.action-cell {
-		text-align: right;
+		text-align: center;
+		vertical-align: middle;
 	}
 
 	.table-btn,
@@ -1211,6 +1281,8 @@
 		font-size: 0.78rem;
 		font-weight: 700;
 		cursor: pointer;
+		min-width: 118px;
+		text-align: center;
 	}
 
 	.primary-btn {
@@ -1238,6 +1310,17 @@
 		font-size: 0.75rem;
 		font-weight: 700;
 		color: var(--theme-primary);
+	}
+
+	.generation-status {
+		display: inline-flex;
+		align-items: center;
+		justify-content: center;
+		padding: 0.2rem 0.62rem;
+		border-radius: 999px;
+		background: rgba(var(--theme-primary-rgb), 0.12);
+		border: 1px solid rgba(var(--theme-primary-rgb), 0.28);
+		min-width: 96px;
 	}
 
 	.topic-loading {

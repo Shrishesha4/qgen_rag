@@ -217,24 +217,30 @@
 
 <style>
 	.profile-page {
+		width: min(100%, 860px);
+		margin: 0 auto;
 		min-height: 100%;
-		padding: 1.25rem;
+		max-height: 100%;
+		overflow-y: auto;
+		padding: 1.25rem 1.25rem max(1.5rem, env(safe-area-inset-bottom));
 		display: flex;
 		flex-direction: column;
-		align-items: center;
+		align-items: stretch;
 		justify-content: flex-start;
 		gap: 1.25rem;
+		box-sizing: border-box;
+		-webkit-overflow-scrolling: touch;
 	}
 
 	.settings-stack {
-		width: min(100%, 760px);
+		width: 100%;
 		display: grid;
 		grid-template-columns: repeat(2, minmax(0, 1fr));
 		gap: 0.9rem;
 	}
 
 	.profile-card {
-		width: min(100%, 760px);
+		width: 100%;
 		padding: 2rem 1.5rem;
 		border-radius: 1.5rem;
 		display: flex;
@@ -442,6 +448,11 @@
 		font: inherit;
 		font-weight: 700;
 		cursor: pointer;
+		transition: transform 0.2s ease, box-shadow 0.2s ease, background 0.2s ease;
+	}
+
+	.profile-actions button:hover {
+		transform: translateY(-1px);
 	}
 
 	.secondary-action {
@@ -458,14 +469,76 @@
 		box-shadow: 0 10px 24px rgba(127, 29, 29, 0.16);
 	}
 
-	@media (max-width: 480px) {
+	@media (max-width: 768px) {
 		.profile-page {
-			padding: 1rem 0.75rem;
-			gap: 0.85rem;
+			width: 100%;
+			padding: 1.25rem 1rem max(1.25rem, env(safe-area-inset-bottom));
+			gap: 1rem;
 		}
 
 		.settings-stack {
 			grid-template-columns: 1fr;
+			gap: 0.75rem;
+		}
+
+		.profile-card {
+			padding: 1.75rem 1.25rem;
+			border-radius: 1.25rem;
+			gap: 1.25rem;
+		}
+
+		.avatar-ring {
+			width: 90px;
+			height: 90px;
+			padding: 5px;
+		}
+
+		.avatar-core {
+			font-size: 1.75rem;
+		}
+
+		.eyebrow {
+			font-size: 0.7rem;
+		}
+
+		.profile-name {
+			font-size: clamp(1.75rem, 6vw, 2.2rem);
+		}
+
+		.profile-email {
+			font-size: 0.9rem;
+		}
+
+		.detail-grid {
+			gap: 0.7rem;
+		}
+
+		.detail-item {
+			padding: 0.85rem;
+		}
+
+		.detail-label {
+			font-size: 0.68rem;
+		}
+
+		.detail-value {
+			font-size: 0.9rem;
+		}
+
+		.profile-actions button {
+			min-height: 48px;
+			font-size: 0.9rem;
+		}
+	}
+
+	@media (max-width: 480px) {
+		.profile-page {
+			padding: max(1rem, env(safe-area-inset-top)) 0.75rem max(1rem, env(safe-area-inset-bottom));
+			justify-content: flex-start;
+			gap: 0.85rem;
+		}
+
+		.settings-stack {
 			gap: 0.6rem;
 		}
 
@@ -475,10 +548,58 @@
 			gap: 1rem;
 		}
 
+		.avatar-ring {
+			width: 80px;
+			height: 80px;
+			padding: 4px;
+		}
+
+		.avatar-core {
+			font-size: 1.5rem;
+		}
+
+		.profile-copy {
+			gap: 0.25rem;
+		}
+
+		.eyebrow {
+			font-size: 0.65rem;
+		}
+
+		.profile-name {
+			font-size: 1.5rem;
+		}
+
+		.profile-email {
+			font-size: 0.85rem;
+		}
+
 		.detail-grid,
 		.profile-actions {
 			grid-template-columns: 1fr;
 			gap: 0.6rem;
+		}
+
+		.detail-item {
+			padding: 0.75rem 0.85rem;
+			border-radius: 0.75rem;
+		}
+
+		.detail-label {
+			font-size: 0.65rem;
+		}
+
+		.detail-value {
+			font-size: 0.85rem;
+		}
+
+		.profile-actions {
+			gap: 0.5rem;
+		}
+
+		.profile-actions button {
+			min-height: 44px;
+			font-size: 0.85rem;
 		}
 	}
 </style>

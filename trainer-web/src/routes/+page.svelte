@@ -26,47 +26,21 @@
 			</p>
 		</div>
 
-		<div class="cards">
-			<a href="/teacher/login" class="role-card glass-panel teacher-card">
-			<div class="role-icon teacher-icon">
+		<div class="cards single-card">
+			<a href="/login" class="role-card glass-panel login-card">
+			<div class="role-icon login-icon">
 				<svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
-					<path d="M12 20h9"></path>
-					<path d="M16.5 3.5a 2.12 2.12 0 0 1 3 3L7 19l-4 1 1-4Z"></path>
+					<path d="M15 3h4a2 2 0 0 1 2 2v14a2 2 0 0 1-2 2h-4"></path>
+					<polyline points="10 17 15 12 10 7"></polyline>
+					<line x1="15" y1="12" x2="3" y2="12"></line>
 				</svg>
 			</div>
-			<h2 class="card-title">Teacher</h2>
+			<h2 class="card-title">Sign In</h2>
 			<p class="card-desc">
-				Generate high-quality questions from your course materials with AI assistance.
+				Access your dashboard as a Teacher, Vetter, or Admin. Your role will be detected automatically.
 			</p>
-			<span class="card-cta">Sign in as Teacher →</span>
+			<span class="card-cta">Continue to Sign In →</span>
 			</a>
-
-			<a href="/vetter/login" class="role-card glass-panel vetter-card">
-			<div class="role-icon vetter-icon">
-				<svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
-					<circle cx="11" cy="11" r="8"></circle>
-					<path d="m21 21-4.3-4.3"></path>
-				</svg>
-			</div>
-			<h2 class="card-title">Vetter</h2>
-			<p class="card-desc">
-				Review, approve, and improve AI-generated questions to train the model.
-			</p>
-			<span class="card-cta">Sign in as Vetter →</span>
-			</a>
-
-		<!-- <a href="/admin/login" class="role-card glass-panel">
-			<div class="role-icon admin-icon">
-				<svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
-					<path d="M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10z"></path>
-				</svg>
-			</div>
-			<h2 class="card-title">Admin</h2>
-			<p class="card-desc">
-				Monitor platform stats, users, and vetting activity at a glance.
-			</p>
-			<span class="card-cta">Sign in as Admin →</span>
-		</a> -->
 		</div>
 	</section>
 </div>
@@ -163,8 +137,7 @@
 	.hero-icon,
 	.hero-title,
 	.hero-sub,
-	.teacher-card,
-	.vetter-card {
+	.login-card {
 		opacity: 0;
 		transform: translateY(14px);
 		filter: blur(8px);
@@ -182,12 +155,8 @@
 		animation: contentFadeUp 0.6s ease 1.22s both;
 	}
 
-	.landing-shell.intro-ready .teacher-card {
+	.landing-shell.intro-ready .login-card {
 		animation: contentFadeUp 0.62s ease 1.34s both;
-	}
-
-	.landing-shell.intro-ready .vetter-card {
-		animation: contentFadeUp 0.62s ease 1.46s both;
 	}
 
 	@keyframes paintSweep {
@@ -254,8 +223,7 @@
 		.hero-icon,
 		.hero-title,
 		.hero-sub,
-		.teacher-card,
-		.vetter-card {
+		.login-card {
 			opacity: 1;
 			transform: none;
 			filter: none;
@@ -325,6 +293,12 @@
 		align-items: stretch;
 	}
 
+	.cards.single-card {
+		grid-template-columns: 1fr;
+		max-width: 420px;
+		margin: 0 auto;
+	}
+
 	.role-card {
 		display: flex;
 		flex-direction: column;
@@ -356,12 +330,8 @@
 			0 0 0 1px rgba(255, 255, 255, 0.12);
 	}
 
-	.teacher-card {
-		background: linear-gradient(160deg, rgba(var(--theme-primary-rgb), 0.16), rgba(255, 255, 255, 0.76));
-	}
-
-	.vetter-card {
-		background: linear-gradient(160deg, rgba(var(--theme-primary-rgb), 0.1), rgba(255, 255, 255, 0.76));
+	.login-card {
+		background: linear-gradient(160deg, rgba(var(--theme-primary-rgb), 0.14), rgba(255, 255, 255, 0.76));
 	}
 
 	.role-card:hover {
@@ -391,23 +361,11 @@
 		justify-content: center;
 	}
 
-	.teacher-icon {
-		background: rgba(var(--theme-primary-rgb), 0.2);
+	.login-icon {
+		background: rgba(var(--theme-primary-rgb), 0.18);
 		color: var(--theme-primary);
-		border: 1px solid rgba(var(--theme-primary-rgb), 0.42);
+		border: 1px solid rgba(var(--theme-primary-rgb), 0.38);
 	}
-
-	.vetter-icon {
-		background: rgba(var(--theme-primary-rgb), 0.14);
-		color: var(--theme-primary-hover);
-		border: 1px solid rgba(var(--theme-primary-rgb), 0.35);
-	}
-
-	/* .admin-icon {
-		background: rgba(245, 158, 11, 0.2);
-		color: #fbbf24;
-		border: 1px solid rgba(245, 158, 11, 0.3);
-	} */
 
 	.card-title {
 		font-size: 1.35rem;

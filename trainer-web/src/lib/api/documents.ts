@@ -191,6 +191,32 @@ export async function getBackgroundGenerationStatuses(subjectIds: string[]): Pro
 	return apiFetch<BackgroundGenerationStatusesResponse>(`/questions/background-generation-statuses?${params.toString()}`);
 }
 
+export interface TopicGenerationStatusItem {
+	run_id: string;
+	subject_id: string;
+	topic_id: string;
+	in_progress: boolean;
+	status: string;
+	progress: number;
+	current_question: number;
+	total_questions: number;
+	target_total_questions?: number;
+	message?: string;
+	updated_at?: string | null;
+	started_at?: string | null;
+	completed_at?: string | null;
+}
+
+export interface TopicGenerationStatusesResponse {
+	statuses: Record<string, TopicGenerationStatusItem>;
+}
+
+export async function getTopicGenerationStatuses(topicIds: string[]): Promise<TopicGenerationStatusesResponse> {
+	if (!topicIds.length) return { statuses: {} };
+	const params = new URLSearchParams({ topic_ids: topicIds.join(',') });
+	return apiFetch<TopicGenerationStatusesResponse>(`/questions/topic-generation-statuses?${params.toString()}`);
+}
+
 /**
  * Generate questions from a subject's indexed documents via SSE.
  * Calls POST /questions/quick-generate-from-subject.

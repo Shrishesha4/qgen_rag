@@ -15,6 +15,8 @@ from app.models.training import (
     TrainingDataset,
     ModelEvaluation,
 )
+from app.models.generation_run import GenerationRun
+from app.models.system_settings import SystemSettings, SETTING_SIGNUP_ENABLED
 
 __all__ = [
     "User",
@@ -35,4 +37,7 @@ __all__ = [
     "VettingReasonCode",
     "TrainingDataset",
     "ModelEvaluation",
+    "GenerationRun",
+    "SystemSettings",
+    "SETTING_SIGNUP_ENABLED",
 ]

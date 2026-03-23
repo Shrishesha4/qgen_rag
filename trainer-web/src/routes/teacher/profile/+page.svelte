@@ -223,17 +223,23 @@
 
 <style>
 	.profile-page {
+		width: min(100%, 860px);
+		margin: 0 auto;
 		min-height: 100%;
-		padding: 1.25rem;
+		max-height: 100%;
+		overflow-y: auto;
+		padding: 1.25rem 1.25rem max(1.5rem, env(safe-area-inset-bottom));
 		display: flex;
 		flex-direction: column;
-		align-items: center;
+		align-items: stretch;
 		justify-content: flex-start;
 		gap: 1.25rem;
+		box-sizing: border-box;
+		-webkit-overflow-scrolling: touch;
 	}
 
 	.settings-stack {
-		width: min(100%, 760px);
+		width: 100%;
 		display: grid;
 		grid-template-columns: repeat(2, minmax(0, 1fr));
 		gap: 0.9rem;
@@ -260,7 +266,7 @@
 	} */
 
 	.profile-card {
-		width: min(100%, 760px);
+		width: 100%;
 		padding: 2rem 1.5rem;
 		border-radius: 1.5rem;
 		display: flex;
@@ -491,7 +497,8 @@
 
 	@media (max-width: 768px) {
 		.profile-page {
-			padding: 1.25rem;
+			width: 100%;
+			padding: 1.25rem 1rem max(1.25rem, env(safe-area-inset-bottom));
 			gap: 1rem;
 		}
 
@@ -552,9 +559,8 @@
 
 	@media (max-width: 480px) {
 		.profile-page {
-			padding: 1rem 0.75rem;
+			padding: max(1rem, env(safe-area-inset-top)) 0.75rem max(1rem, env(safe-area-inset-bottom));
 			justify-content: flex-start;
-			padding-top: max(1rem, env(safe-area-inset-top));
 			gap: 0.85rem;
 		}
 

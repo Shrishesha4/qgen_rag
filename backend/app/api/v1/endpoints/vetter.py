@@ -33,6 +33,7 @@ from app.services.embedding_service import EmbeddingService
 from app.api.v1.deps import get_current_superuser
 from app.services.metrics_service import vetting_submit_success_total, vetting_submit_failure_total, edit_distance_mean
 from app.schemas.question import QuestionSourceInfo, SourceReference
+from app.services.stats_broadcast_service import broadcast_vetting_stats_update
 
 
 router = APIRouter()
@@ -1274,6 +1275,13 @@ async def submit_vetting(
 
         await db.commit()
         vetting_submit_success_total.inc()
+        
+        # Broadcast stats update via WebSocket for real-time updates
+        await broadcast_vetting_stats_update(
+            db=db,
+            subject_id=str(question.subject_id),
+            topic_id=str(question.topic_id) if question.topic_id else None,
+        )
 
         action_label = {
             "approve": "approved",

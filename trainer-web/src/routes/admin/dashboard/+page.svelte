@@ -4,12 +4,19 @@
 	import { session, currentUser } from '$lib/session';
 	import { logout } from '$lib/api/auth';
 	import { getAdminDashboard, listAdminSubjects, type AdminDashboard, type UserStats, type VetterBreakdown, type AdminSubjectSummary } from '$lib/api/admin';
+	import { apiFetch } from '$lib/api/client';
 
 	let loading = $state(true);
 	let stats = $state<AdminDashboard | null>(null);
 	let adminSubjects = $state<AdminSubjectSummary[]>([]);
 	let error = $state('');
-	let activeTab: 'overview' | 'users' | 'vetters' | 'teachers' = $state('overview');
+	let activeTab: 'overview' | 'users' | 'vetters' | 'teachers' | 'settings' = $state('overview');
+
+	// Settings state
+	let signupEnabled = $state(true);
+	let settingsLoading = $state(false);
+	let settingsError = $state('');
+	let settingsSaved = $state(false);
 
 	onMount(() => {
 		const unsub = session.subscribe((s) => {
@@ -18,6 +25,7 @@
 			}
 		});
 		loadStats();
+		loadSettings();
 		return unsub;
 	});
 
@@ -32,6 +40,35 @@
 			error = e instanceof Error ? e.message : 'Failed to load dashboard';
 		} finally {
 			loading = false;
+		}
+	}
+
+	async function loadSettings() {
+		try {
+			const res = await apiFetch<{ signup_enabled: boolean }>('/settings/signup');
+			signupEnabled = res.signup_enabled;
+		} catch {
+			// Default to enabled if can't load
+			signupEnabled = true;
+		}
+	}
+
+	async function toggleSignup() {
+		settingsLoading = true;
+		settingsError = '';
+		settingsSaved = false;
+		try {
+			const res = await apiFetch<{ signup_enabled: boolean }>('/settings/signup', {
+				method: 'PUT',
+				body: JSON.stringify({ signup_enabled: !signupEnabled }),
+			});
+			signupEnabled = res.signup_enabled;
+			settingsSaved = true;
+			setTimeout(() => settingsSaved = false, 2000);
+		} catch (e: unknown) {
+			settingsError = e instanceof Error ? e.message : 'Failed to update settings';
+		} finally {
+			settingsLoading = false;
 		}
 	}
 
@@ -157,6 +194,7 @@
 		<button class="tab-btn" class:active={activeTab === 'users'} onclick={() => activeTab = 'users'}>All Users</button>
 		<button class="tab-btn" class:active={activeTab === 'vetters'} onclick={() => activeTab = 'vetters'}>Vetters</button>
 		<button class="tab-btn" class:active={activeTab === 'teachers'} onclick={() => activeTab = 'teachers'}>Teachers</button>
+		<button class="tab-btn" class:active={activeTab === 'settings'} onclick={() => activeTab = 'settings'}>Settings</button>
 	</div>
 
 	<!-- Tab content -->
@@ -378,6 +416,44 @@
 							{/each}
 						</div>
 					{/if}
+				</div>
+			{:else if activeTab === 'settings'}
+				<div class="section glass-panel">
+					<h2 class="section-title">System Settings</h2>
+					
+					{#if settingsError}
+						<div class="settings-error">{settingsError}</div>
+					{/if}
+
+					<div class="settings-list">
+						<div class="setting-item">
+							<div class="setting-info">
+								<span class="setting-label">User Registration</span>
+								<span class="setting-desc">Allow new users to create accounts. When disabled, only existing users can log in.</span>
+							</div>
+							<div class="setting-control">
+								<button 
+									class="toggle-btn" 
+									class:enabled={signupEnabled}
+									class:loading={settingsLoading}
+									onclick={toggleSignup}
+									disabled={settingsLoading}
+								>
+									{#if settingsLoading}
+										<span class="toggle-spinner"></span>
+									{:else}
+										<span class="toggle-track">
+											<span class="toggle-thumb"></span>
+										</span>
+										<span class="toggle-label">{signupEnabled ? 'Enabled' : 'Disabled'}</span>
+									{/if}
+								</button>
+								{#if settingsSaved}
+									<span class="saved-indicator">✓ Saved</span>
+								{/if}
+							</div>
+						</div>
+					</div>
 				</div>
 			{/if}
 		</div>
@@ -1096,6 +1172,163 @@
 			width: 100%;
 			margin-top: 0.25rem;
 			padding-left: 2.75rem;
+		}
+	}
+
+	/* Settings styles */
+	.settings-error {
+		background: rgba(220, 38, 38, 0.15);
+		border: 0.5px solid rgba(220, 38, 38, 0.3);
+		color: #f87171;
+		border-radius: 0.75rem;
+		padding: 0.65rem 0.85rem;
+		font-size: 0.85rem;
+		margin-bottom: 1rem;
+	}
+
+	.settings-list {
+		display: flex;
+		flex-direction: column;
+		gap: 1rem;
+	}
+
+	.setting-item {
+		display: flex;
+		justify-content: space-between;
+		align-items: center;
+		gap: 1.5rem;
+		padding: 1rem;
+		border-radius: 0.85rem;
+		background: rgba(255, 255, 255, 0.04);
+		border: 1px solid rgba(255, 255, 255, 0.08);
+	}
+
+	.setting-info {
+		display: flex;
+		flex-direction: column;
+		gap: 0.25rem;
+		flex: 1;
+	}
+
+	.setting-label {
+		font-size: 0.95rem;
+		font-weight: 600;
+		color: var(--theme-text);
+	}
+
+	.setting-desc {
+		font-size: 0.82rem;
+		color: var(--theme-text-muted);
+		line-height: 1.45;
+	}
+
+	.setting-control {
+		display: flex;
+		align-items: center;
+		gap: 0.75rem;
+	}
+
+	.toggle-btn {
+		display: flex;
+		align-items: center;
+		gap: 0.6rem;
+		padding: 0.5rem 0.85rem;
+		border: 1px solid rgba(255, 255, 255, 0.15);
+		border-radius: 999px;
+		background: rgba(255, 255, 255, 0.06);
+		color: var(--theme-text-muted);
+		font-size: 0.82rem;
+		font-weight: 600;
+		cursor: pointer;
+		transition: all 0.2s;
+		font-family: inherit;
+		min-width: 120px;
+		justify-content: center;
+	}
+
+	.toggle-btn:hover:not(:disabled) {
+		background: rgba(255, 255, 255, 0.1);
+		border-color: rgba(255, 255, 255, 0.25);
+	}
+
+	.toggle-btn:disabled {
+		opacity: 0.6;
+		cursor: not-allowed;
+	}
+
+	.toggle-btn.enabled {
+		background: rgba(16, 185, 129, 0.15);
+		border-color: rgba(16, 185, 129, 0.35);
+		color: #6ee7b7;
+	}
+
+	.toggle-btn.enabled:hover:not(:disabled) {
+		background: rgba(16, 185, 129, 0.22);
+	}
+
+	.toggle-track {
+		width: 32px;
+		height: 18px;
+		border-radius: 999px;
+		background: rgba(255, 255, 255, 0.2);
+		position: relative;
+		transition: background 0.2s;
+	}
+
+	.toggle-btn.enabled .toggle-track {
+		background: #10b981;
+	}
+
+	.toggle-thumb {
+		position: absolute;
+		top: 2px;
+		left: 2px;
+		width: 14px;
+		height: 14px;
+		border-radius: 50%;
+		background: white;
+		transition: transform 0.2s;
+	}
+
+	.toggle-btn.enabled .toggle-thumb {
+		transform: translateX(14px);
+	}
+
+	.toggle-label {
+		min-width: 55px;
+	}
+
+	.toggle-spinner {
+		width: 1rem;
+		height: 1rem;
+		border: 2px solid rgba(255, 255, 255, 0.2);
+		border-top-color: var(--theme-primary);
+		border-radius: 50%;
+		animation: spin 0.6s linear infinite;
+	}
+
+	.saved-indicator {
+		font-size: 0.78rem;
+		font-weight: 600;
+		color: #10b981;
+		animation: fadeIn 0.2s ease;
+	}
+
+	@keyframes fadeIn {
+		from { opacity: 0; transform: translateX(-5px); }
+		to { opacity: 1; transform: translateX(0); }
+	}
+
+	@media (max-width: 480px) {
+		.setting-item {
+			flex-direction: column;
+			align-items: flex-start;
+			gap: 0.85rem;
+		}
+
+		.setting-control {
+			width: 100%;
+			justify-content: flex-start;
 		}
 	}
 </style>

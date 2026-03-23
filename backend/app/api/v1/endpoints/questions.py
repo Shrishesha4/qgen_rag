@@ -38,6 +38,8 @@ from app.models.user import User
 from app.models.question import Question, GenerationSession
 from app.models.document import Document
 from app.models.subject import Subject, Topic
+from app.models.generation_run import GenerationRun
+from app.services.generation_status_service import GenerationStatusService, broadcast_generation_update
 
 
 # MIME type mapping for allowed extensions
@@ -57,6 +59,8 @@ _MAX_CONCURRENT_GENERATIONS = 2  # Max concurrent generations across all users
 _TASK_CLEANUP_INTERVAL = 300  # Clean up completed tasks every 5 minutes
 _QUEUE_PROCESSING_INTERVAL = 10  # Process queue every 10 seconds
 _MAX_RETRY_ATTEMPTS = 3  # Max retry attempts for failed queue items
+_GENERATION_REFILL_MAX_ROUNDS = 4  # Top-up passes if generation ends below target
+_GENERATION_REFILL_ATTEMPT_MULTIPLIER = 4  # Attempts per missing question in each refill round
 
 # Configure logging
 logger = logging.getLogger(__name__)
@@ -235,6 +239,122 @@ async def _delayed_status_cleanup(task_key: str, delay_seconds: float = 60.0) ->
     _BACKGROUND_GENERATION_STATUS.pop(task_key, None)
 
 
+async def _get_generated_count_since_start(
+    db: AsyncSession,
+    subject_id: str,
+    started_total_questions: int,
+) -> int:
+    """Return number of newly saved questions for this subject since generation started."""
+    subject_total_res = await db.execute(
+        select(Subject.total_questions).where(Subject.id == subject_id)
+    )
+    current_subject_total = int(subject_total_res.scalar_one_or_none() or started_total_questions)
+    return max(0, current_subject_total - started_total_questions)
+
+
+async def _refill_missing_questions_to_target(
+    db: AsyncSession,
+    question_service: QuestionGenerationService,
+    *,
+    user_id: str,
+    subject_id: str,
+    count: int,
+    types: list[str],
+    difficulty: str,
+    marks_by_type: dict[str, int],
+    context: str,
+    topic_id: Optional[str],
+    selected_topic_ids: list[str],
+    allow_without_reference: bool,
+    task_key: str,
+    run_id: str,
+    started_total_questions: int,
+    target_total_questions: int,
+) -> int:
+    """
+    Refill strategy: if generated count is below requested count, run bounded retry rounds
+    with per-question attempts until target is reached or retry budget is exhausted.
+    """
+    generated_count = min(count, await _get_generated_count_since_start(db, subject_id, started_total_questions))
+    if generated_count >= count:
+        return generated_count
+
+    candidate_topic_ids = [tid for tid in selected_topic_ids if tid]
+    if topic_id and topic_id not in candidate_topic_ids:
+        candidate_topic_ids = [topic_id]
+
+    for refill_round in range(1, _GENERATION_REFILL_MAX_ROUNDS + 1):
+        generated_count = min(count, await _get_generated_count_since_start(db, subject_id, started_total_questions))
+        remaining = count - generated_count
+        if remaining <= 0:
+            break
+
+        max_attempts_this_round = max(remaining * _GENERATION_REFILL_ATTEMPT_MULTIPLIER, remaining)
+        _BACKGROUND_GENERATION_STATUS[task_key] = {
+            "in_progress": True,
+            "run_id": run_id,
+            "status": "refilling",
+            "progress": min(99, int((generated_count / max(1, count)) * 100)),
+            "current_question": generated_count,
+            "total_questions": count,
+            "started_total_questions": started_total_questions,
+            "target_total_questions": target_total_questions,
+            "message": f"Auto-refill round {refill_round}: generating {remaining} missing questions",
+            "updated_at": datetime.now(timezone.utc).isoformat(),
+        }
+
+        round_success = 0
+        for attempt_idx in range(max_attempts_this_round):
+            chosen_topic_id = topic_id
+            if not chosen_topic_id and candidate_topic_ids:
+                chosen_topic_id = candidate_topic_ids[attempt_idx % len(candidate_topic_ids)]
+
+            produced = False
+            try:
+                refill_generator = question_service.quick_generate_from_subject(
+                    user_id=user_id,
+                    subject_id=subject_id,
+                    context=context,
+                    count=1,
+                    types=types,
+                    difficulty=difficulty,
+                    marks_by_type=marks_by_type,
+                    topic_id=chosen_topic_id,
+                    existing_session_id=None,
+                    allow_without_reference=allow_without_reference,
+                )
+
+                async for refill_event in refill_generator:
+                    if (refill_event.current_question or 0) >= 1 or refill_event.question is not None:
+                        produced = True
+
+                await db.commit()
+            except Exception as refill_exc:
+                logger.warning(
+                    "Refill attempt failed for subject_id=%s topic_id=%s attempt=%s: %s",
+                    subject_id,
+                    chosen_topic_id,
+                    attempt_idx + 1,
+                    refill_exc,
+                )
+
+            if produced:
+                round_success += 1
+
+            generated_count = min(count, await _get_generated_count_since_start(db, subject_id, started_total_questions))
+            if generated_count >= count:
+                break
+
+        generated_count = min(count, await _get_generated_count_since_start(db, subject_id, started_total_questions))
+        if generated_count >= count:
+            break
+        if round_success == 0:
+            # Stop early if a full refill round produced no net new question.
+            break
+
+    return generated_count
+
+
 async def _run_background_subject_generation(
     user_id: str,
     subject_id: str,
@@ -253,6 +373,8 @@ async def _run_background_subject_generation(
     started_total_questions = 0
     target_total_questions = count
     run_id_value = run_id or str(uuid.uuid4())
+    db_run_created = False
+    effective_topic_id = topic_id  # Track the actual topic being generated
     try:
         async with AsyncSessionLocal() as task_db:
             subject_res = await task_db.execute(
@@ -294,12 +416,30 @@ async def _run_background_subject_generation(
                 if not topic:
                     return
                 context = f"{subject.name}: {topic.name}"
+                effective_topic_id = topic_id
             else:
                 topics_res = await task_db.execute(
                     select(Topic.name).where(Topic.subject_id == subject_id).order_by(Topic.order_index.asc())
                 )
                 topic_names = [name for name in topics_res.scalars().all() if name]
                 context = f"{subject.name}: {', '.join(topic_names)}" if topic_names else subject.name
+
+            # Create database record for cross-device visibility (only if we have a specific topic)
+            if effective_topic_id:
+                try:
+                    gen_status_service = GenerationStatusService(task_db)
+                    await gen_status_service.create_run(
+                        run_id=run_id_value,
+                        subject_id=subject_id,
+                        topic_id=effective_topic_id,
+                        user_id=user_id,
+                        target_count=count,
+                        status="generating",
+                        message="Starting question generation",
+                    )
+                    db_run_created = True
+                except Exception as db_err:
+                    logger.warning(f"Failed to create generation run in DB: {db_err}")
 
             marks_by_type = {"mcq": 1, "short_answer": 2, "long_answer": 5}
             question_service = QuestionGenerationService(task_db)
@@ -461,6 +601,26 @@ async def _run_background_subject_generation(
                         "message": f"Generated {current_generated}/{count} questions",
                         "updated_at": datetime.now(timezone.utc).isoformat(),
                     }
+                    
+                    # Broadcast progress via WebSocket for cross-device visibility
+                    if db_run_created and effective_topic_id:
+                        try:
+                            await broadcast_generation_update(
+                                subject_id=subject_id,
+                                topic_id=effective_topic_id,
+                                status_data={
+                                    "run_id": run_id_value,
+                                    "topic_id": effective_topic_id,
+                                    "in_progress": True,
+                                    "status": "generating",
+                                    "progress": min(99, int((current_generated / max(1, count)) * 100)),
+                                    "current_question": current_generated,
+                                    "total_questions": count,
+                                    "message": f"Generated {current_generated}/{count} questions",
+                                },
+                            )
+                        except Exception:
+                            pass  # Don't fail generation due to WebSocket issues
 
                 subject_total_res = await task_db.execute(
                     select(Subject.total_questions).where(
@@ -505,7 +665,59 @@ async def _run_background_subject_generation(
                         "message": f"Generated {saved_count}/{total} questions" if saved_count > 0 and progress_event.status == "generating" else (progress_event.message or "Generating questions"),
                         "updated_at": datetime.now(timezone.utc).isoformat(),
                     }
+                    
+                    # Broadcast progress via WebSocket for cross-device visibility
+                    if db_run_created and effective_topic_id:
+                        try:
+                            await broadcast_generation_update(
+                                subject_id=subject_id,
+                                topic_id=effective_topic_id,
+                                status_data={
+                                    "run_id": run_id_value,
+                                    "topic_id": effective_topic_id,
+                                    "in_progress": True,
+                                    "status": progress_event.status,
+                                    "progress": saved_progress,
+                                    "current_question": saved_count,
+                                    "total_questions": total,
+                                    "message": f"Generated {saved_count}/{total} questions" if saved_count > 0 and progress_event.status == "generating" else (progress_event.message or "Generating questions"),
+                                },
+                            )
+                        except Exception:
+                            pass  # Don't fail generation due to WebSocket issues
                 final_current_question = _BACKGROUND_GENERATION_STATUS.get(task_key, {}).get("current_question", count)
+
+            final_current_question = await _refill_missing_questions_to_target(
+                task_db,
+                question_service,
+                user_id=user_id,
+                subject_id=subject_id,
+                count=count,
+                types=types,
+                difficulty=difficulty,
+                marks_by_type=marks_by_type,
+                context=context,
+                topic_id=topic_id,
+                selected_topic_ids=selected_topic_ids,
+                allow_without_reference=allow_without_reference,
+                task_key=task_key,
+                run_id=run_id_value,
+                started_total_questions=started_total_questions,
+                target_total_questions=target_total_questions,
+            )
+
+            _BACKGROUND_GENERATION_STATUS[task_key] = {
+                "in_progress": True,
+                "run_id": run_id_value,
+                "status": "generating",
+                "progress": min(99, int((final_current_question / max(1, count)) * 100)),
+                "current_question": final_current_question,
+                "total_questions": count,
+                "started_total_questions": started_total_questions,
+                "target_total_questions": target_total_questions,
+                "message": f"Generated {final_current_question}/{count} questions",
+                "updated_at": datetime.now(timezone.utc).isoformat(),
+            }
             await task_db.commit()
     except Exception as exc:
         error_occurred = True
@@ -528,6 +740,15 @@ async def _run_background_subject_generation(
                 "in_progress": False,
             }
             logger.error(f"Background generation failed for task_key={task_key}: {error_message}")
+            
+            # Update database and broadcast failure via WebSocket
+            if db_run_created and effective_topic_id:
+                try:
+                    async with AsyncSessionLocal() as cleanup_db:
+                        gen_status_service = GenerationStatusService(cleanup_db)
+                        await gen_status_service.fail_run(run_id_value, error_message)
+                except Exception as db_err:
+                    logger.warning(f"Failed to update generation run failure in DB: {db_err}")
         else:
             final_current_question = max(0, min(count, int(final_current_question or 0)))
             terminal_progress = 100 if final_current_question >= count else int((final_current_question / max(1, count)) * 100)
@@ -548,6 +769,24 @@ async def _run_background_subject_generation(
                 "in_progress": False,
             }
             logger.info(f"Background generation completed for task_key={task_key}: {final_current_question}/{count} questions")
+            
+            # Update database and broadcast completion via WebSocket
+            if db_run_created and effective_topic_id:
+                try:
+                    async with AsyncSessionLocal() as cleanup_db:
+                        gen_status_service = GenerationStatusService(cleanup_db)
+                        await gen_status_service.complete_run(
+                            run_id_value,
+                            final_current_question,
+                            status="completed",
+                            message=(
+                                "Generation complete"
+                                if final_current_question >= count
+                                else f"Generation complete ({final_current_question}/{count})"
+                            ),
+                        )
+                except Exception as db_err:
+                    logger.warning(f"Failed to update generation run completion in DB: {db_err}")
         
         # Process queue after task completes (both success and error cases)
         asyncio.create_task(_process_queue())
@@ -1589,6 +1828,59 @@ async def get_background_generation_statuses(
             "updated_at": (status_payload or {}).get("updated_at"),
         }
 
+    return {"statuses": statuses}
+
+
+@router.get("/topic-generation-statuses")
+async def get_topic_generation_statuses(
+    topic_ids: str = Query(..., description="Comma-separated topic IDs"),
+    current_user: User = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+):
+    """
+    Get generation status for specific topics from the database.
+    This provides cross-device visibility of generation status.
+    """
+    raw_ids = [item.strip() for item in topic_ids.split(",") if item.strip()]
+    if not raw_ids:
+        return {"statuses": {}}
+
+    statuses: dict[str, dict] = {}
+    
+    # Query the database for active generation runs
+    result = await db.execute(
+        select(GenerationRun).where(
+            GenerationRun.topic_id.in_(raw_ids),
+            GenerationRun.in_progress == True,
+        )
+    )
+    active_runs = result.scalars().all()
+    
+    for run in active_runs:
+        statuses[run.topic_id] = run.to_status_dict()
+    
+    # Also check for recently completed runs (within last 60 seconds) for topics without active runs
+    from datetime import timedelta
+    recent_cutoff = datetime.now(timezone.utc) - timedelta(seconds=60)
+    
+    missing_topic_ids = [tid for tid in raw_ids if tid not in statuses]
+    if missing_topic_ids:
+        recent_result = await db.execute(
+            select(GenerationRun).where(
+                GenerationRun.topic_id.in_(missing_topic_ids),
+                GenerationRun.in_progress == False,
+                GenerationRun.completed_at >= recent_cutoff,
+            ).order_by(GenerationRun.completed_at.desc())
+        )
+        recent_runs = recent_result.scalars().all()
+        
+        # Only include the most recent completed run per topic
+        seen_topics = set()
+        for run in recent_runs:
+            if run.topic_id not in seen_topics:
+                statuses[run.topic_id] = run.to_status_dict()
+                seen_topics.add(run.topic_id)
+    
     return {"statuses": statuses}
 
 

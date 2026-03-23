@@ -1,11 +1,12 @@
 <script lang="ts">
-	import { onMount, tick } from 'svelte';
+	import { onMount, onDestroy, tick } from 'svelte';
 	import { goto } from '$app/navigation';
 	import { session } from '$lib/session';
 	import {
 		createSubject,
 		createGroup,
 		getSubjectsTree,
+		listSubjects,
 		moveSubject,
 		moveGroup,
 		deleteGroup,
@@ -13,26 +14,37 @@
 		type SubjectGroupTreeNode,
 		type SubjectTreeResponse
 	} from '$lib/api/subjects';
+	import { getGenerationWebSocketClient, type StatsData } from '$lib/api/generation-websocket';
+
+	// Tab state
+	type ViewTab = 'subjects' | 'groups';
+	let activeTab = $state<ViewTab>('subjects');
 
 	let loading = $state(true);
 	let error = $state('');
 	let treeData = $state<SubjectTreeResponse | null>(null);
+	let subjects = $state<SubjectResponse[]>([]);
 	let query = $state('');
 	
-	// Add subject state
+	// WebSocket for live stats updates
+	let wsUnsubscribers: (() => void)[] = [];
+	
+	// Add subject state (for subjects view)
 	let addingSubject = $state(false);
 	let draftCode = $state('');
 	let draftName = $state('');
 	let savingSubject = $state(false);
 	let addSubjectError = $state('');
+	let addSubjectCodeInput = $state<HTMLInputElement | null>(null);
 	
-	// Add group state
+	// Add group state (for groups view)
 	let addingGroup = $state(false);
 	let draftGroupName = $state('');
 	let savingGroup = $state(false);
 	let addGroupError = $state('');
+	let addGroupNameInput = $state<HTMLInputElement | null>(null);
 	
-	// Selection and expansion state
+	// Selection and expansion state (for groups view)
 	let selectedGroupId = $state<string | null>(null);
 	let expandedGroups = $state<Set<string>>(new Set());
 	
@@ -43,6 +55,13 @@
 	let moveTargetName = $state<string>('');
 	let movingItem = $state(false);
 	let moveExpandedGroups = $state<Set<string>>(new Set());
+	
+	// Manage subjects in group modal
+	let showManageSubjectsModal = $state(false);
+	let manageGroupId = $state<string>('');
+	let manageGroupName = $state<string>('');
+	let manageSubjectsQuery = $state('');
+	let managingSubjects = $state(false);
 	
 	// Drag state
 	let draggedItem = $state<{ type: 'subject' | 'group'; id: string; name: string } | null>(null);
@@ -70,15 +89,109 @@
 				goto('/teacher/login');
 			}
 		});
-		void loadTree();
+		void loadData();
+		setupWebSocket();
 		return unsub;
 	});
+	
+	onDestroy(() => {
+		wsUnsubscribers.forEach(unsub => unsub());
+		wsUnsubscribers = [];
+	});
+	
+	function setupWebSocket() {
+		const wsClient = getGenerationWebSocketClient();
+		wsClient.connect();
+		wsClient.subscribeGlobalStats();
+		
+		// Handle global stats updates - update totals
+		const globalUnsub = wsClient.onGlobalStats((statsData: StatsData) => {
+			if (treeData) {
+				treeData = {
+					...treeData,
+					totals: {
+						...treeData.totals,
+						total_questions: statsData.total_questions ?? treeData.totals.total_questions,
+						total_approved: statsData.total_approved ?? treeData.totals.total_approved,
+						total_rejected: statsData.total_rejected ?? treeData.totals.total_rejected,
+						total_pending: statsData.total_pending ?? treeData.totals.total_pending,
+					}
+				};
+			}
+		});
+		wsUnsubscribers.push(globalUnsub);
+		
+		// Handle subject-specific stats updates
+		const subjectUnsub = wsClient.onSubjectStats((subjectId: string, statsData: StatsData) => {
+			// Update flat subjects list
+			subjects = subjects.map(s => {
+				if (s.id === subjectId) {
+					return {
+						...s,
+						total_questions: statsData.total_questions ?? s.total_questions,
+						total_approved: statsData.total_approved ?? s.total_approved,
+						total_rejected: statsData.total_rejected ?? s.total_rejected,
+						total_pending: statsData.total_pending ?? s.total_pending,
+					};
+				}
+				return s;
+			});
+			
+			if (!treeData) return;
+			
+			// Update subject in ungrouped_subjects
+			const updatedUngrouped = treeData.ungrouped_subjects.map(s => {
+				if (s.id === subjectId) {
+					return {
+						...s,
+						total_questions: statsData.total_questions ?? s.total_questions,
+						total_approved: statsData.total_approved ?? s.total_approved,
+						total_rejected: statsData.total_rejected ?? s.total_rejected,
+						total_pending: statsData.total_pending ?? s.total_pending,
+					};
+				}
+				return s;
+			});
+			
+			// Update subject in groups recursively
+			function updateGroupSubjects(groups: SubjectGroupTreeNode[]): SubjectGroupTreeNode[] {
+				return groups.map(group => ({
+					...group,
+					subjects: group.subjects.map(s => {
+						if (s.id === subjectId) {
+							return {
+								...s,
+								total_questions: statsData.total_questions ?? s.total_questions,
+								total_approved: statsData.total_approved ?? s.total_approved,
+								total_rejected: statsData.total_rejected ?? s.total_rejected,
+								total_pending: statsData.total_pending ?? s.total_pending,
+							};
+						}
+						return s;
+					}),
+					children: updateGroupSubjects(group.children),
+				}));
+			}
+			
+			treeData = {
+				...treeData,
+				ungrouped_subjects: updatedUngrouped,
+				groups: updateGroupSubjects(treeData.groups),
+			};
+		});
+		wsUnsubscribers.push(subjectUnsub);
+	}
 
-	async function loadTree() {
+	async function loadData() {
 		loading = true;
 		error = '';
 		try {
-			treeData = await getSubjectsTree();
+			const [treeRes, listRes] = await Promise.all([
+				getSubjectsTree(),
+				listSubjects(1, 100)
+			]);
+			treeData = treeRes;
+			subjects = listRes.subjects;
 		} catch (e: unknown) {
 			error = e instanceof Error ? e.message : 'Failed to load subjects';
 		} finally {
@@ -86,7 +199,24 @@
 		}
 	}
 
-	// Flatten tree for search
+	async function loadTree() {
+		try {
+			treeData = await getSubjectsTree();
+		} catch (e: unknown) {
+			error = e instanceof Error ? e.message : 'Failed to load subjects';
+		}
+	}
+
+	async function loadSubjects() {
+		try {
+			const response = await listSubjects(1, 100);
+			subjects = response.subjects;
+		} catch (e: unknown) {
+			error = e instanceof Error ? e.message : 'Failed to load subjects';
+		}
+	}
+
+	// Flatten tree for search in groups view
 	function flattenSubjects(groups: SubjectGroupTreeNode[], ungrouped: SubjectResponse[]): SubjectResponse[] {
 		const result: SubjectResponse[] = [...ungrouped];
 		function traverse(group: SubjectGroupTreeNode) {
@@ -97,15 +227,27 @@
 		return result;
 	}
 
-	const allSubjects = $derived.by(() => {
+	const allSubjectsFromTree = $derived.by(() => {
 		if (!treeData) return [];
 		return flattenSubjects(treeData.groups, treeData.ungrouped_subjects);
 	});
 
-	const filteredSubjects = $derived.by(() => {
+	// Filtered subjects for subjects view
+	const filteredSubjectsView = $derived.by(() => {
 		const search = query.trim().toLowerCase();
-		if (!search) return null; // null means show tree view
-		return allSubjects.filter((subject) => {
+		if (!search) return subjects;
+		return subjects.filter((subject) => {
+			return [subject.name, subject.code, subject.description ?? ''].some((value) =>
+				value.toLowerCase().includes(search)
+			);
+		});
+	});
+
+	// Filtered subjects for groups view (returns null when no search to show tree)
+	const filteredGroupsView = $derived.by(() => {
+		const search = query.trim().toLowerCase();
+		if (!search) return null;
+		return allSubjectsFromTree.filter((subject) => {
 			return [subject.name, subject.code, subject.description ?? ''].some((value) =>
 				value.toLowerCase().includes(search)
 			);
@@ -113,13 +255,27 @@
 	});
 
 	const totals = $derived.by(() => {
-		if (!treeData) return { totalSubjects: 0, totalQuestions: 0, totalPending: 0, totalApproved: 0, totalRejected: 0 };
+		if (activeTab === 'subjects') {
+			return filteredSubjectsView.reduce(
+				(acc, subject) => {
+					acc.totalTopics += subject.total_topics;
+					acc.totalQuestions += subject.total_questions;
+					acc.totalPending += subject.total_pending ?? 0;
+					acc.totalApproved += subject.total_approved ?? 0;
+					acc.totalRejected += subject.total_rejected ?? 0;
+					return acc;
+				},
+				{ totalTopics: 0, totalQuestions: 0, totalPending: 0, totalApproved: 0, totalRejected: 0, totalSubjects: filteredSubjectsView.length }
+			);
+		}
+		if (!treeData) return { totalSubjects: 0, totalQuestions: 0, totalPending: 0, totalApproved: 0, totalRejected: 0, totalTopics: 0 };
 		return {
 			totalSubjects: treeData.totals.total_subjects,
 			totalQuestions: treeData.totals.total_questions,
 			totalPending: treeData.totals.total_pending,
 			totalApproved: treeData.totals.total_approved,
 			totalRejected: treeData.totals.total_rejected,
+			totalTopics: 0,
 		};
 	});
 
@@ -215,6 +371,17 @@
 		openMoveModal('group', groupId, groupName);
 	}
 
+	function handleContextMenuManageSubjects(groupId: string) {
+		hideContextMenu();
+		openManageSubjectsModal(groupId);
+	}
+
+	function handleContextMenuAddSubgroup(groupId: string) {
+		hideContextMenu();
+		selectedGroupId = groupId;
+		startAddGroup();
+	}
+
 	function handleContextMenuDelete(groupId: string, groupName: string) {
 		hideContextMenu();
 		handleDeleteGroup(groupId, groupName);
@@ -225,6 +392,9 @@
 		if (savingSubject) return;
 		addingSubject = true;
 		addSubjectError = '';
+		tick().then(() => {
+			addSubjectCodeInput?.focus();
+		});
 	}
 
 	function cancelAddSubject() {
@@ -255,7 +425,7 @@
 			addingSubject = false;
 			draftCode = '';
 			draftName = '';
-			await loadTree();
+			await loadData();
 		} catch (e: unknown) {
 			addSubjectError = e instanceof Error ? e.message : 'Failed to create subject';
 		} finally {
@@ -268,6 +438,9 @@
 		if (savingGroup) return;
 		addingGroup = true;
 		addGroupError = '';
+		tick().then(() => {
+			addGroupNameInput?.focus();
+		});
 	}
 
 	function cancelAddGroup() {
@@ -386,6 +559,10 @@
 		if (movingItem) return;
 		if (groupId && isMoveDestinationDisabled(groupId)) return;
 		if (moveTargetType === 'subject') {
+			if (!canAssignSubjectToGroup(groupId)) {
+				error = 'Subjects can only be moved into top-level departments.';
+				return;
+			}
 			const destination = getGroupLabel(groupId);
 			const ok = await requestConfirmation({
 				title: 'Move Subject',
@@ -455,6 +632,11 @@
 		}
 
 		if (draggedItem.type === 'subject') {
+			if (!canAssignSubjectToGroup(targetGroupId)) {
+				error = 'Subjects can only be moved into top-level departments.';
+				handleDragEnd();
+				return;
+			}
 			const destination = getGroupLabel(targetGroupId);
 			const ok = await requestConfirmation({
 				title: 'Move Subject',
@@ -508,6 +690,176 @@
 		}
 		return null;
 	}
+
+	function isTopLevelGroup(groupId: string | null): boolean {
+		if (!groupId || !treeData) return false;
+		const group = findGroupById(treeData.groups, groupId);
+		return group?.parent_id === null;
+	}
+
+	function canAssignSubjectToGroup(groupId: string | null): boolean {
+		return isTopLevelGroup(groupId);
+	}
+
+	// Manage subjects in group modal
+	function openManageSubjectsModal(groupId: string | null) {
+		if (!groupId || !treeData) return;
+		const group = findGroupById(treeData.groups, groupId);
+		if (!group) return;
+		manageGroupId = groupId;
+		manageGroupName = group.name;
+		manageSubjectsQuery = '';
+		showManageSubjectsModal = true;
+	}
+
+	function closeManageSubjectsModal() {
+		showManageSubjectsModal = false;
+		manageGroupId = '';
+		manageGroupName = '';
+		manageSubjectsQuery = '';
+	}
+
+	// Get subjects that can be added to a group (ungrouped subjects)
+	const availableSubjectsForGroup = $derived.by(() => {
+		if (!treeData) return [];
+		return treeData.ungrouped_subjects;
+	});
+
+	// Get subjects currently in the managed group
+	const subjectsInManagedGroup = $derived.by(() => {
+		if (!treeData || !manageGroupId) return [];
+		const group = findGroupById(treeData.groups, manageGroupId);
+		return group?.subjects ?? [];
+	});
+
+	const filteredSubjectsInManagedGroup = $derived.by(() => {
+		const search = manageSubjectsQuery.trim().toLowerCase();
+		if (!search) return subjectsInManagedGroup;
+		return subjectsInManagedGroup.filter((subject) => {
+			return [subject.name, subject.code, subject.description ?? ''].some((value) =>
+				value.toLowerCase().includes(search)
+			);
+		});
+	});
+
+	const filteredAvailableSubjectsForGroup = $derived.by(() => {
+		const search = manageSubjectsQuery.trim().toLowerCase();
+		if (!search) return availableSubjectsForGroup;
+		return availableSubjectsForGroup.filter((subject) => {
+			return [subject.name, subject.code, subject.description ?? ''].some((value) =>
+				value.toLowerCase().includes(search)
+			);
+		});
+	});
+
+	function flattenGroups(groups: SubjectGroupTreeNode[]): SubjectGroupTreeNode[] {
+		const result: SubjectGroupTreeNode[] = [];
+		function walk(group: SubjectGroupTreeNode) {
+			result.push(group);
+			group.children.forEach(walk);
+		}
+		groups.forEach(walk);
+		return result;
+	}
+
+	function collectGroupIds(groups: SubjectGroupTreeNode[]): Set<string> {
+		const ids = new Set<string>();
+		function walk(group: SubjectGroupTreeNode) {
+			ids.add(group.id);
+			group.children.forEach(walk);
+		}
+		groups.forEach(walk);
+		return ids;
+	}
+
+	const groupsInManagedGroup = $derived.by(() => {
+		if (!treeData || !manageGroupId) return [];
+		const group = findGroupById(treeData.groups, manageGroupId);
+		return group?.children ?? [];
+	});
+
+	const descendantGroupIdsInManagedGroup = $derived.by(() => {
+		return collectGroupIds(groupsInManagedGroup);
+	});
+
+	const availableGroupsForManagedGroup = $derived.by(() => {
+		if (!treeData || !manageGroupId) return [];
+		const allGroups = flattenGroups(treeData.groups);
+		return allGroups.filter((group) => {
+			if (group.id === manageGroupId) return false;
+			if (group.parent_id === manageGroupId) return false;
+			if (descendantGroupIdsInManagedGroup.has(group.id)) return false;
+			return true;
+		});
+	});
+
+	const filteredGroupsInManagedGroup = $derived.by(() => {
+		const search = manageSubjectsQuery.trim().toLowerCase();
+		if (!search) return groupsInManagedGroup;
+		return groupsInManagedGroup.filter((group) => group.name.toLowerCase().includes(search));
+	});
+
+	const filteredAvailableGroupsForManagedGroup = $derived.by(() => {
+		const search = manageSubjectsQuery.trim().toLowerCase();
+		if (!search) return availableGroupsForManagedGroup;
+		return availableGroupsForManagedGroup.filter((group) => group.name.toLowerCase().includes(search));
+	});
+
+	async function addSubjectToManagedGroup(subjectId: string) {
+		if (managingSubjects || !manageGroupId) return;
+		if (!canAssignSubjectToGroup(manageGroupId)) {
+			error = 'Subjects can only be added to top-level departments.';
+			return;
+		}
+		managingSubjects = true;
+		try {
+			await moveSubject(subjectId, manageGroupId);
+			await loadData();
+		} catch (e: unknown) {
+			error = e instanceof Error ? e.message : 'Failed to add subject to group';
+		} finally {
+			managingSubjects = false;
+		}
+	}
+
+	async function removeSubjectFromManagedGroup(subjectId: string) {
+		if (managingSubjects) return;
+		managingSubjects = true;
+		try {
+			await moveSubject(subjectId, null);
+			await loadData();
+		} catch (e: unknown) {
+			error = e instanceof Error ? e.message : 'Failed to remove subject from group';
+		} finally {
+			managingSubjects = false;
+		}
+	}
+
+	async function addGroupToManagedGroup(groupId: string) {
+		if (managingSubjects || !manageGroupId) return;
+		managingSubjects = true;
+		try {
+			await moveGroup(groupId, manageGroupId);
+			await loadData();
+		} catch (e: unknown) {
+			error = e instanceof Error ? e.message : 'Failed to add group to group';
+		} finally {
+			managingSubjects = false;
+		}
+	}
+
+	async function removeGroupFromManagedGroup(groupId: string) {
+		if (managingSubjects) return;
+		managingSubjects = true;
+		try {
+			await moveGroup(groupId, null);
+			await loadData();
+		} catch (e: unknown) {
+			error = e instanceof Error ? e.message : 'Failed to remove group from group';
+		} finally {
+			managingSubjects = false;
+		}
+	}
 </script>
 
 <svelte:head>
@@ -516,16 +868,38 @@
 
 <div class="page">
 	<div class="hero animate-fade-in">
-		<div>
+		<div class="hero-intro">
 			<p class="eyebrow">Teacher Console</p>
 			<h1 class="title font-serif">Subjects</h1>
 		</div>
+
+		<!-- Tab Bar -->
+		<div class="tab-bar animate-slide-up">
+			<button 
+				class="tab-btn" 
+				class:active={activeTab === 'subjects'} 
+				onclick={() => { activeTab = 'subjects'; query = ''; }}
+			>
+				Subjects
+			</button>
+			<button 
+				class="tab-btn" 
+				class:active={activeTab === 'groups'} 
+				onclick={() => { activeTab = 'groups'; query = ''; }}
+			>
+				Groups
+			</button>
+		</div>
+
 		<div class="hero-actions">
-			{#if selectedGroupId}
+			{#if activeTab === 'subjects'}
 				<button class="add-btn" onclick={startAddSubject} disabled={savingSubject || addingSubject}>+ Add Subject</button>
-				<button class="add-btn secondary" onclick={startAddGroup} disabled={savingGroup || addingGroup}>+ Add Subgroup</button>
-			{:else}
-				<button class="add-btn secondary" onclick={startAddGroup} disabled={savingGroup || addingGroup}>+ Add Group</button>
+			{:else if activeTab === 'groups'}
+				{#if selectedGroupId}
+					<button class="add-btn secondary" onclick={startAddGroup} disabled={savingGroup || addingGroup}>+ Add Subgroup</button>
+				{:else}
+					<button class="add-btn secondary" onclick={startAddGroup} disabled={savingGroup || addingGroup}>+ Add Group</button>
+				{/if}
 			{/if}
 		</div>
 	</div>
@@ -574,8 +948,115 @@
 			<div class="spinner"></div>
 			<p>Loading subjects...</p>
 		</div>
-	{:else if treeData}
-		<!-- Desktop Table View -->
+	{:else if activeTab === 'subjects'}
+		<!-- SUBJECTS VIEW (flat list) -->
+		<div class="table-shell glass-panel animate-fade-in desktop-only">
+			<table class="subjects-table">
+				<colgroup>
+					<col class="name-col" />
+					<col class="num-col" />
+					<col class="num-col" />
+					<col class="num-col" />
+					<col class="num-col" />
+				</colgroup>
+				<thead>
+					<tr>
+						<th>Name</th>
+						<th>Questions</th>
+						<th>Pending</th>
+						<th>Approved</th>
+						<th>Rejected</th>
+					</tr>
+				</thead>
+				<tbody>
+					{#if addingSubject}
+						<tr class="add-row">
+							<td>
+								<div class="name-stack">
+									<div class="inline-inputs">
+										<input class="cell-input code-input" bind:value={draftCode} bind:this={addSubjectCodeInput} placeholder="SUB101" maxlength="24" onkeydown={(e) => { if (e.key === 'Enter') saveAddSubject(); }} />
+										<input class="cell-input" bind:value={draftName} placeholder="Subject Name" maxlength="120" onkeydown={(e) => { if (e.key === 'Enter') saveAddSubject(); }} />
+									</div>
+									<div class="inline-actions">
+										<button class="table-btn primary" onclick={saveAddSubject} disabled={savingSubject}>{savingSubject ? 'Saving...' : 'Save'}</button>
+										<button class="table-btn" onclick={cancelAddSubject} disabled={savingSubject}>Cancel</button>
+									</div>
+								</div>
+							</td>
+							<td>-</td>
+							<td>-</td>
+							<td>-</td>
+							<td>-</td>
+						</tr>
+					{/if}
+
+					{#if filteredSubjectsView.length === 0}
+						<tr>
+							<td colspan="5" class="empty-cell">No subjects matched your search.</td>
+						</tr>
+					{:else}
+						{#each filteredSubjectsView as subject}
+							<tr class="subject-row" role="button" tabindex="0" onclick={() => openSubject(subject.id)} onkeydown={(event) => {
+								if (event.key === 'Enter' || event.key === ' ') {
+									event.preventDefault();
+									openSubject(subject.id);
+								}
+							}}>
+								<td>
+									<div class="name-stack">
+										<div class="name-header">
+											<strong>{subject.name}</strong>
+											<span class="code-chip">{subject.code}</span>
+										</div>
+									</div>
+								</td>
+								<td>{subject.total_questions}</td>
+								<td>{subject.total_pending ?? 0}</td>
+								<td class="green-text">{subject.total_approved ?? 0}</td>
+								<td class="red-text">{subject.total_rejected ?? 0}</td>
+							</tr>
+						{/each}
+					{/if}
+				</tbody>
+			</table>
+		</div>
+
+		<!-- Mobile Subjects View -->
+		<div class="subjects-mobile-list mobile-only animate-fade-in">
+			{#if addingSubject}
+				<div class="subject-mobile-card glass-panel">
+					<div class="inline-inputs">
+						<input class="cell-input code-input" bind:value={draftCode} bind:this={addSubjectCodeInput} placeholder="SUB101" maxlength="24" onkeydown={(e) => { if (e.key === 'Enter') saveAddSubject(); }} />
+						<input class="cell-input" bind:value={draftName} placeholder="Subject Name" maxlength="120" onkeydown={(e) => { if (e.key === 'Enter') saveAddSubject(); }} />
+					</div>
+					<div class="inline-actions">
+						<button class="table-btn primary" onclick={saveAddSubject} disabled={savingSubject}>{savingSubject ? 'Saving...' : 'Save'}</button>
+						<button class="table-btn" onclick={cancelAddSubject} disabled={savingSubject}>Cancel</button>
+					</div>
+				</div>
+			{/if}
+
+			{#if filteredSubjectsView.length === 0}
+				<div class="subject-mobile-card glass-panel empty-cell">No subjects matched your search.</div>
+			{:else}
+				{#each filteredSubjectsView as subject}
+					<button class="subject-mobile-card glass-panel" onclick={() => openSubject(subject.id)}>
+						<div class="name-header">
+							<span class="code-chip">{subject.code}</span>
+							<strong>{subject.name}</strong>
+						</div>
+						<div class="mobile-metrics">
+							<span>Questions <strong>{subject.total_questions}</strong></span>
+							<span>Pending <strong>{subject.total_pending ?? 0}</strong></span>
+							<span class="green-text">Approved <strong>{subject.total_approved ?? 0}</strong></span>
+							<span class="red-text">Rejected <strong>{subject.total_rejected ?? 0}</strong></span>
+						</div>
+					</button>
+				{/each}
+			{/if}
+		</div>
+	{:else if activeTab === 'groups' && treeData}
+		<!-- GROUPS VIEW (hierarchical tree) -->
 		<div class="table-shell glass-panel animate-fade-in desktop-only">
 			<table class="subjects-table">
 				<colgroup>
@@ -597,29 +1078,6 @@
 					</tr>
 				</thead>
 				<tbody>
-					<!-- Add Subject Row -->
-					{#if addingSubject}
-						<tr class="add-row">
-							<td>
-								<div class="name-stack" style="padding-left: {selectedGroupId ? '2rem' : '0'}">
-									<div class="inline-inputs">
-										<input class="cell-input code-input" bind:value={draftCode} placeholder="SUB101" maxlength="24" />
-										<input class="cell-input" bind:value={draftName} placeholder="Subject Name" maxlength="120" />
-									</div>
-									<div class="inline-actions">
-										<button class="table-btn primary" onclick={saveAddSubject} disabled={savingSubject}>{savingSubject ? 'Saving...' : 'Save'}</button>
-										<button class="table-btn" onclick={cancelAddSubject} disabled={savingSubject}>Cancel</button>
-									</div>
-								</div>
-							</td>
-							<td>-</td>
-							<td>-</td>
-							<td>-</td>
-							<td>-</td>
-							<td></td>
-						</tr>
-					{/if}
-
 					<!-- Add Group Row -->
 					{#if addingGroup}
 						<tr class="add-row">
@@ -627,7 +1085,7 @@
 								<div class="name-stack" style="padding-left: {selectedGroupId ? '2rem' : '0'}">
 									<div class="inline-inputs single">
 										<span class="folder-icon">📁</span>
-										<input class="cell-input" bind:value={draftGroupName} placeholder="Group Name" maxlength="120" />
+										<input class="cell-input" bind:value={draftGroupName} bind:this={addGroupNameInput} placeholder="Group Name" maxlength="120" onkeydown={(e) => { if (e.key === 'Enter') saveAddGroup(); }} />
 									</div>
 									<div class="inline-actions">
 										<button class="table-btn primary" onclick={saveAddGroup} disabled={savingGroup}>{savingGroup ? 'Saving...' : 'Save'}</button>
@@ -643,14 +1101,14 @@
 						</tr>
 					{/if}
 
-					<!-- Search Results (flat list) -->
-					{#if filteredSubjects !== null}
-						{#if filteredSubjects.length === 0}
+					<!-- Search Results (flat list) in Groups view -->
+					{#if filteredGroupsView !== null}
+						{#if filteredGroupsView.length === 0}
 							<tr>
 								<td colspan="6" class="empty-cell">No subjects matched your search.</td>
 							</tr>
 						{:else}
-							{#each filteredSubjects as subject}
+							{#each filteredGroupsView as subject}
 								<tr 
 									class="subject-row" 
 									role="button" 
@@ -721,26 +1179,13 @@
 			</table>
 		</div>
 
-		<!-- Mobile View -->
+		<!-- Mobile Groups View -->
 		<div class="subjects-mobile-list mobile-only animate-fade-in">
-			{#if addingSubject}
-				<div class="subject-mobile-card glass-panel">
-					<div class="inline-inputs">
-						<input class="cell-input code-input" bind:value={draftCode} placeholder="SUB101" maxlength="24" />
-						<input class="cell-input" bind:value={draftName} placeholder="Subject Name" maxlength="120" />
-					</div>
-					<div class="inline-actions">
-						<button class="table-btn primary" onclick={saveAddSubject} disabled={savingSubject}>{savingSubject ? 'Saving...' : 'Save'}</button>
-						<button class="table-btn" onclick={cancelAddSubject} disabled={savingSubject}>Cancel</button>
-					</div>
-				</div>
-			{/if}
-
 			{#if addingGroup}
 				<div class="subject-mobile-card glass-panel">
 					<div class="inline-inputs single">
 						<span class="folder-icon">📁</span>
-						<input class="cell-input" bind:value={draftGroupName} placeholder="Group Name" maxlength="120" />
+						<input class="cell-input" bind:value={draftGroupName} bind:this={addGroupNameInput} placeholder="Group Name" maxlength="120" onkeydown={(e) => { if (e.key === 'Enter') saveAddGroup(); }} />
 					</div>
 					<div class="inline-actions">
 						<button class="table-btn primary" onclick={saveAddGroup} disabled={savingGroup}>{savingGroup ? 'Saving...' : 'Save'}</button>
@@ -749,11 +1194,11 @@
 				</div>
 			{/if}
 
-			{#if filteredSubjects !== null}
-				{#if filteredSubjects.length === 0}
+			{#if filteredGroupsView !== null}
+				{#if filteredGroupsView.length === 0}
 					<div class="subject-mobile-card glass-panel empty-cell">No subjects matched your search.</div>
 				{:else}
-					{#each filteredSubjects as subject}
+					{#each filteredGroupsView as subject}
 						<button class="subject-mobile-card glass-panel" onclick={() => openSubject(subject.id)}>
 							<div class="name-header">
 								<span class="code-chip">{subject.code}</span>
@@ -794,7 +1239,7 @@
 				<button 
 					class="modal-option root-option" 
 					onclick={() => handleMoveToGroup(null)}
-					disabled={movingItem}
+					disabled={movingItem || moveTargetType === 'subject'}
 				>
 					📂 Root (No Group)
 				</button>
@@ -813,8 +1258,10 @@
 	{@const hasChildren = group.children.length > 0}
 	{@const expanded = moveExpandedGroups.has(group.id)}
 	{@const disabledDestination = isMoveDestinationDisabled(group.id)}
+	{@const disabledForSubjectPlacement = moveTargetType === 'subject' && !canAssignSubjectToGroup(group.id)}
+	{@const destinationDisabled = disabledDestination || disabledForSubjectPlacement}
 	<div class="move-tree-node" style="margin-left: {depth * 0.9}rem">
-		<div class="move-tree-row" class:disabled={disabledDestination}>
+		<div class="move-tree-row" class:disabled={destinationDisabled}>
 			<button
 				class="move-tree-toggle"
 				type="button"
@@ -834,7 +1281,7 @@
 			<button
 				class="modal-option move-tree-option"
 				onclick={() => handleMoveToGroup(group.id)}
-				disabled={movingItem || disabledDestination}
+				disabled={movingItem || destinationDisabled}
 			>
 				📁 {group.name}
 			</button>
@@ -863,6 +1310,148 @@
 	</div>
 {/if}
 
+<!-- Manage Subjects Modal -->
+{#if showManageSubjectsModal}
+	<div class="modal-overlay" role="dialog" aria-modal="true" aria-labelledby="manage-subjects-title" tabindex="-1" onclick={closeManageSubjectsModal} onkeydown={(e) => { if (e.key === 'Escape') closeManageSubjectsModal(); }}>
+		<!-- svelte-ignore a11y_click_events_have_key_events -->
+		<!-- svelte-ignore a11y_no_noninteractive_element_interactions -->
+		<section class="modal-content manage-subjects-modal glass-panel" aria-label="Manage subjects" onclick={(e) => e.stopPropagation()}>
+			<h3 id="manage-subjects-title">Manage Subjects in "{manageGroupName}"</h3>
+			<div class="manage-search-bar">
+				<input
+					class="manage-search-input"
+					bind:value={manageSubjectsQuery}
+					placeholder="Search subjects by name, code, or description"
+				/>
+			</div>
+			
+			<!-- Subjects in this group -->
+			<div class="manage-section">
+				<h4 class="manage-section-title">Subjects in Group</h4>
+				{#if filteredSubjectsInManagedGroup.length === 0}
+					{#if subjectsInManagedGroup.length === 0}
+					<p class="manage-empty">No subjects in this group yet.</p>
+					{:else}
+					<p class="manage-empty">No subjects in this group matched your search.</p>
+					{/if}
+				{:else}
+					<div class="manage-list">
+						{#each filteredSubjectsInManagedGroup as subject}
+							<div class="manage-item">
+								<div class="manage-item-info">
+									<span class="code-chip">{subject.code}</span>
+									<strong>{subject.name}</strong>
+								</div>
+								<button 
+									class="table-btn danger small" 
+									onclick={() => removeSubjectFromManagedGroup(subject.id)}
+									disabled={managingSubjects}
+								>
+									Remove
+								</button>
+							</div>
+						{/each}
+					</div>
+				{/if}
+			</div>
+			
+			<!-- Available subjects to add -->
+			<div class="manage-section">
+				<h4 class="manage-section-title">Available Subjects (Ungrouped)</h4>
+				{#if filteredAvailableSubjectsForGroup.length === 0}
+					{#if availableSubjectsForGroup.length === 0}
+					<p class="manage-empty">No ungrouped subjects available.</p>
+					{:else}
+					<p class="manage-empty">No available subjects matched your search.</p>
+					{/if}
+				{:else}
+					<div class="manage-list">
+						{#each filteredAvailableSubjectsForGroup as subject}
+							<div class="manage-item">
+								<div class="manage-item-info">
+									<span class="code-chip">{subject.code}</span>
+									<strong>{subject.name}</strong>
+								</div>
+								<button 
+									class="table-btn primary small" 
+									onclick={() => addSubjectToManagedGroup(subject.id)}
+									disabled={managingSubjects}
+								>
+									Add
+								</button>
+							</div>
+						{/each}
+					</div>
+				{/if}
+			</div>
+
+			<!-- Groups currently under this group -->
+			<div class="manage-section">
+				<h4 class="manage-section-title">Groups in Group</h4>
+				{#if filteredGroupsInManagedGroup.length === 0}
+					{#if groupsInManagedGroup.length === 0}
+					<p class="manage-empty">No groups in this group yet.</p>
+					{:else}
+					<p class="manage-empty">No groups in this group matched your search.</p>
+					{/if}
+				{:else}
+					<div class="manage-list">
+						{#each filteredGroupsInManagedGroup as group}
+							<div class="manage-item">
+								<div class="manage-item-info">
+									<span class="group-chip">Group</span>
+									<strong>{group.name}</strong>
+								</div>
+								<button
+									class="table-btn danger small"
+									onclick={() => removeGroupFromManagedGroup(group.id)}
+									disabled={managingSubjects}
+								>
+									Remove
+								</button>
+							</div>
+						{/each}
+					</div>
+				{/if}
+			</div>
+
+			<!-- Existing groups available to add under this group -->
+			<div class="manage-section">
+				<h4 class="manage-section-title">Available Existing Groups</h4>
+				{#if filteredAvailableGroupsForManagedGroup.length === 0}
+					{#if availableGroupsForManagedGroup.length === 0}
+					<p class="manage-empty">No eligible groups available.</p>
+					{:else}
+					<p class="manage-empty">No available groups matched your search.</p>
+					{/if}
+				{:else}
+					<div class="manage-list">
+						{#each filteredAvailableGroupsForManagedGroup as group}
+							<div class="manage-item">
+								<div class="manage-item-info">
+									<span class="group-chip">Group</span>
+									<strong>{group.name}</strong>
+								</div>
+								<button
+									class="table-btn primary small"
+									onclick={() => addGroupToManagedGroup(group.id)}
+									disabled={managingSubjects}
+								>
+									Add
+								</button>
+							</div>
+						{/each}
+					</div>
+				{/if}
+			</div>
+			
+			<div class="modal-actions">
+				<button class="table-btn" onclick={closeManageSubjectsModal} disabled={managingSubjects}>Close</button>
+			</div>
+		</section>
+	</div>
+{/if}
+
 <!-- Context Menu -->
 {#if contextMenuGroupId && contextMenuPosition && treeData}
 	{@const group = findGroupById(treeData.groups, contextMenuGroupId)}
@@ -876,6 +1465,14 @@
 				bind:this={contextMenuElement}
 				onclick={(e) => e.stopPropagation()}
 			>
+				<button class="context-menu-item" onclick={() => handleContextMenuManageSubjects(group.id)}>
+					<span class="context-menu-icon">📚</span>
+					Manage
+				</button>
+				<button class="context-menu-item" onclick={() => handleContextMenuAddSubgroup(group.id)}>
+					<span class="context-menu-icon">➕</span>
+					Add Subgroup
+				</button>
 				<button class="context-menu-item" onclick={() => handleContextMenuMove(group.id, group.name)}>
 					<span class="context-menu-icon">↔</span>
 					Move Group
@@ -1036,16 +1633,21 @@
 	}
 
 	.hero {
-		display: flex;
-		justify-content: space-between;
-		align-items: flex-start;
+		display: grid;
+		grid-template-columns: minmax(0, 1fr) auto minmax(0, 1fr);
+		align-items: start;
 		gap: 0.9rem;
+	}
+
+	.hero-intro {
+		justify-self: start;
 	}
 
 	.hero-actions {
 		display: flex;
 		gap: 0.5rem;
 		flex-wrap: wrap;
+		justify-self: end;
 	}
 
 	.eyebrow {
@@ -1062,6 +1664,42 @@
 		font-size: 2rem;
 		font-weight: 800;
 		color: var(--theme-text);
+	}
+
+	/* Tab Bar */
+	.tab-bar {
+		display: flex;
+		gap: 0.25rem;
+		padding: 0.25rem;
+		background: rgba(var(--theme-primary-rgb), 0.08);
+		border-radius: 0.75rem;
+		width: fit-content;
+		align-self: start;
+		justify-self: center;
+	}
+
+	.tab-btn {
+		padding: 0.6rem 1.2rem;
+		border-radius: 0.55rem;
+		border: none;
+		background: transparent;
+		color: var(--theme-text-muted);
+		font: inherit;
+		font-size: 0.88rem;
+		font-weight: 600;
+		cursor: pointer;
+		transition: all 0.15s ease;
+	}
+
+	.tab-btn:hover {
+		color: var(--theme-text-primary);
+		background: rgba(var(--theme-primary-rgb), 0.08);
+	}
+
+	.tab-btn.active {
+		background: rgba(var(--theme-primary-rgb), 0.18);
+		color: var(--theme-text-primary);
+		font-weight: 700;
 	}
 
 	.toolbar {
@@ -1523,6 +2161,11 @@
 		background: rgba(var(--theme-primary-rgb), 0.12);
 	}
 
+	.context-menu-item:disabled {
+		opacity: 0.5;
+		cursor: not-allowed;
+	}
+
 	.context-menu-item.danger:hover {
 		background: rgba(239, 68, 68, 0.12);
 		color: #dc2626;
@@ -1725,6 +2368,112 @@
 		gap: 0.55rem;
 	}
 
+	/* Manage Subjects Modal */
+	.manage-subjects-modal {
+		max-width: 520px;
+	}
+
+	.manage-search-bar {
+		margin: 0.8rem 0 1rem;
+	}
+
+	.manage-search-input {
+		width: 100%;
+		border-radius: 0.7rem;
+		border: 1px solid var(--theme-glass-border);
+		background: rgba(var(--theme-primary-rgb), 0.05);
+		color: var(--theme-text-primary);
+		padding: 0.62rem 0.82rem;
+		font: inherit;
+	}
+
+	.manage-search-input::placeholder {
+		color: var(--theme-text-muted);
+	}
+
+	.manage-search-input:focus-visible {
+		outline: 2px solid rgba(var(--theme-primary-rgb), 0.35);
+		outline-offset: 1px;
+	}
+
+	.manage-section {
+		margin-bottom: 1.25rem;
+	}
+
+	.manage-section-title {
+		margin: 0 0 0.6rem;
+		font-size: 0.85rem;
+		font-weight: 700;
+		color: var(--theme-text-muted);
+		text-transform: uppercase;
+		letter-spacing: 0.04em;
+	}
+
+	.manage-empty {
+		margin: 0;
+		padding: 0.8rem;
+		font-size: 0.88rem;
+		color: var(--theme-text-muted);
+		font-style: italic;
+		text-align: center;
+		background: rgba(var(--theme-primary-rgb), 0.04);
+		border-radius: 0.6rem;
+	}
+
+	.manage-list {
+		display: flex;
+		flex-direction: column;
+		gap: 0.5rem;
+		max-height: 200px;
+		overflow-y: auto;
+	}
+
+	.manage-item {
+		display: flex;
+		align-items: center;
+		justify-content: space-between;
+		gap: 0.75rem;
+		padding: 0.6rem 0.8rem;
+		background: rgba(var(--theme-primary-rgb), 0.04);
+		border-radius: 0.6rem;
+		border: 1px solid var(--theme-glass-border);
+	}
+
+	.manage-item-info {
+		display: flex;
+		align-items: center;
+		gap: 0.5rem;
+		flex: 1;
+		min-width: 0;
+	}
+
+	.manage-item-info strong {
+		font-size: 0.9rem;
+		white-space: nowrap;
+		overflow: hidden;
+		text-overflow: ellipsis;
+	}
+
+	.group-chip {
+		display: inline-flex;
+		align-items: center;
+		justify-content: center;
+		padding: 0.12rem 0.45rem;
+		border-radius: 999px;
+		font-size: 0.66rem;
+		font-weight: 700;
+		letter-spacing: 0.03em;
+		text-transform: uppercase;
+		background: rgba(var(--theme-primary-rgb), 0.14);
+		color: var(--theme-primary);
+		border: 1px solid rgba(var(--theme-primary-rgb), 0.34);
+	}
+
+	.table-btn.small {
+		padding: 0.3rem 0.6rem;
+		font-size: 0.72rem;
+	}
+
 	.table-btn.danger {
 		background: rgba(220, 38, 38, 0.18);
 		border-color: rgba(220, 38, 38, 0.45);
@@ -1801,8 +2550,13 @@
 		}
 
 		.hero {
+			display: flex;
 			flex-direction: column;
 			align-items: stretch;
+		}
+
+		.tab-bar {
+			align-self: center;
 		}
 
 		.hero-actions {

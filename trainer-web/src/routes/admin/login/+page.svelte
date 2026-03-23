@@ -1,9 +1,16 @@
 <script lang="ts">
-	import AuthForm from '$lib/components/AuthForm.svelte';
+	import { goto } from '$app/navigation';
+	import { onMount } from 'svelte';
+
+	onMount(() => {
+		goto('/login', { replaceState: true });
+	});
 </script>
 
 <svelte:head>
-	<title>Admin Sign In — VQuest Trainer</title>
+	<title>Redirecting… — VQuest</title>
 </svelte:head>
 
-<AuthForm role="admin" />
+<div style="display: flex; justify-content: center; align-items: center; min-height: 100vh; color: var(--theme-text-muted);">
+	Redirecting to login…
+</div>

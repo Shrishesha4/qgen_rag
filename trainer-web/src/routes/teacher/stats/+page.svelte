@@ -1,5 +1,5 @@
 <script lang="ts">
-	import { onMount } from 'svelte';
+	import { onMount, onDestroy } from 'svelte';
 	import { goto } from '$app/navigation';
 	import { session } from '$lib/session';
 	import { getQuestionsForVetting, getVetterDashboard, type VetterDashboard } from '$lib/api/vetting';
@@ -10,6 +10,7 @@
 		type SubjectGroupTreeNode,
 		type SubjectTreeResponse
 	} from '$lib/api/subjects';
+	import { getGenerationWebSocketClient, type StatsData } from '$lib/api/generation-websocket';
 
 	let loading = $state(true);
 	let error = $state('');
@@ -21,6 +22,9 @@
 	let loadingTopicRowsForSubject = $state('');
 	let topicRowsBySubject = $state<Record<string, TopicStatsRow[]>>({});
 	let topicRowsError = $state('');
+	
+	// WebSocket for live stats updates
+	let wsUnsubscribers: (() => void)[] = [];
 
 	type TopicStatsRow = {
 		id: string;
@@ -39,8 +43,79 @@
 			}
 		});
 		void loadData();
+		setupWebSocket();
 		return unsub;
 	});
+	
+	onDestroy(() => {
+		// Clean up WebSocket subscriptions
+		wsUnsubscribers.forEach(unsub => unsub());
+		wsUnsubscribers = [];
+	});
+	
+	function setupWebSocket() {
+		const wsClient = getGenerationWebSocketClient();
+		wsClient.connect();
+		wsClient.subscribeGlobalStats();
+		
+		// Handle global stats updates
+		const globalUnsub = wsClient.onGlobalStats((statsData: StatsData) => {
+			if (treeData) {
+				treeData = {
+					...treeData,
+					totals: {
+						...treeData.totals,
+						total_questions: statsData.total_questions ?? treeData.totals.total_questions,
+						total_approved: statsData.total_approved ?? treeData.totals.total_approved,
+						total_rejected: statsData.total_rejected ?? treeData.totals.total_rejected,
+						total_pending: statsData.total_pending ?? treeData.totals.total_pending,
+					}
+				};
+			}
+		});
+		wsUnsubscribers.push(globalUnsub);
+		
+		// Handle subject-specific stats updates
+		const subjectUnsub = wsClient.onSubjectStats((subjectId: string, statsData: StatsData) => {
+			// Update the subject in the subjects array
+			subjects = subjects.map(s => {
+				if (s.id === subjectId) {
+					return {
+						...s,
+						total_questions: statsData.total_questions ?? s.total_questions,
+						total_approved: statsData.total_approved ?? s.total_approved,
+						total_rejected: statsData.total_rejected ?? s.total_rejected,
+						total_pending: statsData.total_pending ?? s.total_pending,
+					};
+				}
+				return s;
+			});
+		});
+		wsUnsubscribers.push(subjectUnsub);
+		
+		// Handle topic-specific stats updates
+		const topicUnsub = wsClient.onTopicStats((subjectId: string, topicId: string, statsData: StatsData) => {
+			// Update topic rows if they're loaded for this subject
+			if (topicRowsBySubject[subjectId]) {
+				topicRowsBySubject = {
+					...topicRowsBySubject,
+					[subjectId]: topicRowsBySubject[subjectId].map(t => {
+						if (t.id === topicId) {
+							const generated = statsData.generated ?? t.generated;
+							const approved = statsData.approved ?? t.approved;
+							const rejected = statsData.rejected ?? t.rejected;
+							const pending = statsData.pending ?? t.pending;
+							const vetted = approved + rejected;
+							const vettedPct = generated > 0 ? Math.round((vetted / generated) * 100) : 0;
+							return { ...t, generated, approved, rejected, pending, vettedPct };
+						}
+						return t;
+					})
+				};
+			}
+		});
+		wsUnsubscribers.push(topicUnsub);
+	}
 
 	async function loadData() {
 		loading = true;
@@ -260,7 +335,7 @@
 				<table>
 					<thead>
 						<tr>
-							<th></th>
+							<!-- <th></th> -->
 							<!-- <th>Code</th> -->
 							<th>Name</th>
 							<th>Questions</th>
@@ -345,9 +420,9 @@
 			toggleGroup(group.id);
 		}
 	}}>
-		<td>
+		<!-- <td>
 			<span class="expand-indicator">{expandedGroups.has(group.id) ? '▾' : '▸'}</span>
-		</td>
+		</td> -->
 		<!-- <td>—</td> -->
 		<td class="name-cell" style="padding-left: {depth * 1.75}rem">
 			<span class="group-label">
@@ -381,9 +456,9 @@
 			void toggleRow(row.id);
 		}
 	}}>
-		<td>
+		<!-- <td>
 			<span class="expand-indicator">{expandedSubjectId === row.id ? '▾' : '▸'}</span>
-		</td>
+		</td> -->
 		<!-- <td><span class="code-chip">{row.code}</span></td> -->
 		<td class="name-cell" style="padding-left: {depth * 1.75}rem">
 			<span class="subject-label" class:nested={depth > 0}>
@@ -815,14 +890,14 @@
 		background: rgba(var(--theme-primary-rgb), 0.08);
 	}
 
-	.expand-indicator {
+	/* .expand-indicator {
 		display: inline-flex;
 		align-items: center;
 		justify-content: center;
 		color: var(--theme-text-muted);
 		font-size: 1rem;
 		user-select: none;
-	}
+	} */
 
 	.expanded-row td {
 		font-size: 0.84rem;

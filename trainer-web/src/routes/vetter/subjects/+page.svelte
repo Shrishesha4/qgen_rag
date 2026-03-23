@@ -75,7 +75,7 @@
 		<div class="center-state">
 			<span class="empty-icon">📭</span>
 			<p>No subjects available for vetting</p>
-			<button class="glass-btn" onclick={() => goto('/vetter/subjects')}>
+			<button class="glass-btn empty-back-btn" onclick={() => goto('/vetter/dashboard')}>
 				Back to Subjects
 			</button>
 		</div>
@@ -223,6 +223,26 @@
 	.err-icon { font-size: 2rem; }
 	.err-msg { color: #e94560 !important; }
 	.empty-icon { font-size: 3rem; }
+
+	.empty-back-btn {
+		min-height: 44px;
+		padding: 0.6rem 1.1rem;
+		border-radius: 999px;
+		border: 1px solid rgba(var(--theme-primary-rgb), 0.42);
+		background: rgba(var(--theme-primary-rgb), 0.18);
+		color: var(--theme-text);
+		font: inherit;
+		font-weight: 700;
+		cursor: pointer;
+		box-shadow: 0 8px 20px rgba(15, 23, 42, 0.16);
+		transition: transform 0.15s ease, background 0.15s ease, border-color 0.15s ease;
+	}
+
+	.empty-back-btn:hover {
+		transform: translateY(-1px);
+		background: rgba(var(--theme-primary-rgb), 0.24);
+		border-color: rgba(var(--theme-primary-rgb), 0.58);
+	}
 
 	/* Vet all button */
 	.vet-all-btn {
@@ -539,5 +559,11 @@
 		.sc-stat {
 			font-size: 0.68rem;
 		}
+	}
+
+	:global(:root[data-color-mode='dark']) .center-state {
+		background: transparent !important;
+		border: none !important;
+		box-shadow: none !important;
 	}
 </style>

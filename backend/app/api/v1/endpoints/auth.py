@@ -6,6 +6,7 @@ import os
 import uuid as uuid_lib
 from fastapi import APIRouter, Depends, HTTPException, status, Request, UploadFile, File
 from fastapi.responses import FileResponse
+from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.auth_database import get_auth_db
@@ -24,9 +25,21 @@ from app.schemas.auth import (
 from app.services.user_service import UserService
 from app.api.v1.deps import get_current_user, get_client_info
 from app.models.user import User
+from app.models.system_settings import SystemSettings, SETTING_SIGNUP_ENABLED, DEFAULT_SETTINGS
 
 
 router = APIRouter()
+
+
+async def is_signup_enabled(db: AsyncSession) -> bool:
+    """Check if signup is enabled in system settings."""
+    result = await db.execute(
+        select(SystemSettings).where(SystemSettings.key == SETTING_SIGNUP_ENABLED)
+    )
+    setting = result.scalar_one_or_none()
+    if setting and setting.value:
+        return setting.value.get("enabled", True)
+    return DEFAULT_SETTINGS.get(SETTING_SIGNUP_ENABLED, {}).get("enabled", True)
 
 
 @router.post("/register", response_model=TokenResponse, status_code=status.HTTP_201_CREATED)
@@ -38,6 +51,13 @@ async def register(
     """
     Register a new user account.
     """
+    # Check if signup is enabled
+    if not await is_signup_enabled(db):
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="User registration is currently disabled. Please contact an administrator.",
+        )
+    
     user_service = UserService(db)
     client_info = get_client_info(request)
     

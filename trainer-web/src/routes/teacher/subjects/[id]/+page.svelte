@@ -16,12 +16,15 @@
 		deleteDocumentById,
 		getDocumentStatus,
 		getBackgroundGenerationStatuses,
+		getTopicGenerationStatuses,
 		listReferenceDocuments,
 		scheduleBackgroundGeneration,
 		uploadDocument,
 		type ReferenceDocumentItem,
+		type TopicGenerationStatusItem,
 	} from '$lib/api/documents';
 	import { getQuestionsForVetting } from '$lib/api/vetting';
+	import { getGenerationWebSocketClient, type GenerationWebSocketClient } from '$lib/api/generation-websocket';
 
 	let loading = $state(true);
 	let error = $state('');
@@ -82,10 +85,16 @@
 	let topicGeneratingById = $state<Record<string, boolean>>({});
 	let topicGenerationProgressById = $state<Record<string, string>>({});
 	let completedGenerationHoldByTopicId = $state<Record<string, boolean>>({});
+	let showGenerationNoticeModal = $state(false);
+	let generationNoticeMessage = $state('');
 	let generationPollTimer: ReturnType<typeof setInterval> | null = null;
 	let generationPollingTopicId = $state<string | null>(null);
 	let generationPollingRunId = $state<string | null>(null);
 	let generationPollMisses = 0;
+	
+	// WebSocket client for real-time generation updates
+	let wsClient = $state<GenerationWebSocketClient | null>(null);
+	let wsUnsubscribe = $state<(() => void) | null>(null);
 
 	const PROCESSING_DOC_STATUSES = new Set(['pending', 'processing']);
 
@@ -110,6 +119,14 @@
 	onDestroy(() => {
 		clearReferencePolling();
 		clearGenerationPolling();
+		// Clean up WebSocket
+		if (wsClient && subjectId) {
+			wsClient.unsubscribeSubject(subjectId);
+		}
+		if (wsUnsubscribe) {
+			wsUnsubscribe();
+			wsUnsubscribe = null;
+		}
 	});
 
 	function clearGenerationPolling() {
@@ -139,6 +156,11 @@
 					const nextProgress = { ...topicGenerationProgressById };
 					delete nextProgress[generationPollingTopicId];
 					topicGenerationProgressById = nextProgress;
+
+					// Clear stored topic ID since generation appears to be done
+					if (subjectId) {
+						sessionStorage.removeItem(`gen_topic_${subjectId}`);
+					}
 
 					clearGenerationPolling();
 					await loadSubject();
@@ -186,6 +208,11 @@
 						[generationPollingTopicId]: true,
 					};
 				}
+				
+				// Clear stored topic ID since generation is complete
+				if (subjectId) {
+					sessionStorage.removeItem(`gen_topic_${subjectId}`);
+				}
 			}
 
 			clearGenerationPolling();
@@ -226,11 +253,184 @@
 		try {
 			subject = await getSubject(subjectId);
 			await loadReviewStats();
+			// Check for any in-progress generation after loading subject
+			await checkForInProgressGeneration();
 		} catch (e: unknown) {
 			error = e instanceof Error ? e.message : 'Failed to load subject';
 		} finally {
 			loading = false;
 		}
+	}
+
+	async function checkForInProgressGeneration() {
+		if (!subjectId || !subject) return;
+		
+		try {
+			// Get all topic IDs for this subject
+			const topicIds = subject.topics.map(t => t.id);
+			if (!topicIds.length) return;
+			
+			// Query the database for any active generation runs (cross-device visibility)
+			const statusRes = await getTopicGenerationStatuses(topicIds);
+			
+			// Process any active runs
+			for (const [topicId, status] of Object.entries(statusRes.statuses)) {
+				if (status.in_progress) {
+					// There's an active generation for this topic
+					topicGeneratingById = { ...topicGeneratingById, [topicId]: true };
+					const total = status.total_questions || 30;
+					const current = status.current_question || 0;
+					topicGenerationProgressById = { ...topicGenerationProgressById, [topicId]: `${current}/${total}` };
+					
+					// Store topic ID for this session
+					sessionStorage.setItem(`gen_topic_${subjectId}`, topicId);
+					
+					// Start polling for this topic
+					startGenerationPolling(topicId, status.run_id);
+				}
+			}
+			
+			// Set up WebSocket for real-time updates
+			setupWebSocket();
+		} catch {
+			// Silently fail - this is just a status check
+			// Fall back to the old subject-based check
+			try {
+				const statusRes = await getBackgroundGenerationStatuses([subjectId]);
+				const status = statusRes.statuses[subjectId];
+				
+				if (status && status.in_progress) {
+					const storedTopicId = sessionStorage.getItem(`gen_topic_${subjectId}`);
+					
+					if (storedTopicId && subject?.topics.some(t => t.id === storedTopicId)) {
+						topicGeneratingById = { ...topicGeneratingById, [storedTopicId]: true };
+						const total = status.total_questions || 30;
+						const current = status.current_question || 0;
+						topicGenerationProgressById = { ...topicGenerationProgressById, [storedTopicId]: `${current}/${total}` };
+						startGenerationPolling(storedTopicId, status.run_id);
+					}
+				}
+			} catch {
+				// Silently fail
+			}
+		}
+	}
+	
+	function setupWebSocket() {
+		if (!subjectId) return;
+		
+		// Get or create WebSocket client
+		wsClient = getGenerationWebSocketClient();
+		wsClient.connect();
+		
+		// Subscribe to this subject's updates
+		wsClient.subscribeSubject(subjectId);
+		
+		// Handle real-time status updates
+		wsUnsubscribe = wsClient.onStatusUpdate((status: TopicGenerationStatusItem) => {
+			// Only process updates for topics in this subject
+			if (status.subject_id !== subjectId) return;
+			
+			const topicId = status.topic_id;
+			
+			if (status.in_progress) {
+				// Update generating state
+				topicGeneratingById = { ...topicGeneratingById, [topicId]: true };
+				const total = status.total_questions || 30;
+				const current = status.current_question || 0;
+				topicGenerationProgressById = { ...topicGenerationProgressById, [topicId]: `${current}/${total}` };
+			} else {
+				// Generation completed or failed
+				const next = { ...topicGeneratingById };
+				delete next[topicId];
+				topicGeneratingById = next;
+				
+				const nextProgress = { ...topicGenerationProgressById };
+				delete nextProgress[topicId];
+				topicGenerationProgressById = nextProgress;
+				
+				// Clear stored topic ID
+				sessionStorage.removeItem(`gen_topic_${subjectId}`);
+				
+				// Show completion hold if successful
+				if (status.status === 'completed' && status.current_question > 0) {
+					completedGenerationHoldByTopicId = {
+						...completedGenerationHoldByTopicId,
+						[topicId]: true,
+					};
+				}
+				
+				// Reload subject to get updated question counts
+				void loadSubject();
+			}
+		});
+		
+		// Handle subject stats updates
+		const subjectStatsUnsub = wsClient.onSubjectStats((sid: string, statsData) => {
+			if (sid !== subjectId || !subject) return;
+			
+			// Update subject stats
+			subject = {
+				...subject,
+				total_questions: statsData.total_questions ?? subject.total_questions,
+				total_approved: statsData.total_approved ?? subject.total_approved,
+				total_rejected: statsData.total_rejected ?? subject.total_rejected,
+				total_pending: statsData.total_pending ?? subject.total_pending,
+			};
+			
+			// Update review stats
+			subjectReviewStats = {
+				...subjectReviewStats,
+				generated: statsData.total_questions ?? subjectReviewStats.generated,
+				approved: statsData.total_approved ?? subjectReviewStats.approved,
+				rejected: statsData.total_rejected ?? subjectReviewStats.rejected,
+				pending: statsData.total_pending ?? subjectReviewStats.pending,
+				vetted: (statsData.total_approved ?? 0) + (statsData.total_rejected ?? 0),
+				approvalRate: statsData.approval_rate ?? subjectReviewStats.approvalRate,
+			};
+		});
+		
+		// Handle topic stats updates
+		const topicStatsUnsub = wsClient.onTopicStats((sid: string, tid: string, statsData) => {
+			if (sid !== subjectId) return;
+			
+			// Update topic review stats
+			topicReviewStats = {
+				...topicReviewStats,
+				[tid]: {
+					generated: statsData.generated ?? topicReviewStats[tid]?.generated ?? 0,
+					approved: statsData.approved ?? topicReviewStats[tid]?.approved ?? 0,
+					rejected: statsData.rejected ?? topicReviewStats[tid]?.rejected ?? 0,
+					pending: statsData.pending ?? topicReviewStats[tid]?.pending ?? 0,
+					vetted: (statsData.approved ?? 0) + (statsData.rejected ?? 0),
+					approvalRate: statsData.approval_rate ?? topicReviewStats[tid]?.approvalRate ?? 0,
+				}
+			};
+			
+			// Update topic in subject.topics array
+			if (subject) {
+				subject = {
+					...subject,
+					topics: subject.topics.map(t => {
+						if (t.id === tid) {
+							return {
+								...t,
+								total_questions: statsData.generated ?? t.total_questions,
+							};
+						}
+						return t;
+					})
+				};
+			}
+		});
+		
+		// Store additional unsubscribers - we'll clean them up in onDestroy
+		const originalUnsub = wsUnsubscribe;
+		wsUnsubscribe = () => {
+			originalUnsub?.();
+			subjectStatsUnsub();
+			topicStatsUnsub();
+		};
 	}
 
 	function calcApprovalRate(approved: number, generated: number): number {
@@ -356,8 +556,20 @@
 		goto(`/teacher/train/loop?${params.toString()}`);
 	}
 
+	function closeGenerationNoticeModal() {
+		showGenerationNoticeModal = false;
+	}
+
 	async function generateTopic(topicId: string) {
 		if (!subjectId || topicGeneratingById[topicId] || !!generationPollingTopicId) return;
+
+		const topicName = subject?.topics.find((topic) => topic.id === topicId)?.name ?? 'this topic';
+		generationNoticeMessage = `Question generation for "${topicName}" has started in the background. This may take a few minutes. You can navigate away and come back later to vet the generated questions.`;
+		showGenerationNoticeModal = true;
+		
+		// Store topic ID for resuming on page reload
+		sessionStorage.setItem(`gen_topic_${subjectId}`, topicId);
+		
 		const nextHold = { ...completedGenerationHoldByTopicId };
 		delete nextHold[topicId];
 		completedGenerationHoldByTopicId = nextHold;
@@ -414,6 +626,11 @@
 		const topicPending = topicReviewStats[topicId]?.pending ?? fallbackPending;
 		if (topicGenerated === 0) return true;
 		return totalPending <= 25 && topicPending < 5;
+	}
+
+	// Check if topic is currently generating (show status even when questions > 0)
+	function isTopicGenerating(topicId: string): boolean {
+		return !!topicGeneratingById[topicId] || generationPollingTopicId === topicId;
 	}
 
 	function openAddTopicModal() {
@@ -989,10 +1206,9 @@
 											<div class="topic-title-row">
 												<span class="topic-index">{index + 1}</span>
 												<div class="topic-copy">
-													<h3 class="topic-name">{topic.name}</h3>
-													<!-- {#if topic.description}
-														<p class="topic-description">{topic.description}</p>
-													{/if} -->
+													<button class="topic-name-btn" onclick={() => openEditTopicModal(topic)} title="Click to edit topic">
+														<h3 class="topic-name">{topic.name}</h3>
+													</button>
 												</div>
 											</div>
 										</div>
@@ -1005,18 +1221,17 @@
 									<td class="violet-text">{topicReviewStats[topic.id]?.approvalRate ?? 0}%</td>
 									<td class="action-cell">
 										<div class="topic-inline-actions">
-											{#if canGenerateTopic(topic.id, topic.total_questions, topic.total_questions)}
-												<button class="action-btn action-generate" class:generating={!!topicGeneratingById[topic.id]} onclick={() => generateTopic(topic.id)} disabled={!!topicGeneratingById[topic.id] || !!generationPollingTopicId}>
-													{#if topicGeneratingById[topic.id]}
-														<span class="btn-spinner" aria-hidden="true"></span>
-														<span>Generating {topicGenerationProgressById[topic.id] || ''}</span>
-													{:else}
-														<span>Generate</span>
-													{/if}
+											{#if isTopicGenerating(topic.id)}
+												<button class="action-btn action-generate generating" disabled>
+													<span class="btn-spinner" aria-hidden="true"></span>
+													<span>Generating {topicGenerationProgressById[topic.id] || ''}</span>
+												</button>
+											{:else if canGenerateTopic(topic.id, topic.total_questions, topic.total_questions)}
+												<button class="action-btn action-generate" onclick={() => generateTopic(topic.id)} disabled={!!generationPollingTopicId}>
+													<span>Generate</span>
 												</button>
 											{/if}
 											<button class="action-btn action-vet" onclick={() => vetTopic(topic.id)}>Vet</button>
-											<button class="action-btn action-edit" onclick={() => openEditTopicModal(topic)}>Edit</button>
 										</div>
 									</td>
 								</tr>
@@ -1031,7 +1246,9 @@
 							<div class="topic-title-row">
 								<span class="topic-index">{index + 1}</span>
 								<div class="topic-copy">
-									<h3 class="topic-name">{topic.name}</h3>
+									<button class="topic-name-btn" onclick={() => openEditTopicModal(topic)} title="Click to edit topic">
+										<h3 class="topic-name">{topic.name}</h3>
+									</button>
 									{#if topic.description}
 										<p class="topic-description">{topic.description}</p>
 									{/if}
@@ -1046,18 +1263,17 @@
 								<span class="violet-text">AR <strong>{topicReviewStats[topic.id]?.approvalRate ?? 0}%</strong></span>
 							</div>
 							<div class="topic-inline-actions">
-								{#if canGenerateTopic(topic.id, topic.total_questions, topic.total_questions)}
-									<button class="action-btn action-generate" class:generating={!!topicGeneratingById[topic.id]} onclick={() => generateTopic(topic.id)} disabled={!!topicGeneratingById[topic.id] || !!generationPollingTopicId}>
-										{#if topicGeneratingById[topic.id]}
-											<span class="btn-spinner" aria-hidden="true"></span>
-											<span>Generating {topicGenerationProgressById[topic.id] || ''}</span>
-										{:else}
-											<span>Generate</span>
-										{/if}
+								{#if isTopicGenerating(topic.id)}
+									<button class="action-btn action-generate generating" disabled>
+										<span class="btn-spinner" aria-hidden="true"></span>
+										<span>Generating {topicGenerationProgressById[topic.id] || ''}</span>
+									</button>
+								{:else if canGenerateTopic(topic.id, topic.total_questions, topic.total_questions)}
+									<button class="action-btn action-generate" onclick={() => generateTopic(topic.id)} disabled={!!generationPollingTopicId}>
+										<span>Generate</span>
 									</button>
 								{/if}
 								<button class="action-btn action-vet" onclick={() => vetTopic(topic.id)}>Vet</button>
-								<button class="action-btn action-edit" onclick={() => openEditTopicModal(topic)}>Edit</button>
 							</div>
 						</div>
 					{/each}
@@ -1066,6 +1282,25 @@
 		</div>
 	{/if}
 </div>
+
+{#if showGenerationNoticeModal}
+	<!-- svelte-ignore a11y_click_events_have_key_events a11y_no_static_element_interactions -->
+	<div class="modal-backdrop" role="button" tabindex="0" aria-label="Close" onclick={closeGenerationNoticeModal}>
+		<!-- svelte-ignore a11y_click_events_have_key_events a11y_no_static_element_interactions -->
+		<div class="modal-card generation-notice-card" role="dialog" aria-modal="true" tabindex="-1" onclick={(e) => e.stopPropagation()}>
+			<div class="modal-head">
+				<h3>Generation Started</h3>
+				<button class="modal-close" onclick={closeGenerationNoticeModal} aria-label="Close">✕</button>
+			</div>
+			<div class="modal-body">
+				<p class="generation-notice-message">{generationNoticeMessage}</p>
+			</div>
+			<div class="modal-actions">
+				<button class="action-btn action-add-topic" onclick={closeGenerationNoticeModal}>Okay</button>
+			</div>
+		</div>
+	</div>
+{/if}
 
 {#if showAddTopicModal}
 	<!-- svelte-ignore a11y_click_events_have_key_events a11y_no_static_element_interactions -->
@@ -1514,6 +1749,32 @@
 		color: var(--theme-text-primary);
 	}
 
+	.topic-name-btn {
+		background: none;
+		border: none;
+		padding: 0;
+		margin: 0;
+		cursor: pointer;
+		text-align: left;
+		font: inherit;
+		color: inherit;
+		transition: color 0.15s ease;
+	}
+
+	.topic-name-btn:hover .topic-name {
+		color: var(--theme-primary);
+		text-decoration: underline;
+	}
+
+	.topic-name-btn:focus {
+		outline: none;
+	}
+
+	.topic-name-btn:focus-visible .topic-name {
+		color: var(--theme-primary);
+		text-decoration: underline;
+	}
+
 	.topic-description {
 		margin: 0.28rem 0 0;
 		color: var(--theme-text-muted);
@@ -1798,6 +2059,16 @@
 
 	.modal-actions .action-btn {
 		flex: 1;
+	}
+
+	.generation-notice-card {
+		width: min(520px, 94vw);
+	}
+
+	.generation-notice-message {
+		margin: 0;
+		line-height: 1.55;
+		color: var(--theme-text-primary);
 	}
 
 	.topics-loading {
