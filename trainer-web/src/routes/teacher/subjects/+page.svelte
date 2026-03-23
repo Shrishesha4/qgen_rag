@@ -382,7 +382,9 @@
 
 	.table-shell {
 		border-radius: 1rem;
-		overflow: hidden;
+		overflow-x: auto;
+		overflow-y: auto;
+		max-height: calc(100vh - 420px);
 	}
 
 	.desktop-only {
