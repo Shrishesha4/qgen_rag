@@ -567,6 +567,10 @@
 		font: inherit;
 	}
 
+	.cell-input::placeholder {
+		color: color-mix(in srgb, var(--theme-text-primary) 48%, #64748b);
+	}
+
 	.code-input {
 		text-transform: uppercase;
 	}
@@ -632,6 +636,21 @@
 	:global([data-color-mode='light']) .subjects-table tbody td {
 		border-bottom-color: rgba(148, 163, 184, 0.38);
 		border-right-color: rgba(148, 163, 184, 0.38);
+	}
+
+	:global([data-color-mode='light']) .add-row .cell-input,
+	:global([data-color-mode='light']) .subject-mobile-card .cell-input {
+		background: rgba(255, 255, 255, 0.96);
+		border-color: rgba(100, 116, 139, 0.48);
+		color: #1f2937;
+		box-shadow: 0 1px 0 rgba(255, 255, 255, 0.85), 0 0 0 1px rgba(255, 255, 255, 0.35) inset;
+	}
+
+	:global([data-color-mode='light']) .add-row .cell-input:focus,
+	:global([data-color-mode='light']) .subject-mobile-card .cell-input:focus {
+		outline: none;
+		border-color: rgba(var(--theme-primary-rgb), 0.62);
+		box-shadow: 0 0 0 3px rgba(var(--theme-primary-rgb), 0.18);
 	}
 
 	@media (max-width: 920px) {

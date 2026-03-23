@@ -162,8 +162,11 @@
 			</button>
 			<div class="drawer-copyright">
 				<p class="drawer-copyright-text">
-					{currentYear} © Viana Soft Private Limited
+					2023 © Viana Soft Private Limited
 				</p>
+				<!-- <p class="drawer-copyright-text">
+					{currentYear} © Viana Soft Private Limited
+				</p> -->
 				<!-- svelte-ignore a11y_invalid_attribute -->
 				<a href="#" class="drawer-privacy-link">Privacy Policy</a>
 			</div>

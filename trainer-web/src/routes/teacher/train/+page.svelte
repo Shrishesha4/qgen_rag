@@ -533,8 +533,8 @@
 											</button>
 											<div class="name-stack">
 												<div class="name-header">
-													<span class="code-chip">{subject.code}</span>
 													<strong>{subject.name}</strong>
+													<span class="code-chip">{subject.code}</span>
 												</div>
 											</div>
 										</div>
@@ -578,7 +578,7 @@
 											{@const pendingCount = getTopicPendingCount(topic.id)}
 											{@const generationState = getTopicGenerationState(topic.id)}
 											{@const subjectGenerationState = getSubjectGenerationState(subject.id)}
-											{@const canStart = pendingCount > 0}
+											{@const canStart = pendingCount > 0 || topic.total_questions > 0}
 												<tr class="topic-row" transition:slide={{ duration: 180 }}>
 												<td>
 													<div class="topic-name-stack">
@@ -660,7 +660,7 @@
 											{@const pendingCount = getTopicPendingCount(topic.id)}
 											{@const generationState = getTopicGenerationState(topic.id)}
 											{@const subjectGenerationState = getSubjectGenerationState(subject.id)}
-											{@const canStart = pendingCount > 0}
+											{@const canStart = pendingCount > 0 || topic.total_questions > 0}
 											<div class="mobile-topic-card">
 												<div class="topic-title-line">
 													<span class="topic-branch">↳</span>
@@ -996,7 +996,7 @@
 	.name-header {
 		display: flex;
 		align-items: center;
-		gap: 0.5rem;
+		gap: 2rem;
 		flex-wrap: wrap;
 	}
 
