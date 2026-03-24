@@ -467,6 +467,10 @@ async def delete_group(
             update(Subject).where(Subject.group_id == group_id).values(group_id=parent_group_id)
         )
 
+    # Persist re-parenting before deleting parent, otherwise DB-level ON DELETE CASCADE
+    # can remove children first and cause stale-row updates during commit flush.
+    await db.flush()
+
     # Use SQL delete to avoid ORM relationship cascade deleting re-parented child groups.
     await db.execute(delete(SubjectGroup).where(SubjectGroup.id == group_id))
     await db.commit()
