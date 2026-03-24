@@ -296,7 +296,7 @@
 	{/if}
 
 	{#if loading}
-		<div class="center-state">
+		<div class="center-state loading-state">
 			<div class="spinner"></div>
 			<p>Loading users...</p>
 		</div>
@@ -805,6 +805,17 @@
 		flex-direction: column;
 		align-items: center;
 		gap: 0.75rem;
+	}
+
+	.center-state.loading-state {
+		min-height: 6rem;
+		width: 100%;
+		justify-content: center;
+		background: transparent !important;
+		border: none !important;
+		box-shadow: none !important;
+		backdrop-filter: none !important;
+		-webkit-backdrop-filter: none !important;
 	}
 
 	.spinner {

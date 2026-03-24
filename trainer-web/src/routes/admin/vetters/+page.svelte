@@ -124,7 +124,7 @@
 	</div>
 
 	{#if loading}
-		<div class="center-state">
+		<div class="center-state loading-state">
 			<div class="spinner"></div>
 			<p>Loading vetter analytics…</p>
 		</div>
@@ -377,6 +377,16 @@
 		padding: 2.2rem 1rem;
 		text-align: center;
 		color: var(--theme-text-muted);
+	}
+
+	.center-state.loading-state {
+		min-height: 6rem;
+		width: 100%;
+		background: transparent !important;
+		border: none !important;
+		box-shadow: none !important;
+		backdrop-filter: none !important;
+		-webkit-backdrop-filter: none !important;
 	}
 
 	.spinner {
