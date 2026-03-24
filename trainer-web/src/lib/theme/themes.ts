@@ -42,7 +42,7 @@ export const themes: Record<ThemeName, ThemeConfig> = {
 		name: 'aurora',
 		label: 'Aurora',
 		icon: '🌌',
-		bgImage: '/theme-pictures/aurora.webp',
+		bgImage: '/theme-pictures/auroranew.webp',
 		wallpaperOverlay:
 			'linear-gradient(180deg, rgba(2,10,18,0.16) 0%, rgba(2,10,18,0.08) 50%, rgba(1,8,14,0.22) 100%)',
 		bg: [
