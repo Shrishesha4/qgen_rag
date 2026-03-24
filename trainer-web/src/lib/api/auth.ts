@@ -33,6 +33,9 @@ export interface TokenResponse {
 		full_name: string | null;
 		role: string;
 		avatar_url: string | null;
+		can_manage_groups: boolean;
+		can_generate: boolean;
+		can_vet: boolean;
 		is_active: boolean;
 		created_at: string;
 		last_login_at: string | null;
@@ -69,7 +72,10 @@ export async function login(credentials: LoginRequest): Promise<TokenResponse> {
 			username: data.user.username,
 			full_name: data.user.full_name,
 			role: data.user.role,
-			avatar_url: data.user.avatar_url
+			avatar_url: data.user.avatar_url,
+			can_manage_groups: data.user.can_manage_groups,
+			can_generate: data.user.can_generate,
+			can_vet: data.user.can_vet
 		}
 	});
 	return data;
@@ -95,7 +101,10 @@ export async function register(data: RegisterRequest): Promise<TokenResponse> {
 			username: tokenRes.user.username,
 			full_name: tokenRes.user.full_name,
 			role: tokenRes.user.role,
-			avatar_url: tokenRes.user.avatar_url
+			avatar_url: tokenRes.user.avatar_url,
+			can_manage_groups: tokenRes.user.can_manage_groups,
+			can_generate: tokenRes.user.can_generate,
+			can_vet: tokenRes.user.can_vet
 		}
 	});
 	return tokenRes;
@@ -141,7 +150,10 @@ export async function updateProfile(payload: UpdateProfileRequest): Promise<Toke
 				username: updatedUser.username,
 				full_name: updatedUser.full_name,
 				role: updatedUser.role,
-				avatar_url: updatedUser.avatar_url
+				avatar_url: updatedUser.avatar_url,
+				can_manage_groups: updatedUser.can_manage_groups,
+				can_generate: updatedUser.can_generate,
+				can_vet: updatedUser.can_vet
 			}
 		});
 	}

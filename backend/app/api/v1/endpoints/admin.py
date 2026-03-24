@@ -7,6 +7,8 @@ subjects, topics, questions generated, vetting stats, per-user breakdowns.
 
 from typing import Optional, List
 from datetime import datetime, timezone
+import re
+import uuid
 
 from fastapi import APIRouter, Depends, HTTPException, status
 from sqlalchemy import select, func, and_, case, distinct
@@ -17,9 +19,10 @@ from pydantic import BaseModel
 from app.core.database import get_db
 from app.core.auth_database import AuthSessionLocal
 from app.api.v1.deps import get_current_admin
-from app.models.user import User
+from app.models.user import User, VALID_ROLES, default_permissions_for_role
 from app.models.question import Question, GenerationSession
 from app.models.subject import Subject, Topic
+from app.core.security import hash_password
 
 
 router = APIRouter()
@@ -105,6 +108,42 @@ class AdminSubjectDetail(AdminSubjectSummary):
     topics: List[AdminTopicSummary]
 
 
+class AdminUserSummary(BaseModel):
+    id: str
+    email: str
+    username: str
+    full_name: Optional[str]
+    role: str
+    is_active: bool
+    is_superuser: bool
+    can_manage_groups: bool
+    can_generate: bool
+    can_vet: bool
+    created_at: Optional[datetime]
+    last_login_at: Optional[datetime]
+
+
+class AdminUserCreateRequest(BaseModel):
+    email: str
+    username: str
+    password: str
+    full_name: Optional[str] = None
+    role: str = "teacher"
+    is_active: bool = True
+    can_manage_groups: Optional[bool] = None
+    can_generate: Optional[bool] = None
+    can_vet: Optional[bool] = None
+
+
+class AdminUserUpdateRequest(BaseModel):
+    full_name: Optional[str] = None
+    role: Optional[str] = None
+    is_active: Optional[bool] = None
+    can_manage_groups: Optional[bool] = None
+    can_generate: Optional[bool] = None
+    can_vet: Optional[bool] = None
+
+
 # ============== Helpers ==============
 
 
@@ -133,6 +172,32 @@ def _question_count_columns():
         func.count(case((Question.vetting_status == "rejected", 1))).label("total_rejected"),
         func.count(case((Question.vetting_status == "pending", 1))).label("total_pending"),
     )
+
+
+def _validate_role(role: str) -> str:
+    normalized = (role or "").strip().lower()
+    if normalized not in VALID_ROLES:
+        raise HTTPException(status_code=status.HTTP_422_UNPROCESSABLE_ENTITY, detail="Invalid role")
+    return normalized
+
+
+def _validate_username(username: str) -> str:
+    normalized = (username or "").strip().lower()
+    if not re.match(r"^[a-zA-Z0-9_]{3,50}$", normalized):
+        raise HTTPException(
+            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+            detail="Username must be 3-50 chars and contain only letters, numbers, underscores",
+        )
+    return normalized
+
+
+def _resolve_permissions(role: str, payload: dict) -> dict[str, bool]:
+    defaults = default_permissions_for_role(role)
+    return {
+        "can_manage_groups": payload.get("can_manage_groups", defaults["can_manage_groups"]),
+        "can_generate": payload.get("can_generate", defaults["can_generate"]),
+        "can_vet": payload.get("can_vet", defaults["can_vet"]),
+    }
 
 
 # ============== Endpoints ==============
@@ -476,4 +541,157 @@ async def get_admin_subject(
             )
             for topic in topics
         ],
+    )
+
+
+@router.get("/users", response_model=List[AdminUserSummary])
+async def list_admin_users(
+    current_user: User = Depends(get_current_admin),
+):
+    """List all auth users with role and action-level permissions."""
+    async with AuthSessionLocal() as auth_db:
+        result = await auth_db.execute(select(User).order_by(User.created_at.desc(), User.username.asc()))
+        users = result.scalars().all()
+
+    return [
+        AdminUserSummary(
+            id=user.id,
+            email=user.email,
+            username=user.username,
+            full_name=user.full_name,
+            role=user.role,
+            is_active=bool(user.is_active),
+            is_superuser=bool(user.is_superuser),
+            can_manage_groups=bool(user.can_manage_groups),
+            can_generate=bool(user.can_generate),
+            can_vet=bool(user.can_vet),
+            created_at=user.created_at,
+            last_login_at=user.last_login_at,
+        )
+        for user in users
+    ]
+
+
+@router.post("/users", response_model=AdminUserSummary, status_code=status.HTTP_201_CREATED)
+async def create_admin_user(
+    payload: AdminUserCreateRequest,
+    current_user: User = Depends(get_current_admin),
+):
+    """Create a new user with explicit role and action permissions."""
+    if len(payload.password) < 8:
+        raise HTTPException(status_code=status.HTTP_422_UNPROCESSABLE_ENTITY, detail="Password must be at least 8 characters")
+
+    role = _validate_role(payload.role)
+    username = _validate_username(payload.username)
+    permissions = _resolve_permissions(
+        role,
+        {
+            "can_manage_groups": payload.can_manage_groups,
+            "can_generate": payload.can_generate,
+            "can_vet": payload.can_vet,
+        },
+    )
+
+    async with AuthSessionLocal() as auth_db:
+        existing_email = await auth_db.execute(select(User.id).where(User.email == payload.email))
+        if existing_email.scalar_one_or_none():
+            raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail="Email already registered")
+
+        existing_username = await auth_db.execute(select(User.id).where(User.username == username))
+        if existing_username.scalar_one_or_none():
+            raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail="Username already taken")
+
+        user = User(
+            id=str(uuid.uuid4()),
+            email=payload.email,
+            username=username,
+            password_hash=hash_password(payload.password),
+            full_name=payload.full_name,
+            role=role,
+            is_active=payload.is_active,
+            can_manage_groups=permissions["can_manage_groups"],
+            can_generate=permissions["can_generate"],
+            can_vet=permissions["can_vet"],
+        )
+        auth_db.add(user)
+        await auth_db.commit()
+        await auth_db.refresh(user)
+
+    return AdminUserSummary(
+        id=user.id,
+        email=user.email,
+        username=user.username,
+        full_name=user.full_name,
+        role=user.role,
+        is_active=bool(user.is_active),
+        is_superuser=bool(user.is_superuser),
+        can_manage_groups=bool(user.can_manage_groups),
+        can_generate=bool(user.can_generate),
+        can_vet=bool(user.can_vet),
+        created_at=user.created_at,
+        last_login_at=user.last_login_at,
+    )
+
+
+@router.patch("/users/{user_id}", response_model=AdminUserSummary)
+async def update_admin_user(
+    user_id: str,
+    payload: AdminUserUpdateRequest,
+    current_user: User = Depends(get_current_admin),
+):
+    """Update role, account status, and action permissions for a user."""
+    async with AuthSessionLocal() as auth_db:
+        result = await auth_db.execute(select(User).where(User.id == user_id))
+        user = result.scalar_one_or_none()
+        if not user:
+            raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="User not found")
+
+        update_dict = payload.model_dump(exclude_unset=True)
+
+        if "role" in update_dict and update_dict["role"] is not None:
+            update_dict["role"] = _validate_role(update_dict["role"])
+
+        if payload.full_name is not None:
+            user.full_name = payload.full_name
+
+        if payload.is_active is not None:
+            if user.id == current_user.id and not payload.is_active:
+                raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="You cannot deactivate your own account")
+            user.is_active = payload.is_active
+
+        role_changed = False
+        if "role" in update_dict and update_dict["role"] is not None:
+            user.role = update_dict["role"]
+            role_changed = True
+
+        permissions_payload = {
+            "can_manage_groups": payload.can_manage_groups,
+            "can_generate": payload.can_generate,
+            "can_vet": payload.can_vet,
+        }
+        explicit_permission_update = any(value is not None for value in permissions_payload.values())
+
+        if role_changed or explicit_permission_update:
+            resolved = _resolve_permissions(user.role, permissions_payload)
+            user.can_manage_groups = resolved["can_manage_groups"]
+            user.can_generate = resolved["can_generate"]
+            user.can_vet = resolved["can_vet"]
+
+        user.updated_at = datetime.now(timezone.utc)
+        await auth_db.commit()
+        await auth_db.refresh(user)
+
+    return AdminUserSummary(
+        id=user.id,
+        email=user.email,
+        username=user.username,
+        full_name=user.full_name,
+        role=user.role,
+        is_active=bool(user.is_active),
+        is_superuser=bool(user.is_superuser),
+        can_manage_groups=bool(user.can_manage_groups),
+        can_generate=bool(user.can_generate),
+        can_vet=bool(user.can_vet),
+        created_at=user.created_at,
+        last_login_at=user.last_login_at,
     )

@@ -10,7 +10,7 @@ import hashlib
 from sqlalchemy import select, update
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.models.user import User
+from app.models.user import User, default_permissions_for_role
 from app.models.auth import RefreshToken, AuditLog
 from app.schemas.user import UserCreate, UserUpdate
 from app.core.security import (
@@ -45,13 +45,19 @@ class UserService:
         if existing_username.scalar_one_or_none():
             raise ValueError("Username already taken")
 
-        # Create user with role
+        role = getattr(user_data, 'role', 'teacher')
+        role_defaults = default_permissions_for_role(role)
+
+        # Create user with role and action permissions
         user = User(
             email=user_data.email,
             username=user_data.username.lower(),
             password_hash=hash_password(user_data.password),
             full_name=user_data.full_name,
-            role=getattr(user_data, 'role', 'teacher'),  # Default to teacher if not provided
+            role=role,
+            can_manage_groups=role_defaults["can_manage_groups"],
+            can_generate=role_defaults["can_generate"],
+            can_vet=role_defaults["can_vet"],
         )
         self.db.add(user)
         await self.db.commit()

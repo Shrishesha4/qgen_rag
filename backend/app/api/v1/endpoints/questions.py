@@ -33,7 +33,7 @@ from app.schemas.question import (
 )
 from app.services.question_service import QuestionGenerationService
 from app.services.document_service import DocumentService
-from app.api.v1.deps import get_current_user, rate_limit
+from app.api.v1.deps import get_current_user, rate_limit, ensure_user_can_generate, ensure_user_can_vet
 from app.models.user import User
 from app.models.question import Question, GenerationSession
 from app.models.document import Document
@@ -1177,6 +1177,7 @@ async def generate_questions(
     3. Generates unique questions avoiding duplicates
     4. Validates quality and stores results
     """
+    ensure_user_can_generate(current_user)
     question_service = QuestionGenerationService(db)
     
     async def event_generator():
@@ -1231,6 +1232,8 @@ async def quick_generate_questions(
     - Context: "Binary Trees and Tree Traversal Algorithms"
     - Get: 5 questions about binary trees
     """
+    ensure_user_can_generate(current_user)
+
     # Validate file extension
     filename = file.filename or "document.pdf"
     ext = os.path.splitext(filename)[1].lower()
@@ -1449,6 +1452,8 @@ async def quick_generate_from_subject(
     The LLM will first enhance the focus prompt before generating questions.
     Returns Server-Sent Events (SSE) stream with progress updates.
     """
+    ensure_user_can_generate(current_user)
+
     import logging
     logger = logging.getLogger(__name__)
 
@@ -1546,6 +1551,8 @@ async def cancel_generation(
     db: AsyncSession = Depends(get_db),
 ):
     """Release the generation lock for a subject, allowing a new generation to start."""
+    ensure_user_can_generate(current_user)
+
     from app.services.redis_service import RedisService
     redis = RedisService()
     await redis.release_generation_lock(str(current_user.id), subject_id)
@@ -1646,6 +1653,8 @@ async def schedule_background_generation(
     db: AsyncSession = Depends(get_db),
 ):
     """Schedule server-side generation that can continue after the teacher leaves the page."""
+    ensure_user_can_generate(current_user)
+
     # Start periodic cleanup if not already running
     start_periodic_cleanup()
     valid_types = {"mcq", "short_answer", "long_answer"}
@@ -3082,6 +3091,7 @@ async def get_pending_questions(
     """
     Get questions pending vetting/review.
     """
+    ensure_user_can_vet(current_user)
     question_service = QuestionGenerationService(db)
     
     questions, pagination = await question_service.get_questions(
@@ -3111,6 +3121,8 @@ async def vet_question(
     """
     Approve or reject a question.
     """
+    ensure_user_can_vet(current_user)
+
     from datetime import datetime, timezone
     from sqlalchemy import or_
     from app.models.question import Question
@@ -4429,6 +4441,8 @@ async def generate_from_rubric(
     
     Returns Server-Sent Events (SSE) stream with progress updates.
     """
+    ensure_user_can_generate(current_user)
+
     from app.models.rubric import Rubric
     from app.models.subject import Subject, Topic
     from app.services.llm_service import LLMService
@@ -5045,6 +5059,8 @@ async def generate_chapter(
     Uses the chapter's syllabus content + RAG from reference books.
     Streams SSE progress updates.
     """
+    ensure_user_can_generate(current_user)
+
     from app.models.subject import Subject, Topic
     from app.services.llm_service import LLMService
     from app.services.embedding_service import EmbeddingService

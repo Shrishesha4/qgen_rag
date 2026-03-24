@@ -88,13 +88,13 @@
 </svelte:head>
 
 <div class="page">
-	<div class="hero animate-fade-in">
+	<!-- <div class="hero animate-fade-in">
 		<div>
 			<p class="eyebrow">Admin Console</p>
 			<h1 class="title font-serif">Vetter Progress</h1>
 			<p class="subtitle">See individual vetter throughput, approval behavior, and contribution share across the platform.</p>
 		</div>
-	</div>
+	</div> -->
 
 	<div class="toolbar glass-panel animate-slide-up">
 		<input class="search-input" bind:value={query} placeholder="Search vetter by name, username, or email" />
@@ -204,7 +204,7 @@
 		gap: 1.25rem;
 	}
 
-	.hero {
+	/* .hero {
 		padding-top: 0.5rem;
 	}
 
@@ -229,7 +229,7 @@
 		max-width: 52rem;
 		color: var(--theme-text-muted);
 		line-height: 1.6;
-	}
+	} */
 
 	.toolbar {
 		display: flex;
@@ -412,35 +412,46 @@
 		}
 	}
 
-	:global([data-theme='light']) .search-input {
+	:global([data-color-mode='light']) .search-input {
 		background: #ffffff;
 		border-color: rgba(148, 163, 184, 0.42);
 		color: #0f172a;
 	}
 
-	:global([data-theme='light']) .stat-card,
-	:global([data-theme='light']) .toolbar,
-	:global([data-theme='light']) .table-wrap {
+	:global([data-color-mode='light']) .stat-card,
+	:global([data-color-mode='light']) .toolbar,
+	:global([data-color-mode='light']) .table-wrap {
 		background: #ffffff;
 		border: 1px solid rgba(148, 163, 184, 0.3);
 		box-shadow: 0 14px 34px rgba(15, 23, 42, 0.08);
 	}
 
-	:global([data-theme='light']) .title,
-	:global([data-theme='light']) .user-name,
-	:global([data-theme='light']) .num {
+	:global([data-color-mode='light']) .user-name,
+	:global([data-color-mode='light']) .num {
 		color: #0f172a;
 	}
 
-	:global([data-theme='light']) .subtitle,
-	:global([data-theme='light']) .user-email,
-	:global([data-theme='light']) .stat-label,
-	:global([data-theme='light']) .data-table th {
+	:global([data-color-mode='light']) .user-email,
+	:global([data-color-mode='light']) .stat-label,
+	:global([data-color-mode='light']) .data-table th {
 		color: #475569;
 	}
+	
+	/* :global([data-color-mode='light']) .title,
+	:global([data-color-mode='light']) .user-name,
+	:global([data-color-mode='light']) .num {
+		color: #0f172a;
+	}
 
-	:global([data-theme='light']) .data-table th,
-	:global([data-theme='light']) .data-table td {
+	:global([data-color-mode='light']) .subtitle,
+	:global([data-color-mode='light']) .user-email,
+	:global([data-color-mode='light']) .stat-label,
+	:global([data-color-mode='light']) .data-table th {
+		color: #475569;
+	} */
+
+	:global([data-color-mode='light']) .data-table th,
+	:global([data-color-mode='light']) .data-table td {
 		border-bottom-color: rgba(148, 163, 184, 0.35);
 	}
 </style>

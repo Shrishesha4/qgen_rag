@@ -19,6 +19,34 @@ ROLE_VETTER = "vetter"
 ROLE_ADMIN = "admin"
 VALID_ROLES = {ROLE_TEACHER, ROLE_VETTER, ROLE_ADMIN}
 
+# Permission keys for action-level authorization
+PERMISSION_MANAGE_GROUPS = "can_manage_groups"
+PERMISSION_GENERATE = "can_generate"
+PERMISSION_VET = "can_vet"
+
+
+def default_permissions_for_role(role: str) -> dict[str, bool]:
+    """Return default action permissions for the given role."""
+    normalized_role = (role or ROLE_TEACHER).strip().lower()
+    if normalized_role == ROLE_ADMIN:
+        return {
+            PERMISSION_MANAGE_GROUPS: True,
+            PERMISSION_GENERATE: True,
+            PERMISSION_VET: True,
+        }
+    if normalized_role == ROLE_VETTER:
+        return {
+            PERMISSION_MANAGE_GROUPS: False,
+            PERMISSION_GENERATE: False,
+            PERMISSION_VET: True,
+        }
+    # Teachers keep current behavior by default.
+    return {
+        PERMISSION_MANAGE_GROUPS: True,
+        PERMISSION_GENERATE: True,
+        PERMISSION_VET: True,
+    }
+
 
 class User(AuthBase):
     """User model for authentication and authorization (SQLite)."""
@@ -40,6 +68,11 @@ class User(AuthBase):
     
     # Role: "teacher" (default), "vetter", or "admin"
     role: Mapped[str] = mapped_column(String(20), default=ROLE_TEACHER, nullable=False)
+
+    # Action-level authorization flags managed by admins.
+    can_manage_groups: Mapped[bool] = mapped_column(Boolean, default=True)
+    can_generate: Mapped[bool] = mapped_column(Boolean, default=True)
+    can_vet: Mapped[bool] = mapped_column(Boolean, default=True)
     
     # Status
     is_active: Mapped[bool] = mapped_column(Boolean, default=True)

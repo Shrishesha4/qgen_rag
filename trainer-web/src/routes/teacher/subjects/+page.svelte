@@ -1,6 +1,6 @@
 <script lang="ts">
 	import { onMount, onDestroy, tick } from 'svelte';
-	import { goto } from '$app/navigation';
+	import { goto, preloadData } from '$app/navigation';
 	import { session } from '$lib/session';
 	import {
 		createSubject,
@@ -73,6 +73,8 @@
 	let contextMenuPosition = $state<{ x: number; y: number } | null>(null);
 	let contextMenuElement = $state<HTMLDivElement | null>(null);
 	let contextMenuOverlayElement = $state<HTMLDivElement | null>(null);
+	const SUBJECT_ROUTE_PRELOAD_LIMIT = 8;
+	const preloadedSubjectRoutes = new Set<string>();
 
 	// Custom confirmation modal state
 	let showConfirmModal = $state(false);
@@ -192,11 +194,27 @@
 			]);
 			treeData = treeRes;
 			subjects = listRes.subjects;
+			void preloadInitialSubjectRoutes(listRes.subjects);
 		} catch (e: unknown) {
 			error = e instanceof Error ? e.message : 'Failed to load subjects';
 		} finally {
 			loading = false;
 		}
+	}
+
+	async function preloadSubjectRoute(subjectId: string) {
+		if (!subjectId || preloadedSubjectRoutes.has(subjectId)) return;
+		preloadedSubjectRoutes.add(subjectId);
+		try {
+			await preloadData(`/teacher/subjects/${subjectId}`);
+		} catch {
+			// Keep UI responsive even if prefetch fails.
+		}
+	}
+
+	async function preloadInitialSubjectRoutes(subjectList: SubjectResponse[]) {
+		const initialIds = subjectList.slice(0, SUBJECT_ROUTE_PRELOAD_LIMIT).map((subject) => subject.id);
+		await Promise.all(initialIds.map((subjectId) => preloadSubjectRoute(subjectId)));
 	}
 
 	async function loadTree() {
@@ -285,6 +303,7 @@
 	});
 
 	function openSubject(subjectId: string) {
+		void preloadSubjectRoute(subjectId);
 		goto(`/teacher/subjects/${subjectId}`);
 	}
 

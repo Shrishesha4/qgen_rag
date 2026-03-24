@@ -15,6 +15,7 @@
 	let query = $state('');	
 	let stats = $state<AdminDashboard | null>(null);
 	let subjects = $state<AdminSubjectSummary[]>([]);
+	let expandedTeachers = $state<Record<string, boolean>>({});
 
 	onMount(() => {
 		const unsub = session.subscribe((s) => {
@@ -122,6 +123,21 @@
 	function openSubject(subjectId: string) {
 		goto(`/admin/subjects/${subjectId}`);
 	}
+
+	function userDetailHref(userId: string): string {
+		return `/users/${userId}`;
+	}
+
+	function toggleTeacherRow(teacherId: string) {
+		expandedTeachers = {
+			...expandedTeachers,
+			[teacherId]: !expandedTeachers[teacherId]
+		};
+	}
+
+	function isTeacherExpanded(teacherId: string): boolean {
+		return Boolean(expandedTeachers[teacherId]);
+	}
 </script>
 
 <svelte:head>
@@ -129,13 +145,13 @@
 </svelte:head>
 
 <div class="page">
-	<div class="hero animate-fade-in">
+	<!-- <div class="hero animate-fade-in">
 		<div>
 			<p class="eyebrow">Admin Console</p>
 			<h1 class="title font-serif">Teacher Progress</h1>
 			<p class="subtitle">Track teacher-level generation and vetting progress with subject ownership and question status breakdowns.</p>
 		</div>
-	</div>
+	</div> -->
 
 	<div class="toolbar glass-panel animate-slide-up">
 		<input class="search-input" bind:value={query} placeholder="Search teacher, email, or subject" />
@@ -178,39 +194,98 @@
 			<p>No teachers matched your search.</p>
 		</div>
 	{:else}
-		<div class="teacher-grid animate-fade-in">
-			{#each teacherRows as row}
-				<div class="teacher-card glass-panel">
-					<div class="teacher-head">
-						<div>
-							<p class="teacher-name">{row.teacher.full_name || row.teacher.username}</p>
-							<p class="teacher-email">{row.teacher.email}</p>
-						</div>
-						<span class="progress-pill">{row.subjectProgress}% vetted</span>
-					</div>
-
-					<div class="metrics-grid">
-						<div class="metric"><span>Assigned Subjects</span><strong>{row.subjects.length}</strong></div>
-						<div class="metric"><span>Total Topics</span><strong>{row.totalTopics}</strong></div>
-						<div class="metric"><span>Generated</span><strong>{row.teacher.total_generated}</strong></div>
-						<div class="metric"><span>Teacher Vetted</span><strong>{row.teacher.total_vetted}</strong></div>
-						<div class="metric"><span>Approved</span><strong class="green-text">{row.totalApproved}</strong></div>
-						<div class="metric"><span>Rejected</span><strong class="red-text">{row.totalRejected}</strong></div>
-						<div class="metric"><span>Pending</span><strong class="orange-text">{row.totalPending}</strong></div>
-						<div class="metric"><span>Coverage</span><strong>{row.totalQuestions > 0 ? Math.round((row.totalVetted / row.totalQuestions) * 100) : 0}%</strong></div>
-					</div>
-
-					{#if row.subjects.length > 0}
-						<div class="subject-grid">
-							{#each row.subjects as subject}
-								<button class="subject-chip" onclick={() => openSubject(subject.id)}>
-									<span>{subject.name}</span>
-									<small>{subject.total_questions}q · {subject.total_pending} pending</small>
+		<div class="table-wrap glass-panel animate-fade-in desktop-only">
+			<table class="data-table">
+				<thead>
+					<tr>
+						<th>Teacher</th>
+						<th>Subjects</th>
+						<th>Topics</th>
+						<th>Questions</th>
+						<th>Approved</th>
+						<th>Rejected</th>
+						<th>Pending</th>
+						<th>Coverage</th>
+						<th></th>
+					</tr>
+				</thead>
+				<tbody>
+					{#each teacherRows as row}
+						<tr>
+							<td>
+								<div class="teacher-cell">
+									<a class="teacher-name user-link" href={userDetailHref(row.teacher.user_id)}>{row.teacher.full_name || row.teacher.username}</a>
+									<span class="teacher-email">{row.teacher.email}</span>
+								</div>
+							</td>
+							<td class="num">{row.subjects.length}</td>
+							<td class="num">{row.totalTopics}</td>
+							<td class="num">{row.totalQuestions}</td>
+							<td class="num green-text">{row.totalApproved}</td>
+							<td class="num red-text">{row.totalRejected}</td>
+							<td class="num orange-text">{row.totalPending}</td>
+							<td class="num">{row.subjectProgress}%</td>
+							<td>
+								<button class="toggle-btn" onclick={() => toggleTeacherRow(row.teacher.user_id)}>
+									{isTeacherExpanded(row.teacher.user_id) ? 'Hide' : 'Show'}
 								</button>
-							{/each}
-						</div>
-					{:else}
-						<p class="empty-msg">No subjects assigned.</p>
+							</td>
+						</tr>
+						{#if isTeacherExpanded(row.teacher.user_id)}
+							<tr class="detail-row">
+								<td colspan="9">
+									{#if row.subjects.length > 0}
+										<div class="detail-subjects">
+											{#each row.subjects as subject}
+												<button class="subject-chip" onclick={() => openSubject(subject.id)}>
+													<span>{subject.name}</span>
+													<small>{subject.total_questions}q · {subject.total_pending} pending</small>
+												</button>
+											{/each}
+										</div>
+									{:else}
+										<p class="empty-msg">No subjects created.</p>
+									{/if}
+								</td>
+							</tr>
+						{/if}
+					{/each}
+				</tbody>
+			</table>
+		</div>
+
+		<div class="mobile-list mobile-only animate-fade-in">
+			{#each teacherRows as row}
+				<div class="mobile-card glass-panel">
+					<div class="teacher-cell">
+						<a class="teacher-name user-link" href={userDetailHref(row.teacher.user_id)}>{row.teacher.full_name || row.teacher.username}</a>
+						<span class="teacher-email">{row.teacher.email}</span>
+					</div>
+					<div class="mobile-metrics">
+						<span>Subjects <strong>{row.subjects.length}</strong></span>
+						<span>Topics <strong>{row.totalTopics}</strong></span>
+						<span>Questions <strong>{row.totalQuestions}</strong></span>
+						<span class="green-text">Approved <strong>{row.totalApproved}</strong></span>
+						<span class="red-text">Rejected <strong>{row.totalRejected}</strong></span>
+						<span class="orange-text">Pending <strong>{row.totalPending}</strong></span>
+						<span>Coverage <strong>{row.subjectProgress}%</strong></span>
+					</div>
+					<button class="toggle-btn" onclick={() => toggleTeacherRow(row.teacher.user_id)}>
+						{isTeacherExpanded(row.teacher.user_id) ? 'Hide Subjects' : 'Show Subjects'}
+					</button>
+					{#if isTeacherExpanded(row.teacher.user_id)}
+						{#if row.subjects.length > 0}
+							<div class="detail-subjects">
+								{#each row.subjects as subject}
+									<button class="subject-chip" onclick={() => openSubject(subject.id)}>
+										<span>{subject.name}</span>
+										<small>{subject.total_questions}q · {subject.total_pending} pending</small>
+									</button>
+								{/each}
+							</div>
+						{:else}
+							<p class="empty-msg">No subjects created.</p>
+						{/if}
 					{/if}
 				</div>
 			{/each}
@@ -228,7 +303,7 @@
 		gap: 1.25rem;
 	}
 
-	.hero {
+	/* .hero {
 		padding-top: 0.5rem;
 	}
 
@@ -253,7 +328,7 @@
 		max-width: 52rem;
 		color: var(--theme-text-muted);
 		line-height: 1.6;
-	}
+	} */
 
 	.toolbar {
 		display: flex;
@@ -266,8 +341,8 @@
 		width: 100%;
 		padding: 0.85rem 1rem;
 		border-radius: 0.85rem;
-		border: 1px solid rgba(255,255,255,0.14);
-		background: rgba(255,255,255,0.06);
+		border: 1px solid var(--theme-glass-border);
+		background: var(--theme-input-bg);
 		color: var(--theme-text);
 		font: inherit;
 	}
@@ -312,76 +387,93 @@
 		font-weight: 700;
 	}
 
-	.teacher-grid {
-		display: grid;
-		grid-template-columns: repeat(2, minmax(0, 1fr));
-		gap: 1rem;
+	.table-wrap {
+		overflow-x: auto;
+		border-radius: 1rem;
 	}
 
-	.teacher-card {
-		padding: 1rem;
-		border-radius: 1rem;
+	.desktop-only {
+		display: block;
+	}
+
+	.mobile-only {
+		display: none;
+	}
+
+	.data-table {
+		width: 100%;
+		border-collapse: collapse;
+		min-width: 980px;
+	}
+
+	.data-table th,
+	.data-table td {
+		padding: 0.75rem 0.8rem;
+		border-bottom: 1px solid rgba(148, 163, 184, 0.24);
+		text-align: left;
+		font-size: 0.86rem;
+	}
+
+	.data-table th {
+		font-size: 0.72rem;
+		text-transform: uppercase;
+		letter-spacing: 0.06em;
+		font-weight: 700;
+		color: var(--theme-text-muted);
+	}
+
+	.teacher-cell {
 		display: flex;
 		flex-direction: column;
-		gap: 0.9rem;
-	}
-
-	.teacher-head {
-		display: flex;
-		justify-content: space-between;
-		align-items: center;
-		gap: 0.75rem;
+		gap: 0.15rem;
 	}
 
 	.teacher-name {
-		margin: 0;
-		font-size: 1.05rem;
+		font-size: 0.95rem;
 		font-weight: 700;
 		color: var(--theme-text);
+	}
+
+	.user-link {
+		text-decoration: none;
+	}
+
+	.user-link:hover {
+		text-decoration: underline;
+		text-decoration-color: color-mix(in srgb, var(--theme-primary) 65%, transparent);
 	}
 
 	.teacher-email {
-		margin: 0.2rem 0 0;
-		font-size: 0.82rem;
+		font-size: 0.78rem;
 		color: var(--theme-text-muted);
+		overflow: hidden;
+		text-overflow: ellipsis;
+		white-space: nowrap;
 	}
 
-	.progress-pill {
-		padding: 0.35rem 0.6rem;
-		border-radius: 999px;
-		font-size: 0.75rem;
-		font-weight: 700;
-		background: rgba(34, 197, 94, 0.18);
-		color: #4ade80;
+	.num {
+		text-align: right;
+		font-variant-numeric: tabular-nums;
 	}
 
-	.metrics-grid {
-		display: grid;
-		grid-template-columns: repeat(2, minmax(0, 1fr));
-		gap: 0.55rem;
-	}
-
-	.metric {
-		display: flex;
-		justify-content: space-between;
-		align-items: baseline;
-		gap: 0.5rem;
-		padding: 0.55rem 0.7rem;
-		border-radius: 0.75rem;
-		background: rgba(255,255,255,0.06);
-		font-size: 0.8rem;
-		color: var(--theme-text-muted);
-	}
-
-	.metric strong {
-		font-size: 0.92rem;
+	.toggle-btn {
+		padding: 0.45rem 0.75rem;
+		border-radius: 0.7rem;
+		border: 1px solid color-mix(in srgb, var(--theme-primary) 45%, var(--theme-glass-border));
+		background: color-mix(in srgb, var(--theme-primary) 16%, var(--theme-input-bg));
 		color: var(--theme-text);
+		font-weight: 700;
+		cursor: pointer;
 	}
 
-	.subject-grid {
+	.detail-row td {
+		background: color-mix(in srgb, var(--theme-input-bg) 80%, transparent);
+	}
+
+	.detail-subjects {
 		display: grid;
-		grid-template-columns: repeat(2, minmax(0, 1fr));
-		gap: 0.5rem;
+		grid-template-columns: repeat(3, minmax(0, 1fr));
+		gap: 0.55rem;
 	}
 
 	.subject-chip {
@@ -400,6 +492,31 @@
 	.subject-chip small {
 		color: var(--theme-text-muted);
 		font-size: 0.74rem;
+	}
+
+	.mobile-list {
+		display: none;
+		gap: 0.75rem;
+	}
+
+	.mobile-card {
+		padding: 0.9rem;
+		border-radius: 0.95rem;
+		display: flex;
+		flex-direction: column;
+		gap: 0.7rem;
+	}
+
+	.mobile-metrics {
+		display: grid;
+		grid-template-columns: repeat(2, minmax(0, 1fr));
+		gap: 0.35rem 0.7rem;
+		font-size: 0.82rem;
+		color: var(--theme-text-muted);
+	}
+
+	.mobile-metrics strong {
+		color: var(--theme-text);
 	}
 
 	.empty-msg {
@@ -435,7 +552,26 @@
 			grid-template-columns: repeat(2, minmax(0, 1fr));
 		}
 
-		.teacher-grid {
+		.detail-subjects {
+			grid-template-columns: repeat(2, minmax(0, 1fr));
+		}
+	}
+
+	@media (max-width: 768px) {
+		.desktop-only {
+			display: none;
+		}
+
+		.mobile-only {
+			display: grid;
+		}
+
+		.mobile-list {
+			display: grid;
+		}
+
+		.mobile-metrics,
+		.detail-subjects {
 			grid-template-columns: 1fr;
 		}
 	}
@@ -444,45 +580,64 @@
 		.page {
 			padding: 1.25rem 0.95rem 1.8rem;
 		}
-
-		.metrics-grid,
-		.subject-grid {
-			grid-template-columns: 1fr;
-		}
 	}
 
-	:global([data-theme='light']) .search-input {
+	:global([data-color-mode='light']) .search-input {
 		background: #ffffff;
 		border-color: rgba(148, 163, 184, 0.42);
 		color: #0f172a;
 	}
 
-	:global([data-theme='light']) .teacher-card,
-	:global([data-theme='light']) .stat-card,
-	:global([data-theme='light']) .toolbar {
+	:global([data-color-mode='light']) .table-wrap,
+	:global([data-color-mode='light']) .stat-card,
+	:global([data-color-mode='light']) .toolbar,
+	:global([data-color-mode='light']) .mobile-card {
 		background: #ffffff;
 		border: 1px solid rgba(148, 163, 184, 0.3);
 		box-shadow: 0 14px 34px rgba(15, 23, 42, 0.08);
 	}
 
-	:global([data-theme='light']) .metric,
-	:global([data-theme='light']) .subject-chip {
+	:global([data-color-mode='light']) .detail-row td,
+	:global([data-color-mode='light']) .toggle-btn,
+	:global([data-color-mode='light']) .subject-chip {
 		background: #f8fafc;
 		border-color: rgba(148, 163, 184, 0.35);
 	}
 
-	:global([data-theme='light']) .teacher-name,
-	:global([data-theme='light']) .title,
-	:global([data-theme='light']) .metric strong,
-	:global([data-theme='light']) .subject-chip {
+	:global([data-color-mode='light']) .teacher-name,
+	:global([data-color-mode='light']) .mobile-metrics strong,
+	:global([data-color-mode='light']) .toggle-btn,
+	:global([data-color-mode='light']) .subject-chip {
 		color: #0f172a;
 	}
 
-	:global([data-theme='light']) .teacher-email,
-	:global([data-theme='light']) .subtitle,
-	:global([data-theme='light']) .metric,
-	:global([data-theme='light']) .subject-chip small,
-	:global([data-theme='light']) .stat-label {
+	:global([data-color-mode='light']) .teacher-email,
+	:global([data-color-mode='light']) .mobile-metrics,
+	:global([data-color-mode='light']) .subject-chip small,
+	:global([data-color-mode='light']) .stat-label,
+	:global([data-color-mode='light']) .data-table th {
 		color: #475569;
+	}
+	
+	/* :global([data-color-mode='light']) .teacher-name,
+	:global([data-color-mode='light']) .title,
+	:global([data-color-mode='light']) .mobile-metrics strong,
+	:global([data-color-mode='light']) .toggle-btn,
+	:global([data-color-mode='light']) .subject-chip {
+		color: #0f172a;
+	}
+
+	:global([data-color-mode='light']) .teacher-email,
+	:global([data-color-mode='light']) .subtitle,
+	:global([data-color-mode='light']) .mobile-metrics,
+	:global([data-color-mode='light']) .subject-chip small,
+	:global([data-color-mode='light']) .stat-label,
+	:global([data-color-mode='light']) .data-table th {
+		color: #475569;
+	} */
+
+	:global([data-color-mode='light']) .data-table th,
+	:global([data-color-mode='light']) .data-table td {
+		border-bottom-color: rgba(148, 163, 184, 0.35);
 	}
 </style>

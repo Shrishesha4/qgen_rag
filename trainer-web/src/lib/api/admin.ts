@@ -26,6 +26,42 @@ export interface UserStats {
 	topics_count: number;
 }
 
+export interface AdminUserSummary {
+	id: string;
+	email: string;
+	username: string;
+	full_name: string | null;
+	role: 'teacher' | 'vetter' | 'admin';
+	is_active: boolean;
+	is_superuser: boolean;
+	can_manage_groups: boolean;
+	can_generate: boolean;
+	can_vet: boolean;
+	created_at: string | null;
+	last_login_at: string | null;
+}
+
+export interface AdminUserCreateRequest {
+	email: string;
+	username: string;
+	password: string;
+	full_name?: string;
+	role: 'teacher' | 'vetter' | 'admin';
+	is_active?: boolean;
+	can_manage_groups?: boolean;
+	can_generate?: boolean;
+	can_vet?: boolean;
+}
+
+export interface AdminUserUpdateRequest {
+	full_name?: string;
+	role?: 'teacher' | 'vetter' | 'admin';
+	is_active?: boolean;
+	can_manage_groups?: boolean;
+	can_generate?: boolean;
+	can_vet?: boolean;
+}
+
 export interface AdminDashboard {
 	total_subjects: number;
 	total_topics: number;
@@ -85,4 +121,25 @@ export async function listAdminSubjects(): Promise<AdminSubjectSummary[]> {
 
 export async function getAdminSubject(subjectId: string): Promise<AdminSubjectDetail> {
 	return apiFetch<AdminSubjectDetail>(`/admin/subjects/${subjectId}`);
+}
+
+export async function listAdminUsers(): Promise<AdminUserSummary[]> {
+	return apiFetch<AdminUserSummary[]>('/admin/users');
+}
+
+export async function createAdminUser(payload: AdminUserCreateRequest): Promise<AdminUserSummary> {
+	return apiFetch<AdminUserSummary>('/admin/users', {
+		method: 'POST',
+		body: JSON.stringify(payload)
+	});
+}
+
+export async function updateAdminUser(
+	userId: string,
+	payload: AdminUserUpdateRequest
+): Promise<AdminUserSummary> {
+	return apiFetch<AdminUserSummary>(`/admin/users/${userId}`, {
+		method: 'PATCH',
+		body: JSON.stringify(payload)
+	});
 }

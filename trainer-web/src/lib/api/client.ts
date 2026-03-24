@@ -69,6 +69,9 @@ export interface StoredSession {
 		full_name: string | null;
 		role: string;
 		avatar_url: string | null;
+		can_manage_groups?: boolean;
+		can_generate?: boolean;
+		can_vet?: boolean;
 	};
 }
 

@@ -4,19 +4,18 @@
 	import { session, currentUser } from '$lib/session';
 	import { logout } from '$lib/api/auth';
 	import { getAdminDashboard, listAdminSubjects, type AdminDashboard, type UserStats, type VetterBreakdown, type AdminSubjectSummary } from '$lib/api/admin';
-	import { apiFetch } from '$lib/api/client';
 
 	let loading = $state(true);
 	let stats = $state<AdminDashboard | null>(null);
 	let adminSubjects = $state<AdminSubjectSummary[]>([]);
 	let error = $state('');
-	let activeTab: 'overview' | 'users' | 'vetters' | 'teachers' | 'settings' = $state('overview');
-
-	// Settings state
-	let signupEnabled = $state(true);
-	let settingsLoading = $state(false);
-	let settingsError = $state('');
-	let settingsSaved = $state(false);
+	let activeTab: 'overview' | 'users' | 'vetters' | 'teachers' = $state('overview');
+	const USERS_PAGE_SIZE = 24;
+	const VETTERS_PAGE_SIZE = 24;
+	const TEACHERS_PAGE_SIZE = 16;
+	let usersVisibleCount = $state(USERS_PAGE_SIZE);
+	let vettersVisibleCount = $state(VETTERS_PAGE_SIZE);
+	let teachersVisibleCount = $state(TEACHERS_PAGE_SIZE);
 
 	onMount(() => {
 		const unsub = session.subscribe((s) => {
@@ -25,7 +24,6 @@
 			}
 		});
 		loadStats();
-		loadSettings();
 		return unsub;
 	});
 
@@ -43,35 +41,6 @@
 		}
 	}
 
-	async function loadSettings() {
-		try {
-			const res = await apiFetch<{ signup_enabled: boolean }>('/settings/signup');
-			signupEnabled = res.signup_enabled;
-		} catch {
-			// Default to enabled if can't load
-			signupEnabled = true;
-		}
-	}
-
-	async function toggleSignup() {
-		settingsLoading = true;
-		settingsError = '';
-		settingsSaved = false;
-		try {
-			const res = await apiFetch<{ signup_enabled: boolean }>('/settings/signup', {
-				method: 'PUT',
-				body: JSON.stringify({ signup_enabled: !signupEnabled }),
-			});
-			signupEnabled = res.signup_enabled;
-			settingsSaved = true;
-			setTimeout(() => settingsSaved = false, 2000);
-		} catch (e: unknown) {
-			settingsError = e instanceof Error ? e.message : 'Failed to update settings';
-		} finally {
-			settingsLoading = false;
-		}
-	}
-
 	async function handleLogout() {
 		await logout();
 		session.clear();
@@ -84,6 +53,114 @@
 		const vetted = u.total_approved + u.total_rejected;
 		return Math.round((vetted / total) * 100) + '%';
 	}
+
+	function userDetailHref(userId: string): string {
+		return `/users/${userId}`;
+	}
+
+	function onUsersTabOpen() {
+		activeTab = 'users';
+		usersVisibleCount = USERS_PAGE_SIZE;
+	}
+
+	function onTeachersTabOpen() {
+		activeTab = 'teachers';
+		teachersVisibleCount = TEACHERS_PAGE_SIZE;
+	}
+
+	function onVettersTabOpen() {
+		activeTab = 'vetters';
+		vettersVisibleCount = VETTERS_PAGE_SIZE;
+	}
+
+	function loadMoreUsers() {
+		if (!stats || activeTab !== 'users') return;
+		usersVisibleCount = Math.min(usersVisibleCount + USERS_PAGE_SIZE, stats.users.length);
+	}
+
+	function loadMoreVetters() {
+		if (!stats || activeTab !== 'vetters') return;
+		vettersVisibleCount = Math.min(vettersVisibleCount + VETTERS_PAGE_SIZE, stats.vetters.length);
+	}
+
+	function loadMoreTeachers() {
+		if (activeTab !== 'teachers') return;
+		teachersVisibleCount = Math.min(teachersVisibleCount + TEACHERS_PAGE_SIZE, teacherViewRows.length);
+	}
+
+	function usersInfiniteSentinel(node: HTMLElement) {
+		const observer = new IntersectionObserver(
+			(entries) => {
+				if (entries[0]?.isIntersecting) {
+					loadMoreUsers();
+				}
+			},
+			{ rootMargin: '200px 0px 200px 0px', threshold: 0 }
+		);
+
+		observer.observe(node);
+		return {
+			destroy() {
+				observer.disconnect();
+			}
+		};
+	}
+
+	function vettersInfiniteSentinel(node: HTMLElement) {
+		const observer = new IntersectionObserver(
+			(entries) => {
+				if (entries[0]?.isIntersecting) {
+					loadMoreVetters();
+				}
+			},
+			{ rootMargin: '200px 0px 200px 0px', threshold: 0 }
+		);
+
+		observer.observe(node);
+		return {
+			destroy() {
+				observer.disconnect();
+			}
+		};
+	}
+
+	function teachersInfiniteSentinel(node: HTMLElement) {
+		const observer = new IntersectionObserver(
+			(entries) => {
+				if (entries[0]?.isIntersecting) {
+					loadMoreTeachers();
+				}
+			},
+			{ rootMargin: '200px 0px 200px 0px', threshold: 0 }
+		);
+
+		observer.observe(node);
+		return {
+			destroy() {
+				observer.disconnect();
+			}
+		};
+	}
+
+	const visibleUsers = $derived.by(() => {
+		if (!stats) return [];
+		return stats.users.slice(0, usersVisibleCount);
+	});
+
+	const hasMoreUsers = $derived.by(() => {
+		if (!stats) return false;
+		return visibleUsers.length < stats.users.length;
+	});
+
+	const visibleVetters = $derived.by(() => {
+		if (!stats) return [];
+		return stats.vetters.slice(0, vettersVisibleCount);
+	});
+
+	const hasMoreVetters = $derived.by(() => {
+		if (!stats) return false;
+		return visibleVetters.length < stats.vetters.length;
+	});
 
 	let teacherViewRows = $derived.by(() => {
 		if (!stats) return [];
@@ -107,6 +184,14 @@
 			const progress = totalQuestions > 0 ? Math.round((vetted / totalQuestions) * 100) : 0;
 			return { teacher, subjects, totalTopics, totalQuestions, approved, rejected, pending, progress };
 		});
+	});
+
+	const visibleTeacherRows = $derived.by(() => {
+		return teacherViewRows.slice(0, teachersVisibleCount);
+	});
+
+	const hasMoreTeachers = $derived.by(() => {
+		return visibleTeacherRows.length < teacherViewRows.length;
 	});
 </script>
 
@@ -164,7 +249,14 @@
 		</div>
 	{/if} -->
 
-	<div class="quick-links animate-slide-up">
+	<!-- <div class="quick-links animate-slide-up">
+		<a href="/admin/users" class="quick-link glass-panel">
+			<div>
+				<h2 class="quick-link-title">User Access Control</h2>
+				<p class="quick-link-desc">Add users, assign roles, and toggle permissions for group management, generation, and vetting.</p>
+			</div>
+			<span class="quick-link-arrow">→</span>
+		</a>
 		<a href="/admin/subjects" class="quick-link glass-panel">
 			<div>
 				<h2 class="quick-link-title">Browse Subjects</h2>
@@ -186,15 +278,14 @@
 			</div>
 			<span class="quick-link-arrow">→</span>
 		</a>
-	</div>
+	</div> -->
 
 	<!-- Tabs -->
 	<div class="tabs animate-slide-up">
 		<button class="tab-btn" class:active={activeTab === 'overview'} onclick={() => activeTab = 'overview'}>Overview</button>
-		<button class="tab-btn" class:active={activeTab === 'users'} onclick={() => activeTab = 'users'}>All Users</button>
-		<button class="tab-btn" class:active={activeTab === 'vetters'} onclick={() => activeTab = 'vetters'}>Vetters</button>
-		<button class="tab-btn" class:active={activeTab === 'teachers'} onclick={() => activeTab = 'teachers'}>Teachers</button>
-		<button class="tab-btn" class:active={activeTab === 'settings'} onclick={() => activeTab = 'settings'}>Settings</button>
+		<button class="tab-btn" class:active={activeTab === 'users'} onclick={onUsersTabOpen}>All Users</button>
+		<button class="tab-btn" class:active={activeTab === 'teachers'} onclick={onTeachersTabOpen}>Teachers</button>
+		<button class="tab-btn" class:active={activeTab === 'vetters'} onclick={onVettersTabOpen}>Vetters</button>
 	</div>
 
 	<!-- Tab content -->
@@ -224,7 +315,7 @@
 				</div>
 
 				<!-- Top generators -->
-				{#if stats.users.length > 0}
+				<!-- {#if stats.users.length > 0}
 					<div class="section glass-panel">
 						<h2 class="section-title">Top Generators</h2>
 						<div class="leaderboard">
@@ -240,7 +331,7 @@
 							{/each}
 						</div>
 					</div>
-				{/if}
+				{/if} -->
 
 				<!-- Top vetters -->
 				{#if stats.vetters.length > 0}
@@ -255,8 +346,16 @@
 										<span class="lb-meta">{v.email}</span>
 									</div>
 									<div class="lb-badges">
-										<span class="badge green">{v.total_approved} approved</span>
-										<span class="badge red">{v.total_rejected} rejected</span>
+										<span class="badge green">{v.total_approved} 
+											
+												approved
+											
+										</span>
+										<span class="badge red">{v.total_rejected}
+											
+												rejected
+											
+										</span>
 									</div>
 								</div>
 							{/each}
@@ -283,11 +382,11 @@
 								</tr>
 							</thead>
 							<tbody>
-								{#each stats.users as u}
+								{#each visibleUsers as u}
 									<tr>
 										<td>
 											<div class="user-cell">
-												<span class="user-name">{u.full_name || u.username}</span>
+												<a class="user-name user-link" href={userDetailHref(u.user_id)}>{u.full_name || u.username}</a>
 												<span class="user-email">{u.email}</span>
 											</div>
 										</td>
@@ -305,10 +404,10 @@
 						</table>
 					</div>
 					<div class="admin-mobile-list mobile-only">
-						{#each stats.users as u}
+						{#each visibleUsers as u}
 							<div class="admin-mobile-card">
 								<div class="user-cell">
-									<span class="user-name">{u.full_name || u.username}</span>
+									<a class="user-name user-link" href={userDetailHref(u.user_id)}>{u.full_name || u.username}</a>
 									<span class="user-email">{u.email}</span>
 								</div>
 								<div><span class="role-tag {u.role}">{u.role}</span></div>
@@ -324,6 +423,12 @@
 							</div>
 						{/each}
 					</div>
+					{#if hasMoreUsers}
+						<div class="lazy-sentinel" use:usersInfiniteSentinel>
+							<span class="spinner tiny"></span>
+							Loading more users...
+						</div>
+					{/if}
 				</div>
 
 			{:else if activeTab === 'vetters'}
@@ -344,7 +449,7 @@
 									</tr>
 								</thead>
 								<tbody>
-									{#each stats.vetters as v}
+									{#each visibleVetters as v}
 										<tr>
 											<td>
 												<div class="user-cell">
@@ -362,7 +467,7 @@
 							</table>
 						</div>
 						<div class="admin-mobile-list mobile-only">
-							{#each stats.vetters as v}
+							{#each visibleVetters as v}
 								<div class="admin-mobile-card">
 									<div class="user-cell">
 										<span class="user-name">{v.full_name || v.username}</span>
@@ -377,6 +482,12 @@
 								</div>
 							{/each}
 						</div>
+						{#if hasMoreVetters}
+							<div class="lazy-sentinel" use:vettersInfiniteSentinel>
+								<span class="spinner tiny"></span>
+								Loading more vetters...
+							</div>
+						{/if}
 					{/if}
 				</div>
 			{:else if activeTab === 'teachers'}
@@ -386,14 +497,14 @@
 						<p class="empty-msg">No teachers found.</p>
 					{:else}
 						<div class="teacher-grid">
-							{#each teacherViewRows as row}
+							{#each visibleTeacherRows as row}
 								<div class="teacher-card">
 									<div class="teacher-head">
 										<div>
 											<p class="teacher-name">{row.teacher.full_name || row.teacher.username}</p>
 											<p class="teacher-email">{row.teacher.email}</p>
 										</div>
-										<span class="teacher-progress">{row.progress}% progress</span>
+										<!-- <span class="teacher-progress">{row.progress}% progress</span> -->
 									</div>
 									<div class="teacher-metrics">
 										<span>Subjects: <strong>{row.subjects.length}</strong></span>
@@ -410,50 +521,18 @@
 											{/each}
 										</div>
 									{:else}
-										<p class="empty-msg">No subjects assigned.</p>
+										<p class="empty-msg">No subjects created.</p>
 									{/if}
 								</div>
 							{/each}
 						</div>
-					{/if}
-				</div>
-			{:else if activeTab === 'settings'}
-				<div class="section glass-panel">
-					<h2 class="section-title">System Settings</h2>
-					
-					{#if settingsError}
-						<div class="settings-error">{settingsError}</div>
-					{/if}
-
-					<div class="settings-list">
-						<div class="setting-item">
-							<div class="setting-info">
-								<span class="setting-label">User Registration</span>
-								<span class="setting-desc">Allow new users to create accounts. When disabled, only existing users can log in.</span>
+						{#if hasMoreTeachers}
+							<div class="lazy-sentinel" use:teachersInfiniteSentinel>
+								<span class="spinner tiny"></span>
+								Loading more teachers...
 							</div>
-							<div class="setting-control">
-								<button 
-									class="toggle-btn" 
-									class:enabled={signupEnabled}
-									class:loading={settingsLoading}
-									onclick={toggleSignup}
-									disabled={settingsLoading}
-								>
-									{#if settingsLoading}
-										<span class="toggle-spinner"></span>
-									{:else}
-										<span class="toggle-track">
-											<span class="toggle-thumb"></span>
-										</span>
-										<span class="toggle-label">{signupEnabled ? 'Enabled' : 'Disabled'}</span>
-									{/if}
-								</button>
-								{#if settingsSaved}
-									<span class="saved-indicator">✓ Saved</span>
-								{/if}
-							</div>
-						</div>
-					</div>
+						{/if}
+					{/if}
 				</div>
 			{/if}
 		</div>
@@ -466,7 +545,6 @@
 		</div>
 	{/if}
 
-	<button class="logout-link" onclick={handleLogout}>Sign Out</button>
 </div>
 
 <style>
@@ -544,20 +622,8 @@
 		padding: 1rem 0.5rem;
 		gap: 0.2rem;
 		border-radius: 1rem;
-		/* Force blur effect - override mobile styles */
-		backdrop-filter: blur(10px) saturate(150%) brightness(1.02) !important;
-		-webkit-backdrop-filter: blur(10px) saturate(150%) brightness(1.02) !important;
-		background: linear-gradient(
-			145deg,
-			rgba(255,255,255,0.1) 0%,
-			rgba(255,255,255,0.05) 50%,
-			rgba(255,255,255,0.08) 100%
-		) !important;
-		box-shadow:
-			0 8px 40px rgba(0, 0, 0, 0.25),
-			inset 0 1px 1px rgba(255, 255, 255, 0.25),
-			inset 0 -1px 1px rgba(255, 255, 255, 0.08),
-			0 0 0 1px rgba(255, 255, 255, 0.12) !important;
+		background: color-mix(in srgb, var(--theme-surface) 88%, transparent);
+		border: 1px solid var(--theme-glass-border);
 	}
 
 	.stat-value {
@@ -573,14 +639,14 @@
 		letter-spacing: 0.05em;
 	}
 
-	.amber-text { color: #f59e0b; }
-	.blue-text { color: #60a5fa; }
+	.amber-text { color: color-mix(in srgb, #f59e0b 82%, var(--theme-text)); }
+	.blue-text { color: color-mix(in srgb, #60a5fa 82%, var(--theme-text)); }
 	.white-text { color: var(--theme-text); }
-	.green-text { color: #34d399; }
-	.emerald-text { color: #10b981; }
-	.red-text { color: #f87171; }
-	.orange-text { color: #fb923c; }
-	.purple-text { color: #a78bfa; }
+	.green-text { color: color-mix(in srgb, #34d399 84%, var(--theme-text)); }
+	.emerald-text { color: color-mix(in srgb, #10b981 84%, var(--theme-text)); }
+	.red-text { color: color-mix(in srgb, #f87171 82%, var(--theme-text)); }
+	.orange-text { color: color-mix(in srgb, #fb923c 84%, var(--theme-text)); }
+	.purple-text { color: color-mix(in srgb, #a78bfa 80%, var(--theme-text)); }
 
 	/* Role breakdown bar */
 	.role-bar {
@@ -660,14 +726,7 @@
 		border-radius: 0.75rem;
 		padding: 0.25rem;
 		border: 1px solid var(--theme-glass-border);
-		/* Force blur effect - override mobile styles */
-		backdrop-filter: blur(10px) saturate(150%) brightness(1.02) !important;
-		-webkit-backdrop-filter: blur(10px) saturate(150%) brightness(1.02) !important;
-		box-shadow:
-			0 8px 40px rgba(0, 0, 0, 0.25),
-			inset 0 1px 1px rgba(255, 255, 255, 0.25),
-			inset 0 -1px 1px rgba(255, 255, 255, 0.08),
-			0 0 0 1px rgba(255, 255, 255, 0.12) !important;
+		box-shadow: 0 8px 26px rgba(0, 0, 0, 0.12);
 	}
 
 	.tab-btn {
@@ -779,20 +838,9 @@
 		padding: 1.5rem;
 		border-radius: 1rem;
 		margin-bottom: 1rem;
-		/* Force blur effect - override mobile styles */
-		backdrop-filter: blur(10px) saturate(150%) brightness(1.02) !important;
-		-webkit-backdrop-filter: blur(10px) saturate(150%) brightness(1.02) !important;
-		background: linear-gradient(
-			145deg,
-			rgba(255,255,255,0.1) 0%,
-			rgba(255,255,255,0.05) 50%,
-			rgba(255,255,255,0.08) 100%
-		) !important;
-		box-shadow:
-			0 8px 40px rgba(0, 0, 0, 0.25),
-			inset 0 1px 1px rgba(255, 255, 255, 0.25),
-			inset 0 -1px 1px rgba(255, 255, 255, 0.08),
-			0 0 0 1px rgba(255, 255, 255, 0.12) !important;
+		background: color-mix(in srgb, var(--theme-surface) 90%, transparent);
+		border: 1px solid var(--theme-glass-border);
+		box-shadow: 0 8px 26px rgba(0, 0, 0, 0.12);
 	}
 
 	.section-title {
@@ -800,6 +848,25 @@
 		font-weight: 700;
 		margin: 0 0 1rem;
 		color: var(--theme-text);
+	}
+
+	.section-subtitle {
+		margin: 0 0 0.85rem;
+		color: var(--theme-text-muted);
+		line-height: 1.5;
+	}
+
+	.inline-nav-link {
+		display: inline-flex;
+		align-items: center;
+		padding: 0.55rem 0.8rem;
+		border-radius: 0.7rem;
+		text-decoration: none;
+		font-weight: 700;
+		font-size: 0.85rem;
+		color: #fbbf24;
+		background: rgba(245, 158, 11, 0.14);
+		border: 1px solid rgba(245, 158, 11, 0.3);
 	}
 
 	/* Summary grid */
@@ -893,12 +960,13 @@
 
 	.badge.green {
 		background: rgba(16, 185, 129, 0.15);
-		color: #6ee7b7;
+		color: color-mix(in srgb, #34d399 72%, var(--theme-text));
+
 	}
 
 	.badge.red {
 		background: rgba(239, 68, 68, 0.15);
-		color: #fca5a5;
+		color: color-mix(in srgb, #f87171 76%, var(--theme-text));
 	}
 
 	/* Data table */
@@ -923,13 +991,13 @@
 	}
 
 	.admin-mobile-card {
-		border: 1px solid rgba(255, 255, 255, 0.12);
+		border: 1px solid var(--theme-glass-border);
 		border-radius: 0.82rem;
 		padding: 0.68rem;
 		display: flex;
 		flex-direction: column;
 		gap: 0.45rem;
-		background: rgba(255, 255, 255, 0.04);
+		background: color-mix(in srgb, var(--theme-surface) 86%, transparent);
 	}
 
 	.admin-mobile-metrics {
@@ -991,6 +1059,15 @@
 		font-size: 0.85rem;
 	}
 
+	.user-link {
+		text-decoration: none;
+	}
+
+	.user-link:hover {
+		text-decoration: underline;
+		text-decoration-color: color-mix(in srgb, var(--theme-primary) 65%, transparent);
+	}
+
 	.user-email {
 		font-size: 0.72rem;
 		color: var(--theme-text-muted);
@@ -1006,18 +1083,18 @@
 	}
 
 	.role-tag.teacher {
-		background: rgba(59, 130, 246, 0.15);
-		color: #93c5fd;
+		background: color-mix(in srgb, rgba(59, 130, 246, 0.22) 72%, var(--theme-input-bg));
+		color: color-mix(in srgb, #60a5fa 78%, var(--theme-text));
 	}
 
 	.role-tag.vetter {
-		background: rgba(16, 185, 129, 0.15);
-		color: #6ee7b7;
+		background: color-mix(in srgb, rgba(16, 185, 129, 0.2) 72%, var(--theme-input-bg));
+		color: color-mix(in srgb, #34d399 78%, var(--theme-text));
 	}
 
 	.role-tag.admin {
-		background: rgba(245, 158, 11, 0.15);
-		color: #fbbf24;
+		background: color-mix(in srgb, rgba(245, 158, 11, 0.2) 72%, var(--theme-input-bg));
+		color: color-mix(in srgb, #f59e0b 80%, var(--theme-text));
 	}
 
 	.empty-msg {
@@ -1043,6 +1120,26 @@
 		border-top-color: #f59e0b;
 		border-radius: 50%;
 		animation: spin 0.6s linear infinite;
+	}
+
+	.spinner.tiny {
+		width: 0.95rem;
+		height: 0.95rem;
+		border-width: 2px;
+	}
+
+	.lazy-sentinel {
+		display: inline-flex;
+		align-items: center;
+		justify-content: center;
+		gap: 0.45rem;
+		margin: 0.25rem auto 0;
+		padding: 0.55rem 0.8rem;
+		border-radius: 999px;
+		color: var(--theme-text-muted);
+		font-size: 0.78rem;
+		border: 1px solid var(--theme-glass-border);
+		background: color-mix(in srgb, var(--theme-surface) 82%, transparent);
 	}
 
 	@keyframes spin {
@@ -1175,160 +1272,94 @@
 		}
 	}
 
-	/* Settings styles */
-	.settings-error {
-		background: rgba(220, 38, 38, 0.15);
-		border: 0.5px solid rgba(220, 38, 38, 0.3);
-		color: #f87171;
-		border-radius: 0.75rem;
-		padding: 0.65rem 0.85rem;
-		font-size: 0.85rem;
-		margin-bottom: 1rem;
+	:global([data-color-mode='light']) .stat-card,
+	:global([data-color-mode='light']) .section,
+	:global([data-color-mode='light']) .tabs,
+	:global([data-color-mode='light']) .admin-mobile-card {
+		background: #ffffff;
+		border-color: rgba(148, 163, 184, 0.32);
+		box-shadow: 0 12px 32px rgba(15, 23, 42, 0.08);
 	}
 
-	.settings-list {
-		display: flex;
-		flex-direction: column;
-		gap: 1rem;
+	:global([data-color-mode='light']) .badge.green {
+		background: rgba(16, 185, 129, 0.16);
+		color: #0f766e;
 	}
 
-	.setting-item {
-		display: flex;
-		justify-content: space-between;
-		align-items: center;
-		gap: 1.5rem;
-		padding: 1rem;
-		border-radius: 0.85rem;
-		background: rgba(255, 255, 255, 0.04);
-		border: 1px solid rgba(255, 255, 255, 0.08);
+	:global([data-color-mode='light']) .badge.red {
+		background: rgba(239, 68, 68, 0.14);
+		color: #b91c1c;
 	}
 
-	.setting-info {
-		display: flex;
-		flex-direction: column;
-		gap: 0.25rem;
-		flex: 1;
-	}
-
-	.setting-label {
-		font-size: 0.95rem;
-		font-weight: 600;
-		color: var(--theme-text);
-	}
-
-	.setting-desc {
-		font-size: 0.82rem;
-		color: var(--theme-text-muted);
-		line-height: 1.45;
-	}
-
-	.setting-control {
-		display: flex;
-		align-items: center;
-		gap: 0.75rem;
-	}
-
-	.toggle-btn {
-		display: flex;
-		align-items: center;
-		gap: 0.6rem;
-		padding: 0.5rem 0.85rem;
-		border: 1px solid rgba(255, 255, 255, 0.15);
-		border-radius: 999px;
-		background: rgba(255, 255, 255, 0.06);
-		color: var(--theme-text-muted);
-		font-size: 0.82rem;
-		font-weight: 600;
-		cursor: pointer;
-		transition: all 0.2s;
-		font-family: inherit;
-		min-width: 120px;
-		justify-content: center;
-	}
-
-	.toggle-btn:hover:not(:disabled) {
-		background: rgba(255, 255, 255, 0.1);
-		border-color: rgba(255, 255, 255, 0.25);
-	}
-
-	.toggle-btn:disabled {
-		opacity: 0.6;
-		cursor: not-allowed;
-	}
-
-	.toggle-btn.enabled {
-		background: rgba(16, 185, 129, 0.15);
-		border-color: rgba(16, 185, 129, 0.35);
+	:global([data-color-mode='dark']) .badge.green {
+		background: rgba(16, 185, 129, 0.22);
 		color: #6ee7b7;
 	}
 
-	.toggle-btn.enabled:hover:not(:disabled) {
-		background: rgba(16, 185, 129, 0.22);
+	:global([data-color-mode='dark']) .badge.red {
+		background: rgba(239, 68, 68, 0.22);
+		color: #fca5a5;
 	}
 
-	.toggle-track {
-		width: 32px;
-		height: 18px;
-		border-radius: 999px;
-		background: rgba(255, 255, 255, 0.2);
-		position: relative;
-		transition: background 0.2s;
+	:global([data-color-mode='light']) .green-text {
+		color: #0f766e;
 	}
 
-	.toggle-btn.enabled .toggle-track {
-		background: #10b981;
+	:global([data-color-mode='light']) .emerald-text {
+		color: #047857;
 	}
 
-	.toggle-thumb {
-		position: absolute;
-		top: 2px;
-		left: 2px;
-		width: 14px;
-		height: 14px;
-		border-radius: 50%;
-		background: white;
-		transition: transform 0.2s;
+	:global([data-color-mode='light']) .red-text {
+		color: #b91c1c;
 	}
 
-	.toggle-btn.enabled .toggle-thumb {
-		transform: translateX(14px);
+	:global([data-color-mode='light']) .orange-text {
+		color: #c2410c;
 	}
 
-	.toggle-label {
-		min-width: 55px;
+	:global([data-color-mode='dark']) .green-text {
+		color: #6ee7b7;
 	}
 
-	.toggle-spinner {
-		width: 1rem;
-		height: 1rem;
-		border: 2px solid rgba(255, 255, 255, 0.2);
-		border-top-color: var(--theme-primary);
-		border-radius: 50%;
-		animation: spin 0.6s linear infinite;
+	:global([data-color-mode='dark']) .emerald-text {
+		color: #34d399;
 	}
 
-	.saved-indicator {
-		font-size: 0.78rem;
-		font-weight: 600;
-		color: #10b981;
-		animation: fadeIn 0.2s ease;
+	:global([data-color-mode='dark']) .red-text {
+		color: #fca5a5;
 	}
 
-	@keyframes fadeIn {
-		from { opacity: 0; transform: translateX(-5px); }
-		to { opacity: 1; transform: translateX(0); }
+	:global([data-color-mode='dark']) .orange-text {
+		color: #fdba74;
 	}
 
-	@media (max-width: 480px) {
-		.setting-item {
-			flex-direction: column;
-			align-items: flex-start;
-			gap: 0.85rem;
-		}
+	:global([data-color-mode='light']) .role-tag.teacher {
+		background: rgba(37, 99, 235, 0.12);
+		color: #1d4ed8;
+	}
 
-		.setting-control {
-			width: 100%;
-			justify-content: flex-start;
-		}
+	:global([data-color-mode='light']) .role-tag.vetter {
+		background: rgba(5, 150, 105, 0.14);
+		color: #047857;
+	}
+
+	:global([data-color-mode='light']) .role-tag.admin {
+		background: rgba(217, 119, 6, 0.15);
+		color: #b45309;
+	}
+
+	:global([data-color-mode='dark']) .role-tag.teacher {
+		background: rgba(59, 130, 246, 0.24);
+		color: #bfdbfe;
+	}
+
+	:global([data-color-mode='dark']) .role-tag.vetter {
+		background: rgba(16, 185, 129, 0.24);
+		color: #a7f3d0;
+	}
+
+	:global([data-color-mode='dark']) .role-tag.admin {
+		background: rgba(245, 158, 11, 0.24);
+		color: #fde68a;
 	}
 </style>

@@ -1,5 +1,5 @@
 <script lang="ts">
-	import { onMount, onDestroy, tick } from 'svelte';
+	import { onMount, tick } from 'svelte';
 	import { browser } from '$app/environment';
 	import { goto, beforeNavigate } from '$app/navigation';
 	import { page } from '$app/stores';
@@ -39,6 +39,10 @@
 	const DEFAULT_BATCH_SIZE = 30;
 	const MIN_BATCH_SIZE = 30;
 	const MAX_BATCH_SIZE = 300;
+	const GENERATION_INTERPOLATION_TICK_MS = 300;
+	const GENERATION_INTERPOLATION_MIN_DURATION_MS = 12000;
+	const GENERATION_INTERPOLATION_PER_QUESTION_MS = 1600;
+	const GENERATION_INTERPOLATION_MAX_PROGRESS = 97;
 
 	function parseBatchSizeParam(raw: string | null) {
 		if (raw == null || raw.trim() === '') return DEFAULT_BATCH_SIZE;
@@ -219,6 +223,7 @@
 		return () => {
 			unsub();
 			unsubPage();
+			clearGenerationInterpolationTimer();
 			window.removeEventListener('beforeunload', handleBeforeUnload);
 			window.removeEventListener('mousemove', handlePointerMove);
 			window.removeEventListener('pointermove', handlePointerMove);
@@ -261,6 +266,12 @@
 	let docProcessingDetail = $state('');
 	let docProcessingDocument = $state('');
 	let docProcessingDocumentsTotal = $state(0);
+	let generationVisualTarget = $state(0);
+	let generationVisualCount = $state(0);
+	let generationInterpolatedProgress = $state<number | null>(null);
+	let generationInterpolationStartAt = 0;
+	let backendGenerationCount = 0;
+	let generationInterpolationTimer: ReturnType<typeof setInterval> | null = null;
 	let batchComplete = $state(false);
 	let showBatchCompleteNotice = $state(false);
 	let subjectDetail = $state<SubjectDetailResponse | null>(null);
@@ -334,6 +345,23 @@
 	let canMoveToNextAfterPostTrigger = $derived(
 		!postTriggerGenerationActive || postTriggerGeneratedCount >= POST_TRIGGER_UNLOCK_COUNT
 	);
+	let effectiveGenerationProgress = $derived.by(() => {
+		if (docProcessingProgress !== null) {
+			return Math.max(0, Math.min(100, Math.round(docProcessingProgress)));
+		}
+		if (generationInterpolatedProgress !== null) {
+			return Math.max(0, Math.min(100, Math.round(generationInterpolatedProgress)));
+		}
+		return 0;
+	});
+	let effectiveGenerationCount = $derived.by(() => {
+		if (generationVisualTarget <= 0) return 0;
+		return Math.max(0, Math.min(generationVisualTarget, generationVisualCount));
+	});
+	let generationCountLabel = $derived.by(() => {
+		if (generationVisualTarget <= 0) return '';
+		return `${effectiveGenerationCount}/${generationVisualTarget}`;
+	});
 	let voiceRecorderTitle = $derived.by(() => {
 		if (!voiceAction) return '';
 		if (voiceAction.kind === 'reject') return 'Reject Question';
@@ -539,6 +567,7 @@
 		postTriggerGenerationActive = false;
 		postTriggerBaseQuestionCount = 0;
 		generating = true;
+		beginGenerationProgress(generationBatchSize);
 		genCount = 0;
 		genMessage = 'Checking document readiness...';
 		resetDocumentProcessingState();
@@ -558,6 +587,7 @@
 			} else {
 				await generateBatch(genCtx, generationBatchSize, topicId || undefined);
 			}
+			finalizeGenerationProgress();
 
 			// Arm threshold: next batch triggers when at least 25 current questions are vetted
 			if (!batchComplete && allowAutoGeneration) armNextGen();
@@ -571,6 +601,7 @@
 		} finally {
 			generating = false;
 			genMessage = '';
+			resetGenerationProgress();
 		}
 	}
 
@@ -603,10 +634,12 @@
 					throw new Error(evt.message || 'Generation failed');
 				}
 				applyGenerationEvent(evt);
+				syncGenerationProgressWithBackend(evt);
 				if (evt.message) genMessage = evt.message;
 				if (evt.question) {
 					resetDocumentProcessingState();
 					genCount++;
+					generationVisualCount = Math.max(generationVisualCount, Math.min(generationVisualTarget, genCount));
 					firstQuestionGenerated = true;
 					provisionalSubject = false;
 					// genMessage = `Generated ${genCount} question${genCount > 1 ? 's' : ''} in background...`;
@@ -684,6 +717,8 @@
 		postTriggerGenerationActive = true;
 		postTriggerBaseQuestionCount = questions.length;
 		generating = true;
+		beginGenerationProgress(generationBatchSize);
+		genCount = 0;
 		genMessage = 'Checking document readiness...';
 		resetDocumentProcessingState();
 		try {
@@ -702,6 +737,7 @@
 			} else {
 				await generateBatch(genCtx, generationBatchSize, topicId || undefined);
 			}
+			finalizeGenerationProgress();
 			if (!batchComplete) armNextGen();
 		} catch (e: unknown) {
 			postTriggerGenerationActive = false;
@@ -713,6 +749,7 @@
 		} finally {
 			generating = false;
 			genMessage = '';
+			resetGenerationProgress();
 			if (!postTriggerGenerationActive) {
 				postTriggerBaseQuestionCount = 0;
 			}
@@ -726,6 +763,7 @@
 		genAbortController?.abort();
 		genAbortController = null;
 		resetDocumentProcessingState();
+		resetGenerationProgress();
 		if (subjectId) cancelGeneration(subjectId);
 	}
 
@@ -740,6 +778,82 @@
 
 	function sleep(ms: number) {
 		return new Promise((resolve) => setTimeout(resolve, ms));
+	}
+
+	function clearGenerationInterpolationTimer() {
+		if (!generationInterpolationTimer) return;
+		clearInterval(generationInterpolationTimer);
+		generationInterpolationTimer = null;
+	}
+
+	function beginGenerationProgress(targetCount: number) {
+		generationVisualTarget = Math.max(1, targetCount || generationBatchSize || 1);
+		generationVisualCount = 0;
+		backendGenerationCount = 0;
+		generationInterpolatedProgress = 0;
+		generationInterpolationStartAt = Date.now();
+		clearGenerationInterpolationTimer();
+		generationInterpolationTimer = setInterval(() => {
+			if (!generating) return;
+			if (docProcessingProgress !== null) return;
+
+			const elapsedMs = Date.now() - generationInterpolationStartAt;
+			const estimatedDurationMs = Math.max(
+				GENERATION_INTERPOLATION_MIN_DURATION_MS,
+				generationVisualTarget * GENERATION_INTERPOLATION_PER_QUESTION_MS
+			);
+			const elapsedRatio = Math.max(0, Math.min(1, elapsedMs / estimatedDurationMs));
+			const timeBasedCount = Math.floor(elapsedRatio * generationVisualTarget);
+			const nextCount = Math.max(generationVisualCount, backendGenerationCount, timeBasedCount);
+			generationVisualCount = Math.min(generationVisualTarget, nextCount);
+
+			const countBasedProgress = (generationVisualCount / Math.max(1, generationVisualTarget)) * 100;
+			const nextProgress = Math.min(
+				GENERATION_INTERPOLATION_MAX_PROGRESS,
+				Math.max(generationInterpolatedProgress ?? 0, countBasedProgress)
+			);
+			generationInterpolatedProgress = Math.round(nextProgress);
+		}, GENERATION_INTERPOLATION_TICK_MS);
+	}
+
+	function finalizeGenerationProgress() {
+		const target = Math.max(1, generationVisualTarget);
+		backendGenerationCount = Math.max(backendGenerationCount, target);
+		generationVisualCount = target;
+		generationInterpolatedProgress = 100;
+	}
+
+	function resetGenerationProgress() {
+		clearGenerationInterpolationTimer();
+		generationVisualTarget = 0;
+		generationVisualCount = 0;
+		generationInterpolatedProgress = null;
+		generationInterpolationStartAt = 0;
+		backendGenerationCount = 0;
+	}
+
+	function syncGenerationProgressWithBackend(evt: GenerationEvent) {
+		if (generationVisualTarget <= 0) return;
+
+		if (evt.questions_generated !== undefined && Number.isFinite(evt.questions_generated)) {
+			backendGenerationCount = Math.max(backendGenerationCount, Math.max(0, evt.questions_generated));
+		}
+		if (evt.question) {
+			backendGenerationCount = Math.max(backendGenerationCount, genCount + 1);
+		}
+
+		generationVisualCount = Math.min(
+			generationVisualTarget,
+			Math.max(generationVisualCount, backendGenerationCount)
+		);
+
+		if (docProcessingProgress === null && evt.progress !== undefined) {
+			const normalized = Math.max(0, Math.min(100, Math.round(evt.progress)));
+			generationInterpolatedProgress = Math.min(
+				GENERATION_INTERPOLATION_MAX_PROGRESS,
+				Math.max(generationInterpolatedProgress ?? 0, normalized)
+			);
+		}
 	}
 
 	async function ensureDocumentsReadyForGeneration() {
@@ -800,6 +914,7 @@
 		// stopBackgroundGen();
 		generating = false;
 		genMessage = '';
+		resetGenerationProgress();
 		nextGenAt = 0;
 		
 		// Always clear progress when completing batch
@@ -1230,22 +1345,23 @@
 		</div>
 	{:else if questions.length === 0 && generating}
 		<div class="center-state">
-			<div class="spinner"></div>
 			<p>{genMessage || 'Generating questions…'}</p>
-			{#if docProcessingProgress !== null}
-				<div class="gen-progress-card standalone">
-					<div class="gen-progress-head">
-						<!-- <span class="gen-progress-label">{docProcessingDocument || 'Document processing'}</span> -->
-						<!-- <span class="gen-progress-value">{docProcessingProgress}%</span> -->
-					</div>
-					<div class="gen-progress-track">
-						<div class="gen-progress-fill" style:width="{docProcessingProgress}%"></div>
-					</div>
-					{#if docProcessingDetail}
-						<!-- <p class="gen-progress-detail">{docProcessingDetail}</p> -->
+			<div class="gen-progress-card standalone">
+				<div class="gen-progress-head">
+					{#if generationCountLabel}
+						<span class="gen-progress-label">Generated {generationCountLabel}</span>
+					{:else}
+						<span class="gen-progress-label">Preparing generation</span>
 					{/if}
+					<span class="gen-progress-value">{effectiveGenerationProgress}%</span>
 				</div>
-			{/if}
+				<div class="gen-progress-track">
+					<div class="gen-progress-fill" style:width="{effectiveGenerationProgress}%"></div>
+				</div>
+				{#if docProcessingDetail}
+					<p class="gen-progress-detail">{docProcessingDetail}</p>
+				{/if}
+			</div>
 			<p class="sub-text">Please Wait...</p>
 			<button class="glass-btn secondary-btn" onclick={promptContinueGenerationInBackground} disabled={handingOffGeneration}>
 				{handingOffGeneration ? 'Switching…' : 'Generate In Background'}
@@ -1281,22 +1397,19 @@
 				<div class="gen-dot"></div>
 				<span class="gen-text">{genMessage || 'Generating...'}</span>
 			</div>
-			{#if docProcessingProgress !== null}
-				<div class="gen-progress-head">
-					<!-- <span class="gen-progress-label">
-						{docProcessingDocument || 'Document processing'}
-						{#if docProcessingDocumentsTotal > 1}
-							({docProcessingDocumentsTotal} docs)
-						{/if}
-					</span> -->
-					<span class="gen-progress-value">{docProcessingProgress}%</span>
-				</div>
-				<div class="gen-progress-track">
-					<div class="gen-progress-fill" style:width="{docProcessingProgress}%"></div>
-				</div>
-				{#if docProcessingDetail}
-					<p class="gen-progress-detail">{docProcessingDetail}</p>
+			<div class="gen-progress-head">
+				{#if generationCountLabel}
+					<span class="gen-progress-label">Generated {generationCountLabel}</span>
+				{:else}
+					<span class="gen-progress-label">Preparing generation</span>
 				{/if}
+				<span class="gen-progress-value">{effectiveGenerationProgress}%</span>
+			</div>
+			<div class="gen-progress-track">
+				<div class="gen-progress-fill" style:width="{effectiveGenerationProgress}%"></div>
+			</div>
+			{#if docProcessingDetail}
+				<p class="gen-progress-detail">{docProcessingDetail}</p>
 			{/if}
 		</div>
 	{/if}
@@ -2346,7 +2459,7 @@
 		gap: 0.75rem;
 	}
 
-	/* .gen-progress-label,
+	.gen-progress-label,
 	.gen-progress-value {
 		font-size: 0.78rem;
 		color: var(--theme-text-muted);
@@ -2355,7 +2468,7 @@
 	.gen-progress-label {
 		font-weight: 600;
 		word-break: break-word;
-	} */
+	}
 
 	.gen-progress-value {
 		font-variant-numeric: tabular-nums;

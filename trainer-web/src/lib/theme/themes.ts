@@ -70,7 +70,7 @@ export const themes: Record<ThemeName, ThemeConfig> = {
 		name: 'water',
 		label: 'Ocean',
 		icon: '🌊',
-		bgImage: '/theme-pictures/deep-ocean.webp',
+		bgImage: '/theme-pictures/deep-ocean-new.webp',
 		wallpaperOverlay:
 			'linear-gradient(180deg, rgba(0,0,0,0.1) 0%, rgba(0,0,0,0.0) 50%, rgba(0,0,0,0.15) 100%)',
 		bg: [
