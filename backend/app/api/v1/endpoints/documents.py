@@ -156,7 +156,7 @@ async def delete_document(
     db: AsyncSession = Depends(get_db),
 ):
     """
-    Delete a document and all associated data.
+    Delete a document while keeping generated questions.
     """
     document_service = DocumentService(db)
     

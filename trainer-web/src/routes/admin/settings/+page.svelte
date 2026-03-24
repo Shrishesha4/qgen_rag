@@ -58,13 +58,13 @@
 </svelte:head>
 
 <div class="page">
-	<div class="header glass-panel">
+	<!-- <div class="header glass-panel">
 		<div>
 			<p class="eyebrow">Admin Console</p>
 			<h1 class="title">Settings</h1>
 			<p class="subtitle">Manage platform-wide controls for account access and onboarding.</p>
 		</div>
-	</div>
+	</div> -->
 
 	{#if settingsError}
 		<div class="settings-error" role="alert">{settingsError}</div>
@@ -120,7 +120,7 @@
 		gap: 1rem;
 	}
 
-	.header {
+	/* .header {
 		padding: 1rem;
 		border-radius: 1rem;
 	}
@@ -145,7 +145,7 @@
 		margin: 0.45rem 0 0;
 		color: var(--theme-text-muted);
 		line-height: 1.55;
-	}
+	} */
 
 	.section {
 		padding: 1.2rem;
@@ -332,7 +332,6 @@
 		}
 	}
 
-	:global([data-color-mode='light']) .header,
 	:global([data-color-mode='light']) .section,
 	:global([data-color-mode='light']) .setting-item,
 	:global([data-color-mode='light']) .center-state {
@@ -340,6 +339,15 @@
 		border-color: rgba(148, 163, 184, 0.32);
 		box-shadow: 0 12px 32px rgba(15, 23, 42, 0.08);
 	}
+
+	/* :global([data-color-mode='light']) .header,
+	:global([data-color-mode='light']) .section,
+	:global([data-color-mode='light']) .setting-item,
+	:global([data-color-mode='light']) .center-state {
+		background: #ffffff;
+		border-color: rgba(148, 163, 184, 0.32);
+		box-shadow: 0 12px 32px rgba(15, 23, 42, 0.08);
+	} */
 
 	:global([data-color-mode='light']) .toggle-btn {
 		background: #f8fafc;

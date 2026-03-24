@@ -68,7 +68,9 @@ class Document(Base):
     
     # Relationships (user is cross-database, no ORM relationship)
     chunks = relationship("DocumentChunk", back_populates="document", cascade="all, delete-orphan")
-    questions = relationship("Question", back_populates="document", cascade="all, delete-orphan")
+    # Keep generated questions when a document is removed.
+    # DB FK on questions.document_id uses ON DELETE SET NULL.
+    questions = relationship("Question", back_populates="document", passive_deletes=True)
     generation_sessions = relationship("GenerationSession", back_populates="document", cascade="all, delete-orphan")
     topic = relationship("Topic", back_populates="documents")
     
