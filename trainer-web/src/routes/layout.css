@@ -1591,3 +1591,32 @@ a:hover {
 :root[data-color-mode='dark'] .glass-input::placeholder {
   color: var(--theme-text-secondary) !important;
 }
+
+/* ── Admin frosted card consistency (light mode only) ── */
+:root[data-color-mode='light'] .app-shell.admin-ui .glass-panel,
+:root[data-color-mode='light'] .app-shell.admin-ui .glass-card,
+:root[data-color-mode='light'] .app-shell.admin-ui .section,
+:root[data-color-mode='light'] .app-shell.admin-ui .stat-card,
+:root[data-color-mode='light'] .app-shell.admin-ui .meta-card,
+:root[data-color-mode='light'] .app-shell.admin-ui .mobile-card,
+:root[data-color-mode='light'] .app-shell.admin-ui .admin-mobile-card,
+:root[data-color-mode='light'] .app-shell.admin-ui .topic-card,
+:root[data-color-mode='light'] .app-shell.admin-ui .teacher-card,
+:root[data-color-mode='light'] .app-shell.admin-ui .subject-card,
+:root[data-color-mode='light'] .app-shell.admin-ui .table-wrap,
+:root[data-color-mode='light'] .app-shell.admin-ui .header,
+:root[data-color-mode='light'] .app-shell.admin-ui .toolbar,
+:root[data-color-mode='light'] .app-shell.admin-ui .center-state {
+  background: linear-gradient(
+    145deg,
+    rgba(255, 255, 255, 0.44) 0%,
+    rgba(255, 255, 255, 0.36) 52%,
+    rgba(255, 255, 255, 0.3) 100%
+  ) !important;
+  border: 1px solid rgba(255, 255, 255, 0.58) !important;
+  box-shadow:
+    0 14px 34px rgba(15, 23, 42, 0.12),
+    inset 0 1px 0 rgba(255, 255, 255, 0.65) !important;
+  backdrop-filter: blur(14px) saturate(165%) brightness(1.04) !important;
+  -webkit-backdrop-filter: blur(14px) saturate(165%) brightness(1.04) !important;
+}

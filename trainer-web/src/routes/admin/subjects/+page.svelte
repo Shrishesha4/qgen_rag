@@ -134,6 +134,19 @@
 	function updateEditableCode(event: Event) {
 		editingCode = ((event.currentTarget as HTMLElement).textContent || '').replace(/\u00a0/g, ' ');
 	}
+
+	function seedEditableContent(node: HTMLElement, value: string) {
+		node.textContent = value;
+		let lastValue = value;
+		return {
+			update(nextValue: string) {
+				if (nextValue !== lastValue) {
+					lastValue = nextValue;
+					node.textContent = nextValue;
+				}
+			}
+		};
+	}
 </script>
 
 <svelte:head>
@@ -178,7 +191,7 @@
 	</div>
 
 	{#if loading}
-		<div class="center-state">
+		<div class="center-state loading-state">
 			<div class="spinner"></div>
 			<p>Loading subjects…</p>
 		</div>
@@ -213,15 +226,17 @@
 											contenteditable="plaintext-only"
 											role="textbox"
 											tabindex="0"
+											use:seedEditableContent={subject.name}
 											oninput={updateEditableName}
-										>{editingName}</span>
+										></span>
 										<span
 											class="subject-code subject-code-editable"
 											contenteditable="plaintext-only"
 											role="textbox"
 											tabindex="0"
+											use:seedEditableContent={subject.code}
 											oninput={updateEditableCode}
-										>{editingCode}</span>
+										></span>
 										<div class="inline-actions">
 											<button
 												type="button"
@@ -287,15 +302,17 @@
 								contenteditable="plaintext-only"
 								role="textbox"
 								tabindex="0"
+								use:seedEditableContent={subject.name}
 								oninput={updateEditableName}
-							>{editingName}</span>
+							></span>
 							<span
 								class="subject-code subject-code-editable"
 								contenteditable="plaintext-only"
 								role="textbox"
 								tabindex="0"
+								use:seedEditableContent={subject.code}
 								oninput={updateEditableCode}
-							>{editingCode}</span>
+							></span>
 							<div class="inline-actions">
 								<button
 									type="button"
@@ -662,6 +679,17 @@
 		text-align: center;
 		color: var(--theme-text-muted);
 		border-radius: 1rem;
+	}
+
+	.center-state.loading-state {
+		min-height: 6rem;
+		width: 100%;
+		justify-content: center;
+		background: transparent !important;
+		border: none !important;
+		box-shadow: none !important;
+		backdrop-filter: none !important;
+		-webkit-backdrop-filter: none !important;
 	}
 
 	.spinner {

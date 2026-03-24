@@ -353,6 +353,9 @@
 
 	.table-wrap {
 		overflow-x: auto;
+		border-radius: 0.95rem;
+		border: 1px solid var(--theme-glass-border);
+		background: color-mix(in srgb, var(--theme-surface) 88%, transparent);
 	}
 
 	.desktop-only {
@@ -375,6 +378,7 @@
 		text-align: left;
 		font-size: 0.86rem;
 		border-bottom: 1px solid rgba(148, 163, 184, 0.24);
+		color: var(--theme-text);
 	}
 
 	.data-table th {
@@ -397,8 +401,15 @@
 	}
 
 	.subject-code {
-		font-size: 0.78rem;
-		color: var(--theme-text-muted);
+		font-size: 0.72rem;
+		font-weight: 700;
+		display: inline-flex;
+		align-items: center;
+		width: fit-content;
+		padding: 0.2rem 0.45rem;
+		border-radius: 999px;
+		background: color-mix(in srgb, rgba(59, 130, 246, 0.2) 70%, var(--theme-input-bg));
+		color: color-mix(in srgb, #60a5fa 78%, var(--theme-text));
 	}
 
 	.num {
@@ -536,5 +547,29 @@
 	:global([data-color-mode='light']) .data-table th,
 	:global([data-color-mode='light']) .data-table td {
 		border-bottom-color: rgba(148, 163, 184, 0.35);
+	}
+
+	:global([data-color-mode='light']) .table-wrap {
+		background: rgba(255, 255, 255, 0.8);
+		border-color: rgba(148, 163, 184, 0.38);
+	}
+
+	:global([data-color-mode='light']) .subject-code {
+		background: rgba(59, 130, 246, 0.14);
+		color: #1d4ed8;
+	}
+
+	:global([data-color-mode='dark']) .table-wrap {
+		background: rgba(248, 250, 252, 0.1);
+		border-color: rgba(203, 213, 225, 0.28);
+	}
+
+	:global([data-color-mode='dark']) .data-table td {
+		color: #e5e7eb;
+	}
+
+	:global([data-color-mode='dark']) .subject-code {
+		background: rgba(96, 165, 250, 0.24);
+		color: #bfdbfe;
 	}
 </style>
