@@ -49,7 +49,7 @@
 
 	let pathname = $derived($page.url.pathname);
 	const currentYear = $derived.by(() => new Date().getFullYear());
-	const hideGlobalBackPrefixes = ['/teacher/train/loop'];
+	const hideGlobalBackPrefixes = ['/teacher/train/loop', '/privacy-policy', '/disclaimer'];
 	let showDesktopChrome = $derived.by(() => {
 		if (pathname.includes('/login')) return false;
 		return pathname.startsWith('/teacher') || pathname.startsWith('/vetter') || pathname.startsWith('/admin');
@@ -245,13 +245,12 @@
 				</div>
 				<div class="copyright-row">
 					<p class="drawer-copyright-text">
-						2023 © Viana Soft Private Limited
+						2023 © Vianasoft Pvt Ltd
 					</p>
-					<!-- <p class="drawer-copyright-text">
-						{currentYear} © Viana Soft Private Limited
-					</p> -->
-					<!-- svelte-ignore a11y_invalid_attribute -->
-					<a href="#" class="privacy-link">Privacy Policy</a>
+					<div class="legal-links">
+						<a href="/disclaimer" class="privacy-link">Disclaimer</a>
+						<a href="/privacy-policy" class="privacy-link">Privacy Policy</a>
+					</div>
 				</div>
 			</div>
 		</aside>
@@ -597,6 +596,13 @@
 			font-size: 0.65rem;
 			color: var(--theme-text-muted);
 			line-height: 1.4;
+		}
+
+		.legal-links {
+			display: flex;
+			align-items: center;
+			gap: 0.5rem;
+			flex-wrap: wrap;
 		}
 
 		.privacy-link {
