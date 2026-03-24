@@ -146,6 +146,22 @@ class Settings(BaseSettings):
     # Queue + Worker Controls
     QUEUE_MAX_RETRIES: int = Field(default=3)
     QUEUE_DEAD_LETTER_PREFIX: str = Field(default="dlq")
+    REDIS_QUEUE_ENABLED: bool = Field(default=True)
+    REDIS_QUEUE_STATUS_TTL_SECONDS: int = Field(default=3600)
+    REDIS_QUEUE_RUNNING_TTL_SECONDS: int = Field(default=3600)
+
+    # Database Pool Controls
+    API_WORKERS: int = Field(default=1)
+    DB_POOL_SIZE_BASE: int = Field(default=10)
+    DB_POOL_MAX_OVERFLOW: int = Field(default=5)
+    DB_POOL_TIMEOUT: int = Field(default=120)
+    DB_POOL_RECYCLE: int = Field(default=1800)
+    DB_ENABLE_POOL_MONITORING: bool = Field(default=True)
+
+    # LLM Circuit Breaker Controls
+    LLM_CIRCUIT_BREAKER_ENABLED: bool = Field(default=True)
+    LLM_CIRCUIT_FAILURE_THRESHOLD: int = Field(default=5)
+    LLM_CIRCUIT_RECOVERY_TIMEOUT: int = Field(default=30)
 
     # Generation Controls
     ENABLE_TWO_PASS_GENERATION: bool = Field(default=False)

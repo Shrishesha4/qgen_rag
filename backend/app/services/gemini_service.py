@@ -16,6 +16,9 @@ from app.services.llm_service import (
     LLMConnectionError,
     LLMTimeoutError,
     LLMResponseError,
+    _call_with_breaker,
+    _ensure_circuit_closed,
+    _record_circuit_failure,
 )
 
 
@@ -217,6 +220,7 @@ class GeminiService:
         max_tokens: int = 5000,
     ) -> AsyncGenerator[str, None]:
         """Generate a streaming response from Gemini."""
+        await _ensure_circuit_closed("gemini", "generate_stream")
         from google.genai import types
         
         client = self._get_client()
@@ -251,6 +255,7 @@ class GeminiService:
                     yield chunk.text
                     
         except Exception as e:
+            _record_circuit_failure("gemini", "generate_stream", e)
             logger.error(f"Gemini streaming error: {e}")
             raise GeminiResponseError(f"Streaming failed: {e}") from e
 
@@ -262,97 +267,100 @@ class GeminiService:
         max_tokens: int = 8192,
     ) -> Dict[str, Any]:
         """Generate a JSON response from Gemini using structured output."""
-        from google.genai import types
-        
-        client = self._get_client()
-        
-        # Build contents with system instruction
-        full_prompt = prompt
-        if system_prompt:
-            full_prompt = f"System Instructions:\n{system_prompt}\n\nUser Request:\n{prompt}"
-        
-        contents = [types.Content(
-            role="user",
-            parts=[types.Part(text=full_prompt)]
-        )]
-        
-        # Configure generation with JSON response format
-        config = types.GenerateContentConfig(
-            temperature=temperature,
-            max_output_tokens=max_tokens,
-            candidate_count=1,
-            safety_settings=self._get_safety_settings(),
-            response_mime_type="application/json",  # Force JSON output
-        )
-        
-        # Retry logic
-        max_retries = 3
-        last_error = None
-        
-        for attempt in range(max_retries):
-            try:
-                response = await client.aio.models.generate_content(
-                    model=self.model_name,
-                    contents=contents,
-                    config=config,
-                )
-                
-                # Check for blocked content
-                if not response.candidates:
-                    if hasattr(response, 'prompt_feedback') and response.prompt_feedback:
-                        block_reason = getattr(response.prompt_feedback, 'block_reason', None)
-                        if block_reason:
-                            raise GeminiResponseError(f"Content blocked: {block_reason}")
-                    raise GeminiResponseError("No response generated")
-                
-                # Extract text from response
-                candidate = response.candidates[0]
-                finish_reason = getattr(candidate, 'finish_reason', None)
-                if finish_reason and str(finish_reason).upper() == "SAFETY":
-                    raise GeminiResponseError("Response blocked for safety reasons")
-                
-                if not candidate.content or not candidate.content.parts:
-                    raise GeminiResponseError("Empty response from Gemini")
-                
-                response_text = candidate.content.parts[0].text
-                
-                # Parse and return JSON - should be valid due to response_mime_type
+        async def _operation() -> Dict[str, Any]:
+            from google.genai import types
+            
+            client = self._get_client()
+            
+            # Build contents with system instruction
+            full_prompt = prompt
+            if system_prompt:
+                full_prompt = f"System Instructions:\n{system_prompt}\n\nUser Request:\n{prompt}"
+            
+            contents = [types.Content(
+                role="user",
+                parts=[types.Part(text=full_prompt)]
+            )]
+            
+            # Configure generation with JSON response format
+            config = types.GenerateContentConfig(
+                temperature=temperature,
+                max_output_tokens=max_tokens,
+                candidate_count=1,
+                safety_settings=self._get_safety_settings(),
+                response_mime_type="application/json",  # Force JSON output
+            )
+            
+            # Retry logic
+            max_retries = 3
+            last_error = None
+            
+            for attempt in range(max_retries):
                 try:
-                    return json.loads(response_text)
-                except json.JSONDecodeError:
-                    # Fallback: try to extract JSON object
-                    return self._extract_json_object(response_text)
+                    response = await client.aio.models.generate_content(
+                        model=self.model_name,
+                        contents=contents,
+                        config=config,
+                    )
                     
-            except json.JSONDecodeError as e:
-                last_error = e
-                if attempt < max_retries - 1:
-                    logger.warning(f"JSON parse error (attempt {attempt + 1}): {e}, retrying...")
-                    await asyncio.sleep(1)
-                    continue
-                raise
-                
-            except Exception as e:
-                last_error = e
-                error_str = str(e).lower()
-                
-                if "429" in str(e) or "quota" in error_str or "rate" in error_str:
+                    # Check for blocked content
+                    if not response.candidates:
+                        if hasattr(response, 'prompt_feedback') and response.prompt_feedback:
+                            block_reason = getattr(response.prompt_feedback, 'block_reason', None)
+                            if block_reason:
+                                raise GeminiResponseError(f"Content blocked: {block_reason}")
+                        raise GeminiResponseError("No response generated")
+                    
+                    # Extract text from response
+                    candidate = response.candidates[0]
+                    finish_reason = getattr(candidate, 'finish_reason', None)
+                    if finish_reason and str(finish_reason).upper() == "SAFETY":
+                        raise GeminiResponseError("Response blocked for safety reasons")
+                    
+                    if not candidate.content or not candidate.content.parts:
+                        raise GeminiResponseError("Empty response from Gemini")
+                    
+                    response_text = candidate.content.parts[0].text
+                    
+                    # Parse and return JSON - should be valid due to response_mime_type
+                    try:
+                        return json.loads(response_text)
+                    except json.JSONDecodeError:
+                        # Fallback: try to extract JSON object
+                        return self._extract_json_object(response_text)
+                        
+                except json.JSONDecodeError as e:
+                    last_error = e
                     if attempt < max_retries - 1:
-                        wait_time = (attempt + 1) * 5
-                        logger.warning(f"Gemini rate limited, waiting {wait_time}s...")
-                        await asyncio.sleep(wait_time)
+                        logger.warning(f"JSON parse error (attempt {attempt + 1}): {e}, retrying...")
+                        await asyncio.sleep(1)
                         continue
-                    raise GeminiRateLimitError(f"Rate limit exceeded: {e}") from e
-                
-                if attempt < max_retries - 1:
-                    logger.warning(f"Gemini error (attempt {attempt + 1}): {e}, retrying...")
-                    await asyncio.sleep(1 * (attempt + 1))
-                    continue
-                
-                if isinstance(e, GeminiError):
                     raise
-                raise GeminiResponseError(f"JSON generation failed: {e}") from e
-        
-        raise last_error or GeminiResponseError("JSON generation failed after retries")
+                    
+                except Exception as e:
+                    last_error = e
+                    error_str = str(e).lower()
+                    
+                    if "429" in str(e) or "quota" in error_str or "rate" in error_str:
+                        if attempt < max_retries - 1:
+                            wait_time = (attempt + 1) * 5
+                            logger.warning(f"Gemini rate limited, waiting {wait_time}s...")
+                            await asyncio.sleep(wait_time)
+                            continue
+                        raise GeminiRateLimitError(f"Rate limit exceeded: {e}") from e
+                    
+                    if attempt < max_retries - 1:
+                        logger.warning(f"Gemini error (attempt {attempt + 1}): {e}, retrying...")
+                        await asyncio.sleep(1 * (attempt + 1))
+                        continue
+                    
+                    if isinstance(e, GeminiError):
+                        raise
+                    raise GeminiResponseError(f"JSON generation failed: {e}") from e
+            
+            raise last_error or GeminiResponseError("JSON generation failed after retries")
+
+        return await _call_with_breaker("gemini", "generate_json", _operation)
     
     def _extract_json_object(self, text: str) -> Dict[str, Any]:
         """Extract the first valid JSON object or array from text."""

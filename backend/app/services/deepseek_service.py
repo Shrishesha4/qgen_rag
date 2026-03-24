@@ -19,6 +19,9 @@ from app.services.llm_service import (
     LLMConnectionError,
     LLMTimeoutError,
     LLMResponseError,
+    _call_with_breaker,
+    _ensure_circuit_closed,
+    _record_circuit_failure,
 )
 
 
@@ -282,6 +285,7 @@ class DeepSeekService:
         max_tokens: int = 5000,
     ) -> AsyncGenerator[str, None]:
         """Generate a streaming response from DeepSeek (SSE)."""
+        await _ensure_circuit_closed("deepseek", "generate_stream")
         messages = []
         if system_prompt:
             messages.append({"role": "system", "content": system_prompt})
@@ -322,6 +326,7 @@ class DeepSeekService:
                         except json.JSONDecodeError:
                             continue
         except Exception as e:
+            _record_circuit_failure("deepseek", "generate_stream", e)
             logger.error(f"DeepSeek streaming error: {e}")
             raise DeepSeekResponseError(f"Streaming failed: {e}") from e
 
@@ -337,126 +342,129 @@ class DeepSeekService:
         max_tokens: int = 8192,
     ) -> Dict[str, Any]:
         """Generate a JSON response from DeepSeek with retry logic."""
-        json_system = (system_prompt or "") + (
-            "\n\nIMPORTANT: You must respond with ONLY a valid JSON object. "
-            "Do NOT include any prose, commentary, or markdown code fences (```json) before or after the JSON. "
-            "Output ALL fields specified in the format above, including the 'explanation' field. "
-            "Start your response with { and end with }."
-        )
+        async def _operation() -> Dict[str, Any]:
+            json_system = (system_prompt or "") + (
+                "\n\nIMPORTANT: You must respond with ONLY a valid JSON object. "
+                "Do NOT include any prose, commentary, or markdown code fences (```json) before or after the JSON. "
+                "Output ALL fields specified in the format above, including the 'explanation' field. "
+                "Start your response with { and end with }."
+            )
 
-        # DeepSeek supports json_object response format
-        messages = []
-        if json_system:
-            messages.append({"role": "system", "content": json_system})
-        messages.append({"role": "user", "content": prompt})
+            # DeepSeek supports json_object response format
+            messages = []
+            if json_system:
+                messages.append({"role": "system", "content": json_system})
+            messages.append({"role": "user", "content": prompt})
 
-        payload = {
-            "model": self.model,
-            "messages": messages,
-            "temperature": temperature,
-            "max_tokens": max_tokens,
-            "stream": False,
-            "response_format": {"type": "json_object"},
-        }
+            payload = {
+                "model": self.model,
+                "messages": messages,
+                "temperature": temperature,
+                "max_tokens": max_tokens,
+                "stream": False,
+                "response_format": {"type": "json_object"},
+            }
 
-        max_retries = 3
-        last_error = None
+            max_retries = 3
+            last_error = None
 
-        for attempt in range(max_retries):
-            try:
-                async with httpx.AsyncClient(timeout=self._timeout) as client:
-                    resp = await client.post(
-                        f"{self.base_url}/chat/completions",
-                        headers=self._headers(),
-                        json=payload,
-                    )
-
-                    if resp.status_code == 429:
-                        if attempt < max_retries - 1:
-                            wait_time = (attempt + 1) * 5
-                            logger.warning(
-                                f"DeepSeek rate limited, waiting {wait_time}s..."
-                            )
-                            await asyncio.sleep(wait_time)
-                            continue
-                        raise DeepSeekRateLimitError("Rate limit exceeded (HTTP 429)")
-
-                    resp.raise_for_status()
-                    result = resp.json()
-
-                self._track_usage(result)
-
-                content = (
-                    result.get("choices", [{}])[0]
-                    .get("message", {})
-                    .get("content", "")
-                )
-
-                if not content:
-                    raise DeepSeekResponseError("Empty response from DeepSeek")
-
-                # Log raw response for debugging
-                raw_preview = content[:500]
-                logger.debug(f"DeepSeek raw JSON response preview: {raw_preview}")
-
-                # Clean markdown fences if present
-                content = content.strip()
-                if content.startswith("```json"):
-                    content = content[7:]
-                if content.startswith("```"):
-                    content = content[3:]
-                if content.endswith("```"):
-                    content = content[:-3]
-                content = content.strip()
-
-                # Parse JSON
+            for attempt in range(max_retries):
                 try:
-                    return self._extract_json_object(content)
-                except json.JSONDecodeError as e:
-                    logger.warning(
-                        f"JSON extraction failed: {e}. Cleaned response was: {content[:800]}"
+                    async with httpx.AsyncClient(timeout=self._timeout) as client:
+                        resp = await client.post(
+                            f"{self.base_url}/chat/completions",
+                            headers=self._headers(),
+                            json=payload,
+                        )
+
+                        if resp.status_code == 429:
+                            if attempt < max_retries - 1:
+                                wait_time = (attempt + 1) * 5
+                                logger.warning(
+                                    f"DeepSeek rate limited, waiting {wait_time}s..."
+                                )
+                                await asyncio.sleep(wait_time)
+                                continue
+                            raise DeepSeekRateLimitError("Rate limit exceeded (HTTP 429)")
+
+                        resp.raise_for_status()
+                        result = resp.json()
+
+                    self._track_usage(result)
+
+                    content = (
+                        result.get("choices", [{}])[0]
+                        .get("message", {})
+                        .get("content", "")
                     )
+
+                    if not content:
+                        raise DeepSeekResponseError("Empty response from DeepSeek")
+
+                    # Log raw response for debugging
+                    raw_preview = content[:500]
+                    logger.debug(f"DeepSeek raw JSON response preview: {raw_preview}")
+
+                    # Clean markdown fences if present
+                    content = content.strip()
+                    if content.startswith("```json"):
+                        content = content[7:]
+                    if content.startswith("```"):
+                        content = content[3:]
+                    if content.endswith("```"):
+                        content = content[:-3]
+                    content = content.strip()
+
+                    # Parse JSON
+                    try:
+                        return self._extract_json_object(content)
+                    except json.JSONDecodeError as e:
+                        logger.warning(
+                            f"JSON extraction failed: {e}. Cleaned response was: {content[:800]}"
+                        )
+                        if attempt < max_retries - 1:
+                            logger.warning(
+                                f"JSON parse error (attempt {attempt + 1}), retrying..."
+                            )
+                            await asyncio.sleep(1)
+                            continue
+                        raise
+
+                except (DeepSeekError, json.JSONDecodeError):
+                    last_error = last_error  # keep original
+                    raise
+
+                except httpx.HTTPStatusError as e:
+                    last_error = e
                     if attempt < max_retries - 1:
                         logger.warning(
-                            f"JSON parse error (attempt {attempt + 1}), retrying..."
+                            f"DeepSeek HTTP error (attempt {attempt + 1}): {e}, retrying..."
                         )
-                        await asyncio.sleep(1)
+                        await asyncio.sleep(1 * (attempt + 1))
                         continue
-                    raise
+                    raise DeepSeekResponseError(
+                        f"JSON generation failed: HTTP {e.response.status_code}"
+                    ) from e
 
-            except (DeepSeekError, json.JSONDecodeError):
-                last_error = last_error  # keep original
-                raise
+                except Exception as e:
+                    last_error = e
+                    if attempt < max_retries - 1:
+                        logger.warning(
+                            f"DeepSeek error (attempt {attempt + 1}): {e}, retrying..."
+                        )
+                        await asyncio.sleep(1 * (attempt + 1))
+                        continue
+                    if isinstance(e, DeepSeekError):
+                        raise
+                    raise DeepSeekResponseError(
+                        f"JSON generation failed: {e}"
+                    ) from e
 
-            except httpx.HTTPStatusError as e:
-                last_error = e
-                if attempt < max_retries - 1:
-                    logger.warning(
-                        f"DeepSeek HTTP error (attempt {attempt + 1}): {e}, retrying..."
-                    )
-                    await asyncio.sleep(1 * (attempt + 1))
-                    continue
-                raise DeepSeekResponseError(
-                    f"JSON generation failed: HTTP {e.response.status_code}"
-                ) from e
+            raise last_error or DeepSeekResponseError(
+                "JSON generation failed after retries"
+            )
 
-            except Exception as e:
-                last_error = e
-                if attempt < max_retries - 1:
-                    logger.warning(
-                        f"DeepSeek error (attempt {attempt + 1}): {e}, retrying..."
-                    )
-                    await asyncio.sleep(1 * (attempt + 1))
-                    continue
-                if isinstance(e, DeepSeekError):
-                    raise
-                raise DeepSeekResponseError(
-                    f"JSON generation failed: {e}"
-                ) from e
-
-        raise last_error or DeepSeekResponseError(
-            "JSON generation failed after retries"
-        )
+        return await _call_with_breaker("deepseek", "generate_json", _operation)
 
     # ------------------------------------------------------------------
     # Health check

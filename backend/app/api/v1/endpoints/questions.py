@@ -40,6 +40,7 @@ from app.models.document import Document
 from app.models.subject import Subject, Topic
 from app.models.generation_run import GenerationRun
 from app.services.generation_status_service import GenerationStatusService, broadcast_generation_update
+from app.services.redis_queue_service import RedisQueueService
 
 
 # MIME type mapping for allowed extensions
@@ -65,22 +66,81 @@ _GENERATION_REFILL_ATTEMPT_MULTIPLIER = 4  # Attempts per missing question in ea
 # Configure logging
 logger = logging.getLogger(__name__)
 
+_REDIS_QUEUE_SERVICE = RedisQueueService()
+_REDIS_CONSUMER_ID = f"api-{os.getenv('HOSTNAME') or uuid.uuid4()}"
+
+
+def _redis_queue_enabled() -> bool:
+    return bool(settings.REDIS_QUEUE_ENABLED)
+
+
+async def _set_background_status(task_key: str, status_payload: dict) -> None:
+    _BACKGROUND_GENERATION_STATUS[task_key] = status_payload
+    if not _redis_queue_enabled():
+        return
+    try:
+        await _REDIS_QUEUE_SERVICE.update_status(task_key, status_payload)
+        if status_payload.get("in_progress") is True:
+            await _REDIS_QUEUE_SERVICE.refresh_running(task_key)
+    except Exception as exc:
+        logger.warning("Failed to persist status to Redis for task_key=%s: %s", task_key, exc)
+
+
+async def _get_background_status(task_key: str) -> Optional[dict]:
+    if _redis_queue_enabled():
+        try:
+            status_payload = await _REDIS_QUEUE_SERVICE.get_status(task_key)
+            if status_payload is not None:
+                _BACKGROUND_GENERATION_STATUS[task_key] = status_payload
+                return status_payload
+        except Exception as exc:
+            logger.warning("Failed to fetch status from Redis for task_key=%s: %s", task_key, exc)
+    return _BACKGROUND_GENERATION_STATUS.get(task_key)
+
+
+async def _delete_background_status(task_key: str) -> None:
+    _BACKGROUND_GENERATION_STATUS.pop(task_key, None)
+    if not _redis_queue_enabled():
+        return
+    try:
+        await _REDIS_QUEUE_SERVICE.delete_status(task_key)
+    except Exception as exc:
+        logger.warning("Failed to delete status from Redis for task_key=%s: %s", task_key, exc)
+
 
 def _bg_gen_task_key(user_id: str, subject_id: str) -> str:
     return f"{user_id}:{subject_id}"
 
 
-def _get_queue_position(user_id: str, subject_id: str) -> int:
+async def _get_queue_position(user_id: str, subject_id: str) -> int:
     """Get position in queue for this user/subject combination.
     Returns 0 if not found, 1-based position if found."""
+    if _redis_queue_enabled():
+        try:
+            return await _REDIS_QUEUE_SERVICE.get_queue_position(user_id, subject_id)
+        except Exception as exc:
+            logger.warning("Redis queue position lookup failed, falling back to memory: %s", exc)
+
     for i, item in enumerate(_BACKGROUND_GENERATION_QUEUE):
         if item["user_id"] == user_id and item["subject_id"] == subject_id:
             return i + 1
     return 0
 
 
-def _add_to_queue(user_id: str, subject_id: str, count: int, request_data: dict) -> int:
+async def _add_to_queue(user_id: str, subject_id: str, count: int, request_data: dict) -> int:
     """Add to queue and return position (1-based)"""
+    if _redis_queue_enabled():
+        try:
+            await _REDIS_QUEUE_SERVICE.add_to_queue(
+                user_id=user_id,
+                subject_id=subject_id,
+                count=count,
+                request_data=request_data,
+            )
+            return await _REDIS_QUEUE_SERVICE.get_queue_position(user_id, subject_id)
+        except Exception as exc:
+            logger.warning("Redis queue enqueue failed, falling back to memory: %s", exc)
+
     queue_item = {
         "user_id": user_id,
         "subject_id": subject_id,
@@ -95,15 +155,27 @@ def _add_to_queue(user_id: str, subject_id: str, count: int, request_data: dict)
     return len(_BACKGROUND_GENERATION_QUEUE)
 
 
-def _get_next_from_queue() -> dict | None:
+async def _get_next_from_queue() -> dict | None:
     """Get next item from queue"""
+    if _redis_queue_enabled():
+        try:
+            return await _REDIS_QUEUE_SERVICE.claim_next_item(_REDIS_CONSUMER_ID)
+        except Exception as exc:
+            logger.warning("Redis queue claim failed, falling back to memory: %s", exc)
+
     if not _BACKGROUND_GENERATION_QUEUE:
         return None
     return _BACKGROUND_GENERATION_QUEUE.pop(0)
 
 
-def _get_current_running_count() -> int:
+async def _get_current_running_count() -> int:
     """Get count of currently running generations and clean up completed tasks"""
+    if _redis_queue_enabled():
+        try:
+            return await _REDIS_QUEUE_SERVICE.get_running_count()
+        except Exception as exc:
+            logger.warning("Redis running count failed, falling back to memory: %s", exc)
+
     count = 0
     completed_tasks = []
     
@@ -140,12 +212,12 @@ async def _process_queue():
     """Process queue when there's capacity with proper locking to prevent race conditions"""
     async with _QUEUE_PROCESSING_LOCK:
         # Double-check capacity with lock held
-        current_running = _get_current_running_count()
+        current_running = await _get_current_running_count()
         if current_running >= _MAX_CONCURRENT_GENERATIONS:
             logger.debug(f"Queue processing skipped: {current_running}/{_MAX_CONCURRENT_GENERATIONS} tasks running")
             return
         
-        next_item = _get_next_from_queue()
+        next_item = await _get_next_from_queue()
         if not next_item:
             logger.debug("Queue processing skipped: no items in queue")
             return
@@ -165,6 +237,8 @@ async def _process_queue():
                 topic_ids=next_item["request_data"].get("topic_ids"),
                 allow_without_reference=next_item["request_data"].get("allow_without_reference", False),
             )
+            if _redis_queue_enabled() and next_item.get("message_id"):
+                await _REDIS_QUEUE_SERVICE.ack_item(next_item["message_id"])
             logger.info(f"Successfully started queued generation for user_id={next_item['user_id']}, subject_id={next_item['subject_id']}")
         except Exception as e:
             logger.error(f"Error processing queued generation for user_id={next_item['user_id']}, subject_id={next_item['subject_id']}: {e}")
@@ -173,13 +247,27 @@ async def _process_queue():
             retry_count = next_item.get("retry_count", 0)
             if retry_count < _MAX_RETRY_ATTEMPTS:
                 next_item["retry_count"] = retry_count + 1
-                _BACKGROUND_GENERATION_QUEUE.insert(0, next_item)  # Put back at front of queue
+                if _redis_queue_enabled():
+                    retry_request_data = dict(next_item["request_data"])
+                    retry_request_data["run_id"] = next_item.get("run_id")
+                    retry_request_data["retry_count"] = next_item["retry_count"]
+                    retry_request_data["task_key"] = _bg_gen_task_key(next_item["user_id"], next_item["subject_id"])
+                    await _REDIS_QUEUE_SERVICE.add_to_queue(
+                        user_id=next_item["user_id"],
+                        subject_id=next_item["subject_id"],
+                        count=next_item["count"],
+                        request_data=retry_request_data,
+                    )
+                    if next_item.get("message_id"):
+                        await _REDIS_QUEUE_SERVICE.ack_item(next_item["message_id"])
+                else:
+                    _BACKGROUND_GENERATION_QUEUE.insert(0, next_item)  # Put back at front of queue
                 logger.warning(f"Retrying queue item (attempt {retry_count + 1}/{_MAX_RETRY_ATTEMPTS}): user_id={next_item['user_id']}, subject_id={next_item['subject_id']}")
             else:
                 logger.error(f"Queue item failed after {_MAX_RETRY_ATTEMPTS} attempts: user_id={next_item['user_id']}, subject_id={next_item['subject_id']}")
                 # Update status to show failure
                 task_key = _bg_gen_task_key(next_item["user_id"], next_item["subject_id"])
-                _BACKGROUND_GENERATION_STATUS[task_key] = {
+                await _set_background_status(task_key, {
                     "in_progress": False,
                     "run_id": next_item["run_id"],
                     "status": "failed",
@@ -188,7 +276,9 @@ async def _process_queue():
                     "total_questions": next_item["count"],
                     "message": f"Failed after {_MAX_RETRY_ATTEMPTS} retry attempts: {str(e)}",
                     "updated_at": datetime.now(timezone.utc).isoformat(),
-                }
+                })
+                if _redis_queue_enabled() and next_item.get("message_id"):
+                    await _REDIS_QUEUE_SERVICE.ack_item(next_item["message_id"])
             
             # Continue processing queue if there are more items
             asyncio.create_task(_process_queue())
@@ -236,7 +326,7 @@ async def _wait_for_subject_docs_ready(
 async def _delayed_status_cleanup(task_key: str, delay_seconds: float = 60.0) -> None:
     """Remove a terminal status entry after a delay so the frontend has time to poll it."""
     await asyncio.sleep(delay_seconds)
-    _BACKGROUND_GENERATION_STATUS.pop(task_key, None)
+    await _delete_background_status(task_key)
 
 
 async def _get_generated_count_since_start(
@@ -290,7 +380,7 @@ async def _refill_missing_questions_to_target(
             break
 
         max_attempts_this_round = max(remaining * _GENERATION_REFILL_ATTEMPT_MULTIPLIER, remaining)
-        _BACKGROUND_GENERATION_STATUS[task_key] = {
+        await _set_background_status(task_key, {
             "in_progress": True,
             "run_id": run_id,
             "status": "refilling",
@@ -301,7 +391,7 @@ async def _refill_missing_questions_to_target(
             "target_total_questions": target_total_questions,
             "message": f"Auto-refill round {refill_round}: generating {remaining} missing questions",
             "updated_at": datetime.now(timezone.utc).isoformat(),
-        }
+        })
 
         round_success = 0
         for attempt_idx in range(max_attempts_this_round):
@@ -375,6 +465,16 @@ async def _run_background_subject_generation(
     run_id_value = run_id or str(uuid.uuid4())
     db_run_created = False
     effective_topic_id = topic_id  # Track the actual topic being generated
+    if _redis_queue_enabled():
+        await _REDIS_QUEUE_SERVICE.register_running(
+            task_key,
+            {
+                "user_id": str(user_id),
+                "subject_id": str(subject_id),
+                "run_id": run_id_value,
+                "started_at": datetime.now(timezone.utc).isoformat(),
+            },
+        )
     try:
         async with AsyncSessionLocal() as task_db:
             subject_res = await task_db.execute(
@@ -388,7 +488,7 @@ async def _run_background_subject_generation(
 
             docs_ready = True
             if not allow_without_reference:
-                _BACKGROUND_GENERATION_STATUS[task_key] = {
+                await _set_background_status(task_key, {
                     "in_progress": True,
                     "run_id": run_id_value,
                     "status": "waiting_for_documents",
@@ -399,7 +499,7 @@ async def _run_background_subject_generation(
                     "target_total_questions": target_total_questions,
                     "message": "Waiting for reference documents to finish processing",
                     "updated_at": datetime.now(timezone.utc).isoformat(),
-                }
+                })
                 docs_ready = await _wait_for_subject_docs_ready(task_db, user_id, subject_id)
                 if not docs_ready:
                     return
@@ -544,7 +644,7 @@ async def _run_background_subject_generation(
                     batch_slots = [multi_slot_queue.pop(0) for _ in range(batch_size)]
                     total_multi_attempts += len(batch_slots)
 
-                    _BACKGROUND_GENERATION_STATUS[task_key] = {
+                    await _set_background_status(task_key, {
                         "in_progress": True,
                         "run_id": run_id_value,
                         "status": "generating",
@@ -558,7 +658,7 @@ async def _run_background_subject_generation(
                             f"of {count} using {batch_size} workers"
                         ),
                         "updated_at": datetime.now(timezone.utc).isoformat(),
-                    }
+                    })
 
                     batch_results = await asyncio.gather(*[_run_single_topic_slot(slot) for slot in batch_slots])
 
@@ -589,7 +689,7 @@ async def _run_background_subject_generation(
                     db_generated = max(0, current_subject_total - started_total_questions)
                     current_generated = min(count, max(completed_slots, db_generated))
 
-                    _BACKGROUND_GENERATION_STATUS[task_key] = {
+                    await _set_background_status(task_key, {
                         "in_progress": True,
                         "run_id": run_id_value,
                         "status": "generating",
@@ -600,7 +700,7 @@ async def _run_background_subject_generation(
                         "target_total_questions": target_total_questions,
                         "message": f"Generated {current_generated}/{count} questions",
                         "updated_at": datetime.now(timezone.utc).isoformat(),
-                    }
+                    })
                     
                     # Broadcast progress via WebSocket for cross-device visibility
                     if db_run_created and effective_topic_id:
@@ -653,7 +753,7 @@ async def _run_background_subject_generation(
                     # For non-generating statuses (processing, complete, error), use the event's own progress
                     if progress_event.status not in ("generating",):
                         saved_progress = progress_event.progress or 0
-                    _BACKGROUND_GENERATION_STATUS[task_key] = {
+                    await _set_background_status(task_key, {
                         "in_progress": True,
                         "run_id": run_id_value,
                         "status": progress_event.status,
@@ -664,7 +764,7 @@ async def _run_background_subject_generation(
                         "target_total_questions": target_total_questions,
                         "message": f"Generated {saved_count}/{total} questions" if saved_count > 0 and progress_event.status == "generating" else (progress_event.message or "Generating questions"),
                         "updated_at": datetime.now(timezone.utc).isoformat(),
-                    }
+                    })
                     
                     # Broadcast progress via WebSocket for cross-device visibility
                     if db_run_created and effective_topic_id:
@@ -685,7 +785,8 @@ async def _run_background_subject_generation(
                             )
                         except Exception:
                             pass  # Don't fail generation due to WebSocket issues
-                final_current_question = _BACKGROUND_GENERATION_STATUS.get(task_key, {}).get("current_question", count)
+                latest_status = await _get_background_status(task_key) or {}
+                final_current_question = latest_status.get("current_question", count)
 
             final_current_question = await _refill_missing_questions_to_target(
                 task_db,
@@ -706,7 +807,7 @@ async def _run_background_subject_generation(
                 target_total_questions=target_total_questions,
             )
 
-            _BACKGROUND_GENERATION_STATUS[task_key] = {
+            await _set_background_status(task_key, {
                 "in_progress": True,
                 "run_id": run_id_value,
                 "status": "generating",
@@ -717,7 +818,7 @@ async def _run_background_subject_generation(
                 "target_total_questions": target_total_questions,
                 "message": f"Generated {final_current_question}/{count} questions",
                 "updated_at": datetime.now(timezone.utc).isoformat(),
-            }
+            })
             await task_db.commit()
     except Exception as exc:
         error_occurred = True
@@ -725,9 +826,11 @@ async def _run_background_subject_generation(
     finally:
         # Remove the task reference immediately
         _BACKGROUND_GENERATION_TASKS.pop(task_key, None)
+        if _redis_queue_enabled():
+            await _REDIS_QUEUE_SERVICE.unregister_running(task_key)
         # Set a terminal status so the frontend can see completion/error
         if error_occurred:
-            _BACKGROUND_GENERATION_STATUS[task_key] = {
+            await _set_background_status(task_key, {
                 "run_id": run_id_value,
                 "status": "error",
                 "progress": 0,
@@ -738,7 +841,7 @@ async def _run_background_subject_generation(
                 "message": f"Generation failed: {error_message}",
                 "updated_at": datetime.now(timezone.utc).isoformat(),
                 "in_progress": False,
-            }
+            })
             logger.error(f"Background generation failed for task_key={task_key}: {error_message}")
             
             # Update database and broadcast failure via WebSocket
@@ -752,7 +855,7 @@ async def _run_background_subject_generation(
         else:
             final_current_question = max(0, min(count, int(final_current_question or 0)))
             terminal_progress = 100 if final_current_question >= count else int((final_current_question / max(1, count)) * 100)
-            _BACKGROUND_GENERATION_STATUS[task_key] = {
+            await _set_background_status(task_key, {
                 "run_id": run_id_value,
                 "status": "completed",
                 "progress": terminal_progress,
@@ -767,7 +870,7 @@ async def _run_background_subject_generation(
                 ),
                 "updated_at": datetime.now(timezone.utc).isoformat(),
                 "in_progress": False,
-            }
+            })
             logger.info(f"Background generation completed for task_key={task_key}: {final_current_question}/{count} questions")
             
             # Update database and broadcast completion via WebSocket
@@ -1609,7 +1712,7 @@ async def schedule_background_generation(
     task_key = _bg_gen_task_key(current_user.id, parsed_subject_id)
     existing_task = _BACKGROUND_GENERATION_TASKS.get(task_key)
     if existing_task and not existing_task.done():
-        existing_status = _BACKGROUND_GENERATION_STATUS.get(task_key, {})
+        existing_status = await _get_background_status(task_key) or {}
         return {
             "status": "already_running",
             "message": "Background generation is already running for this subject",
@@ -1621,8 +1724,21 @@ async def schedule_background_generation(
             "total_questions": existing_status.get("total_questions", count),
         }
 
+    distributed_status = await _get_background_status(task_key)
+    if distributed_status and distributed_status.get("in_progress") is True:
+        return {
+            "status": "already_running",
+            "message": "Background generation is already running for this subject",
+            "subject_id": str(parsed_subject_id),
+            "run_id": distributed_status.get("run_id"),
+            "count": count,
+            "progress": distributed_status.get("progress", 0),
+            "current_question": distributed_status.get("current_question", 0),
+            "total_questions": distributed_status.get("total_questions", count),
+        }
+
     # Check if already queued
-    queue_position = _get_queue_position(current_user.id, parsed_subject_id)
+    queue_position = await _get_queue_position(current_user.id, parsed_subject_id)
     if queue_position > 0:
         return {
             "status": "queued",
@@ -1633,7 +1749,7 @@ async def schedule_background_generation(
         }
 
     # Check if we have capacity to run immediately or need to queue
-    current_running = _get_current_running_count()
+    current_running = await _get_current_running_count()
     request_data = {
         "types": type_list,
         "difficulty": difficulty,
@@ -1644,11 +1760,11 @@ async def schedule_background_generation(
 
     if current_running >= _MAX_CONCURRENT_GENERATIONS:
         # Queue the request
-        queue_position = _add_to_queue(current_user.id, parsed_subject_id, count, request_data)
+        queue_position = await _add_to_queue(current_user.id, parsed_subject_id, count, request_data)
         run_id = str(uuid.uuid4())
         
         # Set queued status
-        _BACKGROUND_GENERATION_STATUS[task_key] = {
+        await _set_background_status(task_key, {
             "in_progress": True,
             "run_id": run_id,
             "status": "queued",
@@ -1659,7 +1775,7 @@ async def schedule_background_generation(
             "target_total_questions": int(subject.total_questions or 0) + count,
             "message": f"Queued for background generation (position {queue_position})",
             "updated_at": datetime.now(timezone.utc).isoformat(),
-        }
+        })
         
         return {
             "status": "queued",
@@ -1675,7 +1791,7 @@ async def schedule_background_generation(
     # Run immediately
     run_id = str(uuid.uuid4())
 
-    _BACKGROUND_GENERATION_STATUS[task_key] = {
+    await _set_background_status(task_key, {
         "in_progress": True,
         "run_id": run_id,
         "status": "scheduled",
@@ -1686,7 +1802,7 @@ async def schedule_background_generation(
         "target_total_questions": int(subject.total_questions or 0) + count,
         "message": "Background generation scheduled",
         "updated_at": datetime.now(timezone.utc).isoformat(),
-    }
+    })
 
     task = asyncio.create_task(
         _run_background_subject_generation(
@@ -1740,7 +1856,7 @@ async def get_background_generation_statuses(
             continue
 
         task_key = _bg_gen_task_key(current_user.id, parsed_subject_id)
-        status_payload = _BACKGROUND_GENERATION_STATUS.get(task_key)
+        status_payload = await _get_background_status(task_key)
         task = _BACKGROUND_GENERATION_TASKS.get(task_key)
 
         # Check for terminal status first (task finished, status still cached)
