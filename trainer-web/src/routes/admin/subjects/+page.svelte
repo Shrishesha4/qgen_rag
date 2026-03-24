@@ -3,11 +3,16 @@
 	import { goto } from '$app/navigation';
 	import { session } from '$lib/session';
 	import { listAdminSubjects, type AdminSubjectSummary } from '$lib/api/admin';
+	import { updateSubject } from '$lib/api/subjects';
 
 	let loading = $state(true);
 	let error = $state('');
 	let subjects = $state<AdminSubjectSummary[]>([]);
 	let query = $state('');
+	let editingSubjectId = $state('');
+	let editingName = $state('');
+	let editingCode = $state('');
+	let saveBusySubjectId = $state('');
 
 	onMount(() => {
 		const unsub = session.subscribe((s) => {
@@ -60,8 +65,74 @@
 		goto(`/admin/subjects/${subjectId}`);
 	}
 
+	function startInlineEdit(subject: AdminSubjectSummary): void {
+		editingSubjectId = subject.id;
+		editingName = subject.name;
+		editingCode = subject.code;
+	}
+
+	function cancelInlineEdit(): void {
+		editingSubjectId = '';
+		editingName = '';
+		editingCode = '';
+	}
+
+	function hasInlineChanges(subject: AdminSubjectSummary): boolean {
+		if (editingSubjectId !== subject.id) return false;
+		return editingName.trim() !== subject.name || editingCode.trim() !== subject.code;
+	}
+
+	async function saveInlineEdit(subject: AdminSubjectSummary): Promise<void> {
+		if (!hasInlineChanges(subject)) {
+			cancelInlineEdit();
+			return;
+		}
+
+		const nextName = editingName.trim();
+		const nextCode = editingCode.trim();
+		if (!nextName || !nextCode) {
+			error = 'Subject name and code are required';
+			return;
+		}
+
+		error = '';
+		saveBusySubjectId = subject.id;
+		try {
+			await updateSubject(subject.id, {
+				name: nextName,
+				code: nextCode
+			});
+			subjects = subjects.map((item) =>
+				item.id === subject.id
+					? {
+						...item,
+						name: nextName,
+						code: nextCode
+					}
+					: item
+			);
+			cancelInlineEdit();
+		} catch (e: unknown) {
+			error = e instanceof Error ? e.message : 'Failed to update subject';
+		} finally {
+			saveBusySubjectId = '';
+		}
+	}
+
+	function userDetailHref(userId: string): string {
+		return `/users/${userId}`;
+	}
+
 	function formatDate(value: string) {
 		return new Date(value).toLocaleDateString();
+	}
+
+	function updateEditableName(event: Event) {
+		editingName = ((event.currentTarget as HTMLElement).textContent || '').replace(/\u00a0/g, ' ');
+	}
+
+	function updateEditableCode(event: Event) {
+		editingCode = ((event.currentTarget as HTMLElement).textContent || '').replace(/\u00a0/g, ' ');
 	}
 </script>
 
@@ -70,13 +141,13 @@
 </svelte:head>
 
 <div class="page">
-	<div class="hero animate-fade-in">
+	<!-- <div class="hero animate-fade-in">
 		<div>
 			<p class="eyebrow">Admin Console</p>
 			<h1 class="title font-serif">Subjects</h1>
 			<p class="subtitle">Browse every subject, see ownership, question inventory, and drill into topic-level vetting status.</p>
 		</div>
-	</div>
+	</div> -->
 
 	<div class="toolbar glass-panel animate-slide-up">
 		<input class="search-input" bind:value={query} placeholder="Search by subject, code, teacher, or email" />
@@ -116,33 +187,162 @@
 			<p>No subjects matched your search.</p>
 		</div>
 	{:else}
-		<div class="subject-grid animate-fade-in">
+		<div class="table-wrap glass-panel animate-fade-in desktop-only">
+			<table class="data-table">
+				<thead>
+					<tr>
+						<th>Subject</th>
+						<th>Teacher</th>
+						<th>Topics</th>
+						<th>Questions</th>
+						<th>Approved</th>
+						<th>Rejected</th>
+						<th>Pending</th>
+						<th>Created</th>
+						<th></th>
+					</tr>
+				</thead>
+				<tbody>
+					{#each filteredSubjects as subject}
+						<tr>
+							<td>
+								{#if editingSubjectId === subject.id}
+									<div class="subject-cell editing-row">
+										<span
+											class="subject-name subject-editable"
+											contenteditable="plaintext-only"
+											role="textbox"
+											tabindex="0"
+											oninput={updateEditableName}
+										>{editingName}</span>
+										<span
+											class="subject-code subject-code-editable"
+											contenteditable="plaintext-only"
+											role="textbox"
+											tabindex="0"
+											oninput={updateEditableCode}
+										>{editingCode}</span>
+										<div class="inline-actions">
+											<button
+												type="button"
+												class="icon-btn icon-btn-save"
+												title="Save"
+												onclick={() => saveInlineEdit(subject)}
+												disabled={saveBusySubjectId === subject.id || !hasInlineChanges(subject)}
+											>
+												&#10003;
+											</button>
+											<button
+												type="button"
+												class="icon-btn icon-btn-cancel"
+												title="Cancel"
+												onclick={cancelInlineEdit}
+												disabled={saveBusySubjectId === subject.id}
+											>
+												&#10005;
+											</button>
+										</div>
+									</div>
+								{:else}
+									<div class="subject-cell">
+										<button class="subject-inline-trigger" type="button" onclick={() => startInlineEdit(subject)}>
+											<span class="subject-name">{subject.name}</span>
+											<span class="subject-code">{subject.code}</span>
+										</button>
+									</div>
+								{/if}
+							</td>
+							<td>
+								<div class="owner-cell">
+									{#if subject.teacher_id}
+										<a class="owner-name user-link" href={userDetailHref(subject.teacher_id)}>{subject.teacher_name || 'Unknown teacher'}</a>
+									{:else}
+										<span class="owner-name">{subject.teacher_name || 'Unknown teacher'}</span>
+									{/if}
+									<span class="owner-email">{subject.teacher_email || 'No email'}</span>
+								</div>
+							</td>
+							<td class="num">{subject.total_topics}</td>
+							<td class="num">{subject.total_questions}</td>
+							<td class="num green-text">{subject.total_approved}</td>
+							<td class="num red-text">{subject.total_rejected}</td>
+							<td class="num orange-text">{subject.total_pending}</td>
+							<td>{formatDate(subject.created_at)}</td>
+							<td>
+								<button class="open-btn" onclick={() => openSubject(subject.id)}>Open</button>
+							</td>
+						</tr>
+					{/each}
+				</tbody>
+			</table>
+		</div>
+
+		<div class="mobile-list mobile-only animate-fade-in">
 			{#each filteredSubjects as subject}
-				<button class="subject-card glass-panel" onclick={() => openSubject(subject.id)}>
-					<div class="card-top">
-						<span class="subject-code">{subject.code}</span>
-					</div>
-					<h2 class="subject-name">{subject.name}</h2>
-					{#if subject.description}
-						<p class="subject-desc">{subject.description}</p>
+				<div class="mobile-card glass-panel">
+					{#if editingSubjectId === subject.id}
+						<div class="subject-cell editing-row">
+							<span
+								class="subject-name subject-editable"
+								contenteditable="plaintext-only"
+								role="textbox"
+								tabindex="0"
+								oninput={updateEditableName}
+							>{editingName}</span>
+							<span
+								class="subject-code subject-code-editable"
+								contenteditable="plaintext-only"
+								role="textbox"
+								tabindex="0"
+								oninput={updateEditableCode}
+							>{editingCode}</span>
+							<div class="inline-actions">
+								<button
+									type="button"
+									class="icon-btn icon-btn-save"
+									title="Save"
+									onclick={() => saveInlineEdit(subject)}
+									disabled={saveBusySubjectId === subject.id || !hasInlineChanges(subject)}
+								>
+									&#10003;
+								</button>
+								<button
+									type="button"
+									class="icon-btn icon-btn-cancel"
+									title="Cancel"
+									onclick={cancelInlineEdit}
+									disabled={saveBusySubjectId === subject.id}
+								>
+									&#10005;
+								</button>
+							</div>
+						</div>
+					{:else}
+						<div class="subject-cell">
+							<button class="subject-inline-trigger" type="button" onclick={() => startInlineEdit(subject)}>
+								<span class="subject-name">{subject.name}</span>
+								<span class="subject-code">{subject.code}</span>
+							</button>
+						</div>
 					{/if}
-					<div class="owner-block">
-						<span class="owner-name">{subject.teacher_name || 'Unknown teacher'}</span>
+					<div class="owner-cell">
+						{#if subject.teacher_id}
+							<a class="owner-name user-link" href={userDetailHref(subject.teacher_id)}>{subject.teacher_name || 'Unknown teacher'}</a>
+						{:else}
+							<span class="owner-name">{subject.teacher_name || 'Unknown teacher'}</span>
+						{/if}
 						<span class="owner-email">{subject.teacher_email || 'No email'}</span>
 					</div>
-					<div class="metrics-grid">
-						<div class="metric"><span>Topics</span><strong>{subject.total_topics}</strong></div>
-						<div class="metric"><span>Questions</span><strong>{subject.total_questions}</strong></div>
-						<div class="metric"><span>Approved</span><strong class="green-text">{subject.total_approved}</strong></div>
-						<div class="metric"><span>Rejected</span><strong class="red-text">{subject.total_rejected}</strong></div>
-						<div class="metric"><span>Pending</span><strong class="orange-text">{subject.total_pending}</strong></div>
-						<div class="metric"><span>Created</span><strong>{formatDate(subject.created_at)}</strong></div>
+					<div class="mobile-metrics">
+						<span>Topics <strong>{subject.total_topics}</strong></span>
+						<span>Questions <strong>{subject.total_questions}</strong></span>
+						<span class="green-text">Approved <strong>{subject.total_approved}</strong></span>
+						<span class="red-text">Rejected <strong>{subject.total_rejected}</strong></span>
+						<span class="orange-text">Pending <strong>{subject.total_pending}</strong></span>
+						<span>Created <strong>{formatDate(subject.created_at)}</strong></span>
 					</div>
-					<div class="card-footer">
-						<span>Open subject</span>
-						<span class="arrow">→</span>
-					</div>
-				</button>
+					<button class="open-btn" onclick={() => openSubject(subject.id)}>Open Subject</button>
+				</div>
 			{/each}
 		</div>
 	{/if}
@@ -158,7 +358,7 @@
 		gap: 1.25rem;
 	}
 
-	.hero {
+	/* .hero {
 		padding-top: 0.5rem;
 	}
 
@@ -183,7 +383,7 @@
 		max-width: 48rem;
 		color: var(--theme-text-muted);
 		line-height: 1.6;
-	}
+	} */
 
 	.toolbar {
 		display: flex;
@@ -196,8 +396,8 @@
 		flex: 1;
 		padding: 0.85rem 1rem;
 		border-radius: 0.85rem;
-		border: 1px solid rgba(255,255,255,0.14);
-		background: rgba(255,255,255,0.06);
+		border: 1px solid var(--theme-glass-border);
+		background: var(--theme-input-bg);
 		color: var(--theme-text);
 		font: inherit;
 	}
@@ -253,31 +453,39 @@
 		font-weight: 700;
 	}
 
-	.subject-grid {
-		display: grid;
-		grid-template-columns: repeat(2, minmax(0, 1fr));
-		gap: 1rem;
+	.table-wrap {
+		overflow-x: auto;
+		border-radius: 1rem;
 	}
 
-	.subject-card {
-		padding: 1.25rem;
-		border-radius: 1.25rem;
+	.desktop-only {
+		display: block;
+	}
+
+	.mobile-only {
+		display: none;
+	}
+
+	.data-table {
+		width: 100%;
+		border-collapse: collapse;
+		min-width: 900px;
+	}
+
+	.data-table th,
+	.data-table td {
+		padding: 0.75rem 0.8rem;
+		border-bottom: 1px solid rgba(148, 163, 184, 0.24);
 		text-align: left;
-		border: 1px solid rgba(255, 255, 255, 0.12);
-		cursor: pointer;
-		color: inherit;
-		transition: transform 0.2s ease, box-shadow 0.2s ease;
+		font-size: 0.86rem;
 	}
 
-	.subject-card:hover {
-		transform: translateY(-2px);
-	}
-
-	.card-top {
-		display: flex;
-		justify-content: space-between;
-		align-items: center;
-		gap: 0.75rem;
+	.data-table th {
+		font-size: 0.72rem;
+		text-transform: uppercase;
+		letter-spacing: 0.06em;
+		font-weight: 700;
+		color: var(--theme-text-muted);
 	}
 
 	.subject-code {
@@ -286,97 +494,163 @@
 		justify-content: center;
 		font-size: 0.72rem;
 		font-weight: 700;
-		padding: 0.28rem 0.6rem;
+		padding: 0.25rem 0.55rem;
 		border-radius: 999px;
 		line-height: 1;
+		background: color-mix(in srgb, rgba(96, 165, 250, 0.22) 72%, var(--theme-input-bg));
+		color: color-mix(in srgb, #60a5fa 78%, var(--theme-text));
 	}
-	/* .subject-code,
-	.coverage-chip {
-		font-size: 0.72rem;
-		font-weight: 700;
-		padding: 0.28rem 0.6rem;
-		border-radius: 999px;
-	} */
-
-	.subject-code {
-		background: rgba(96, 165, 250, 0.16);
-		color: #93c5fd;
-	}
-
-	/* .coverage-chip {
-		background: rgba(245, 158, 11, 0.16);
-		color: #fbbf24;
-	} */
 
 	.subject-name {
-		margin: 0.9rem 0 0.35rem;
-		font-size: 1.2rem;
+		font-size: 0.95rem;
+		font-weight: 700;
+		line-height: 1.35;
 		color: var(--theme-text);
 	}
 
-	.subject-desc {
-		margin: 0;
-		color: var(--theme-text-muted);
-		line-height: 1.55;
-	}
-
-	.owner-block {
+	.subject-cell,
+	.owner-cell {
 		display: flex;
 		flex-direction: column;
 		gap: 0.15rem;
-		margin-top: 1rem;
-		padding-top: 0.9rem;
-		border-top: 1px solid rgba(255,255,255,0.08);
+	}
+
+	.subject-inline-trigger {
+		padding: 0;
+		border: 0;
+		background: transparent;
+		display: flex;
+		flex-direction: column;
+		align-items: flex-start;
+		gap: 0.15rem;
+		cursor: text;
+		text-align: left;
+		font: inherit;
+		color: inherit;
+	}
+
+	.subject-inline-trigger:hover .subject-name,
+	.subject-inline-trigger:hover .subject-code {
+		text-decoration: underline;
+		text-decoration-color: color-mix(in srgb, var(--theme-primary) 60%, transparent);
+	}
+
+	.editing-row {
+		gap: 0.35rem;
+	}
+
+	.subject-editable {
+		border-radius: 0.45rem;
+		padding: 0.2rem 0.35rem;
+		outline: 1px solid color-mix(in srgb, var(--theme-primary) 35%, var(--theme-glass-border));
+		background: color-mix(in srgb, var(--theme-input-bg) 86%, transparent);
+		min-width: 6rem;
+	}
+
+	.subject-editable:focus-visible {
+		outline: 2px solid color-mix(in srgb, var(--theme-primary) 72%, transparent);
+	}
+
+	.subject-code-editable {
+		display: inline-flex;
+		align-items: center;
+		justify-content: center;
+	}
+
+	.inline-actions {
+		display: inline-flex;
+		gap: 0.28rem;
+		align-items: center;
+	}
+
+	.icon-btn {
+		width: 1.55rem;
+		height: 1.55rem;
+		border-radius: 999px;
+		border: 1px solid color-mix(in srgb, var(--theme-glass-border) 80%, transparent);
+		background: color-mix(in srgb, var(--theme-input-bg) 84%, transparent);
+		color: var(--theme-text);
+		font-size: 0.78rem;
+		font-weight: 800;
+		line-height: 1;
+		padding: 0;
+		cursor: pointer;
+	}
+
+	.icon-btn-save {
+		color: color-mix(in srgb, #34d399 80%, var(--theme-text));
+	}
+
+	.icon-btn-cancel {
+		color: color-mix(in srgb, #f87171 78%, var(--theme-text));
+	}
+
+	.icon-btn:disabled {
+		opacity: 0.45;
+		cursor: not-allowed;
 	}
 
 	.owner-name {
 		font-weight: 700;
 		color: var(--theme-text);
+		font-size: 0.88rem;
+	}
+
+	.user-link {
+		text-decoration: none;
+	}
+
+	.user-link:hover {
+		text-decoration: underline;
+		text-decoration-color: color-mix(in srgb, var(--theme-primary) 65%, transparent);
 	}
 
 	.owner-email {
-		font-size: 0.8rem;
+		font-size: 0.78rem;
 		color: var(--theme-text-muted);
+		overflow: hidden;
+		text-overflow: ellipsis;
+		white-space: nowrap;
 	}
 
-	.metrics-grid {
-		display: grid;
-		grid-template-columns: repeat(3, minmax(0, 1fr));
+	.num {
+		text-align: right;
+		font-variant-numeric: tabular-nums;
+	}
+
+	.open-btn {
+		padding: 0.5rem 0.8rem;
+		border-radius: 0.7rem;
+		border: 1px solid color-mix(in srgb, var(--theme-primary) 45%, var(--theme-glass-border));
+		background: color-mix(in srgb, var(--theme-primary) 16%, var(--theme-input-bg));
+		color: var(--theme-text);
+		font-weight: 700;
+		cursor: pointer;
+	}
+
+	.mobile-list {
+		display: none;
 		gap: 0.75rem;
-		margin-top: 1rem;
 	}
 
-	.metric {
+	.mobile-card {
+		padding: 0.9rem;
+		border-radius: 0.95rem;
 		display: flex;
 		flex-direction: column;
-		gap: 0.1rem;
+		gap: 0.7rem;
 	}
 
-	.metric span {
-		font-size: 0.72rem;
-		text-transform: uppercase;
-		letter-spacing: 0.04em;
+	.mobile-metrics {
+		display: grid;
+		grid-template-columns: repeat(2, minmax(0, 1fr));
+		gap: 0.35rem 0.7rem;
+		font-size: 0.82rem;
 		color: var(--theme-text-muted);
 	}
 
-	.metric strong {
-		font-size: 0.96rem;
+	.mobile-metrics strong {
 		color: var(--theme-text);
-	}
-
-	.card-footer {
-		margin-top: 1rem;
-		padding-top: 0.9rem;
-		display: flex;
-		justify-content: space-between;
-		align-items: center;
-		border-top: 1px solid rgba(255,255,255,0.08);
-		color: #fbbf24;
-		font-weight: 700;
-	}
-
-	.arrow {
-		font-size: 1.15rem;
 	}
 
 	.center-state {
@@ -410,27 +684,89 @@
 		to { transform: rotate(360deg); }
 	}
 
-	@media (max-width: 900px) {
-		.subject-grid {
-			grid-template-columns: 1fr;
-		}
-	}
-
-	@media (max-width: 640px) {
+	@media (max-width: 768px) {
 		.page {
-			padding: 1.5rem 1rem 2rem;
+			padding: 1.35rem 0.95rem 1.85rem;
 		}
 
 		.toolbar {
 			flex-direction: column;
 		}
 
+		.desktop-only {
+			display: none;
+		}
+
+		.mobile-only {
+			display: grid;
+		}
+
+		.mobile-list {
+			display: grid;
+		}
+
+		.mobile-metrics {
+			grid-template-columns: 1fr;
+		}
+	}
+
+	@media (max-width: 640px) {
+
 		.stats-row {
 			grid-template-columns: repeat(2, minmax(0, 1fr));
 		}
+	}
 
-		.metrics-grid {
-			grid-template-columns: repeat(2, minmax(0, 1fr));
-		}
+	:global([data-color-mode='light']) .search-input {
+		background: #ffffff;
+		border-color: rgba(148, 163, 184, 0.42);
+		color: #0f172a;
+	}
+
+	:global([data-color-mode='light']) .stat-card,
+	:global([data-color-mode='light']) .toolbar,
+	:global([data-color-mode='light']) .center-state.glass-panel,
+	:global([data-color-mode='light']) .table-wrap,
+	:global([data-color-mode='light']) .mobile-card {
+		background: #ffffff;
+		border: 1px solid rgba(148, 163, 184, 0.3);
+		box-shadow: 0 14px 34px rgba(15, 23, 42, 0.08);
+	}
+
+	:global([data-color-mode='light']) .data-table th,
+	:global([data-color-mode='light']) .data-table td {
+		border-bottom-color: rgba(148, 163, 184, 0.35);
+	}
+
+	:global([data-color-mode='light']) .open-btn {
+		color: #0f172a;
+	}
+
+	:global([data-color-mode='light']) .subject-code {
+		background: rgba(59, 130, 246, 0.14);
+		color: #1d4ed8;
+	}
+
+	:global([data-color-mode='light']) .icon-btn {
+		background: #ffffff;
+		border-color: rgba(148, 163, 184, 0.45);
+	}
+
+	:global([data-color-mode='dark']) .subject-code {
+		background: rgba(96, 165, 250, 0.24);
+		color: #bfdbfe;
+	}
+
+	:global([data-color-mode='dark']) .icon-btn {
+		background: color-mix(in srgb, var(--theme-input-bg) 84%, transparent);
+		border-color: rgba(148, 163, 184, 0.22);
+	}
+
+	:global([data-color-mode='dark']) .icon-btn-save {
+		color: #6ee7b7;
+	}
+
+	:global([data-color-mode='dark']) .icon-btn-cancel {
+		color: #fca5a5;
 	}
 </style>

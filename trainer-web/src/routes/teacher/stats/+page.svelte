@@ -36,6 +36,10 @@
 		vettedPct: number;
 	};
 
+	const INITIAL_TOPIC_ROWS_PRELOAD_LIMIT = 4;
+	const GROUP_TOPIC_ROWS_PRELOAD_LIMIT = 6;
+	const topicRowsLoading = new Set<string>();
+
 	onMount(() => {
 		const unsub = session.subscribe((s) => {
 			if (!s || s.user.role !== 'teacher') {
@@ -126,11 +130,25 @@
 			treeData = treeRes;
 			subjects = flattenSubjects(treeRes.groups, treeRes.ungrouped_subjects);
 			expandedGroups = new Set(treeRes.groups.map((group) => group.id));
+			void preloadInitialTopicRows(subjects);
 		} catch (e: unknown) {
 			error = e instanceof Error ? e.message : 'Failed to load teacher stats';
 		} finally {
 			loading = false;
 		}
+	}
+
+	function collectSubjectIdsFromGroup(group: SubjectGroupTreeNode): string[] {
+		const ids = group.subjects.map((subject) => subject.id);
+		for (const child of group.children) {
+			ids.push(...collectSubjectIdsFromGroup(child));
+		}
+		return ids;
+	}
+
+	async function preloadInitialTopicRows(subjectList: SubjectResponse[]) {
+		const ids = subjectList.slice(0, INITIAL_TOPIC_ROWS_PRELOAD_LIMIT).map((subject) => subject.id);
+		await Promise.all(ids.map((subjectId) => ensureTopicRowsLoaded(subjectId, { silent: true })));
 	}
 
 	function flattenSubjects(groups: SubjectGroupTreeNode[], ungrouped: SubjectResponse[]): SubjectResponse[] {
@@ -218,8 +236,11 @@
 		return counts;
 	}
 
-	async function loadTopicRows(subjectId: string) {
-		loadingTopicRowsForSubject = subjectId;
+	async function loadTopicRows(subjectId: string, opts: { silent?: boolean } = {}) {
+		const silent = opts.silent ?? false;
+		if (!silent) {
+			loadingTopicRowsForSubject = subjectId;
+		}
 		topicRowsError = '';
 		try {
 			const [detail, pendingCounts, approvedCounts, rejectedCounts] = await Promise.all([
@@ -251,25 +272,53 @@
 		} catch (e: unknown) {
 			topicRowsError = e instanceof Error ? e.message : 'Failed to load topic rows';
 		} finally {
-			loadingTopicRowsForSubject = '';
+			if (!silent && loadingTopicRowsForSubject === subjectId) {
+				loadingTopicRowsForSubject = '';
+			}
+		}
+	}
+
+	async function ensureTopicRowsLoaded(subjectId: string, opts: { silent?: boolean } = {}) {
+		if (!subjectId || topicRowsBySubject[subjectId] || topicRowsLoading.has(subjectId)) return;
+		topicRowsLoading.add(subjectId);
+		try {
+			await loadTopicRows(subjectId, opts);
+		} finally {
+			topicRowsLoading.delete(subjectId);
 		}
 	}
 
 	async function toggleRow(subjectId: string) {
 		expandedSubjectId = expandedSubjectId === subjectId ? '' : subjectId;
-		if (expandedSubjectId && !topicRowsBySubject[expandedSubjectId]) {
-			await loadTopicRows(expandedSubjectId);
+		if (expandedSubjectId) {
+			await ensureTopicRowsLoaded(expandedSubjectId);
 		}
 	}
 
 	function toggleGroup(groupId: string) {
 		const next = new Set(expandedGroups);
+		const opening = !next.has(groupId);
 		if (next.has(groupId)) {
 			next.delete(groupId);
 		} else {
 			next.add(groupId);
 		}
 		expandedGroups = next;
+		if (!opening || !treeData) return;
+
+		const stack = [...treeData.groups];
+		while (stack.length > 0) {
+			const group = stack.pop();
+			if (!group) continue;
+			if (group.id === groupId) {
+				const ids = collectSubjectIdsFromGroup(group).slice(0, GROUP_TOPIC_ROWS_PRELOAD_LIMIT);
+				for (const subjectId of ids) {
+					void ensureTopicRowsLoaded(subjectId, { silent: true });
+				}
+				break;
+			}
+			stack.push(...group.children);
+		}
 	}
 </script>
 

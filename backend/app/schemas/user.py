@@ -87,6 +87,9 @@ class UserResponse(BaseModel):
     timezone: str
     language: str
     role: str = "teacher"
+    can_manage_groups: bool = True
+    can_generate: bool = True
+    can_vet: bool = True
     is_active: bool
     created_at: datetime
     last_login_at: Optional[datetime]

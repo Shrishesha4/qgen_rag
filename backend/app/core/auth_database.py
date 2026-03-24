@@ -10,7 +10,7 @@ import os
 from pathlib import Path
 from sqlalchemy.ext.asyncio import create_async_engine, AsyncSession, async_sessionmaker
 from sqlalchemy.orm import declarative_base
-from sqlalchemy import event
+from sqlalchemy import event, text
 import logging
 
 from app.core.config import settings
@@ -66,6 +66,55 @@ async def init_auth_db():
     """Initialize SQLite auth database and create tables."""
     async with auth_engine.begin() as conn:
         await conn.run_sync(AuthBase.metadata.create_all)
+
+        # Lightweight schema evolution for existing SQLite deployments.
+        table_info = await conn.execute(text("PRAGMA table_info(users)"))
+        existing_columns = {row[1] for row in table_info.fetchall()}
+
+        if "can_manage_groups" not in existing_columns:
+            await conn.execute(text("ALTER TABLE users ADD COLUMN can_manage_groups BOOLEAN"))
+        if "can_generate" not in existing_columns:
+            await conn.execute(text("ALTER TABLE users ADD COLUMN can_generate BOOLEAN"))
+        if "can_vet" not in existing_columns:
+            await conn.execute(text("ALTER TABLE users ADD COLUMN can_vet BOOLEAN"))
+
+        # Backfill defaults for legacy rows where new columns are null.
+        await conn.execute(
+            text(
+                """
+                UPDATE users
+                SET can_manage_groups = CASE
+                    WHEN role IN ('teacher', 'admin') THEN 1
+                    ELSE 0
+                END
+                WHERE can_manage_groups IS NULL
+                """
+            )
+        )
+        await conn.execute(
+            text(
+                """
+                UPDATE users
+                SET can_generate = CASE
+                    WHEN role IN ('teacher', 'admin') THEN 1
+                    ELSE 0
+                END
+                WHERE can_generate IS NULL
+                """
+            )
+        )
+        await conn.execute(
+            text(
+                """
+                UPDATE users
+                SET can_vet = CASE
+                    WHEN role IN ('teacher', 'vetter', 'admin') THEN 1
+                    ELSE 0
+                END
+                WHERE can_vet IS NULL
+                """
+            )
+        )
     
     # Ensure database file has correct permissions after creation
     if auth_db_path.exists():

@@ -11,6 +11,14 @@ export interface SubjectCreate {
 	course_outcomes?: { id: string; name: string; description?: string }[];
 }
 
+export interface SubjectUpdate {
+	name?: string;
+	code?: string;
+	description?: string;
+	learning_outcomes?: { id: string; name: string; description?: string }[];
+	course_outcomes?: { id: string; name: string; description?: string }[];
+}
+
 export interface TopicResponse {
 	id: string;
 	subject_id: string;
@@ -68,6 +76,13 @@ export async function getSubject(id: string): Promise<SubjectDetailResponse> {
 export async function createSubject(data: SubjectCreate): Promise<SubjectResponse> {
 	return apiFetch<SubjectResponse>('/subjects', {
 		method: 'POST',
+		body: JSON.stringify(data),
+	});
+}
+
+export async function updateSubject(id: string, data: SubjectUpdate): Promise<SubjectResponse> {
+	return apiFetch<SubjectResponse>(`/subjects/${id}`, {
+		method: 'PUT',
 		body: JSON.stringify(data),
 	});
 }

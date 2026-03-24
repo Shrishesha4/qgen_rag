@@ -36,7 +36,7 @@ from app.schemas.subject import (
     SubjectGroupTreeNode,
     SubjectTreeResponse,
 )
-from app.api.v1.deps import get_current_user
+from app.api.v1.deps import get_current_user, ensure_user_can_generate, ensure_user_can_manage_groups
 from app.services.llm_service import LLMService
 
 logger = logging.getLogger(__name__)
@@ -378,6 +378,8 @@ async def update_group(
     db: AsyncSession = Depends(get_db),
 ):
     """Update a subject group."""
+    ensure_user_can_manage_groups(current_user)
+
     result = await db.execute(
         select(SubjectGroup).where(SubjectGroup.id == group_id)
     )
@@ -427,6 +429,8 @@ async def delete_group(
     db: AsyncSession = Depends(get_db),
 ):
     """Delete a subject group and lift direct children and subjects one level up."""
+    ensure_user_can_manage_groups(current_user)
+
     result = await db.execute(
         select(SubjectGroup).where(SubjectGroup.id == group_id)
     )
@@ -484,6 +488,8 @@ async def move_group(
     db: AsyncSession = Depends(get_db),
 ):
     """Move a group to a new parent (or root)."""
+    ensure_user_can_manage_groups(current_user)
+
     result = await db.execute(
         select(SubjectGroup).where(SubjectGroup.id == group_id)
     )
@@ -1342,6 +1348,8 @@ async def extract_chapters_from_syllabus(
     3. Creates Topic entries for each identified chapter
     4. Returns the list of created topics
     """
+    ensure_user_can_generate(current_user)
+
     # Verify subject exists (shared across teachers)
     result = await db.execute(
         select(Subject).where(Subject.id == subject_id)
@@ -1538,6 +1546,8 @@ async def generate_learning_outcomes(
     2. Reference book chunks linked to this subject (up to 30 chunks × 400 chars each)
     3. Generic fallback LOs if nothing meaningful is found or the LLM fails
     """
+    ensure_user_can_generate(current_user)
+
     subj_result = await db.execute(select(Subject).where(Subject.id == subject_id))
     subject = subj_result.scalar_one_or_none()
     if not subject:
@@ -1615,6 +1625,8 @@ async def move_subject(
     db: AsyncSession = Depends(get_db),
 ):
     """Move a subject to a different group (or root)."""
+    ensure_user_can_manage_groups(current_user)
+
     result = await db.execute(
         select(Subject).where(Subject.id == subject_id)
     )

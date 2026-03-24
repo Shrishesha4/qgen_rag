@@ -21,6 +21,30 @@ from app.services.redis_service import RedisService
 security = HTTPBearer()
 
 
+def _ensure_action_permission(current_user: User, permission: str, error_detail: str) -> None:
+    """Raise 403 when a user lacks an action-level permission."""
+    if current_user.is_superuser:
+        return
+    if bool(getattr(current_user, permission, False)):
+        return
+    raise HTTPException(
+        status_code=status.HTTP_403_FORBIDDEN,
+        detail=error_detail,
+    )
+
+
+def ensure_user_can_generate(current_user: User) -> None:
+    _ensure_action_permission(current_user, "can_generate", "You do not have permission to generate questions")
+
+
+def ensure_user_can_vet(current_user: User) -> None:
+    _ensure_action_permission(current_user, "can_vet", "You do not have permission to vet questions")
+
+
+def ensure_user_can_manage_groups(current_user: User) -> None:
+    _ensure_action_permission(current_user, "can_manage_groups", "You do not have permission to manage groups")
+
+
 async def get_current_user(
     request: Request,
     credentials: HTTPAuthorizationCredentials = Depends(security),
@@ -129,6 +153,8 @@ async def get_current_vetter(
             status_code=status.HTTP_403_FORBIDDEN,
             detail="Vetter access required",
         )
+
+    ensure_user_can_vet(current_user)
     return current_user
 
 

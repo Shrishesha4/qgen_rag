@@ -16,7 +16,6 @@
 	import {
 		createTeacherVettingLoopUrl,
 		hydrateTeacherVettingProgressStoreFromRemote,
-		latestTeacherVettingProgressBySubject,
 		type TeacherVettingProgressSnapshot,
 	} from '$lib/vetting-progress';
 	import { getGenerationWebSocketClient, type StatsData } from '$lib/api/generation-websocket';
@@ -24,6 +23,7 @@
 	let loading = $state(true);
 	let error = $state('');
 	let latestProgress = $state<TeacherVettingProgressSnapshot | null>(null);
+	let progressStore = $state<Record<string, TeacherVettingProgressSnapshot>>({});
 	let treeData = $state<SubjectTreeResponse | null>(null);
 	let subjects = $state<SubjectResponse[]>([]);
 	let expandedGroups = $state<Set<string>>(new Set());
@@ -31,8 +31,13 @@
 	let loadingTopics = $state('');
 	let expandedSubjectId = $state('');
 	let searchQuery = $state('');
-	let progressBySubject = $state<Record<string, TeacherVettingProgressSnapshot>>({});
-	let pendingByTopic = $state<Record<string, number>>({});
+	type TopicCountStats = {
+		generated: number;
+		pending: number;
+		approved: number;
+		rejected: number;
+	};
+	let topicStatsByTopic = $state<Record<string, TopicCountStats>>({});
 	let loadingPendingCounts = $state(false);
 	let showGenerateFirstModal = $state(false);
 	let generateFirstSubjectId = $state('');
@@ -50,8 +55,14 @@
 		total_questions?: number | null;
 	};
 
+	const INITIAL_SUBJECT_PRELOAD_LIMIT = 6;
+	const GROUP_SUBJECT_PRELOAD_LIMIT = 8;
+
 	let subjectGenerationStateBySubject = $state<Record<string, SubjectGenerationState>>({});
 	let subjectGenerationPollTimer: ReturnType<typeof setInterval> | null = null;
+	let pendingLoadInFlightCount = 0;
+	const pendingCountsLoadedForSubject = new Set<string>();
+	const pendingCountsLoadingForSubject = new Set<string>();
 	
 	// WebSocket for live stats updates
 	let wsUnsubscribers: (() => void)[] = [];
@@ -82,6 +93,13 @@
 		if (total <= 0) return false;
 		const reviewedCount = new Set([...snapshot.approvedQuestionIds, ...snapshot.rejectedQuestionIds]).size;
 		return reviewedCount >= total;
+	}
+
+	function hasMeaningfulProgress(snapshot: TeacherVettingProgressSnapshot | null | undefined): boolean {
+		if (!snapshot) return false;
+		if (snapshot.batchComplete) return true;
+		const reviewedCount = new Set([...snapshot.approvedQuestionIds, ...snapshot.rejectedQuestionIds]).size;
+		return reviewedCount > 0;
 	}
 
 	onMount(() => {
@@ -148,12 +166,15 @@
 		
 		// Handle topic-specific stats updates - update pending counts
 		const topicUnsub = wsClient.onTopicStats((subjectId: string, topicId: string, statsData: StatsData) => {
-			if (statsData.pending !== undefined) {
-				pendingByTopic = {
-					...pendingByTopic,
-					[topicId]: statsData.pending,
-				};
-			}
+			topicStatsByTopic = {
+				...topicStatsByTopic,
+				[topicId]: {
+					generated: statsData.generated ?? topicStatsByTopic[topicId]?.generated ?? 0,
+					pending: statsData.pending ?? topicStatsByTopic[topicId]?.pending ?? 0,
+					approved: statsData.approved ?? topicStatsByTopic[topicId]?.approved ?? 0,
+					rejected: statsData.rejected ?? topicStatsByTopic[topicId]?.rejected ?? 0,
+				},
+			};
 		});
 		wsUnsubscribers.push(topicUnsub);
 	}
@@ -166,8 +187,8 @@
 		error = '';
 		try {
 			const store = await hydrateTeacherVettingProgressStoreFromRemote();
+			progressStore = store;
 			latestProgress = resolveLatestProgress(store);
-			progressBySubject = latestTeacherVettingProgressBySubject(store);
 		} catch (e: unknown) {
 			error = e instanceof Error ? e.message : 'Failed to load your vetting progress';
 		}
@@ -176,10 +197,15 @@
 	async function loadSubjects() {
 		loading = true;
 		try {
+			pendingCountsLoadedForSubject.clear();
+			pendingCountsLoadingForSubject.clear();
+			pendingLoadInFlightCount = 0;
+			loadingPendingCounts = false;
 			const treeRes = await getSubjectsTree();
 			treeData = treeRes;
 			subjects = flattenSubjects(treeRes.groups, treeRes.ungrouped_subjects);
 			expandedGroups = new Set();
+			void preloadInitialSubjectData(subjects);
 			await refreshSubjectGenerationStatuses(subjects);
 			ensureSubjectGenerationPolling();
 		} catch (e: unknown) {
@@ -197,6 +223,22 @@
 		}
 		groups.forEach(traverse);
 		return result;
+	}
+
+	function collectSubjectIdsFromGroup(group: SubjectGroupTreeNode): string[] {
+		const subjectIds = group.subjects.map((subject) => subject.id);
+		for (const child of group.children) {
+			subjectIds.push(...collectSubjectIdsFromGroup(child));
+		}
+		return subjectIds;
+	}
+
+	async function preloadInitialSubjectData(subjectList: SubjectResponse[]) {
+		const subjectIds = subjectList.slice(0, INITIAL_SUBJECT_PRELOAD_LIMIT).map((subject) => subject.id);
+		if (subjectIds.length === 0) return;
+		await Promise.all(subjectIds.map((subjectId) =>
+			ensureTopicsLoaded(subjectId, { silent: true, includePendingCounts: true })
+		));
 	}
 
 	async function refreshSubjectGenerationStatuses(subjectList: SubjectResponse[] = subjects) {
@@ -234,54 +276,129 @@
 		}, 3000);
 	}
 
-	async function ensureTopicsLoaded(subjectId: string) {
+	async function ensureTopicsLoaded(
+		subjectId: string,
+		opts: { silent?: boolean; includePendingCounts?: boolean } = {}
+	) {
+		const silent = opts.silent ?? false;
+		const includePendingCounts = opts.includePendingCounts ?? true;
 		if (!subjectId) return;
 		if (topicsMap[subjectId]) {
-			await loadPendingCountsForSubject(subjectId, topicsMap[subjectId]);
+			if (includePendingCounts) {
+				await ensurePendingCountsLoaded(subjectId, topicsMap[subjectId], { silent });
+			}
 			return;
 		}
-		loadingTopics = subjectId;
+		if (!silent) {
+			loadingTopics = subjectId;
+		}
 		try {
 			const detail = await getSubject(subjectId);
 			topicsMap = { ...topicsMap, [subjectId]: detail.topics };
-			await loadPendingCountsForSubject(subjectId, detail.topics);
+			if (includePendingCounts) {
+				await ensurePendingCountsLoaded(subjectId, detail.topics, { silent });
+			}
 		} catch {
 			topicsMap = { ...topicsMap, [subjectId]: [] };
 		} finally {
-			loadingTopics = '';
+			if (!silent && loadingTopics === subjectId) {
+				loadingTopics = '';
+			}
 		}
 	}
 
-	async function loadPendingCountsForSubject(subjectId: string, topics: TopicResponse[]) {
-		loadingPendingCounts = true;
+	async function ensurePendingCountsLoaded(
+		subjectId: string,
+		topics: TopicResponse[],
+		opts: { silent?: boolean } = {}
+	) {
+		if (pendingCountsLoadedForSubject.has(subjectId) || pendingCountsLoadingForSubject.has(subjectId)) {
+			return;
+		}
+		pendingCountsLoadingForSubject.add(subjectId);
+		try {
+			await loadPendingCountsForSubject(subjectId, topics, opts);
+			pendingCountsLoadedForSubject.add(subjectId);
+		} finally {
+			pendingCountsLoadingForSubject.delete(subjectId);
+		}
+	}
+
+	async function loadPendingCountsForSubject(
+		subjectId: string,
+		topics: TopicResponse[],
+		opts: { silent?: boolean } = {}
+	) {
+		const silent = opts.silent ?? false;
+		if (!silent) {
+			pendingLoadInFlightCount += 1;
+			loadingPendingCounts = true;
+		}
 		try {
 			const limit = 100;
-			let pageNo = 1;
-			const nextPendingByTopic: Record<string, number> = {};
-			for (const topic of topics) {
-				nextPendingByTopic[topic.id] = 0;
-			}
-
-			while (true) {
-				const pageRes = await getQuestionsForVetting({
-					subject_id: subjectId,
-					status: 'pending',
-					page: pageNo,
-					limit,
-				});
-				for (const q of pageRes.questions) {
-					if (!q.topic_id) continue;
-					nextPendingByTopic[q.topic_id] = (nextPendingByTopic[q.topic_id] ?? 0) + 1;
+			const countByStatus = async (status: 'pending' | 'approved' | 'rejected') => {
+				let pageNo = 1;
+				const byTopic: Record<string, number> = {};
+				let orphan = 0;
+				while (true) {
+					const pageRes = await getQuestionsForVetting({
+						subject_id: subjectId,
+						status,
+						page: pageNo,
+						limit,
+					});
+					for (const q of pageRes.questions) {
+						if (q.topic_id && topics.some((topic) => topic.id === q.topic_id)) {
+							byTopic[q.topic_id] = (byTopic[q.topic_id] ?? 0) + 1;
+						} else {
+							orphan += 1;
+						}
+					}
+					if (pageNo >= pageRes.pages || pageRes.questions.length === 0) break;
+					pageNo += 1;
 				}
-				if (pageNo >= pageRes.pages || pageRes.questions.length === 0) break;
-				pageNo += 1;
+				return { byTopic, orphan };
+			};
+
+			const [pendingCounts, approvedCounts, rejectedCounts] = await Promise.all([
+				countByStatus('pending'),
+				countByStatus('approved'),
+				countByStatus('rejected'),
+			]);
+
+			const singleTopicId = topics.length === 1 ? topics[0].id : null;
+			const nextTopicStatsByTopic: Record<string, TopicCountStats> = {};
+
+			for (const topic of topics) {
+				let pending = pendingCounts.byTopic[topic.id] ?? 0;
+				let approved = approvedCounts.byTopic[topic.id] ?? 0;
+				let rejected = rejectedCounts.byTopic[topic.id] ?? 0;
+
+				if (singleTopicId && topic.id === singleTopicId) {
+					pending += pendingCounts.orphan;
+					approved += approvedCounts.orphan;
+					rejected += rejectedCounts.orphan;
+				}
+
+				const generatedFromStatuses = pending + approved + rejected;
+				const fallbackGenerated = topic.total_questions ?? 0;
+				const generated = generatedFromStatuses > 0 ? generatedFromStatuses : fallbackGenerated;
+				nextTopicStatsByTopic[topic.id] = {
+					generated,
+					pending: generatedFromStatuses > 0 ? pending : fallbackGenerated,
+					approved,
+					rejected,
+				};
 			}
 
-			pendingByTopic = { ...pendingByTopic, ...nextPendingByTopic };
+			topicStatsByTopic = { ...topicStatsByTopic, ...nextTopicStatsByTopic };
 		} catch {
 			// Preserve existing counts for other subjects if this fetch fails.
 		} finally {
-			loadingPendingCounts = false;
+			if (!silent) {
+				pendingLoadInFlightCount = Math.max(0, pendingLoadInFlightCount - 1);
+				loadingPendingCounts = pendingLoadInFlightCount > 0;
+			}
 		}
 	}
 
@@ -296,13 +413,35 @@
 
 	function resumeLastProgress() {
 		if (!latestProgress) return;
-		const loopUrl = createTeacherVettingLoopUrl(latestProgress, {
+		resumeSpecificProgress(latestProgress);
+	}
+
+	function resumeSpecificProgress(snapshot: TeacherVettingProgressSnapshot) {
+		const loopUrl = createTeacherVettingLoopUrl(snapshot, {
 			resume: true,
-			resumeKey: latestProgress.key,
+			resumeKey: snapshot.key,
 		});
 		const params = new URLSearchParams(loopUrl.split('?')[1] ?? '');
 		params.set('auto_generate', '1');
 		goto(`/teacher/train/loop?${params.toString()}`);
+	}
+
+	function findLatestProgressForTopic(subjectId: string, topicId: string): TeacherVettingProgressSnapshot | null {
+		let winner: TeacherVettingProgressSnapshot | null = null;
+		for (const snapshot of Object.values(progressStore)) {
+			if (snapshot.subjectId !== subjectId || snapshot.topicId !== topicId) continue;
+			if (!winner || toMillis(snapshot.updatedAt) > toMillis(winner.updatedAt)) {
+				winner = snapshot;
+			}
+		}
+		return winner;
+	}
+
+	function topicResumeSnapshot(subjectId: string, topicId: string): TeacherVettingProgressSnapshot | null {
+		const snapshot = findLatestProgressForTopic(subjectId, topicId);
+		if (!snapshot) return null;
+		if (!hasMeaningfulProgress(snapshot)) return null;
+		return isProgressComplete(snapshot) ? null : snapshot;
 	}
 
 	function openGenerateFirstModal(subjectId: string, topicId: string | null, title: string, message: string) {
@@ -396,6 +535,51 @@
 		});
 	});
 
+	function collectGroupedSubjectIds(groups: SubjectGroupTreeNode[]): Set<string> {
+		const ids = new Set<string>();
+		const walk = (group: SubjectGroupTreeNode) => {
+			for (const subject of group.subjects) {
+				ids.add(subject.id);
+			}
+			for (const child of group.children) {
+				walk(child);
+			}
+		};
+		for (const group of groups) {
+			walk(group);
+		}
+		return ids;
+	}
+
+	const groupedSubjectIds = $derived.by(() => {
+		if (!treeData) return new Set<string>();
+		return collectGroupedSubjectIds(treeData.groups);
+	});
+
+	const filteredGroupedSubjects = $derived.by(() => {
+		const q = searchQuery.trim().toLowerCase();
+		const groupedSubjects = subjects.filter((subject) => groupedSubjectIds.has(subject.id));
+		if (!q) return groupedSubjects;
+		return groupedSubjects.filter((subject) => {
+			const subjectMatch =
+				subject.name.toLowerCase().includes(q) ||
+				subject.code.toLowerCase().includes(q) ||
+				(subject.description || '').toLowerCase().includes(q);
+			if (subjectMatch) return true;
+			const topics = topicsMap[subject.id] || [];
+			return topics.some((topic) => topic.name.toLowerCase().includes(q));
+		});
+	});
+
+	const mobileVisibleSubjects = $derived.by(() => {
+		if (activeViewTab === 'groups') {
+			const hasQuery = searchQuery.trim().length > 0;
+			if (hasQuery) return filteredGroupedSubjects;
+			return filteredGroupedSubjects;
+		}
+		return filteredSubjects;
+	});
+
 	const hasSearchQuery = $derived.by(() => searchQuery.trim().length > 0);
 
 	function isExpanded(subjectId: string): boolean {
@@ -404,12 +588,29 @@
 
 	function toggleGroup(groupId: string) {
 		const next = new Set(expandedGroups);
+		const isOpening = !next.has(groupId);
 		if (next.has(groupId)) {
 			next.delete(groupId);
 		} else {
 			next.add(groupId);
 		}
 		expandedGroups = next;
+
+		if (!isOpening || !treeData) return;
+		const allGroupSubjectIds: string[] = [];
+		const stack = [...treeData.groups];
+		while (stack.length > 0) {
+			const group = stack.pop();
+			if (!group) continue;
+			if (group.id === groupId) {
+				allGroupSubjectIds.push(...collectSubjectIdsFromGroup(group));
+				break;
+			}
+			stack.push(...group.children);
+		}
+		for (const subjectId of allGroupSubjectIds.slice(0, GROUP_SUBJECT_PRELOAD_LIMIT)) {
+			void ensureTopicsLoaded(subjectId, { silent: true, includePendingCounts: true });
+		}
 	}
 
 	function getSubjectGenerationState(subjectId: string): SubjectGenerationState | null {
@@ -417,7 +618,32 @@
 	}
 
 	function getTopicPendingCount(topicId: string): number {
-		return pendingByTopic[topicId] ?? 0;
+		return topicStatsByTopic[topicId]?.pending ?? 0;
+	}
+
+	function getTopicStats(topic: TopicResponse): TopicCountStats {
+		return (
+			topicStatsByTopic[topic.id] ?? {
+				generated: topic.total_questions ?? 0,
+				pending: topic.total_questions ?? 0,
+				approved: 0,
+				rejected: 0,
+			}
+		);
+	}
+
+	function shouldStartSubjectVetting(subject: SubjectResponse): boolean {
+		const approved = subject.total_approved ?? 0;
+		const rejected = subject.total_rejected ?? 0;
+		return approved + rejected === 0;
+	}
+
+	async function handleSubjectPrimaryAction(subject: SubjectResponse) {
+		if (shouldStartSubjectVetting(subject)) {
+			startSubjectVetting(subject.id, subject.total_questions ?? 0);
+			return;
+		}
+		await toggleSubject(subject.id);
 	}
 
 	function getSubjectGenerationLabel(subjectId: string): string {
@@ -433,9 +659,8 @@
 		return 'Generating...';
 	}
 
-	function estimateTopicApproved(topic: TopicResponse): number {
-		const pending = getTopicPendingCount(topic.id);
-		return Math.max(0, topic.total_questions - pending);
+	function subjectPrimaryActionLabel(subject: SubjectResponse): string {
+		return shouldStartSubjectVetting(subject) ? 'Start Vetting' : 'View Topics';
 	}
 </script>
 
@@ -460,7 +685,7 @@
 			<div class="error-banner" role="alert">{error}</div>
 		{/if}
 
-		{#if latestProgress && !latestProgressIsComplete}
+		{#if latestProgress && hasMeaningfulProgress(latestProgress) && !latestProgressIsComplete}
 			<section class="resume-strip glass-panel">
 				<div class="summary-grid">
 					<div class="summary-item">
@@ -554,25 +779,22 @@
 							{/if}
 						{:else}
 							{#if hasSearchQuery}
-								{#if filteredSubjects.length === 0}
+								{#if filteredGroupedSubjects.length === 0}
 									<tr>
-										<td colspan="6" class="empty-cell">No matching subjects.</td>
+										<td colspan="6" class="empty-cell">No matching grouped subjects.</td>
 									</tr>
 								{:else}
-									{#each filteredSubjects as subject}
+									{#each filteredGroupedSubjects as subject}
 										{@render vettingSubjectRow(subject, 0)}
 									{/each}
 								{/if}
-							{:else if !treeData || (treeData.groups.length === 0 && treeData.ungrouped_subjects.length === 0)}
+							{:else if !treeData || treeData.groups.length === 0}
 								<tr>
 									<td colspan="6" class="empty-cell">No subjects yet.</td>
 								</tr>
 							{:else}
 								{#each treeData.groups as group}
 									{@render vettingGroupRow(group, 0)}
-								{/each}
-								{#each treeData.ungrouped_subjects as subject}
-									{@render vettingSubjectRow(subject, 0)}
 								{/each}
 							{/if}
 						{/if}
@@ -581,10 +803,10 @@
 			</div>
 
 			<div class="training-mobile-list mobile-only">
-				{#if filteredSubjects.length === 0}
+				{#if mobileVisibleSubjects.length === 0}
 					<div class="mobile-card glass-panel empty-cell">No matching subjects.</div>
 				{:else}
-					{#each filteredSubjects as subject}
+					{#each mobileVisibleSubjects as subject}
 						<div class="mobile-card glass-panel">
 							<div class="mobile-card-head">
 								<div class="name-header">
@@ -602,10 +824,7 @@
 								<span class="red-text">Rejected <strong>{subject.total_rejected ?? 0}</strong></span>
 							</div>
 							<div class="inline-actions">
-								<button class="table-btn primary" onclick={() => startSubjectVetting(subject.id, subject.total_questions ?? 0)} disabled={loadingPendingCounts}>Start Vetting</button>
-								{#if progressBySubject[subject.id] && !isProgressComplete(progressBySubject[subject.id])}
-									<button class="table-btn" onclick={resumeLastProgress}>Resume</button>
-								{/if}
+								<button class="table-btn primary" onclick={() => void handleSubjectPrimaryAction(subject)} disabled={loadingPendingCounts}>{subjectPrimaryActionLabel(subject)}</button>
 							</div>
 
 							{#if isExpanded(subject.id)}
@@ -616,7 +835,9 @@
 								{:else}
 									<div class="mobile-topic-list">
 										{#each topicsMap[subject.id] || [] as topic}
-											{@const pendingCount = getTopicPendingCount(topic.id)}
+													{@const topicStats = getTopicStats(topic)}
+													{@const pendingCount = topicStats.pending}
+													{@const topicProgress = topicResumeSnapshot(subject.id, topic.id)}
 											{@const subjectGenerationState = getSubjectGenerationState(subject.id)}
 											<div class="mobile-topic-card">
 												<div class="topic-title-line">
@@ -624,14 +845,18 @@
 													<strong>{topic.name}</strong>
 												</div>
 												<div class="mobile-metrics">
-													<span>Questions <strong>{topic.total_questions}</strong></span>
+															<span>Questions <strong>{topicStats.generated}</strong></span>
 													<span>Pending <strong>{pendingCount}</strong></span>
+															<span class="green-text">Approved <strong>{topicStats.approved}</strong></span>
+															<span class="red-text">Rejected <strong>{topicStats.rejected}</strong></span>
 												</div>
 												<div class="inline-actions">
 													{#if subjectGenerationState?.in_progress && pendingCount === 0}
 														<span class="status-text generation-status"><span class="spinner-sm"></span>{getSubjectGenerationLabel(subject.id)}</span>
+															{:else if topicProgress}
+																<button class="table-btn" onclick={() => resumeSpecificProgress(topicProgress)} disabled={loadingPendingCounts}>Resume</button>
 													{:else}
-														<button class="table-btn primary" onclick={() => startTopicVetting(subject.id, topic.id, topic.name, topic.total_questions ?? 0)} disabled={loadingPendingCounts}>Start Vetting</button>
+																<button class="table-btn primary" onclick={() => startTopicVetting(subject.id, topic.id, topic.name, topicStats.generated)} disabled={loadingPendingCounts}>Start Vetting</button>
 													{/if}
 												</div>
 											</div>
@@ -722,16 +947,10 @@
 			<div class="inline-actions action-stack">
 				<button class="table-btn primary" onclick={(event) => {
 					event.stopPropagation();
-					startSubjectVetting(subject.id, subject.total_questions ?? 0);
+					void handleSubjectPrimaryAction(subject);
 				}} disabled={loadingPendingCounts}>
-					Start Vetting
+					{subjectPrimaryActionLabel(subject)}
 				</button>
-				{#if progressBySubject[subject.id] && !isProgressComplete(progressBySubject[subject.id])}
-					<button class="table-btn" onclick={(event) => {
-						event.stopPropagation();
-						resumeLastProgress();
-					}}>Resume</button>
-				{/if}
 				{#if getSubjectGenerationState(subject.id)?.in_progress}
 					<span class="status-text generation-status">{getSubjectGenerationLabel(subject.id)}</span>
 				{/if}
@@ -750,7 +969,9 @@
 			</tr>
 		{:else}
 			{#each topicsMap[subject.id] || [] as topic}
-				{@const pendingCount = getTopicPendingCount(topic.id)}
+				{@const topicStats = getTopicStats(topic)}
+				{@const pendingCount = topicStats.pending}
+				{@const topicProgress = topicResumeSnapshot(subject.id, topic.id)}
 				{@const subjectGenerationState = getSubjectGenerationState(subject.id)}
 				<tr class="topic-row" transition:slide={{ duration: 180 }}>
 					<td>
@@ -762,18 +983,23 @@
 							</div>
 						</div>
 					</td>
-					<td>{topic.total_questions}</td>
+					<td>{topicStats.generated}</td>
 					<td>{pendingCount}</td>
-					<td class="green-text">{estimateTopicApproved(topic)}</td>
-					<td class="red-text">0</td>
+					<td class="green-text">{topicStats.approved}</td>
+					<td class="red-text">{topicStats.rejected}</td>
 					<td class="action-cell">
 						<div class="inline-actions action-stack">
 							{#if subjectGenerationState?.in_progress && pendingCount === 0}
 								<span class="status-text generation-status"><span class="spinner-sm"></span>{getSubjectGenerationLabel(subject.id)}</span>
+							{:else if topicProgress}
+								<button class="table-btn" onclick={(event) => {
+									event.stopPropagation();
+									resumeSpecificProgress(topicProgress);
+								}}>Resume</button>
 							{:else}
 								<button class="table-btn primary" onclick={(event) => {
 									event.stopPropagation();
-									startTopicVetting(subject.id, topic.id, topic.name, topic.total_questions ?? 0);
+									startTopicVetting(subject.id, topic.id, topic.name, topicStats.generated);
 								}} disabled={loadingPendingCounts}>Start Vetting</button>
 							{/if}
 						</div>

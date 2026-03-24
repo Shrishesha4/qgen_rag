@@ -457,7 +457,7 @@
 		try {
 			const limit = 100;
 			let pageNo = 1;
-			const allQuestions: Array<{ topic_id: string | null; vetting_status: string; version_number: number }> = [];
+			const allQuestions: Array<{ topic_id: string | null; vetting_status: string }> = [];
 
 			while (true) {
 				const pageRes = await getQuestionsForVetting({
@@ -470,7 +470,6 @@
 					...pageRes.questions.map((q) => ({
 						topic_id: q.topic_id,
 						vetting_status: q.vetting_status,
-						version_number: Math.max(1, q.version_number || 1),
 					}))
 				);
 				if (pageNo >= pageRes.pages || pageRes.questions.length === 0) break;
@@ -478,26 +477,40 @@
 			}
 
 			const perTopic: Record<string, ReviewStats> = {};
-			const regeneratedByTopic: Record<string, number> = {};
 			for (const topic of subject.topics) {
 				perTopic[topic.id] = {
-					generated: topic.total_questions,
+					generated: 0,
 					approved: 0,
 					rejected: 0,
 					pending: 0,
 					vetted: 0,
 					approvalRate: 0,
 				};
-				regeneratedByTopic[topic.id] = 0;
 			}
 
+			let orphanApproved = 0;
+			let orphanRejected = 0;
+			let orphanPending = 0;
+
 			for (const q of allQuestions) {
-				if (!q.topic_id || !perTopic[q.topic_id]) continue;
 				const normalized = normalizeStatus(q.vetting_status);
-				if (normalized === 'approved') perTopic[q.topic_id].approved += 1;
-				else if (normalized === 'rejected') perTopic[q.topic_id].rejected += 1;
-				else perTopic[q.topic_id].pending += 1;
-				regeneratedByTopic[q.topic_id] += Math.max(0, q.version_number - 1);
+				if (q.topic_id && perTopic[q.topic_id]) {
+					if (normalized === 'approved') perTopic[q.topic_id].approved += 1;
+					else if (normalized === 'rejected') perTopic[q.topic_id].rejected += 1;
+					else perTopic[q.topic_id].pending += 1;
+					continue;
+				}
+
+				if (normalized === 'approved') orphanApproved += 1;
+				else if (normalized === 'rejected') orphanRejected += 1;
+				else orphanPending += 1;
+			}
+
+			if (subject.topics.length === 1) {
+				const onlyTopicId = subject.topics[0].id;
+				perTopic[onlyTopicId].approved += orphanApproved;
+				perTopic[onlyTopicId].rejected += orphanRejected;
+				perTopic[onlyTopicId].pending += orphanPending;
 			}
 
 			let approvedTotal = 0;
@@ -507,9 +520,10 @@
 
 			for (const topic of subject.topics) {
 				const stats = perTopic[topic.id];
-				stats.generated += regeneratedByTopic[topic.id] || 0;
+				stats.generated = stats.approved + stats.rejected + stats.pending;
 				stats.vetted = stats.approved + stats.rejected;
-				if (stats.pending === 0) {
+				if (stats.generated === 0) {
+					stats.generated = topic.total_questions;
 					stats.pending = Math.max(0, topic.total_questions - stats.vetted);
 				}
 				stats.approvalRate = calcApprovalRate(stats.approved, stats.generated);
@@ -1287,7 +1301,11 @@
 													<span class="btn-spinner" aria-hidden="true"></span>
 													<span>Generating {topicGenerationProgressById[topic.id] || ''}</span>
 												</button>
-											{:else if canGenerateTopic(topic.id, topic.total_questions, topic.total_questions)}
+											{:else if canGenerateTopic(
+												topic.id,
+												topicReviewStats[topic.id]?.pending ?? topic.total_questions,
+												topicReviewStats[topic.id]?.generated ?? topic.total_questions
+											)}
 												<button class="action-btn action-generate" onclick={() => generateTopic(topic.id)} disabled={!!generationPollingTopicId}>
 													<span>Generate</span>
 												</button>
@@ -1329,7 +1347,11 @@
 										<span class="btn-spinner" aria-hidden="true"></span>
 										<span>Generating {topicGenerationProgressById[topic.id] || ''}</span>
 									</button>
-								{:else if canGenerateTopic(topic.id, topic.total_questions, topic.total_questions)}
+								{:else if canGenerateTopic(
+									topic.id,
+									topicReviewStats[topic.id]?.pending ?? topic.total_questions,
+									topicReviewStats[topic.id]?.generated ?? topic.total_questions
+								)}
 									<button class="action-btn action-generate" onclick={() => generateTopic(topic.id)} disabled={!!generationPollingTopicId}>
 										<span>Generate</span>
 									</button>

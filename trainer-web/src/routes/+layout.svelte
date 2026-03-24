@@ -76,10 +76,12 @@
 		if (pathname.startsWith('/admin')) {
 			return [
 				{ href: '/admin/dashboard', label: 'Dashboard', icon: '📊' },
+				{ href: '/admin/users', label: 'User Management', icon: '👥' },
 				{ href: '/admin/subjects', label: 'Subjects', icon: '🧾' },
 				{ href: '/admin/teachers', label: 'Teachers', icon: '🧑‍🏫' },
 				{ href: '/admin/vetters', label: 'Vetters', icon: '✅' },
-				{ href: '/admin/profile', label: 'Profile', icon: '👤' }
+				{ href: '/admin/settings', label: 'Settings', icon: '⚙️' },
+				{ href: '/admin/profile', label: 'Profile', icon: '👤' },
 			];
 		}
 		return [];
@@ -497,12 +499,27 @@
 		}
 
 		.sidebar-link.active {
-			background: linear-gradient(135deg, rgba(var(--theme-primary-rgb), 0.32), rgba(var(--theme-primary-rgb), 0.2));
-			border-color: rgba(var(--theme-primary-rgb), 0.62);
-			color: #374151;
+			background: linear-gradient(135deg, rgba(var(--theme-primary-rgb), 0.88), rgba(var(--theme-primary-rgb), 0.64));
+			border-color: rgba(var(--theme-primary-rgb), 0.9);
+			color: #ffffff;
 			box-shadow:
-				0 8px 18px rgba(var(--theme-primary-rgb), 0.22),
-				inset 0 1px 0 rgba(255, 255, 255, 0.34);
+				0 8px 18px rgba(var(--theme-primary-rgb), 0.34),
+				inset 0 1px 0 rgba(255, 255, 255, 0.2);
+		}
+
+		:global([data-color-mode='light']) .sidebar-link.active {
+			background: linear-gradient(135deg, rgba(var(--theme-primary-rgb), 0.96), rgba(var(--theme-primary-rgb), 0.78));
+			border-color: rgba(var(--theme-primary-rgb), 0.98);
+			color: #ffffff;
+			box-shadow:
+				0 10px 22px rgba(var(--theme-primary-rgb), 0.42),
+				inset 0 1px 0 rgba(255, 255, 255, 0.18);
+		}
+
+		:global([data-color-mode='light']) .sidebar-link.active .sidebar-link-icon {
+			background: rgba(15, 23, 42, 0.24);
+			border-color: rgba(255, 255, 255, 0.5);
+			color: #ffffff;
 		}
 
 		.sidebar-link-icon {
@@ -523,9 +540,9 @@
 		}
 
 		.sidebar-link.active .sidebar-link-icon {
-			background: rgba(255, 255, 255, 0.95);
-			border-color: rgba(var(--theme-primary-rgb), 0.54);
-			color: #374151;
+			background: rgba(15, 23, 42, 0.22);
+			border-color: rgba(255, 255, 255, 0.45);
+			color: #ffffff;
 		}
 
 		:global([data-color-mode='dark']) .sidebar-link.active {
