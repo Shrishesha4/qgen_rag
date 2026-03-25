@@ -16,12 +16,13 @@ from sqlalchemy import (
     String, Boolean, Integer, Float, DateTime, Text, ForeignKey,
     UniqueConstraint, Index, Enum as SQLEnum
 )
-from sqlalchemy.dialects.postgresql import UUID, JSONB
+from sqlalchemy.dialects.postgresql import JSONB
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 import uuid
 import enum
 
 from app.core.database import Base
+from app.core.types import UUIDString
 
 
 class EvaluationItemStatus(str, enum.Enum):
@@ -79,21 +80,21 @@ class EvaluationItem(Base):
     """
     __tablename__ = "gel_evaluation_items"
 
-    id: Mapped[uuid.UUID] = mapped_column(
-        UUID(as_uuid=True), primary_key=True, default=uuid.uuid4
+    id: Mapped[str] = mapped_column(
+        UUIDString(), primary_key=True, default=lambda: str(uuid.uuid4())
     )
     
     # Link to source question
-    question_id: Mapped[uuid.UUID] = mapped_column(
-        UUID(as_uuid=True), ForeignKey("questions.id", ondelete="CASCADE"), nullable=False
+    question_id: Mapped[str] = mapped_column(
+        UUIDString(), ForeignKey("questions.id", ondelete="CASCADE"), nullable=False
     )
     
     # Subject/topic context (denormalized for query efficiency)
-    subject_id: Mapped[uuid.UUID] = mapped_column(
-        UUID(as_uuid=True), ForeignKey("subjects.id", ondelete="SET NULL"), nullable=True
+    subject_id: Mapped[Optional[str]] = mapped_column(
+        UUIDString(), ForeignKey("subjects.id", ondelete="SET NULL"), nullable=True
     )
-    topic_id: Mapped[Optional[uuid.UUID]] = mapped_column(
-        UUID(as_uuid=True), ForeignKey("topics.id", ondelete="SET NULL"), nullable=True
+    topic_id: Mapped[Optional[str]] = mapped_column(
+        UUIDString(), ForeignKey("topics.id", ondelete="SET NULL"), nullable=True
     )
     
     # Evaluation metadata
@@ -110,8 +111,8 @@ class EvaluationItem(Base):
     control_type: Mapped[Optional[str]] = mapped_column(String(20))  # "known_good" or "known_bad"
     
     # Rubric reference
-    rubric_id: Mapped[Optional[uuid.UUID]] = mapped_column(
-        UUID(as_uuid=True), ForeignKey("rubrics.id", ondelete="SET NULL"), nullable=True
+    rubric_id: Mapped[Optional[str]] = mapped_column(
+        UUIDString(), ForeignKey("rubrics.id", ondelete="SET NULL"), nullable=True
     )
     
     # Timestamps
@@ -141,8 +142,8 @@ class Assignment(Base):
     """
     __tablename__ = "gel_assignments"
 
-    id: Mapped[uuid.UUID] = mapped_column(
-        UUID(as_uuid=True), primary_key=True, default=uuid.uuid4
+    id: Mapped[str] = mapped_column(
+        UUIDString(), primary_key=True, default=lambda: str(uuid.uuid4())
     )
     
     # Assignment metadata
@@ -150,11 +151,11 @@ class Assignment(Base):
     description: Mapped[Optional[str]] = mapped_column(Text)
     
     # Scope
-    subject_id: Mapped[Optional[uuid.UUID]] = mapped_column(
-        UUID(as_uuid=True), ForeignKey("subjects.id", ondelete="SET NULL"), nullable=True
+    subject_id: Mapped[Optional[str]] = mapped_column(
+        UUIDString(), ForeignKey("subjects.id", ondelete="SET NULL"), nullable=True
     )
-    topic_id: Mapped[Optional[uuid.UUID]] = mapped_column(
-        UUID(as_uuid=True), ForeignKey("topics.id", ondelete="SET NULL"), nullable=True
+    topic_id: Mapped[Optional[str]] = mapped_column(
+        UUIDString(), ForeignKey("topics.id", ondelete="SET NULL"), nullable=True
     )
     cohort: Mapped[Optional[str]] = mapped_column(String(100))  # Target cohort
     grade: Mapped[Optional[str]] = mapped_column(String(20))  # Target grade
@@ -175,8 +176,8 @@ class Assignment(Base):
     show_feedback_immediately: Mapped[bool] = mapped_column(Boolean, default=False)
     
     # Scoring settings
-    rubric_id: Mapped[Optional[uuid.UUID]] = mapped_column(
-        UUID(as_uuid=True), ForeignKey("rubrics.id", ondelete="SET NULL"), nullable=True
+    rubric_id: Mapped[Optional[str]] = mapped_column(
+        UUIDString(), ForeignKey("rubrics.id", ondelete="SET NULL"), nullable=True
     )
     passing_score: Mapped[Optional[float]] = mapped_column(Float)
     
@@ -206,15 +207,15 @@ class AssignmentItem(Base):
     """
     __tablename__ = "gel_assignment_items"
 
-    id: Mapped[uuid.UUID] = mapped_column(
-        UUID(as_uuid=True), primary_key=True, default=uuid.uuid4
+    id: Mapped[str] = mapped_column(
+        UUIDString(), primary_key=True, default=lambda: str(uuid.uuid4())
     )
     
-    assignment_id: Mapped[uuid.UUID] = mapped_column(
-        UUID(as_uuid=True), ForeignKey("gel_assignments.id", ondelete="CASCADE"), nullable=False
+    assignment_id: Mapped[str] = mapped_column(
+        UUIDString(), ForeignKey("gel_assignments.id", ondelete="CASCADE"), nullable=False
     )
-    evaluation_item_id: Mapped[uuid.UUID] = mapped_column(
-        UUID(as_uuid=True), ForeignKey("gel_evaluation_items.id", ondelete="CASCADE"), nullable=False
+    evaluation_item_id: Mapped[str] = mapped_column(
+        UUIDString(), ForeignKey("gel_evaluation_items.id", ondelete="CASCADE"), nullable=False
     )
     
     # Ordering
@@ -241,17 +242,17 @@ class StudentAttempt(Base):
     """
     __tablename__ = "gel_student_attempts"
 
-    id: Mapped[uuid.UUID] = mapped_column(
-        UUID(as_uuid=True), primary_key=True, default=uuid.uuid4
+    id: Mapped[str] = mapped_column(
+        UUIDString(), primary_key=True, default=lambda: str(uuid.uuid4())
     )
     
     # Links
     student_id: Mapped[str] = mapped_column(String(36), nullable=False)  # User ID
-    evaluation_item_id: Mapped[uuid.UUID] = mapped_column(
-        UUID(as_uuid=True), ForeignKey("gel_evaluation_items.id", ondelete="CASCADE"), nullable=False
+    evaluation_item_id: Mapped[str] = mapped_column(
+        UUIDString(), ForeignKey("gel_evaluation_items.id", ondelete="CASCADE"), nullable=False
     )
-    assignment_id: Mapped[Optional[uuid.UUID]] = mapped_column(
-        UUID(as_uuid=True), ForeignKey("gel_assignments.id", ondelete="SET NULL"), nullable=True
+    assignment_id: Mapped[Optional[str]] = mapped_column(
+        UUIDString(), ForeignKey("gel_assignments.id", ondelete="SET NULL"), nullable=True
     )
     
     # Attempt metadata
@@ -318,12 +319,12 @@ class AttemptIssue(Base):
     """
     __tablename__ = "gel_attempt_issues"
 
-    id: Mapped[uuid.UUID] = mapped_column(
-        UUID(as_uuid=True), primary_key=True, default=uuid.uuid4
+    id: Mapped[str] = mapped_column(
+        UUIDString(), primary_key=True, default=lambda: str(uuid.uuid4())
     )
     
-    attempt_id: Mapped[uuid.UUID] = mapped_column(
-        UUID(as_uuid=True), ForeignKey("gel_student_attempts.id", ondelete="CASCADE"), nullable=False
+    attempt_id: Mapped[str] = mapped_column(
+        UUIDString(), ForeignKey("gel_student_attempts.id", ondelete="CASCADE"), nullable=False
     )
     
     # Issue details
@@ -359,12 +360,12 @@ class AttemptScore(Base):
     """
     __tablename__ = "gel_attempt_scores"
 
-    id: Mapped[uuid.UUID] = mapped_column(
-        UUID(as_uuid=True), primary_key=True, default=uuid.uuid4
+    id: Mapped[str] = mapped_column(
+        UUIDString(), primary_key=True, default=lambda: str(uuid.uuid4())
     )
     
-    attempt_id: Mapped[uuid.UUID] = mapped_column(
-        UUID(as_uuid=True), ForeignKey("gel_student_attempts.id", ondelete="CASCADE"), nullable=False
+    attempt_id: Mapped[str] = mapped_column(
+        UUIDString(), ForeignKey("gel_student_attempts.id", ondelete="CASCADE"), nullable=False
     )
     
     # Score dimension
@@ -399,12 +400,12 @@ class AttemptEvent(Base):
     """
     __tablename__ = "gel_attempt_events"
 
-    id: Mapped[uuid.UUID] = mapped_column(
-        UUID(as_uuid=True), primary_key=True, default=uuid.uuid4
+    id: Mapped[str] = mapped_column(
+        UUIDString(), primary_key=True, default=lambda: str(uuid.uuid4())
     )
     
-    attempt_id: Mapped[uuid.UUID] = mapped_column(
-        UUID(as_uuid=True), ForeignKey("gel_student_attempts.id", ondelete="CASCADE"), nullable=False
+    attempt_id: Mapped[str] = mapped_column(
+        UUIDString(), ForeignKey("gel_student_attempts.id", ondelete="CASCADE"), nullable=False
     )
     
     # Event details

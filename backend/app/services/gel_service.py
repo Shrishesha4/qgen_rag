@@ -40,6 +40,10 @@ class GELService:
     def __init__(self, db: AsyncSession):
         self.db = db
         self.scoring_service = GELScoringService(db)
+    @staticmethod
+    def _sid(value: Optional[object]) -> Optional[str]:
+        """Normalize UUID/str inputs to plain strings for varchar PK/FK columns."""
+        return str(value) if value is not None else None
 
     # ==================== Evaluation Items ====================
 
@@ -55,16 +59,16 @@ class GELService:
             raise ValueError(f"Question {data.question_id} not found")
         
         item = EvaluationItem(
-            question_id=data.question_id,
-            subject_id=data.subject_id or (uuid.UUID(question.subject_id) if question.subject_id else None),
-            topic_id=data.topic_id or (uuid.UUID(question.topic_id) if question.topic_id else None),
+            question_id=str(data.question_id),
+            subject_id=str(data.subject_id) if data.subject_id else (str(question.subject_id) if question.subject_id else None),
+            topic_id=str(data.topic_id) if data.topic_id else (str(question.topic_id) if question.topic_id else None),
             difficulty_label=data.difficulty_label or question.difficulty_level,
             bloom_level=data.bloom_level or question.bloom_taxonomy_level,
             known_issues=data.known_issues,
             expected_detection_count=data.expected_detection_count,
             is_control_item=data.is_control_item,
             control_type=data.control_type,
-            rubric_id=data.rubric_id,
+            rubric_id=str(data.rubric_id) if data.rubric_id else None,
             status=EvaluationItemStatus.DRAFT.value,
             created_by=created_by,
         )
@@ -90,11 +94,11 @@ class GELService:
             if not question:
                 logger.warning(f"Question {qid} not found, skipping")
                 continue
-            
+
             item = EvaluationItem(
-                question_id=qid,
-                subject_id=uuid.UUID(question.subject_id) if question.subject_id else None,
-                topic_id=uuid.UUID(question.topic_id) if question.topic_id else None,
+                question_id=str(qid),
+                subject_id=str(question.subject_id) if question.subject_id else None,
+                topic_id=str(question.topic_id) if question.topic_id else None,
                 difficulty_label=question.difficulty_level,
                 bloom_level=question.bloom_taxonomy_level,
                 rubric_id=rubric_id,
@@ -113,7 +117,7 @@ class GELService:
 
     async def get_evaluation_item(self, item_id: uuid.UUID) -> Optional[EvaluationItem]:
         """Get an evaluation item by ID."""
-        return await self.db.get(EvaluationItem, item_id)
+        return await self.db.get(EvaluationItem, self._sid(item_id))
 
     async def list_evaluation_items(
         self,
@@ -129,9 +133,9 @@ class GELService:
         if status:
             query = query.where(EvaluationItem.status == status)
         if subject_id:
-            query = query.where(EvaluationItem.subject_id == subject_id)
+            query = query.where(EvaluationItem.subject_id == self._sid(subject_id))
         if topic_id:
-            query = query.where(EvaluationItem.topic_id == topic_id)
+            query = query.where(EvaluationItem.topic_id == self._sid(topic_id))
         
         # Count total
         count_query = select(func.count()).select_from(query.subquery())
@@ -152,7 +156,7 @@ class GELService:
         data: EvaluationItemUpdate,
     ) -> Optional[EvaluationItem]:
         """Update an evaluation item."""
-        item = await self.db.get(EvaluationItem, item_id)
+        item = await self.db.get(EvaluationItem, self._sid(item_id))
         if not item:
             return None
         
@@ -168,7 +172,7 @@ class GELService:
 
     async def delete_evaluation_item(self, item_id: uuid.UUID) -> bool:
         """Delete an evaluation item."""
-        item = await self.db.get(EvaluationItem, item_id)
+        item = await self.db.get(EvaluationItem, self._sid(item_id))
         if not item:
             return False
         
@@ -185,10 +189,11 @@ class GELService:
     ) -> Assignment:
         """Create a new assignment."""
         assignment = Assignment(
+            id=str(uuid.uuid4()),
             title=data.title,
             description=data.description,
-            subject_id=data.subject_id,
-            topic_id=data.topic_id,
+            subject_id=str(data.subject_id) if data.subject_id else None,
+            topic_id=str(data.topic_id) if data.topic_id else None,
             cohort=data.cohort,
             grade=data.grade,
             scheduled_start=data.scheduled_start,
@@ -197,7 +202,7 @@ class GELService:
             time_limit_minutes=data.time_limit_minutes,
             shuffle_items=data.shuffle_items,
             show_feedback_immediately=data.show_feedback_immediately,
-            rubric_id=data.rubric_id,
+            rubric_id=str(data.rubric_id) if data.rubric_id else None,
             passing_score=data.passing_score,
             status=AssignmentStatus.DRAFT.value,
             created_by=created_by,
@@ -211,7 +216,7 @@ class GELService:
             for seq, item_id in enumerate(data.evaluation_item_ids):
                 assignment_item = AssignmentItem(
                     assignment_id=assignment.id,
-                    evaluation_item_id=item_id,
+                    evaluation_item_id=str(item_id),
                     sequence_number=seq,
                 )
                 self.db.add(assignment_item)
@@ -224,7 +229,7 @@ class GELService:
 
     async def get_assignment(self, assignment_id: uuid.UUID) -> Optional[Assignment]:
         """Get an assignment by ID."""
-        query = select(Assignment).where(Assignment.id == assignment_id)
+        query = select(Assignment).where(Assignment.id == self._sid(assignment_id))
         query = query.options(selectinload(Assignment.items))
         result = await self.db.execute(query)
         return result.scalar_one_or_none()
@@ -266,7 +271,7 @@ class GELService:
         data: AssignmentUpdate,
     ) -> Optional[Assignment]:
         """Update an assignment."""
-        assignment = await self.db.get(Assignment, assignment_id)
+        assignment = await self.db.get(Assignment, self._sid(assignment_id))
         if not assignment:
             return None
         
@@ -282,7 +287,7 @@ class GELService:
 
     async def activate_assignment(self, assignment_id: uuid.UUID) -> Optional[Assignment]:
         """Activate an assignment (make it available to students)."""
-        assignment = await self.db.get(Assignment, assignment_id)
+        assignment = await self.db.get(Assignment, self._sid(assignment_id))
         if not assignment:
             return None
         
@@ -298,7 +303,7 @@ class GELService:
 
     async def close_assignment(self, assignment_id: uuid.UUID) -> Optional[Assignment]:
         """Close an assignment."""
-        assignment = await self.db.get(Assignment, assignment_id)
+        assignment = await self.db.get(Assignment, self._sid(assignment_id))
         if not assignment:
             return None
         
@@ -319,7 +324,7 @@ class GELService:
         starting_sequence: int = 0,
     ) -> int:
         """Add evaluation items to an assignment."""
-        assignment = await self.db.get(Assignment, assignment_id)
+        assignment = await self.db.get(Assignment, self._sid(assignment_id))
         if not assignment:
             raise ValueError(f"Assignment {assignment_id} not found")
         
@@ -329,8 +334,8 @@ class GELService:
             existing = await self.db.execute(
                 select(AssignmentItem).where(
                     and_(
-                        AssignmentItem.assignment_id == assignment_id,
-                        AssignmentItem.evaluation_item_id == item_id,
+                        AssignmentItem.assignment_id == assignment.id,
+                        AssignmentItem.evaluation_item_id == self._sid(item_id),
                     )
                 )
             )
@@ -338,8 +343,8 @@ class GELService:
                 continue
             
             assignment_item = AssignmentItem(
-                assignment_id=assignment_id,
-                evaluation_item_id=item_id,
+                assignment_id=assignment.id,
+                evaluation_item_id=self._sid(item_id),
                 sequence_number=starting_sequence + seq,
             )
             self.db.add(assignment_item)
@@ -402,9 +407,10 @@ class GELService:
         assignment_id: uuid.UUID,
     ) -> List[Dict[str, Any]]:
         """Get items assigned to a student in an assignment."""
+        assignment_id_str = self._sid(assignment_id)
         # Get assignment items
         query = select(AssignmentItem).where(
-            AssignmentItem.assignment_id == assignment_id
+            AssignmentItem.assignment_id == assignment_id_str
         ).order_by(AssignmentItem.sequence_number)
         
         result = await self.db.execute(query)
@@ -422,7 +428,7 @@ class GELService:
             attempts_query = select(StudentAttempt).where(
                 and_(
                     StudentAttempt.evaluation_item_id == ai.evaluation_item_id,
-                    StudentAttempt.assignment_id == assignment_id,
+                    StudentAttempt.assignment_id == assignment_id_str,
                     StudentAttempt.student_id == student_id,
                 )
             ).order_by(StudentAttempt.attempt_number.desc())
@@ -448,16 +454,18 @@ class GELService:
         data: StudentAttemptCreate,
     ) -> StudentAttempt:
         """Start a new attempt on an evaluation item."""
+        eval_item_id = self._sid(data.evaluation_item_id)
+        assignment_id = self._sid(data.assignment_id)
         # Verify evaluation item exists
-        eval_item = await self.db.get(EvaluationItem, data.evaluation_item_id)
+        eval_item = await self.db.get(EvaluationItem, eval_item_id)
         if not eval_item:
             raise ValueError(f"Evaluation item {data.evaluation_item_id} not found")
         
         # Check assignment constraints if provided
         assignment = None
         max_attempts = 1
-        if data.assignment_id:
-            assignment = await self.db.get(Assignment, data.assignment_id)
+        if assignment_id:
+            assignment = await self.db.get(Assignment, assignment_id)
             if not assignment:
                 raise ValueError(f"Assignment {data.assignment_id} not found")
             if assignment.status != AssignmentStatus.ACTIVE.value:
@@ -468,8 +476,8 @@ class GELService:
         existing_query = select(func.count()).select_from(StudentAttempt).where(
             and_(
                 StudentAttempt.student_id == student_id,
-                StudentAttempt.evaluation_item_id == data.evaluation_item_id,
-                StudentAttempt.assignment_id == data.assignment_id if data.assignment_id else True,
+                StudentAttempt.evaluation_item_id == eval_item_id,
+                StudentAttempt.assignment_id == assignment_id if assignment_id else True,
             )
         )
         existing_count = (await self.db.execute(existing_query)).scalar() or 0
@@ -481,8 +489,8 @@ class GELService:
         in_progress_query = select(StudentAttempt).where(
             and_(
                 StudentAttempt.student_id == student_id,
-                StudentAttempt.evaluation_item_id == data.evaluation_item_id,
-                StudentAttempt.assignment_id == data.assignment_id if data.assignment_id else True,
+                StudentAttempt.evaluation_item_id == eval_item_id,
+                StudentAttempt.assignment_id == assignment_id if assignment_id else True,
                 StudentAttempt.status == AttemptStatus.IN_PROGRESS.value,
             )
         )
@@ -494,8 +502,8 @@ class GELService:
         # Create new attempt
         attempt = StudentAttempt(
             student_id=student_id,
-            evaluation_item_id=data.evaluation_item_id,
-            assignment_id=data.assignment_id,
+            evaluation_item_id=eval_item_id,
+            assignment_id=assignment_id,
             attempt_number=existing_count + 1,
             status=AttemptStatus.IN_PROGRESS.value,
             started_at=datetime.utcnow(),
@@ -526,7 +534,7 @@ class GELService:
         data: StudentAttemptDraft,
     ) -> StudentAttempt:
         """Save a draft of an attempt."""
-        attempt = await self.db.get(StudentAttempt, attempt_id)
+        attempt = await self.db.get(StudentAttempt, self._sid(attempt_id))
         if not attempt:
             raise ValueError(f"Attempt {attempt_id} not found")
         if attempt.student_id != student_id:
@@ -553,7 +561,7 @@ class GELService:
         if data.issues:
             # Clear existing issues
             await self.db.execute(
-                select(AttemptIssue).where(AttemptIssue.attempt_id == attempt_id)
+                select(AttemptIssue).where(AttemptIssue.attempt_id == self._sid(attempt_id))
             )
             for issue_data in data.issues:
                 issue = AttemptIssue(
@@ -589,7 +597,7 @@ class GELService:
         data: StudentAttemptSubmit,
     ) -> Dict[str, Any]:
         """Submit an attempt for scoring."""
-        attempt = await self.db.get(StudentAttempt, attempt_id)
+        attempt = await self.db.get(StudentAttempt, self._sid(attempt_id))
         if not attempt:
             raise ValueError(f"Attempt {attempt_id} not found")
         if attempt.student_id != student_id:
@@ -613,7 +621,7 @@ class GELService:
         
         # Clear and add issues
         await self.db.execute(
-            select(AttemptIssue).where(AttemptIssue.attempt_id == attempt_id)
+            select(AttemptIssue).where(AttemptIssue.attempt_id == self._sid(attempt_id))
         )
         for issue_data in data.issues:
             issue = AttemptIssue(
@@ -646,7 +654,7 @@ class GELService:
         # Check if feedback should be shown immediately
         show_feedback = False
         if attempt.assignment_id:
-            assignment = await self.db.get(Assignment, attempt.assignment_id)
+            assignment = await self.db.get(Assignment, self._sid(attempt.assignment_id))
             if assignment and assignment.show_feedback_immediately:
                 show_feedback = True
                 attempt.feedback_shown_at = datetime.utcnow()
@@ -667,7 +675,7 @@ class GELService:
         student_id: Optional[str] = None,
     ) -> Optional[StudentAttempt]:
         """Get an attempt by ID."""
-        query = select(StudentAttempt).where(StudentAttempt.id == attempt_id)
+        query = select(StudentAttempt).where(StudentAttempt.id == self._sid(attempt_id))
         query = query.options(
             selectinload(StudentAttempt.issues),
             selectinload(StudentAttempt.scores),
@@ -746,7 +754,7 @@ class GELService:
         query = select(StudentAttempt).where(StudentAttempt.student_id == student_id)
         
         if assignment_id:
-            query = query.where(StudentAttempt.assignment_id == assignment_id)
+            query = query.where(StudentAttempt.assignment_id == self._sid(assignment_id))
         if status:
             query = query.where(StudentAttempt.status == status)
         
@@ -883,6 +891,13 @@ class GELService:
         ).group_by(AttemptIssue.category).order_by(func.count(AttemptIssue.id).desc()).limit(10)
         issues_result = await self.db.execute(issues_query)
         common_issues = [{"category": cat, "count": cnt} for cat, cnt in issues_result]
+
+        # Confidence calibration placeholder until detailed calibration metrics are stored
+        confidence_calibration = {
+            "overconfident": 0,
+            "underconfident": 0,
+            "calibrated": 0,
+        }
         
         return {
             "total_evaluation_items": total_items,
@@ -894,4 +909,5 @@ class GELService:
             "average_score": round(avg_score, 2) if avg_score else None,
             "score_distribution": score_dist,
             "common_issues": common_issues,
+            "confidence_calibration": confidence_calibration,
         }

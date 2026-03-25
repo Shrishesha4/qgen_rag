@@ -132,13 +132,16 @@
 	<title>GEL Assignments | Teacher Dashboard</title>
 </svelte:head>
 
-<div class="space-y-6">
+<div class="glass-panel p-6 space-y-6 border border-white/10 shadow-2xl text-slate-100">
 	<!-- Header -->
 	<div class="flex items-center justify-between">
-		<h1 class="text-2xl font-bold text-gray-900 dark:text-white">GEL Assignments</h1>
+		<div>
+			<p class="text-xs uppercase tracking-[0.2em] text-slate-300">GEL</p>
+			<h1 class="text-3xl font-semibold text-white">Assignments</h1>
+		</div>
 		<button
 			on:click={() => showCreateModal = true}
-			class="flex items-center space-x-2 px-4 py-2 bg-primary-600 hover:bg-primary-700 text-white rounded-lg transition-colors"
+			class="flex items-center space-x-2 px-4 py-2 rounded-xl bg-rose-500 hover:bg-rose-400 text-white shadow-lg shadow-rose-500/20 transition"
 		>
 			<Plus class="h-5 w-5" />
 			<span>Create Assignment</span>
@@ -146,20 +149,20 @@
 	</div>
 
 	<!-- Filters -->
-	<div class="flex items-center space-x-4">
+	<div class="flex items-center gap-3">
 		<div class="flex-1 relative">
-			<Search class="absolute left-3 top-1/2 transform -translate-y-1/2 h-5 w-5 text-gray-400" />
+			<Search class="absolute left-3 top-1/2 transform -translate-y-1/2 h-5 w-5 text-slate-400" />
 			<input
 				type="text"
 				bind:value={searchQuery}
 				placeholder="Search assignments..."
-				class="w-full pl-10 pr-4 py-2 border border-gray-300 dark:border-gray-600 rounded-lg bg-white dark:bg-gray-800"
+				class="w-full pl-10 pr-4 py-2 rounded-lg bg-white/5 border border-white/10 text-white placeholder:text-slate-400 focus:border-rose-400/60 focus:ring-0"
 			/>
 		</div>
 		<select
 			bind:value={statusFilter}
 			on:change={loadAssignments}
-			class="px-4 py-2 border border-gray-300 dark:border-gray-600 rounded-lg bg-white dark:bg-gray-800"
+			class="px-3 py-2 rounded-lg bg-white/5 border border-white/10 text-white focus:border-rose-400/60 focus:ring-0"
 		>
 			<option value="">All Status</option>
 			<option value="draft">Draft</option>
@@ -170,8 +173,8 @@
 	</div>
 
 	{#if error}
-		<div class="bg-red-50 dark:bg-red-900/20 border border-red-200 dark:border-red-800 rounded-lg p-4">
-			<div class="flex items-center space-x-2 text-red-700 dark:text-red-400">
+		<div class="glass-panel p-4 border border-red-500/30 text-red-200 bg-red-900/20">
+			<div class="flex items-center space-x-2">
 				<AlertCircle class="h-5 w-5" />
 				<span>{error}</span>
 			</div>
@@ -183,17 +186,15 @@
 			<div class="animate-spin rounded-full h-12 w-12 border-b-2 border-primary-600"></div>
 		</div>
 	{:else if filteredAssignments.length === 0}
-		<div class="bg-white dark:bg-gray-800 rounded-lg shadow p-8 text-center">
-			<Calendar class="h-12 w-12 text-gray-400 mx-auto mb-4" />
-			<h3 class="text-lg font-medium text-gray-900 dark:text-white">No assignments yet</h3>
-			<p class="mt-1 text-gray-500 dark:text-gray-400">
-				Create your first assignment to get started with GEL evaluations.
-			</p>
+		<div class="glass-panel border border-white/10 rounded-xl p-10 text-center space-y-3">
+			<Calendar class="h-12 w-12 text-slate-300 mx-auto" />
+			<h3 class="text-xl font-semibold text-white">No assignments yet</h3>
+			<p class="text-slate-300/80">Create your first assignment to get started with GEL evaluations.</p>
 		</div>
 	{:else}
-		<div class="bg-white dark:bg-gray-800 rounded-lg shadow overflow-hidden">
-			<table class="min-w-full divide-y divide-gray-200 dark:divide-gray-700">
-				<thead class="bg-gray-50 dark:bg-gray-700">
+		<div class="glass-panel border border-white/10 rounded-2xl overflow-hidden shadow-xl">
+			<table class="min-w-full divide-y divide-white/10">
+				<thead class="bg-white/5 text-slate-200">
 					<tr>
 						<th class="px-6 py-3 text-left text-xs font-medium text-gray-500 dark:text-gray-300 uppercase tracking-wider">
 							Assignment
@@ -215,16 +216,16 @@
 						</th>
 					</tr>
 				</thead>
-				<tbody class="divide-y divide-gray-200 dark:divide-gray-700">
+				<tbody class="divide-y divide-white/5 bg-white/2">
 					{#each filteredAssignments as assignment}
-						<tr class="hover:bg-gray-50 dark:hover:bg-gray-700">
+						<tr class="hover:bg-white/5 transition">
 							<td class="px-6 py-4">
 								<a href="/teacher/gel/assignments/{assignment.id}" class="block">
-									<div class="text-sm font-medium text-gray-900 dark:text-white">
+									<div class="text-sm font-semibold text-white">
 										{assignment.title}
 									</div>
 									{#if assignment.description}
-										<div class="text-sm text-gray-500 dark:text-gray-400 truncate max-w-xs">
+										<div class="text-xs text-slate-300/80 truncate max-w-xs">
 											{assignment.description}
 										</div>
 									{/if}
@@ -235,17 +236,17 @@
 									{assignment.status}
 								</span>
 							</td>
-							<td class="px-6 py-4 text-sm text-gray-500 dark:text-gray-400">
+							<td class="px-6 py-4 text-sm text-slate-200/80">
 								{#if assignment.cohort || assignment.grade}
 									{assignment.cohort || ''} {assignment.grade || ''}
 								{:else}
 									All students
 								{/if}
 							</td>
-							<td class="px-6 py-4 text-sm text-gray-900 dark:text-white">
+							<td class="px-6 py-4 text-sm text-white">
 								{assignment.item_count}
 							</td>
-							<td class="px-6 py-4 text-sm text-gray-900 dark:text-white">
+							<td class="px-6 py-4 text-sm text-white">
 								{assignment.attempt_count}
 							</td>
 							<td class="px-6 py-4 text-right">
@@ -286,14 +287,14 @@
 <!-- Create Modal -->
 {#if showCreateModal}
 	<div class="fixed inset-0 bg-black/50 flex items-center justify-center z-50">
-		<div class="bg-white dark:bg-gray-800 rounded-lg shadow-xl max-w-lg w-full mx-4 max-h-[90vh] overflow-y-auto">
-			<div class="p-6 border-b border-gray-200 dark:border-gray-700">
-				<h2 class="text-lg font-semibold text-gray-900 dark:text-white">Create Assignment</h2>
+		<div class="glass-panel bg-slate-900/80 border border-white/15 rounded-2xl shadow-2xl max-w-lg w-full mx-4 max-h-[90vh] overflow-y-auto">
+			<div class="p-6 border-b border-white/10">
+				<h2 class="text-lg font-semibold text-white">Create Assignment</h2>
 			</div>
 			
-			<form on:submit|preventDefault={createAssignment} class="p-6 space-y-4">
+			<form on:submit|preventDefault={createAssignment} class="p-6 space-y-4 text-slate-100">
 				<div>
-					<label for="title" class="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-1">
+					<label for="title" class="block text-sm font-semibold text-slate-200 mb-1">
 						Title *
 					</label>
 					<input
@@ -301,25 +302,25 @@
 						type="text"
 						bind:value={newAssignment.title}
 						required
-						class="w-full px-3 py-2 border border-gray-300 dark:border-gray-600 rounded-lg bg-white dark:bg-gray-800"
+						class="w-full px-3 py-2 rounded-lg bg-white/5 border border-white/15 text-white placeholder:text-slate-400 focus:border-rose-400/60 focus:ring-0"
 					/>
 				</div>
 
 				<div>
-					<label for="description" class="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-1">
+					<label for="description" class="block text-sm font-semibold text-slate-200 mb-1">
 						Description
 					</label>
 					<textarea
 						id="description"
 						bind:value={newAssignment.description}
 						rows="3"
-						class="w-full px-3 py-2 border border-gray-300 dark:border-gray-600 rounded-lg bg-white dark:bg-gray-800"
+						class="w-full px-3 py-2 rounded-lg bg-white/5 border border-white/15 text-white placeholder:text-slate-400 focus:border-rose-400/60 focus:ring-0"
 					></textarea>
 				</div>
 
 				<div class="grid grid-cols-2 gap-4">
 					<div>
-						<label for="cohort" class="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-1">
+						<label for="cohort" class="block text-sm font-semibold text-slate-200 mb-1">
 							Cohort
 						</label>
 						<input
@@ -327,11 +328,11 @@
 							type="text"
 							bind:value={newAssignment.cohort}
 							placeholder="e.g., 2024-Spring"
-							class="w-full px-3 py-2 border border-gray-300 dark:border-gray-600 rounded-lg bg-white dark:bg-gray-800"
+							class="w-full px-3 py-2 rounded-lg bg-white/5 border border-white/15 text-white placeholder:text-slate-400 focus:border-rose-400/60 focus:ring-0"
 						/>
 					</div>
 					<div>
-						<label for="grade" class="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-1">
+						<label for="grade" class="block text-sm font-semibold text-slate-200 mb-1">
 							Grade
 						</label>
 						<input
@@ -339,39 +340,39 @@
 							type="text"
 							bind:value={newAssignment.grade}
 							placeholder="e.g., 10, 11, 12"
-							class="w-full px-3 py-2 border border-gray-300 dark:border-gray-600 rounded-lg bg-white dark:bg-gray-800"
+							class="w-full px-3 py-2 rounded-lg bg-white/5 border border-white/15 text-white placeholder:text-slate-400 focus:border-rose-400/60 focus:ring-0"
 						/>
 					</div>
 				</div>
 
 				<div class="grid grid-cols-2 gap-4">
 					<div>
-						<label for="start" class="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-1">
+						<label for="start" class="block text-sm font-semibold text-slate-200 mb-1">
 							Start Date
 						</label>
 						<input
 							id="start"
 							type="datetime-local"
 							bind:value={newAssignment.scheduled_start}
-							class="w-full px-3 py-2 border border-gray-300 dark:border-gray-600 rounded-lg bg-white dark:bg-gray-800"
+							class="w-full px-3 py-2 rounded-lg bg-white/5 border border-white/15 text-white placeholder:text-slate-400 focus:border-rose-400/60 focus:ring-0"
 						/>
 					</div>
 					<div>
-						<label for="end" class="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-1">
+						<label for="end" class="block text-sm font-semibold text-slate-200 mb-1">
 							End Date
 						</label>
 						<input
 							id="end"
 							type="datetime-local"
 							bind:value={newAssignment.scheduled_end}
-							class="w-full px-3 py-2 border border-gray-300 dark:border-gray-600 rounded-lg bg-white dark:bg-gray-800"
+							class="w-full px-3 py-2 rounded-lg bg-white/5 border border-white/15 text-white placeholder:text-slate-400 focus:border-rose-400/60 focus:ring-0"
 						/>
 					</div>
 				</div>
 
 				<div class="grid grid-cols-2 gap-4">
 					<div>
-						<label for="attempts" class="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-1">
+						<label for="attempts" class="block text-sm font-semibold text-slate-200 mb-1">
 							Max Attempts per Item
 						</label>
 						<input
@@ -380,11 +381,11 @@
 							bind:value={newAssignment.max_attempts_per_item}
 							min="1"
 							max="10"
-							class="w-full px-3 py-2 border border-gray-300 dark:border-gray-600 rounded-lg bg-white dark:bg-gray-800"
+							class="w-full px-3 py-2 rounded-lg bg-white/5 border border-white/15 text-white placeholder:text-slate-400 focus:border-rose-400/60 focus:ring-0"
 						/>
 					</div>
 					<div>
-						<label for="time" class="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-1">
+						<label for="time" class="block text-sm font-semibold text-slate-200 mb-1">
 							Time Limit (minutes)
 						</label>
 						<input
@@ -393,7 +394,7 @@
 							bind:value={newAssignment.time_limit_minutes}
 							min="1"
 							placeholder="No limit"
-							class="w-full px-3 py-2 border border-gray-300 dark:border-gray-600 rounded-lg bg-white dark:bg-gray-800"
+							class="w-full px-3 py-2 rounded-lg bg-white/5 border border-white/15 text-white placeholder:text-slate-400 focus:border-rose-400/60 focus:ring-0"
 						/>
 					</div>
 				</div>
@@ -403,31 +404,31 @@
 						<input
 							type="checkbox"
 							bind:checked={newAssignment.shuffle_items}
-							class="rounded border-gray-300 dark:border-gray-600"
+							class="rounded border-white/30 bg-white/10"
 						/>
-						<span class="text-sm text-gray-700 dark:text-gray-300">Shuffle items for each student</span>
+						<span class="text-sm text-slate-200">Shuffle items for each student</span>
 					</label>
 					<label class="flex items-center space-x-2">
 						<input
 							type="checkbox"
 							bind:checked={newAssignment.show_feedback_immediately}
-							class="rounded border-gray-300 dark:border-gray-600"
+							class="rounded border-white/30 bg-white/10"
 						/>
-						<span class="text-sm text-gray-700 dark:text-gray-300">Show feedback immediately after submission</span>
+						<span class="text-sm text-slate-200">Show feedback immediately after submission</span>
 					</label>
 				</div>
 
-				<div class="flex justify-end space-x-3 pt-4 border-t border-gray-200 dark:border-gray-700">
+				<div class="flex justify-end space-x-3 pt-4 border-t border-white/10">
 					<button
 						type="button"
 						on:click={() => { showCreateModal = false; resetForm(); }}
-						class="px-4 py-2 text-gray-700 dark:text-gray-300 hover:bg-gray-100 dark:hover:bg-gray-700 rounded-lg"
+						class="px-4 py-2 text-slate-200 hover:bg-white/5 rounded-lg"
 					>
 						Cancel
 					</button>
 					<button
 						type="submit"
-						class="px-4 py-2 bg-primary-600 hover:bg-primary-700 text-white rounded-lg"
+						class="px-4 py-2 bg-rose-500 hover:bg-rose-400 text-white rounded-lg shadow-md shadow-rose-500/20"
 					>
 						Create Assignment
 					</button>

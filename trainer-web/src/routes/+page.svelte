@@ -1,14 +1,46 @@
 <script lang="ts">
 	import { goto } from '$app/navigation';
 	import { onMount } from 'svelte';
-	import { login } from '$lib/api/auth';
+	import { login, register, type TokenResponse } from '$lib/api/auth';
+	import { apiUrl } from '$lib/api/client';
 	import { session } from '$lib/session';
 
 	let introReady = $state(false);
+	let mode: 'login' | 'register' = $state('login');
 	let email = $state('');
 	let password = $state('');
+	let username = $state('');
+	let fullName = $state('');
+	let selectedRole: 'teacher' | 'vetter' = $state('teacher');
 	let signingIn = $state(false);
 	let signInError = $state('');
+	let signupEnabled = $state(true);
+	let checkingSignup = $state(true);
+	const SIGNUP_SETTINGS_TIMEOUT_MS = 5000;
+
+	async function fetchSignupEnabled(): Promise<boolean> {
+		const controller = new AbortController();
+		const timeoutId = window.setTimeout(() => controller.abort(), SIGNUP_SETTINGS_TIMEOUT_MS);
+
+		try {
+			const res = await fetch(apiUrl('/settings/signup'), {
+				signal: controller.signal,
+				cache: 'no-store'
+			});
+			if (!res.ok) return true;
+			const data = await res.json();
+			return data.signup_enabled ?? true;
+		} catch {
+			return true;
+		} finally {
+			window.clearTimeout(timeoutId);
+		}
+	}
+
+	async function initSignupState() {
+		signupEnabled = await fetchSignupEnabled();
+		checkingSignup = false;
+	}
 
 	function redirectByRole(role: string) {
 		switch (role) {
@@ -25,11 +57,37 @@
 		}
 	}
 
-	async function handleLandingSignIn() {
+	async function handleLandingAuth() {
 		signInError = '';
 		signingIn = true;
 		try {
-			const response = await login({ email, password });
+			let response: TokenResponse;
+			if (mode === 'login') {
+				response = await login({ email, password });
+			} else {
+				if (!signupEnabled && !checkingSignup) {
+					signInError = 'Signup is currently disabled. Please contact an administrator.';
+					signingIn = false;
+					return;
+				}
+				if (!username.trim()) {
+					signInError = 'Username is required';
+					signingIn = false;
+					return;
+				}
+				if (password.length < 8) {
+					signInError = 'Password must be at least 8 characters';
+					signingIn = false;
+					return;
+				}
+				response = await register({
+					email,
+					username: username.trim().toLowerCase(),
+					full_name: fullName.trim() || undefined,
+					password,
+					role: selectedRole
+				});
+			}
 			session.refresh();
 			redirectByRole(response.user.role);
 		} catch (e: unknown) {
@@ -43,6 +101,8 @@
 		const rafId = requestAnimationFrame(() => {
 			introReady = true;
 		});
+
+		void initSignupState();
 
 		return () => {
 			cancelAnimationFrame(rafId);
@@ -63,9 +123,56 @@
 		</div>
 
 		<div class="signin-wrap">
-			<form class="signin-form" onsubmit={(e) => { e.preventDefault(); handleLandingSignIn(); }}>
+			<form class="signin-form" onsubmit={(e) => { e.preventDefault(); handleLandingAuth(); }}>
 				{#if signInError}
 					<p class="signin-error" role="alert">{signInError}</p>
+				{/if}
+				{#if mode === 'register'}
+					<label class="signin-field">
+						<span class="signin-label">Username</span>
+						<input
+							type="text"
+							class="signin-input"
+							bind:value={username}
+							placeholder="e.g. jane_doe"
+							autocomplete="username"
+							required
+							minlength={3}
+							maxlength={50}
+						/>
+					</label>
+					<label class="signin-field">
+						<span class="signin-label">Full Name <span class="optional">(optional)</span></span>
+						<input
+							type="text"
+							class="signin-input"
+							bind:value={fullName}
+							placeholder="Jane Doe"
+							autocomplete="name"
+							maxlength={255}
+						/>
+					</label>
+					<div class="signin-field">
+						<span class="signin-label">Role</span>
+						<div class="role-selector">
+							<button
+								type="button"
+								class="role-option"
+								class:selected={selectedRole === 'teacher'}
+								onclick={() => selectedRole = 'teacher'}
+							>
+								Teacher
+							</button>
+							<button
+								type="button"
+								class="role-option"
+								class:selected={selectedRole === 'vetter'}
+								onclick={() => selectedRole = 'vetter'}
+							>
+								Vetter
+							</button>
+						</div>
+					</div>
 				{/if}
 				<label class="signin-field">
 					<span class="signin-label">Email</span>
@@ -84,14 +191,32 @@
 						type="password"
 						class="signin-input"
 						bind:value={password}
-						placeholder="••••••••"
-						autocomplete="current-password"
+						placeholder={mode === 'register' ? 'Min 8 characters' : '••••••••'}
+						autocomplete={mode === 'login' ? 'current-password' : 'new-password'}
+						minlength={mode === 'register' ? 8 : undefined}
 						required
 					/>
 				</label>
 				<button type="submit" class="signin-submit" disabled={signingIn}>
-					{signingIn ? 'Signing In...' : 'Sign In'}
+					{signingIn ? (mode === 'login' ? 'Signing In...' : 'Creating Account...') : (mode === 'login' ? 'Sign In' : 'Create Account')}
 				</button>
+				<div class="mode-switch">
+					{#if mode === 'login'}
+						{#if signupEnabled || checkingSignup}
+							<span>Don't have an account?</span>
+							<button class="switch-btn" type="button" onclick={() => { mode = 'register'; signInError = ''; }}>
+								Sign Up
+							</button>
+						{:else}
+							<span>Signup is currently disabled.</span>
+						{/if}
+					{:else}
+						<span>Already have an account?</span>
+						<button class="switch-btn" type="button" onclick={() => { mode = 'login'; signInError = ''; }}>
+							Sign In
+						</button>
+					{/if}
+				</div>
 			</form>
 		</div>
 	</section>
@@ -364,6 +489,11 @@
 		color: rgba(15, 23, 42, 0.78);
 	}
 
+	.optional {
+		font-weight: 500;
+		opacity: 0.8;
+	}
+
 	.signin-input {
 		padding: 0.62rem 0.74rem;
 		border-radius: 0.7rem;
@@ -434,6 +564,54 @@
 	.signin-submit:disabled {
 		opacity: 0.7;
 		cursor: wait;
+	}
+
+	.role-selector {
+		display: flex;
+		gap: 0.4rem;
+	}
+
+	.role-option {
+		flex: 1;
+		padding: 0.5rem 0.7rem;
+		border-radius: 0.6rem;
+		border: 1px solid rgba(255, 255, 255, 0.55);
+		background: rgba(255, 255, 255, 0.28);
+		color: rgba(17, 24, 39, 0.9);
+		font-size: 0.85rem;
+		font-weight: 600;
+		cursor: pointer;
+		transition: background 0.18s ease, border-color 0.18s ease;
+	}
+
+	.role-option.selected {
+		background: rgba(var(--theme-primary-rgb), 0.16);
+		border-color: rgba(var(--theme-primary-rgb), 0.35);
+	}
+
+	.mode-switch {
+		text-align: center;
+		margin-top: 0.5rem;
+		font-size: 0.82rem;
+		color: rgba(31, 41, 55, 0.75);
+		display: flex;
+		justify-content: center;
+		align-items: center;
+		gap: 0.35rem;
+	}
+
+	.switch-btn {
+		border: none;
+		background: transparent;
+		font-size: 0.82rem;
+		font-weight: 700;
+		color: var(--theme-primary);
+		cursor: pointer;
+		padding: 0;
+	}
+
+	.switch-btn:hover {
+		text-decoration: underline;
 	}
 
 	.signin-error {

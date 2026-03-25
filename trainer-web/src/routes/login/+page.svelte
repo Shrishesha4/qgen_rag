@@ -18,6 +18,26 @@
 	let loading = $state(false);
 	let signupEnabled = $state(true);
 	let checkingSignup = $state(true);
+	const SIGNUP_SETTINGS_TIMEOUT_MS = 5000;
+
+	async function fetchSignupEnabled(): Promise<boolean> {
+		const controller = new AbortController();
+		const timeoutId = window.setTimeout(() => controller.abort(), SIGNUP_SETTINGS_TIMEOUT_MS);
+
+		try {
+			const res = await fetch(apiUrl('/settings/signup'), {
+				signal: controller.signal,
+				cache: 'no-store'
+			});
+			if (!res.ok) return true;
+			const data = await res.json();
+			return data.signup_enabled ?? true;
+		} catch {
+			return true;
+		} finally {
+			window.clearTimeout(timeoutId);
+		}
+	}
 
 	onMount(async () => {
 		// If already logged in, redirect to appropriate dashboard
@@ -27,18 +47,8 @@
 			return;
 		}
 
-		// Check if signup is enabled
-		try {
-			const res = await fetch(apiUrl('/settings/signup'));
-			if (res.ok) {
-				const data = await res.json();
-				signupEnabled = data.signup_enabled ?? true;
-			}
-		} catch {
-			signupEnabled = true;
-		} finally {
-			checkingSignup = false;
-		}
+		signupEnabled = await fetchSignupEnabled();
+		checkingSignup = false;
 	});
 
 	function redirectByRole(role: string) {
@@ -64,6 +74,11 @@
 			if (mode === 'login') {
 				response = await login({ email, password });
 			} else {
+				if (!signupEnabled && !checkingSignup) {
+					error = 'Signup is currently disabled. Please contact an administrator.';
+					loading = false;
+					return;
+				}
 				if (!username.trim()) {
 					error = 'Username is required';
 					loading = false;
@@ -212,23 +227,23 @@
 			</button>
 		</form>
 
-		{#if !checkingSignup}
-			<div class="mode-switch">
-				{#if mode === 'login'}
-					{#if signupEnabled}
-						<span>Don't have an account?</span>
-						<button class="switch-btn" onclick={() => { mode = 'register'; error = ''; }}>
-							Sign Up
-						</button>
-					{/if}
-				{:else}
-					<span>Already have an account?</span>
-					<button class="switch-btn" onclick={() => { mode = 'login'; error = ''; }}>
-						Sign In
+		<div class="mode-switch">
+			{#if mode === 'login'}
+				{#if signupEnabled || checkingSignup}
+					<span>Don't have an account?</span>
+					<button class="switch-btn" onclick={() => { mode = 'register'; error = ''; }}>
+						Sign Up
 					</button>
+				{:else}
+					<span>Signup is currently disabled.</span>
 				{/if}
-			</div>
-		{/if}
+			{:else}
+				<span>Already have an account?</span>
+				<button class="switch-btn" onclick={() => { mode = 'login'; error = ''; }}>
+					Sign In
+				</button>
+			{/if}
+		</div>
 	</div>
 </div>
 
