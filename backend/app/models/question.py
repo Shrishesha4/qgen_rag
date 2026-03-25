@@ -114,6 +114,9 @@ class Question(Base):
     # Metadata
     generation_metadata: Mapped[Optional[dict]] = mapped_column(JSONB)
     
+    # Provider tracking - which LLM provider generated this question
+    provider_key: Mapped[Optional[str]] = mapped_column(String(60), index=True)
+    
     # Relationships
     document = relationship("Document", back_populates="questions")
     subject = relationship("Subject", back_populates="questions")

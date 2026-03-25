@@ -1448,6 +1448,10 @@ Return JSON only:
         # Store generation_confidence as the overall quality score from LLM
         generation_confidence = llm_scores["quality"]
 
+        # Extract provider_key for direct column storage
+        provider_meta = self._build_provider_metadata(self._provider_metadata)
+        provider_key = provider_meta.get("provider_key") or None
+
         question = Question(
             document_id=document_id,
             session_id=session_id,
@@ -1473,8 +1477,9 @@ Return JSON only:
             generation_attempt_count=generation_attempt_count,
             used_reference_materials=used_reference_materials,
             novelty_metadata=novelty_result.similarity_breakdown if novelty_result else None,
+            provider_key=provider_key,
             generation_metadata={
-                **self._build_provider_metadata(self._provider_metadata),
+                **provider_meta,
                 "raw_response": question_data,
                 "source_info": source_info,
             },
@@ -2254,6 +2259,10 @@ Output valid JSON only."""
         # Store generation_confidence as the overall quality score from LLM
         generation_confidence = llm_scores["quality"]
 
+        # Extract provider_key for direct column storage
+        provider_meta = self._build_provider_metadata(self._provider_metadata)
+        provider_key = provider_meta.get("provider_key") or None
+
         question = Question(
             document_id=document_id,
             session_id=session_id,
@@ -2280,8 +2289,9 @@ Output valid JSON only."""
             used_reference_materials=used_reference or bool(chunk_ids),
             novelty_metadata=novelty_result.similarity_breakdown,
             generation_status="accepted",
+            provider_key=provider_key,
             generation_metadata={
-                **self._build_provider_metadata(self._provider_metadata),
+                **provider_meta,
                 "raw_response": question_data,
             },
         )
@@ -3791,6 +3801,8 @@ Output valid JSON only."""
                             )
                             # Save discarded question to DB for traceability
                             try:
+                                discarded_provider_meta = self._build_provider_metadata(self._provider_metadata)
+                                discarded_provider_key = discarded_provider_meta.get("provider_key") or None
                                 discarded_q = Question(
                                     document_id=(
                                         getattr(selected_chunks[0], 'document_id', None)
@@ -3810,6 +3822,7 @@ Output valid JSON only."""
                                     discard_reason=f"duplicate (sim={max_sim:.4f}, source={match_source})",
                                     is_archived=True,
                                     is_latest=False,
+                                    provider_key=discarded_provider_key,
                                 )
                                 self.db.add(discarded_q)
                             except Exception:

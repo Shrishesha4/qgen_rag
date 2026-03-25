@@ -224,7 +224,9 @@ def _resolve_permissions(role: str, payload: dict) -> dict[str, bool]:
 
 
 def _provider_key_expr():
+    """Extract provider_key from Question, preferring the direct column over JSONB."""
     return func.coalesce(
+        func.nullif(Question.provider_key, ""),
         func.nullif(Question.generation_metadata["provider_key"].astext, ""),
         func.nullif(Question.generation_metadata["provider"].astext, ""),
         func.nullif(Question.generation_metadata["llm_provider"].astext, ""),

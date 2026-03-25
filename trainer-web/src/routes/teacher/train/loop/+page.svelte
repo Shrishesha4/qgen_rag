@@ -18,6 +18,7 @@
 		cancelGeneration,
 		listReferenceDocuments,
 		scheduleBackgroundGeneration,
+		getGenerationLimits,
 		type GenerationEvent,
 	} from '$lib/api/documents';
 	import { deleteSubject, getSubject, type SubjectDetailResponse } from '$lib/api/subjects';
@@ -35,21 +36,22 @@
 	const FAILED_DOC_STATUSES = new Set(['failed', 'error']);
 	const WAIT_POLL_MS = 1500;
 	const WAIT_DOCS_TIMEOUT_MS = 3 * 60 * 1000;
-	const BATCH_SIZE_UNIT = 30;
+	const BATCH_SIZE_UNIT = 1;
 	const DEFAULT_BATCH_SIZE = 30;
-	const MIN_BATCH_SIZE = 30;
-	const MAX_BATCH_SIZE = 300;
+	const MIN_BATCH_SIZE = 1;
+	const MAX_BATCH_SIZE = 1000;
+	let providerBatchSize = $state(DEFAULT_BATCH_SIZE);
 	const GENERATION_INTERPOLATION_TICK_MS = 300;
 	const GENERATION_INTERPOLATION_MIN_DURATION_MS = 12000;
 	const GENERATION_INTERPOLATION_PER_QUESTION_MS = 1600;
 	const GENERATION_INTERPOLATION_MAX_PROGRESS = 97;
 
-	function parseBatchSizeParam(raw: string | null) {
-		if (raw == null || raw.trim() === '') return DEFAULT_BATCH_SIZE;
+	function parseBatchSizeParam(raw: string | null, fallback: number) {
+		if (raw == null || raw.trim() === '') return fallback;
 		const parsed = Number(raw);
-		if (!Number.isFinite(parsed) || parsed <= 0) return DEFAULT_BATCH_SIZE;
+		if (!Number.isFinite(parsed) || parsed <= 0) return fallback;
 		const normalized = Math.trunc(parsed / BATCH_SIZE_UNIT) * BATCH_SIZE_UNIT;
-		return Math.max(MIN_BATCH_SIZE, Math.min(MAX_BATCH_SIZE, normalized || DEFAULT_BATCH_SIZE));
+		return Math.max(MIN_BATCH_SIZE, Math.min(MAX_BATCH_SIZE, normalized || fallback));
 	}
 
 	let subjectId = $state('');
@@ -120,7 +122,7 @@
 				.filter(Boolean);
 			const nextProvisionalSubject = p.url.searchParams.get('provisional') === '1';
 			const nextAllowNoPdfGeneration = p.url.searchParams.get('noPdf') === '1';
-			const nextGenerationBatchSize = parseBatchSizeParam(p.url.searchParams.get('count'));
+			const nextGenerationBatchSize = parseBatchSizeParam(p.url.searchParams.get('count'), providerBatchSize);
 			const nextTargetQuestionId = p.url.searchParams.get('question_id') ?? '';
 			const nextTargetStartIndex = parseInt(p.url.searchParams.get('start_index') ?? '0', 10);
 			const resumeParam = p.url.searchParams.get('resume');
@@ -503,6 +505,22 @@
 		loading = true;
 		error = '';
 		showBatchCompleteNotice = false;
+
+		// Fetch provider-configured batch size from backend
+		try {
+			const limits = await getGenerationLimits();
+			if (limits.max_batch_size > 0) {
+				providerBatchSize = limits.max_batch_size;
+				// Update generationBatchSize if no explicit count was provided in URL
+				const urlCount = new URL(window.location.href).searchParams.get('count');
+				if (!urlCount) {
+					generationBatchSize = providerBatchSize;
+				}
+			}
+		} catch (e) {
+			// Fallback to default if API fails
+			console.warn('Failed to fetch generation limits, using default:', e);
+		}
 
 		if (await restoreSavedProgress()) {
 			loading = false;
