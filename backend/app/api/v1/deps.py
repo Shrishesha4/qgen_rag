@@ -186,6 +186,35 @@ async def get_current_teacher_or_admin(
     return current_user
 
 
+async def get_current_student(
+    current_user: User = Depends(get_current_user),
+) -> User:
+    """
+    Dependency to get current user with student role.
+    """
+    if current_user.role != "student" and not current_user.is_superuser:
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="Student access required",
+        )
+    return current_user
+
+
+async def get_current_student_or_teacher(
+    current_user: User = Depends(get_current_user),
+) -> User:
+    """
+    Dependency to get current user with student or teacher role.
+    Useful for endpoints that both students and teachers can access.
+    """
+    if current_user.role not in ("student", "teacher", "admin") and not current_user.is_superuser:
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="Student or teacher access required",
+        )
+    return current_user
+
+
 def rate_limit(requests: int = 100, window_seconds: int = 3600):
     """
     Rate limiting dependency factory.

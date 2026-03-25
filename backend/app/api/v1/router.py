@@ -4,7 +4,7 @@ API v1 Router - combines all endpoint routers.
 
 from fastapi import APIRouter
 
-from app.api.v1.endpoints import auth, documents, questions, subjects, rubrics, vetter, training, models, admin, websocket, settings
+from app.api.v1.endpoints import auth, documents, questions, subjects, rubrics, vetter, training, models, admin, websocket, settings, gel
 
 api_router = APIRouter()
 
@@ -19,3 +19,4 @@ api_router.include_router(models.router, prefix="/models", tags=["Model Operatio
 api_router.include_router(admin.router, prefix="/admin", tags=["Admin Dashboard"])
 api_router.include_router(websocket.router, prefix="/ws", tags=["WebSocket"])
 api_router.include_router(settings.router, prefix="/settings", tags=["Settings"])
+api_router.include_router(gel.router, tags=["GEL/GELTrain"])

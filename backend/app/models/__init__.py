@@ -16,7 +16,26 @@ from app.models.training import (
     ModelEvaluation,
 )
 from app.models.generation_run import GenerationRun
-from app.models.system_settings import SystemSettings, SETTING_SIGNUP_ENABLED
+from app.models.system_settings import (
+    SystemSettings,
+    SETTING_SIGNUP_ENABLED,
+    SETTING_GEL_CONFIG,
+    SETTING_STUDENT_SIGNUP_ENABLED,
+)
+from app.models.gel import (
+    EvaluationItem,
+    Assignment,
+    AssignmentItem,
+    StudentAttempt,
+    AttemptIssue,
+    AttemptScore,
+    AttemptEvent,
+    EvaluationItemStatus,
+    AssignmentStatus,
+    AttemptStatus,
+    IssueSeverity,
+    IssueCategory,
+)
 
 __all__ = [
     "User",
@@ -40,4 +59,19 @@ __all__ = [
     "GenerationRun",
     "SystemSettings",
     "SETTING_SIGNUP_ENABLED",
+    "SETTING_GEL_CONFIG",
+    "SETTING_STUDENT_SIGNUP_ENABLED",
+    # GEL models
+    "EvaluationItem",
+    "Assignment",
+    "AssignmentItem",
+    "StudentAttempt",
+    "AttemptIssue",
+    "AttemptScore",
+    "AttemptEvent",
+    "EvaluationItemStatus",
+    "AssignmentStatus",
+    "AttemptStatus",
+    "IssueSeverity",
+    "IssueCategory",
 ]

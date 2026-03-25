@@ -79,6 +79,8 @@
 	let navigationConfirmMessage = $state('');
 	let navigationConfirmAction = $state<null | (() => void | Promise<void>)>(null);
 	let skipNextLeaveConfirm = false;
+	let progressSavedNotice = $state(false);
+	let userCompletedFullBatch = $state(false);
 
 	// Confirm + cleanup before any SvelteKit navigation
 	beforeNavigate(({ cancel, to }) => {
@@ -113,6 +115,15 @@
 		const unsub = session.subscribe((s) => {
 			if (!s) goto('/teacher/login');
 		});
+		
+		// Block direct access without required params
+		const initialParams = new URL(window.location.href).searchParams;
+		const hasSubject = initialParams.get('subject');
+		if (!hasSubject) {
+			goto('/teacher/train');
+			return () => {};
+		}
+		
 		const unsubPage = page.subscribe((p) => {
 			const nextSubjectId = p.url.searchParams.get('subject') ?? '';
 			const nextTopicId = p.url.searchParams.get('topic') ?? '';
@@ -298,14 +309,16 @@
 		}
 	});
 
-	// When the current batch is fully vetted, automatically roll into the next batch.
+	// When the current batch is fully vetted, show "All caught up" and trigger regeneration
 	$effect(() => {
 		if (!allowAutoGeneration || !subjectId) return;
 		if (loading || generating || submitting || regenerating || completingBatch) return;
 		if (batchComplete) return;
 		if (questions.length === 0) return;
 		if (totalReviewed < questions.length) return;
-		void completeBatch(true);
+		// User completed the full batch - mark it and trigger regeneration
+		userCompletedFullBatch = true;
+		void completeBatchAndRegenerate();
 	});
 
 	// Edit mode
@@ -340,7 +353,7 @@
 	let isReviewed = $derived(
 		currentQuestion ? approved.has(currentQuestion.id) || rejected.has(currentQuestion.id) : false
 	);
-	let showAllCaughtUp = $derived(questions.length > 0 && batchComplete && totalReviewed >= questions.length);
+	let showAllCaughtUp = $derived(questions.length > 0 && userCompletedFullBatch && totalReviewed >= questions.length);
 	let showBatchCompletePanel = $derived(showBatchCompleteNotice || showAllCaughtUp);
 	let postTriggerGeneratedCount = $derived(
 		postTriggerGenerationActive ? Math.max(0, questions.length - postTriggerBaseQuestionCount) : 0
@@ -949,10 +962,44 @@
 		throw new Error('Documents are still processing. Please wait a moment and retry generation.');
 	}
 
+	async function completeBatchAndRegenerate() {
+		if (completingBatch || !subjectId || !allowAutoGeneration) return;
+		completingBatch = true;
+		
+		// Clear progress when completing batch
+		const key = currentProgressKey();
+		if (key) {
+			removeTeacherVettingProgress(key);
+			void removeTeacherVettingProgressRemoteSnapshot(key);
+		}
+		
+		// Reset local state but keep user on page
+		questions = [];
+		currentIndex = 0;
+		approved.clear();
+		rejected.clear();
+		batchComplete = false;
+		showBatchCompleteNotice = false;
+		postTriggerGenerationActive = false;
+		postTriggerBaseQuestionCount = 0;
+		completingBatch = false;
+		
+		// Start regeneration - user stays on page to vet streaming questions
+		await startBackgroundGeneration();
+	}
+
+	async function saveProgressAndNotify() {
+		await persistProgressNow(true);
+		progressSavedNotice = true;
+		skipNextLeaveConfirm = true;
+		setTimeout(() => {
+			progressSavedNotice = false;
+		}, 2000);
+	}
+
 	async function completeBatch(autoAdvance = false) {
 		if (completingBatch) return;
 		completingBatch = true;
-		// stopBackgroundGen();
 		generating = false;
 		genMessage = '';
 		resetGenerationProgress();
@@ -1727,9 +1774,15 @@
 		{/if}
 
 		{#if !editing && !generating && !regenerating && !batchComplete && subjectId}
-			<button class="complete-batch-fab" onclick={() => { void completeBatch(); }}>
-				✓ Complete Batch
-			</button>
+			{#if totalReviewed >= questions.length && questions.length > 0}
+				<button class="complete-batch-fab" onclick={() => { userCompletedFullBatch = true; void completeBatchAndRegenerate(); }}>
+					✓ Complete Batch
+				</button>
+			{:else}
+				<button class="save-progress-fab" onclick={() => { void saveProgressAndNotify(); }}>
+					💾 Save Progress
+				</button>
+			{/if}
 		{/if}
 	</div>
 {/if}
@@ -1744,6 +1797,12 @@
 		onSubmit={handleVoiceRecorderSubmit}
 		onCancel={closeVoiceRecorder}
 	/>
+{/if}
+
+{#if progressSavedNotice}
+	<div class="progress-saved-toast animate-fade-in">
+		<span>✓ Progress saved</span>
+	</div>
 {/if}
 
 <ConfirmDialog
@@ -2044,6 +2103,46 @@
 		color: #2f8f3f;
 	}
 
+	.save-progress-fab {
+		pointer-events: auto;
+		padding: 0.85rem 1.5rem;
+		border: 1px solid rgba(59, 130, 246, 0.4);
+		border-radius: 999px;
+		background: rgba(59, 130, 246, 0.25);
+		color: #60a5fa;
+		font-size: 0.95rem;
+		font-weight: 700;
+		cursor: pointer;
+		backdrop-filter: blur(12px);
+		-webkit-backdrop-filter: blur(12px);
+		transition: all 0.2s ease;
+		font-family: inherit;
+	}
+
+	.save-progress-fab:hover {
+		background: rgba(59, 130, 246, 0.4);
+		transform: translateY(-2px);
+		box-shadow: 0 4px 16px rgba(59, 130, 246, 0.2);
+	}
+
+	:global([data-color-mode='light']) .save-progress-fab {
+		color: #2563eb;
+	}
+
+	.progress-saved-toast {
+		position: fixed;
+		bottom: 6rem;
+		left: 50%;
+		transform: translateX(-50%);
+		padding: 0.75rem 1.25rem;
+		border-radius: 999px;
+		background: rgba(72, 192, 80, 0.9);
+		color: white;
+		font-size: 0.9rem;
+		font-weight: 600;
+		z-index: 1100;
+		box-shadow: 0 4px 16px rgba(72, 192, 80, 0.3);
+	}
 
 	.finish-btn {
 		padding: 0.85rem 2.5rem;

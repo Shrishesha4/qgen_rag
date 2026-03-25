@@ -225,11 +225,21 @@ def _resolve_permissions(role: str, payload: dict) -> dict[str, bool]:
 
 def _provider_key_expr():
     """Extract provider_key from Question, preferring the direct column over JSONB."""
+    base_url_expr = func.lower(func.coalesce(Question.generation_metadata["base_url"].astext, ""))
+    inferred_from_base_url = case(
+        (base_url_expr.like("%api.x.ai%"), literal("grok")),
+        (base_url_expr.like("%api.deepseek.com%"), literal("deepseek")),
+        (base_url_expr.like("%generativelanguage.googleapis.com%"), literal("gemini")),
+        (base_url_expr.like("%localhost:11434%"), literal("ollama")),
+        else_=literal("unknown"),
+    )
+
     return func.coalesce(
         func.nullif(Question.provider_key, ""),
         func.nullif(Question.generation_metadata["provider_key"].astext, ""),
         func.nullif(Question.generation_metadata["provider"].astext, ""),
         func.nullif(Question.generation_metadata["llm_provider"].astext, ""),
+        inferred_from_base_url,
         literal("unknown"),
     )
 

@@ -17,7 +17,8 @@ from app.core.auth_database import AuthBase
 ROLE_TEACHER = "teacher"
 ROLE_VETTER = "vetter"
 ROLE_ADMIN = "admin"
-VALID_ROLES = {ROLE_TEACHER, ROLE_VETTER, ROLE_ADMIN}
+ROLE_STUDENT = "student"
+VALID_ROLES = {ROLE_TEACHER, ROLE_VETTER, ROLE_ADMIN, ROLE_STUDENT}
 
 # Permission keys for action-level authorization
 PERMISSION_MANAGE_GROUPS = "can_manage_groups"
@@ -39,6 +40,12 @@ def default_permissions_for_role(role: str) -> dict[str, bool]:
             PERMISSION_MANAGE_GROUPS: False,
             PERMISSION_GENERATE: False,
             PERMISSION_VET: True,
+        }
+    if normalized_role == ROLE_STUDENT:
+        return {
+            PERMISSION_MANAGE_GROUPS: False,
+            PERMISSION_GENERATE: False,
+            PERMISSION_VET: False,
         }
     # Teachers keep current behavior by default.
     return {
@@ -66,13 +73,19 @@ class User(AuthBase):
     timezone: Mapped[str] = mapped_column(String(50), default="UTC")
     language: Mapped[str] = mapped_column(String(10), default="en")
     
-    # Role: "teacher" (default), "vetter", or "admin"
+    # Role: "teacher" (default), "vetter", "admin", or "student"
     role: Mapped[str] = mapped_column(String(20), default=ROLE_TEACHER, nullable=False)
 
     # Action-level authorization flags managed by admins.
     can_manage_groups: Mapped[bool] = mapped_column(Boolean, default=True)
     can_generate: Mapped[bool] = mapped_column(Boolean, default=True)
     can_vet: Mapped[bool] = mapped_column(Boolean, default=True)
+    
+    # Student-specific profile fields (GEL/GELTrain)
+    grade: Mapped[Optional[str]] = mapped_column(String(20))  # e.g., "10", "11", "12"
+    cohort: Mapped[Optional[str]] = mapped_column(String(100))  # e.g., "2024-Spring-A"
+    consent_given: Mapped[bool] = mapped_column(Boolean, default=False)  # Data consent for students
+    consent_given_at: Mapped[Optional[datetime]] = mapped_column(DateTime)
     
     # Status
     is_active: Mapped[bool] = mapped_column(Boolean, default=True)

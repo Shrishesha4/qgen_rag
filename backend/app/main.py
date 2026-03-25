@@ -1,6 +1,6 @@
 """
-QuestionGeneration AI - FastAPI Backend
-A stateful RAG-based question generation system for educators
+GELTrain - FastAPI Backend
+AI-powered question evaluation and learning platform with RAG-based question generation
 """
 
 import uuid
@@ -26,7 +26,7 @@ async def lifespan(app: FastAPI):
     # Configure logging here (worker process only) to avoid duplicate startup logs when using --reload
     setup_logging(log_level=settings.LOG_LEVEL, json_logs=settings.LOG_JSON)
     # Startup
-    logger.info("🚀 Starting QuestionGeneration AI...")
+    logger.info("🚀 Starting GELTrain...")
 
     # Log effective model configuration (from .env / settings)
     logger.info(f"🔧 Ollama: base_url={settings.OLLAMA_BASE_URL} model={settings.OLLAMA_MODEL}")
@@ -80,8 +80,8 @@ async def lifespan(app: FastAPI):
 
 
 app = FastAPI(
-    title="QuestionGeneration AI",
-    description="A stateful RAG-based question generation system for educators",
+    title="GELTrain",
+    description="AI-powered question evaluation and learning platform with RAG-based question generation",
     version="1.0.0",
     lifespan=lifespan,
     docs_url="/docs",
@@ -172,7 +172,7 @@ app.include_router(api_router, prefix=settings.API_PREFIX)
 @app.get("/", tags=["Health"])
 async def root():
     """Root endpoint - health check."""
-    return {"status": "healthy", "service": "QuestionGeneration AI", "version": "1.0.0"}
+    return {"status": "healthy", "service": "GELTrain", "version": "1.0.0"}
 
 
 @app.get("/health", tags=["Health"])

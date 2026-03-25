@@ -32,6 +32,8 @@ class SystemSettings(AuthBase):
 # Default settings keys
 SETTING_SIGNUP_ENABLED = "signup_enabled"
 SETTING_PROVIDER_GENERATION_CONFIG = "provider_generation_config"
+SETTING_GEL_CONFIG = "gel_config"
+SETTING_STUDENT_SIGNUP_ENABLED = "student_signup_enabled"
 
 # Default values
 DEFAULT_SETTINGS = {
@@ -66,5 +68,21 @@ DEFAULT_SETTINGS = {
                 "api_key": "",
             },
         ],
+    },
+    SETTING_STUDENT_SIGNUP_ENABLED: {"enabled": False},  # Student self-signup disabled by default
+    SETTING_GEL_CONFIG: {
+        "enabled": True,
+        "default_rubric_weights": {
+            "detection": 0.35,
+            "reasoning": 0.25,
+            "correction": 0.20,
+            "confidence_calibration": 0.20,
+        },
+        "default_max_attempts": 1,
+        "default_time_limit_minutes": None,
+        "show_feedback_immediately": False,
+        "require_consent": True,
+        "overconfidence_penalty_factor": 1.5,
+        "passing_score": 60,
     },
 }

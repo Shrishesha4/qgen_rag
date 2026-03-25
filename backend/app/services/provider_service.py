@@ -25,6 +25,25 @@ from app.services.llm_service import LLMProvider
 logger = logging.getLogger(__name__)
 
 
+def _normalize_openai_base_url(base_url: str) -> str:
+    """Normalize OpenAI-compatible base URLs to provider roots.
+
+    Some provider configs are saved as full endpoint URLs (for example,
+    https://api.x.ai/v1/chat/completions). The DeepSeek-compatible client
+    appends /chat/completions itself, so endpoint suffixes must be stripped.
+    """
+    normalized = (base_url or "").strip().rstrip("/")
+    if not normalized:
+        return normalized
+
+    for suffix in ("/chat/completions", "/completions"):
+        if normalized.endswith(suffix):
+            normalized = normalized[: -len(suffix)].rstrip("/")
+            break
+
+    return normalized
+
+
 @dataclass
 class ProviderConfig:
     """Configuration for a single LLM provider."""
@@ -40,6 +59,8 @@ class ProviderConfig:
         self.key = (self.key or "").strip().lower()
         self.name = (self.name or self.key).strip()
         self.base_url = (self.base_url or "").strip().rstrip("/")
+        if self.key not in {"ollama", "gemini"}:
+            self.base_url = _normalize_openai_base_url(self.base_url)
         self.model = (self.model or "").strip()
         self.api_key = (self.api_key or "").strip()
 
@@ -238,6 +259,7 @@ class ProviderService:
         provider_key = provider.key.lower()
         model = model_override or provider.model
         api_key = provider.get_api_key()
+        normalized_base_url = provider.base_url
 
         metadata = {
             "provider_key": provider_key,
@@ -268,6 +290,9 @@ class ProviderService:
             return service, metadata
 
         # For OpenAI-compatible providers (deepseek, openrouter, custom, etc.)
+        normalized_base_url = _normalize_openai_base_url(provider.base_url)
+        metadata["base_url"] = normalized_base_url
+
         if not api_key:
             logger.warning(
                 f"No API key configured for provider {provider_key}. "
@@ -276,14 +301,14 @@ class ProviderService:
 
         # Create a custom OpenAI-compatible service with the provider's base_url
         service = _create_openai_compatible_service(
-            base_url=provider.base_url,
+            base_url=normalized_base_url,
             api_key=api_key or "",
             model=model or settings.DEEPSEEK_MODEL,
             provider_key=provider_key,
         )
 
         metadata["llm_model"] = model or settings.DEEPSEEK_MODEL
-        logger.info(f"Created OpenAI-compatible service for provider={provider_key}, base_url={provider.base_url}")
+        logger.info(f"Created OpenAI-compatible service for provider={provider_key}, base_url={normalized_base_url}")
 
         return service, metadata
 
@@ -327,7 +352,7 @@ def _create_openai_compatible_service(
             custom_provider_key: str = "custom",
         ):
             # Store custom values before calling parent init
-            self._custom_base_url = custom_base_url.rstrip("/")
+            self._custom_base_url = _normalize_openai_base_url(custom_base_url)
             self._custom_api_key = custom_api_key
             self._custom_model = custom_model or settings.DEEPSEEK_MODEL
             self._custom_provider_key = custom_provider_key

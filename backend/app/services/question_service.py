@@ -1344,6 +1344,7 @@ Return JSON only:
         novelty_result: Optional[NoveltyResult] = None,
         generation_attempt_count: int = 1,
         used_reference_materials: Optional[bool] = None,
+        provider_metadata_override: Optional[Dict[str, Any]] = None,
     ) -> tuple[Question, QuestionResponse]:
         """
         Save generated question to database after validation.
@@ -1450,7 +1451,7 @@ Return JSON only:
         generation_confidence = llm_scores["quality"]
 
         # Extract provider_key for direct column storage
-        provider_meta = self._build_provider_metadata(self._provider_metadata)
+        provider_meta = self._build_provider_metadata(provider_metadata_override or self._provider_metadata)
         provider_key = provider_meta.get("provider_key") or None
 
         question = Question(
@@ -3718,16 +3719,13 @@ Output valid JSON only."""
             async def _build_candidate(slot: dict, attempt_index: int, exclusion_snapshot: List[str]) -> dict:
                 q_type = slot["q_type"]
                 slot_provider_key = slot.get("provider_key")
-                
-                # Temporarily swap LLM service if this slot has a specific provider
-                original_llm_service = self.llm_service
-                original_provider_metadata = self._provider_metadata
+                llm_svc = self.llm_service
+                provider_metadata = self._build_provider_metadata(self._provider_metadata)
                 
                 try:
                     if slot_provider_key and slot_provider_key in provider_llm_services:
                         llm_svc, metadata = provider_llm_services[slot_provider_key]
-                        self.llm_service = llm_svc
-                        self._provider_metadata = metadata
+                        provider_metadata = metadata
                         logger.debug(f"Using provider {slot_provider_key} for slot {slot.get('id')}")
                     
                     pool_size = len(subj_chunk_pool)
@@ -3750,6 +3748,7 @@ Output valid JSON only."""
                         subject_id=subject_id,
                         topic_id=topic_id,
                         rejection_guidance_override=rejection_guidance_cache,
+                        llm_service_override=llm_svc,
                     )
 
                     if not question_data:
@@ -3779,6 +3778,7 @@ Output valid JSON only."""
                         "selected_chunks": selected_chunks,
                         "confidence_score": confidence_score,
                         "provider_key": slot_provider_key,
+                        "provider_metadata": provider_metadata,
                     }
                 except Exception as gen_err:
                     logger.warning(
@@ -3790,10 +3790,6 @@ Output valid JSON only."""
                         "slot": slot,
                         "reason": f"worker_exception:{gen_err}",
                     }
-                finally:
-                    # Restore original LLM service
-                    self.llm_service = original_llm_service
-                    self._provider_metadata = original_provider_metadata
 
             # Safety cap: total attempts across all rounds to prevent infinite loops
             max_total_attempts = count * 3
@@ -3860,6 +3856,7 @@ Output valid JSON only."""
                     question_data = result["question_data"]
                     selected_chunks = result["selected_chunks"]
                     confidence_score = float(result.get("confidence_score", 0.8) or 0.8)
+                    provider_metadata = result.get("provider_metadata")
                     q_text = question_data.get("question_text", "")
 
                     if generated_embeddings or existing_embeddings:
@@ -3878,7 +3875,7 @@ Output valid JSON only."""
                             )
                             # Save discarded question to DB for traceability
                             try:
-                                discarded_provider_meta = self._build_provider_metadata(self._provider_metadata)
+                                discarded_provider_meta = self._build_provider_metadata(provider_metadata or self._provider_metadata)
                                 discarded_provider_key = discarded_provider_meta.get("provider_key") or None
                                 discarded_q = Question(
                                     document_id=(
@@ -3945,6 +3942,7 @@ Output valid JSON only."""
                             prevalidated_confidence=confidence_score,
                             user_id=user_id,
                             used_reference_materials=bool(selected_chunks),
+                            provider_metadata_override=provider_metadata,
                         )
                         questions_generated += 1
                         final_embedding = question.question_embedding if question.question_embedding is not None else new_embedding
@@ -4090,6 +4088,7 @@ Output valid JSON only."""
         subject_id: Optional[str] = None,
         topic_id: Optional[str] = None,
         rejection_guidance_override: Optional[str] = None,
+        llm_service_override: Optional[LLMProvider] = None,
     ) -> Optional[Dict[str, Any]]:
         """Generate a single question for quick generation with context awareness.
         
@@ -4221,6 +4220,7 @@ Output valid JSON only."""
                 prompt=prompt,
                 system_prompt=system_prompt,
                 question_type=question_type,
+                llm_service_override=llm_service_override,
             )
             
             if not response:
@@ -4252,12 +4252,14 @@ Output valid JSON only."""
         system_prompt: str,
         question_type: str,
         max_retries: int = 3,
+        llm_service_override: Optional[LLMProvider] = None,
     ) -> Optional[Dict[str, Any]]:
         """Generate JSON with retry on parse errors."""
         import logging
         logger = logging.getLogger(__name__)
         
         last_error = None
+        llm_service = llm_service_override or self.llm_service
         for attempt in range(max_retries):
             try:
                 if attempt > 0:
@@ -4268,7 +4270,7 @@ Output valid JSON only."""
                     # Higher base temperature for diversity with smaller models
                     temperature = 0.85
                 
-                response = await self.llm_service.generate_json(
+                response = await llm_service.generate_json(
                     prompt=prompt,
                     system_prompt=system_prompt,
                     temperature=temperature,
@@ -4279,6 +4281,7 @@ Output valid JSON only."""
                         response=response,
                         prompt=prompt,
                         question_type=question_type,
+                        llm_service_override=llm_service,
                     )
 
                 if settings.GENERATION_SCHEMA_ENFORCEMENT and not self._validate_generation_schema(response, question_type):
@@ -4327,6 +4330,7 @@ Output valid JSON only."""
         response: Dict[str, Any],
         prompt: str,
         question_type: str,
+        llm_service_override: Optional[LLMProvider] = None,
     ) -> Dict[str, Any]:
         """Second-pass self-critique and repair to improve schema and quality compliance."""
         critique_prompt = f"""You are validating a generated {question_type} question.
@@ -4343,7 +4347,8 @@ Tasks:
 2. Remove ambiguity and fix factual or formatting issues
 3. Keep question intent intact
 """
-        repaired = await self.llm_service.generate_json(
+        llm_service = llm_service_override or self.llm_service
+        repaired = await llm_service.generate_json(
             prompt=critique_prompt,
             system_prompt="You are a strict JSON repair assistant for exam question generation.",
             temperature=0.2,

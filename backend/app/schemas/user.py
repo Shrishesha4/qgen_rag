@@ -10,7 +10,7 @@ import re
 
 
 # User role types
-RoleType = Literal["teacher", "vetter", "admin"]
+RoleType = Literal["teacher", "vetter", "admin", "student"]
 
 
 class UserBase(BaseModel):
@@ -96,6 +96,12 @@ class UserResponse(BaseModel):
     preferences: Optional[dict]
 
     subject_reference_materials: Optional[dict]
+    
+    # Student-specific fields (GEL/GELTrain)
+    grade: Optional[str] = None
+    cohort: Optional[str] = None
+    consent_given: bool = False
+    consent_given_at: Optional[datetime] = None
 
     model_config = {"from_attributes": True}
 

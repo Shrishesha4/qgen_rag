@@ -121,6 +121,7 @@ class Question(Base):
     document = relationship("Document", back_populates="questions")
     subject = relationship("Subject", back_populates="questions")
     topic = relationship("Topic", back_populates="questions")
+    evaluation_items = relationship("EvaluationItem", back_populates="question", cascade="all, delete-orphan")
     
     __table_args__ = (
         CheckConstraint("user_rating BETWEEN 1 AND 5", name="check_user_rating"),
