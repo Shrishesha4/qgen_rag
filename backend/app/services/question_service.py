@@ -178,6 +178,7 @@ class QuestionGenerationService:
         document_service: Optional[DocumentService] = None,
         reranker_service: Optional[RerankerService] = None,
         novelty_service: Optional[NoveltyService] = None,
+        provider_metadata: Optional[Dict[str, Any]] = None,
     ):
         self.db = db
         self.embedding_service = embedding_service or EmbeddingService()
@@ -185,6 +186,8 @@ class QuestionGenerationService:
         self.redis_service = redis_service or RedisService()
         self.document_service = document_service or DocumentService(db, self.embedding_service)
         self.novelty_service = novelty_service or NoveltyService(db, self.embedding_service)
+        # Provider metadata for tracking which provider generated questions
+        self._provider_metadata = provider_metadata
         # Only initialize reranker if enabled
         if settings.RERANKER_ENABLED:
             self.reranker_service = reranker_service or RerankerService()
@@ -196,6 +199,47 @@ class QuestionGenerationService:
         self.question_option_similarity_threshold = float(
             settings.QUESTION_OPTION_SIMILARITY_THRESHOLD
         )
+
+    def _build_provider_metadata(self, override: Optional[Dict[str, Any]] = None) -> Dict[str, Any]:
+        """Capture active LLM identity for analytics and post-hoc attribution.
+        
+        Args:
+            override: Optional metadata dict from ProviderService to use instead of
+                      reading from environment settings. Used for dynamic multi-provider
+                      generation.
+        """
+        if override:
+            # Use provided metadata from ProviderService
+            return {
+                "provider_key": override.get("provider_key", "unknown"),
+                "provider": override.get("provider", "unknown"),
+                "llm_provider": override.get("llm_provider", "unknown"),
+                "llm_model": override.get("llm_model", ""),
+                "base_url": (override.get("base_url", "") or "").rstrip("/"),
+            }
+
+        # Fallback to environment-based provider (legacy behavior)
+        provider = (getattr(settings, "LLM_PROVIDER", "") or "").strip().lower() or "unknown"
+        model = ""
+        base_url = ""
+
+        if provider == "deepseek":
+            model = (getattr(settings, "DEEPSEEK_MODEL", "") or "").strip()
+            base_url = (getattr(settings, "DEEPSEEK_BASE_URL", "") or "").strip()
+        elif provider == "gemini":
+            model = (getattr(settings, "GEMINI_MODEL", "") or "").strip()
+            base_url = "https://generativelanguage.googleapis.com"
+        elif provider == "ollama":
+            model = (getattr(settings, "OLLAMA_MODEL", "") or "").strip()
+            base_url = (getattr(settings, "OLLAMA_BASE_URL", "") or "").strip()
+
+        return {
+            "provider_key": provider,
+            "provider": provider,
+            "llm_provider": provider,
+            "llm_model": model,
+            "base_url": base_url.rstrip("/"),
+        }
 
     async def generate_questions(
         self,
@@ -1430,6 +1474,7 @@ Return JSON only:
             used_reference_materials=used_reference_materials,
             novelty_metadata=novelty_result.similarity_breakdown if novelty_result else None,
             generation_metadata={
+                **self._build_provider_metadata(self._provider_metadata),
                 "raw_response": question_data,
                 "source_info": source_info,
             },
@@ -2236,6 +2281,7 @@ Output valid JSON only."""
             novelty_metadata=novelty_result.similarity_breakdown,
             generation_status="accepted",
             generation_metadata={
+                **self._build_provider_metadata(self._provider_metadata),
                 "raw_response": question_data,
             },
         )

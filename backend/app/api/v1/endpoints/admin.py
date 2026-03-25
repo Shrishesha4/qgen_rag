@@ -6,12 +6,13 @@ subjects, topics, questions generated, vetting stats, per-user breakdowns.
 """
 
 from typing import Optional, List
-from datetime import datetime, timezone
+from datetime import datetime, timezone, timedelta
 import re
 import uuid
+from collections import Counter
 
 from fastapi import APIRouter, Depends, HTTPException, status
-from sqlalchemy import select, func, and_, case, distinct
+from sqlalchemy import select, func, and_, case, distinct, literal
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import selectinload
 from pydantic import BaseModel
@@ -22,6 +23,7 @@ from app.api.v1.deps import get_current_admin
 from app.models.user import User, VALID_ROLES, default_permissions_for_role
 from app.models.question import Question, GenerationSession
 from app.models.subject import Subject, Topic
+from app.models.training import VettingLog
 from app.core.security import hash_password
 
 
@@ -144,6 +146,27 @@ class AdminUserUpdateRequest(BaseModel):
     can_vet: Optional[bool] = None
 
 
+class ProviderMetric(BaseModel):
+    provider_key: str
+    total_generated: int
+    api_calls: int
+    avg_questions_per_call: float
+    total_rejected: int
+    total_regenerated: int
+    rejection_rate: float
+    regeneration_rate: float
+    inferred_preference: str
+    top_rejection_reasons: List[str]
+
+
+class ProviderMetricsResponse(BaseModel):
+    window_days: int
+    total_generated: int
+    total_rejected: int
+    total_regenerated: int
+    providers: List[ProviderMetric]
+
+
 # ============== Helpers ==============
 
 
@@ -198,6 +221,15 @@ def _resolve_permissions(role: str, payload: dict) -> dict[str, bool]:
         "can_generate": payload.get("can_generate", defaults["can_generate"]),
         "can_vet": payload.get("can_vet", defaults["can_vet"]),
     }
+
+
+def _provider_key_expr():
+    return func.coalesce(
+        func.nullif(Question.generation_metadata["provider_key"].astext, ""),
+        func.nullif(Question.generation_metadata["provider"].astext, ""),
+        func.nullif(Question.generation_metadata["llm_provider"].astext, ""),
+        literal("unknown"),
+    )
 
 
 # ============== Endpoints ==============
@@ -694,4 +726,157 @@ async def update_admin_user(
         can_vet=bool(user.can_vet),
         created_at=user.created_at,
         last_login_at=user.last_login_at,
+    )
+
+
+@router.get("/provider-metrics", response_model=ProviderMetricsResponse)
+async def get_provider_metrics(
+    days: int = 30,
+    current_user: User = Depends(get_current_admin),
+    db: AsyncSession = Depends(get_db),
+):
+    """Return provider-level generation and rejection/regeneration metrics."""
+    window_days = max(1, min(days, 365))
+    since = datetime.now(timezone.utc) - timedelta(days=window_days)
+    provider_expr = _provider_key_expr().label("provider_key")
+
+    generated_rows = (
+        await db.execute(
+            select(
+                provider_expr,
+                func.count(Question.id).label("generated"),
+                func.count(distinct(Question.session_id)).label("api_calls"),
+            )
+            .where(
+                Question.generation_status == "accepted",
+                Question.generated_at >= since,
+            )
+            .group_by(provider_expr)
+        )
+    ).all()
+    generated_map = {
+        str(row.provider_key or "unknown"): {
+            "generated": int(row.generated or 0),
+            "api_calls": int(row.api_calls or 0),
+        }
+        for row in generated_rows
+    }
+
+    rejected_rows = (
+        await db.execute(
+            select(
+                provider_expr,
+                func.count(Question.id).label("rejected"),
+            )
+            .where(
+                Question.vetting_status == "rejected",
+                Question.generated_at >= since,
+            )
+            .group_by(provider_expr)
+        )
+    ).all()
+    rejected_map = {
+        str(row.provider_key or "unknown"): int(row.rejected or 0)
+        for row in rejected_rows
+    }
+
+    regenerated_rows = (
+        await db.execute(
+            select(
+                provider_expr,
+                func.count(Question.id).label("regenerated"),
+            )
+            .where(
+                Question.replaces_id.isnot(None),
+                Question.generated_at >= since,
+            )
+            .group_by(provider_expr)
+        )
+    ).all()
+    regenerated_map = {
+        str(row.provider_key or "unknown"): int(row.regenerated or 0)
+        for row in regenerated_rows
+    }
+
+    reason_rows = (
+        await db.execute(
+            select(
+                provider_expr,
+                VettingLog.reason_codes,
+                VettingLog.rejection_reasons,
+            )
+            .join(VettingLog, VettingLog.question_id == Question.id)
+            .where(
+                VettingLog.decision == "reject",
+                VettingLog.created_at >= since,
+            )
+        )
+    ).all()
+
+    reason_map: dict[str, Counter] = {}
+    for row in reason_rows:
+        provider_key = str(row.provider_key or "unknown")
+        bucket = reason_map.setdefault(provider_key, Counter())
+        codes = row.reason_codes or []
+        reasons = row.rejection_reasons or []
+        for code in codes:
+            if code:
+                bucket[str(code)] += 1
+        if not codes:
+            for reason in reasons:
+                if reason:
+                    bucket[str(reason)] += 1
+
+    provider_keys = set(generated_map) | set(rejected_map) | set(regenerated_map)
+    provider_metrics: List[ProviderMetric] = []
+    total_generated = 0
+    total_rejected = 0
+    total_regenerated = 0
+
+    for provider_key in sorted(provider_keys):
+        generated = generated_map.get(provider_key, {}).get("generated", 0)
+        api_calls = generated_map.get(provider_key, {}).get("api_calls", 0)
+        rejected = rejected_map.get(provider_key, 0)
+        regenerated = regenerated_map.get(provider_key, 0)
+
+        total_generated += generated
+        total_rejected += rejected
+        total_regenerated += regenerated
+
+        rejection_rate = (rejected / generated) if generated else 0.0
+        regeneration_rate = (regenerated / rejected) if rejected else 0.0
+        if rejection_rate <= 0.2:
+            inferred_preference = "preferred"
+        elif rejection_rate <= 0.4:
+            inferred_preference = "neutral"
+        else:
+            inferred_preference = "avoid"
+
+        top_reasons = [
+            reason for reason, _ in reason_map.get(provider_key, Counter()).most_common(3)
+        ]
+
+        provider_metrics.append(
+            ProviderMetric(
+                provider_key=provider_key,
+                total_generated=generated,
+                api_calls=api_calls,
+                avg_questions_per_call=round((generated / api_calls) if api_calls else 0.0, 2),
+                total_rejected=rejected,
+                total_regenerated=regenerated,
+                rejection_rate=round(rejection_rate, 4),
+                regeneration_rate=round(regeneration_rate, 4),
+                inferred_preference=inferred_preference,
+                top_rejection_reasons=top_reasons,
+            )
+        )
+
+    provider_metrics.sort(key=lambda item: item.total_generated, reverse=True)
+
+    return ProviderMetricsResponse(
+        window_days=window_days,
+        total_generated=total_generated,
+        total_rejected=total_rejected,
+        total_regenerated=total_regenerated,
+        providers=provider_metrics,
     )
