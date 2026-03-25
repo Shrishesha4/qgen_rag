@@ -3,6 +3,7 @@
 	import { browser } from '$app/environment';
 	import { beforeNavigate } from '$app/navigation';
 	import { goto } from '$app/navigation';
+	import { apiFetch } from '$lib/api/client';
 	import { session } from '$lib/session';
 	import FileUploadZone from '$lib/components/FileUploadZone.svelte';
 	import { createSubject, createTopic, extractChapters, getSubject, updateTopic, type TopicResponse } from '$lib/api/subjects';
@@ -15,8 +16,14 @@
 	} from '$lib/api/documents';
 
 	const DRAFT_STORAGE_KEY = 'qgen:new-topic-wizard:draft:v1';
-	const MIN_QUESTION_COUNT = 30;
-	const MAX_QUESTION_COUNT = 30;
+	const MIN_QUESTION_COUNT = 1;
+	const DEFAULT_QUESTION_COUNT = 30;
+
+	interface GenerationLimitsResponse {
+		max_batch_size: number;
+	}
+
+	let maxQuestionCount = $state(DEFAULT_QUESTION_COUNT);
 
 	function clampStep(value: number) {
 		if (!Number.isFinite(value)) return 1;
@@ -24,8 +31,9 @@
 	}
 
 	function clampQuestionCount(value: number) {
-		if (!Number.isFinite(value)) return 30;
-		return Math.max(MIN_QUESTION_COUNT, Math.min(MAX_QUESTION_COUNT, Math.trunc(value)));
+		const safeMax = Math.max(MIN_QUESTION_COUNT, Math.trunc(maxQuestionCount));
+		if (!Number.isFinite(value)) return Math.min(DEFAULT_QUESTION_COUNT, safeMax);
+		return Math.max(MIN_QUESTION_COUNT, Math.min(safeMax, Math.trunc(value)));
 	}
 
 	onMount(() => {
@@ -33,9 +41,22 @@
 			if (!s) goto('/teacher/login');
 		});
 
-		void restoreDraftAndResume();
+		void loadGenerationLimitsAndRestoreDraft();
 		return unsub;
 	});
+
+	async function loadGenerationLimitsAndRestoreDraft() {
+		try {
+			const limits = await apiFetch<GenerationLimitsResponse>('/settings/generation-limits');
+			const maxBatch = Number(limits?.max_batch_size ?? DEFAULT_QUESTION_COUNT);
+			maxQuestionCount = maxBatch > 0 ? maxBatch : DEFAULT_QUESTION_COUNT;
+		} catch {
+			maxQuestionCount = DEFAULT_QUESTION_COUNT;
+		}
+
+		desiredQuestionCount = clampQuestionCount(desiredQuestionCount);
+		await restoreDraftAndResume();
+	}
 
 	beforeNavigate(({ to }) => {
 		const staying = to?.url?.pathname?.startsWith('/teacher/train/new');
@@ -115,7 +136,7 @@
 	let completeOnlyMode = $state(false);
 	let backgroundGenerationScheduled = $state(false);
 	let backgroundGenerationMessage = $state('');
-	let desiredQuestionCount = $state(30);
+	let desiredQuestionCount = $state(DEFAULT_QUESTION_COUNT);
 	let draftHydrated = $state(false);
 
 	// ── Derived ──
@@ -156,7 +177,7 @@
 			case 3:
 				return (skipReferencePdf || hasReferenceUploads) &&
 					desiredQuestionCount >= MIN_QUESTION_COUNT &&
-					desiredQuestionCount <= MAX_QUESTION_COUNT &&
+					desiredQuestionCount <= maxQuestionCount &&
 					!anyDocsFailed;
 			case 4: return true; // review
 			case 5: return true;
@@ -235,7 +256,7 @@
 			tempSubjectId = parsed.tempSubjectId ?? '';
 			backgroundGenerationScheduled = parsed.backgroundGenerationScheduled ?? false;
 			backgroundGenerationMessage = parsed.backgroundGenerationMessage ?? '';
-			desiredQuestionCount = clampQuestionCount(parsed.desiredQuestionCount ?? 30);
+			desiredQuestionCount = clampQuestionCount(parsed.desiredQuestionCount ?? DEFAULT_QUESTION_COUNT);
 			skipReferencePdf = parsed.skipReferencePdf ?? false;
 
 			if (tempSubjectId) {
@@ -736,8 +757,9 @@
 			}
 			setupProgress = 40;
 
-			// 3. Always queue one batch (30) per topic after setup completion.
+			// 3. Queue one batch per topic after setup completion.
 			setupStatus = 'Scheduling first question batches...';
+			const questionsPerTopic = clampQuestionCount(desiredQuestionCount);
 			const topicIdsForGeneration = topics
 				.map((topic) => topicIdByName.get(topicKey(topic.name)))
 				.filter((id): id is string => Boolean(id));
@@ -745,7 +767,7 @@
 				await scheduleBackgroundGeneration({
 					subjectId,
 					topicId: topicIdsForGeneration[0],
-					count: 30,
+					count: questionsPerTopic,
 					types: 'mcq',
 					difficulty: 'medium',
 					allowWithoutReference: skipReferencePdf,
@@ -754,14 +776,14 @@
 				await scheduleBackgroundGeneration({
 					subjectId,
 					topicIds: topicIdsForGeneration,
-					count: 30 * topicIdsForGeneration.length,
+					count: questionsPerTopic * topicIdsForGeneration.length,
 					types: 'mcq',
 					difficulty: 'medium',
 					allowWithoutReference: skipReferencePdf,
 				});
 			}
 			backgroundGenerationScheduled = true;
-			backgroundGenerationMessage = `Scheduled 30 questions for ${topicIdsForGeneration.length} topic${topicIdsForGeneration.length === 1 ? '' : 's'}.`;
+			backgroundGenerationMessage = `Scheduled ${questionsPerTopic} questions for ${topicIdsForGeneration.length} topic${topicIdsForGeneration.length === 1 ? '' : 's'}.`;
 
 			// 4. Reference materials are already uploaded per-topic in Step 3.
 			setupProgress = 80;
@@ -1074,7 +1096,7 @@
 				{:else if completeOnlyMode || !allDocsReady}
 					<p class="step-hint">Reference materials are still processing. You can complete setup now and continue from dashboard later.</p>
 				{/if}
-				<p class="step-hint">On Complete, one 30-question batch will be scheduled for each topic.</p>
+				<p class="step-hint">On Complete, one {clampQuestionCount(desiredQuestionCount)}-question batch will be scheduled for each topic.</p>
 				{#if backgroundGenerationMessage}
 					<p class="step-hint">{backgroundGenerationMessage}</p>
 				{/if}
@@ -1114,7 +1136,7 @@
 					</div>
 					<div class="review-section">
 						<span class="rs-label">Questions To Generate</span>
-						<span class="rs-value">30 per topic</span>
+						<span class="rs-value">{clampQuestionCount(desiredQuestionCount)} per topic (max {maxQuestionCount})</span>
 					</div>
 				</div>
 				{#if setupError}

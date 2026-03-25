@@ -49,6 +49,10 @@ class ProviderGenerationSettingsUpdate(BaseModel):
     providers: list[ProviderGenerationItem]
 
 
+class GenerationLimitsResponse(BaseModel):
+    max_batch_size: int
+
+
 async def get_setting(db: AsyncSession, key: str) -> dict:
     """Get a setting value, returning default if not found."""
     result = await db.execute(
@@ -191,6 +195,17 @@ async def get_provider_generation_settings(
 
     value = await get_setting(db, SETTING_PROVIDER_GENERATION_CONFIG)
     return _provider_settings_response(value)
+
+
+@router.get("/generation-limits", response_model=GenerationLimitsResponse)
+async def get_generation_limits(
+    _: User = Depends(get_current_user),
+    db: AsyncSession = Depends(get_auth_db),
+):
+    """Return generation limits for authenticated users."""
+    value = await get_setting(db, SETTING_PROVIDER_GENERATION_CONFIG)
+    provider_settings = _provider_settings_response(value)
+    return GenerationLimitsResponse(max_batch_size=provider_settings.generation_batch_size)
 
 
 @router.put("/providers-generation", response_model=ProviderGenerationSettingsResponse)
