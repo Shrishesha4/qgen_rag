@@ -12,7 +12,7 @@ class Settings(BaseSettings):
     """Application settings loaded from environment variables."""
 
     # API routing prefix
-    API_PREFIX: str = Field(default="/api/v1")
+    API_PREFIX: str = Field(default="")
 
     # Database (PostgreSQL + pgvector for vector data)
     # Individual database connection parameters for Docker Compose

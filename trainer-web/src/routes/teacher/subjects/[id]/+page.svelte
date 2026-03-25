@@ -1196,9 +1196,9 @@
 					<p class="eyebrow">{subject.code}  {#if subject.creator_username} · {subject.creator_username}{/if}</p>
 					<h1 class="title font-serif">{subject.name}</h1>
 				</div>
-				<button class="action-btn action-danger" onclick={onDeleteSubject} disabled={deletingSubject}>
+				<!-- <button class="action-btn action-danger" onclick={onDeleteSubject} disabled={deletingSubject}>
 					{deletingSubject ? 'Deleting…' : 'Delete Subject'}
-				</button>
+				</button> -->
 			</div>
 			{#if subject.description}
 				<p class="description">{subject.description}</p>
@@ -1207,7 +1207,7 @@
 
 		<div class="stats-grid animate-slide-up">
 			<div class="stat-card glass-panel">
-				<span class="stat-value amber-text">{subject.total_topics}</span>
+				<span class="stat-value amber-text">{subject.total_topics}</span >
 				<span class="stat-label">Topics</span>
 			</div>
 			<div class="stat-card glass-panel">
