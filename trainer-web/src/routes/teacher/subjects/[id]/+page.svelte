@@ -17,6 +17,7 @@
 		getDocumentStatus,
 		getBackgroundGenerationStatuses,
 		getTopicGenerationStatuses,
+		getGenerationLimits,
 		listReferenceDocuments,
 		scheduleBackgroundGeneration,
 		uploadDocument,
@@ -654,10 +655,26 @@
 		};
 		topicGenerationProgressById = {
 			...topicGenerationProgressById,
-			[topicId]: '0/30',
+			[topicId]: 'Starting...',
 		};
 		error = '';
 		try {
+			// Fetch provider-configured batch size
+			let batchCount = 30;
+			try {
+				const limits = await getGenerationLimits();
+				if (limits.max_batch_size > 0) {
+					batchCount = limits.max_batch_size;
+				}
+			} catch {
+				// Fallback to default
+			}
+
+			topicGenerationProgressById = {
+				...topicGenerationProgressById,
+				[topicId]: `0/${batchCount}`,
+			};
+
 			const references = await listReferenceDocuments(subjectId, topicId);
 			const topicPdfCount = [
 				...(references.reference_books ?? []),
@@ -667,14 +684,14 @@
 
 			const scheduled = await scheduleBackgroundGeneration({
 				subjectId,
-				count: 30,
+				count: batchCount,
 				types: 'mcq',
 				difficulty: 'medium',
 				topicId,
 				allowWithoutReference,
 			});
 
-			const total = Math.max(1, scheduled.count || 30);
+			const total = Math.max(1, scheduled.count || batchCount);
 			topicGenerationProgressById = {
 				...topicGenerationProgressById,
 				[topicId]: `0/${total}`,

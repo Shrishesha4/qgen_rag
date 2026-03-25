@@ -40,7 +40,8 @@
 	const DEFAULT_BATCH_SIZE = 30;
 	const MIN_BATCH_SIZE = 1;
 	const MAX_BATCH_SIZE = 1000;
-	let providerBatchSize = $state(DEFAULT_BATCH_SIZE);
+	let providerBatchSize = $state<number | null>(null);
+	let providerBatchSizeFetched = $state(false);
 	const GENERATION_INTERPOLATION_TICK_MS = 300;
 	const GENERATION_INTERPOLATION_MIN_DURATION_MS = 12000;
 	const GENERATION_INTERPOLATION_PER_QUESTION_MS = 1600;
@@ -122,7 +123,7 @@
 				.filter(Boolean);
 			const nextProvisionalSubject = p.url.searchParams.get('provisional') === '1';
 			const nextAllowNoPdfGeneration = p.url.searchParams.get('noPdf') === '1';
-			const nextGenerationBatchSize = parseBatchSizeParam(p.url.searchParams.get('count'), providerBatchSize);
+			const nextGenerationBatchSize = parseBatchSizeParam(p.url.searchParams.get('count'), providerBatchSize ?? DEFAULT_BATCH_SIZE);
 			const nextTargetQuestionId = p.url.searchParams.get('question_id') ?? '';
 			const nextTargetStartIndex = parseInt(p.url.searchParams.get('start_index') ?? '0', 10);
 			const resumeParam = p.url.searchParams.get('resume');
@@ -500,26 +501,38 @@
 		queueProgressSave();
 	});
 
+	// Fetch provider batch size from backend (called once)
+	async function fetchProviderBatchSize(): Promise<number> {
+		if (providerBatchSizeFetched && providerBatchSize !== null) {
+			return providerBatchSize;
+		}
+		try {
+			const limits = await getGenerationLimits();
+			providerBatchSizeFetched = true;
+			if (limits.max_batch_size > 0) {
+				providerBatchSize = limits.max_batch_size;
+				return limits.max_batch_size;
+			}
+		} catch (e) {
+			console.warn('Failed to fetch generation limits, using default:', e);
+		}
+		providerBatchSizeFetched = true;
+		providerBatchSize = DEFAULT_BATCH_SIZE;
+		return DEFAULT_BATCH_SIZE;
+	}
+
 	// Load existing pending questions, then start background generation
 	async function loadAndStream() {
 		loading = true;
 		error = '';
 		showBatchCompleteNotice = false;
 
-		// Fetch provider-configured batch size from backend
-		try {
-			const limits = await getGenerationLimits();
-			if (limits.max_batch_size > 0) {
-				providerBatchSize = limits.max_batch_size;
-				// Update generationBatchSize if no explicit count was provided in URL
-				const urlCount = new URL(window.location.href).searchParams.get('count');
-				if (!urlCount) {
-					generationBatchSize = providerBatchSize;
-				}
-			}
-		} catch (e) {
-			// Fallback to default if API fails
-			console.warn('Failed to fetch generation limits, using default:', e);
+		// Fetch provider-configured batch size from backend FIRST
+		const fetchedBatchSize = await fetchProviderBatchSize();
+		// Update generationBatchSize if no explicit count was provided in URL
+		const urlCount = new URL(window.location.href).searchParams.get('count');
+		if (!urlCount) {
+			generationBatchSize = fetchedBatchSize;
 		}
 
 		if (await restoreSavedProgress()) {
@@ -585,10 +598,20 @@
 		postTriggerGenerationActive = false;
 		postTriggerBaseQuestionCount = 0;
 		generating = true;
-		beginGenerationProgress(generationBatchSize);
 		genCount = 0;
-		genMessage = 'Checking document readiness...';
+		genMessage = 'Fetching generation settings...';
 		resetDocumentProcessingState();
+
+		// Ensure we have the correct batch size from provider settings
+		const batchSize = await fetchProviderBatchSize();
+		// Update generationBatchSize if no explicit count was provided in URL
+		const urlCount = new URL(window.location.href).searchParams.get('count');
+		if (!urlCount) {
+			generationBatchSize = batchSize;
+		}
+
+		beginGenerationProgress(generationBatchSize);
+		genMessage = 'Checking document readiness...';
 
 		try {
 			await ensureDocumentsReadyForGeneration();

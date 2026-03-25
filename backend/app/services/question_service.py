@@ -33,6 +33,7 @@ from app.services.redis_service import RedisService
 from app.services.document_service import DocumentService
 from app.services.reranker_service import RerankerService
 from app.services.novelty_service import NoveltyService, NoveltyResult
+from app.services.provider_service import ProviderService, ProviderConfig
 from app.core.config import settings
 
 
@@ -3615,6 +3616,25 @@ Output valid JSON only."""
             type_distribution = self._distribute_types(count, types)
             logger.info(f"quick_generate_from_subject: type distribution={type_distribution}")
 
+            # ── Multi-provider allocation ──────────────────────────────────
+            # Get provider allocations to distribute questions across enabled providers
+            provider_service = ProviderService()
+            provider_allocations = []
+            provider_llm_services: Dict[str, Tuple[LLMProvider, Dict[str, Any]]] = {}
+            try:
+                provider_allocations = await provider_service.allocate_batch(count)
+                for alloc in provider_allocations:
+                    llm_svc, metadata = provider_service.create_llm_service(alloc.provider)
+                    provider_llm_services[alloc.provider.key] = (llm_svc, metadata)
+                logger.info(
+                    f"quick_generate_from_subject: multi-provider allocation: "
+                    f"{[(a.provider.key, a.question_count) for a in provider_allocations]}"
+                )
+            except Exception as alloc_err:
+                logger.warning(f"quick_generate_from_subject: Provider allocation failed, using default: {alloc_err}")
+                # Fallback to single provider (self.llm_service)
+                provider_allocations = []
+
             # Prepare rejection guidance once so parallel workers don't hit DB concurrently.
             rejection_guidance_cache = ""
             if subject_id or topic_id:
@@ -3638,12 +3658,52 @@ Output valid JSON only."""
                     parallel_workers = 1
             worker_timeout_seconds = 180 if (llm_provider == "ollama" and "qwen" in ollama_model) else 90
             max_attempts_per_slot = 4
+
+            # Build slot queue with provider assignments
             slot_queue = []
             slot_id_seq = 0
-            for q_type, type_count in type_distribution.items():
-                for _ in range(type_count):
-                    slot_queue.append({"id": slot_id_seq, "q_type": q_type, "attempts": 0})
-                    slot_id_seq += 1
+            
+            if provider_allocations:
+                # Distribute slots across providers based on allocation
+                provider_slot_counts: Dict[str, int] = {}
+                for alloc in provider_allocations:
+                    provider_slot_counts[alloc.provider.key] = alloc.question_count
+                
+                # Assign providers to slots in round-robin within type distribution
+                for q_type, type_count in type_distribution.items():
+                    # Calculate how many of this type each provider should generate
+                    type_ratio = type_count / count if count > 0 else 0
+                    provider_type_counts: List[Tuple[str, int]] = []
+                    remaining_type = type_count
+                    
+                    for i, alloc in enumerate(provider_allocations):
+                        if i == len(provider_allocations) - 1:
+                            # Last provider gets remainder
+                            prov_type_count = remaining_type
+                        else:
+                            prov_type_count = int(alloc.question_count * type_ratio)
+                            prov_type_count = min(prov_type_count, remaining_type)
+                        
+                        if prov_type_count > 0:
+                            provider_type_counts.append((alloc.provider.key, prov_type_count))
+                            remaining_type -= prov_type_count
+                    
+                    # Create slots with provider assignments
+                    for provider_key, prov_count in provider_type_counts:
+                        for _ in range(prov_count):
+                            slot_queue.append({
+                                "id": slot_id_seq,
+                                "q_type": q_type,
+                                "attempts": 0,
+                                "provider_key": provider_key,
+                            })
+                            slot_id_seq += 1
+            else:
+                # Fallback: no provider allocation, use default
+                for q_type, type_count in type_distribution.items():
+                    for _ in range(type_count):
+                        slot_queue.append({"id": slot_id_seq, "q_type": q_type, "attempts": 0, "provider_key": None})
+                        slot_id_seq += 1
 
             if parallel_workers > 1:
                 yield QuickGenerateProgress(
@@ -3657,7 +3717,19 @@ Output valid JSON only."""
 
             async def _build_candidate(slot: dict, attempt_index: int, exclusion_snapshot: List[str]) -> dict:
                 q_type = slot["q_type"]
+                slot_provider_key = slot.get("provider_key")
+                
+                # Temporarily swap LLM service if this slot has a specific provider
+                original_llm_service = self.llm_service
+                original_provider_metadata = self._provider_metadata
+                
                 try:
+                    if slot_provider_key and slot_provider_key in provider_llm_services:
+                        llm_svc, metadata = provider_llm_services[slot_provider_key]
+                        self.llm_service = llm_svc
+                        self._provider_metadata = metadata
+                        logger.debug(f"Using provider {slot_provider_key} for slot {slot.get('id')}")
+                    
                     pool_size = len(subj_chunk_pool)
                     pool_offset = (attempt_index * 3) % max(1, pool_size - 2)
                     selected_chunks = subj_chunk_pool[pool_offset:pool_offset + 3]
@@ -3706,17 +3778,22 @@ Output valid JSON only."""
                         "question_data": question_data,
                         "selected_chunks": selected_chunks,
                         "confidence_score": confidence_score,
+                        "provider_key": slot_provider_key,
                     }
                 except Exception as gen_err:
                     logger.warning(
                         f"quick_generate_from_subject: worker failed for slot={slot.get('id')} "
-                        f"type={q_type}: {gen_err}"
+                        f"type={q_type} provider={slot_provider_key}: {gen_err}"
                     )
                     return {
                         "ok": False,
                         "slot": slot,
                         "reason": f"worker_exception:{gen_err}",
                     }
+                finally:
+                    # Restore original LLM service
+                    self.llm_service = original_llm_service
+                    self._provider_metadata = original_provider_metadata
 
             # Safety cap: total attempts across all rounds to prevent infinite loops
             max_total_attempts = count * 3
