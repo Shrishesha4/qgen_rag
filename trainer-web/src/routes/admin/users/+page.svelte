@@ -219,7 +219,17 @@
 
 	function formatDate(value: string | null): string {
 		if (!value) return '—';
-		return new Date(value).toLocaleString();
+		const normalizedValue = /(?:Z|[+-]\d{2}:?\d{2})$/.test(value) ? value : `${value}Z`;
+		return new Date(normalizedValue).toLocaleString('en-IN', {
+			timeZone: 'Asia/Kolkata',
+			year: 'numeric',
+			month: '2-digit',
+			day: '2-digit',
+			hour: '2-digit',
+			minute: '2-digit',
+			second: '2-digit',
+			hour12: true
+		});
 	}
 </script>
 
