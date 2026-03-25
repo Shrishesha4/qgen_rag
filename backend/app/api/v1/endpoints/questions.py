@@ -41,6 +41,7 @@ from app.models.subject import Subject, Topic
 from app.models.generation_run import GenerationRun
 from app.services.generation_status_service import GenerationStatusService, broadcast_generation_update
 from app.services.redis_queue_service import RedisQueueService
+from app.services.provider_service import get_provider_service, create_question_service_for_provider
 
 
 # MIME type mapping for allowed extensions
@@ -542,7 +543,21 @@ async def _run_background_subject_generation(
                     logger.warning(f"Failed to create generation run in DB: {db_err}")
 
             marks_by_type = {"mcq": 1, "short_answer": 2, "long_answer": 5}
-            question_service = QuestionGenerationService(task_db)
+
+            async def _build_provider_aware_question_service(db_session: AsyncSession) -> QuestionGenerationService:
+                try:
+                    provider_service = get_provider_service()
+                    enabled = await provider_service.get_enabled_providers()
+                    if enabled:
+                        preferred = (getattr(settings, "LLM_PROVIDER", "") or "").strip().lower()
+                        selected = next((p for p in enabled if p.key == preferred), enabled[0])
+                        return await create_question_service_for_provider(db_session, selected)
+                except Exception as provider_exc:
+                    logger.warning("Provider-aware generation setup failed, using default provider: %s", provider_exc)
+
+                return QuestionGenerationService(db_session)
+
+            question_service = await _build_provider_aware_question_service(task_db)
 
             if len(selected_topic_ids) > 1:
                 topic_rows_res = await task_db.execute(
@@ -595,7 +610,7 @@ async def _run_background_subject_generation(
 
                     try:
                         async with AsyncSessionLocal() as worker_db:
-                            worker_question_service = QuestionGenerationService(worker_db)
+                            worker_question_service = await _build_provider_aware_question_service(worker_db)
                             generator = worker_question_service.quick_generate_from_subject(
                                 user_id=user_id,
                                 subject_id=subject_id,
