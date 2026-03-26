@@ -8,6 +8,7 @@ from fastapi import APIRouter, Depends, HTTPException, status, Request, UploadFi
 from fastapi.responses import FileResponse
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
+from pydantic import BaseModel
 
 from app.core.auth_database import get_auth_db
 from app.core.config import settings
@@ -24,11 +25,15 @@ from app.schemas.auth import (
 )
 from app.services.user_service import UserService
 from app.api.v1.deps import get_current_user, get_client_info
-from app.models.user import User, ROLE_STUDENT
+from app.models.user import User, ROLE_STUDENT, ROLE_ADMIN
 from app.models.system_settings import SystemSettings, SETTING_SIGNUP_ENABLED, SETTING_STUDENT_SIGNUP_ENABLED, DEFAULT_SETTINGS
 
 
 router = APIRouter()
+
+
+class BootstrapStatus(BaseModel):
+    admin_exists: bool
 
 
 async def is_signup_enabled(db: AsyncSession) -> bool:
@@ -53,6 +58,15 @@ async def is_student_signup_enabled(db: AsyncSession) -> bool:
     return DEFAULT_SETTINGS.get(SETTING_STUDENT_SIGNUP_ENABLED, {}).get("enabled", False)
 
 
+@router.get("/bootstrap-status", response_model=BootstrapStatus)
+async def get_bootstrap_status(
+    db: AsyncSession = Depends(get_auth_db),
+):
+    """Return whether an admin account already exists (public)."""
+    user_service = UserService(db)
+    return BootstrapStatus(admin_exists=await user_service.admin_exists())
+
+
 @router.post("/register", response_model=TokenResponse, status_code=status.HTTP_201_CREATED)
 async def register(
     request: Request,
@@ -62,21 +76,31 @@ async def register(
     """
     Register a new user account.
     """
-    # Check signup toggles per role
-    if user_data.role == ROLE_STUDENT:
-        if not await is_student_signup_enabled(db):
-            raise HTTPException(
-                status_code=status.HTTP_403_FORBIDDEN,
-                detail="Student self-signup is currently disabled. Please contact your teacher or an administrator.",
-            )
-    else:
-        if not await is_signup_enabled(db):
-            raise HTTPException(
-                status_code=status.HTTP_403_FORBIDDEN,
-                detail="User registration is currently disabled. Please contact an administrator.",
-            )
-    
     user_service = UserService(db)
+    admin_exists = await user_service.admin_exists()
+
+    # On first run, force creation of an admin before allowing any other role.
+    if not admin_exists:
+        if user_data.role != ROLE_ADMIN:
+            raise HTTPException(
+                status_code=status.HTTP_403_FORBIDDEN,
+                detail="First account must be an admin. Create an admin user to continue.",
+            )
+        user_data = user_data.model_copy(update={"role": ROLE_ADMIN})
+    else:
+        # Check signup toggles per role once an admin already exists
+        if user_data.role == ROLE_STUDENT:
+            if not await is_student_signup_enabled(db):
+                raise HTTPException(
+                    status_code=status.HTTP_403_FORBIDDEN,
+                    detail="Student self-signup is currently disabled. Please contact your teacher or an administrator.",
+                )
+        else:
+            if not await is_signup_enabled(db):
+                raise HTTPException(
+                    status_code=status.HTTP_403_FORBIDDEN,
+                    detail="User registration is currently disabled. Please contact an administrator.",
+                )
     client_info = get_client_info(request)
     
     try:
@@ -400,3 +424,18 @@ async def revoke_session(
     # This would require storing session IDs differently
     # For now, return success
     return {"message": "Session revoked successfully"}
+
+
+@router.get("/admin-exists")
+async def admin_exists(db: AsyncSession = Depends(get_auth_db)) -> Dict[str, bool]:
+    """Check if any admin user exists in the system"""
+    try:
+        # Check if any user with admin role exists
+        result = await db.execute(
+            select(User).where(User.role == "admin").limit(1)
+        )
+        admin_user = result.scalar_one_or_none()
+        return {"exists": admin_user is not None}
+    except Exception:
+        # If there's an error, assume no admin exists for bootstrap
+        return {"exists": False}

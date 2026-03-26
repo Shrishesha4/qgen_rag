@@ -1,6 +1,10 @@
+
 <script lang="ts">
+	import { goto } from '$app/navigation';
 	import { onMount } from 'svelte';
 	import { apiFetch } from '$lib/api/client';
+	import { logout } from '$lib/api/auth';
+	import { session } from '$lib/session';
 	import {
 		AlertCircle,
 		User2,
@@ -82,6 +86,12 @@
 		if (value === null || Number.isNaN(value)) return '—';
 		return `${value.toFixed(0)}%`;
 	}
+
+	async function handleLogout() {
+		await logout();
+		session.clear();
+		goto('/');
+	}
 </script>
 
 <div class="page-container student-shell space-y-8">
@@ -105,6 +115,7 @@
 				<p class="summary-value">{formatScore(data?.average_score ?? null)}</p>
 				<p class="summary-label">Average score</p>
 			</div>
+			<button class="logout-btn" on:click={handleLogout}>Sign out</button>
 		</div>
 	</section>
 
@@ -349,6 +360,23 @@
 		align-items: center;
 	}
 
+	.logout-btn {
+		margin-left: auto;
+		padding: 10px 14px;
+		border-radius: 12px;
+		border: 1px solid rgba(255, 255, 255, 0.18);
+		background: rgba(255, 255, 255, 0.08);
+		color: #fff;
+		font-weight: 700;
+		transition: 140ms ease;
+		cursor: pointer;
+	}
+
+	.logout-btn:hover {
+		border-color: rgba(255, 255, 255, 0.32);
+		background: rgba(255, 255, 255, 0.16);
+	}
+
 	.summary-value {
 		margin: 0;
 		font-size: 1.9rem;
@@ -564,6 +592,12 @@
 	:global([data-color-mode='light']) .student-shell .pill.no {
 		background: rgba(239, 68, 68, 0.14);
 		border-color: rgba(239, 68, 68, 0.32);
+	}
+
+	:global([data-color-mode='light']) .student-shell .logout-btn {
+		border-color: rgba(15, 23, 42, 0.12);
+		background: rgba(15, 23, 42, 0.04);
+		color: #0f172a;
 	}
 
 	:global([data-color-mode='light']) .student-shell .ghost {

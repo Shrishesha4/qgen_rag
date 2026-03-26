@@ -37,9 +37,9 @@
 		average_score: number | null;
 	}
 
-	let dashboard: DashboardData | null = null;
-	let isLoading = true;
-	let error: string | null = null;
+	let dashboard = $state<DashboardData | null>(null);
+	let isLoading = $state(true);
+	let error = $state<string | null>(null);
 
 	onMount(async () => {
 		await loadDashboard();
@@ -73,17 +73,19 @@
 	}
 
 	const completedStatuses = new Set(['completed', 'reviewed', 'scored', 'graded']);
-	$: pendingItems =
-		dashboard?.assigned_items.filter((item) => !completedStatuses.has(item.last_attempt_status ?? '')) ?? [];
-	$: completedItems =
+	const pendingItems = $derived(
+		dashboard?.assigned_items.filter((item: AssignedItem) => !completedStatuses.has(item.last_attempt_status ?? '')) ?? []
+	);
+	const completedItems = $derived(
 		dashboard?.assigned_items
-			.filter((item) => completedStatuses.has(item.last_attempt_status ?? ''))
+			.filter((item: AssignedItem) => completedStatuses.has(item.last_attempt_status ?? ''))
 			.slice()
-			.sort((a, b) => {
+			.sort((a: AssignedItem, b: AssignedItem) => {
 				const aDate = a.due_date ? new Date(a.due_date).getTime() : 0;
 				const bDate = b.due_date ? new Date(b.due_date).getTime() : 0;
 				return bDate - aDate;
-			}) ?? [];
+			}) ?? []
+	);
 
 	function getDifficultyColor(label: string | null) {
 		switch (label) {
@@ -123,7 +125,7 @@
 				<AlertCircle class="h-5 w-5" />
 				<span>{error}</span>
 			</div>
-			<button class="glass-btn-secondary mt-3" on:click={loadDashboard}>Try again</button>
+			<button class="glass-btn-secondary mt-3" onclick={loadDashboard}>Try again</button>
 		</div>
 	{:else if dashboard}
 		<div class="grid grid-cols-1 sm:grid-cols-2 xl:grid-cols-4 gap-4">

@@ -21,6 +21,10 @@ export interface RegisterRequest {
 	role: 'teacher' | 'vetter' | 'admin' | 'student';
 }
 
+export interface BootstrapStatus {
+	admin_exists: boolean;
+}
+
 export interface TokenResponse {
 	access_token: string;
 	refresh_token: string;
@@ -165,5 +169,11 @@ export async function changePassword(payload: ChangePasswordRequest): Promise<{ 
 	return apiFetch<{ message: string }>('/auth/change-password', {
 		method: 'POST',
 		body: JSON.stringify(payload)
+	});
+}
+
+export async function getBootstrapStatus(): Promise<BootstrapStatus> {
+	return apiFetch<BootstrapStatus>('/auth/bootstrap-status', {
+		method: 'GET'
 	});
 }

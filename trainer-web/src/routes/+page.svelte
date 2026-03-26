@@ -6,17 +6,19 @@
 	import { session } from '$lib/session';
 
 	let introReady = $state(false);
-	let mode: 'login' | 'register' = $state('login');
+	let mode: 'login' | 'register' | 'bootstrap' = $state('login');
 	let email = $state('');
 	let password = $state('');
 	let username = $state('');
 	let fullName = $state('');
-	let selectedRole: 'teacher' | 'vetter' | 'student' = $state('teacher');
+	let selectedRole: 'teacher' | 'vetter' | 'student' | 'admin' = $state('teacher');
 	let signingIn = $state(false);
 	let signInError = $state('');
 	let signupEnabled = $state(true);
 	let studentSignupEnabled = $state(false);
 	let checkingSignup = $state(true);
+	let adminExists = $state(true);
+	let checkingAdmin = $state(true);
 	const SIGNUP_SETTINGS_TIMEOUT_MS = 5000;
 
 	async function fetchSignupSettings(): Promise<{ signupEnabled: boolean; studentSignupEnabled: boolean }> {
@@ -43,7 +45,35 @@
 		}
 	}
 
-	async function initSignupState() {
+	async function checkAdminExists(): Promise<boolean> {
+		try {
+			const res = await fetch(apiUrl('/auth/admin-exists'), {
+				cache: 'no-store'
+			});
+			if (!res.ok) {
+				return false; // Assume no admin if endpoint fails
+			}
+			const data = await res.json();
+			return data.exists ?? false;
+		} catch {
+			return false; // Assume no admin if network fails
+		}
+	}
+
+	async function initAuthState() {
+		// Check if admin exists first
+		const admin = await checkAdminExists();
+		adminExists = admin;
+		checkingAdmin = false;
+
+		// If no admin exists, show bootstrap mode
+		if (!admin) {
+			mode = 'bootstrap';
+			selectedRole = 'admin';
+			return;
+		}
+
+		// Otherwise, check signup settings
 		const settings = await fetchSignupSettings();
 		signupEnabled = settings.signupEnabled;
 		studentSignupEnabled = settings.studentSignupEnabled;
@@ -76,33 +106,60 @@
 			if (mode === 'login') {
 				response = await login({ email, password });
 			} else {
-				if (selectedRole === 'student' && !studentSignupEnabled && !checkingSignup) {
-					signInError = 'Student self-signup is currently disabled. Please contact your teacher.';
-					signingIn = false;
-					return;
+				// Bootstrap mode - always create admin
+				if (mode === 'bootstrap') {
+					if (!username.trim()) {
+						signInError = 'Username is required for admin account';
+						signingIn = false;
+						return;
+					}
+					if (!fullName.trim()) {
+						signInError = 'Full name is required for admin account';
+						signingIn = false;
+						return;
+					}
+					if (password.length < 8) {
+						signInError = 'Password must be at least 8 characters';
+						signingIn = false;
+						return;
+					}
+					response = await register({
+						email,
+						username: username.trim().toLowerCase(),
+						full_name: fullName.trim(),
+						password,
+						role: 'admin'
+					});
+				} else {
+					// Normal registration
+					if (selectedRole === 'student' && !studentSignupEnabled && !checkingSignup) {
+						signInError = 'Student self-signup is currently disabled. Please contact your teacher.';
+						signingIn = false;
+						return;
+					}
+					if (selectedRole !== 'student' && !signupEnabled && !checkingSignup) {
+						signInError = 'Signup is currently disabled. Please contact an administrator.';
+						signingIn = false;
+						return;
+					}
+					if (!username.trim()) {
+						signInError = 'Username is required';
+						signingIn = false;
+						return;
+					}
+					if (password.length < 8) {
+						signInError = 'Password must be at least 8 characters';
+						signingIn = false;
+						return;
+					}
+					response = await register({
+						email,
+						username: username.trim().toLowerCase(),
+						full_name: fullName.trim() || undefined,
+						password,
+						role: selectedRole
+					});
 				}
-				if (selectedRole !== 'student' && !signupEnabled && !checkingSignup) {
-					signInError = 'Signup is currently disabled. Please contact an administrator.';
-					signingIn = false;
-					return;
-				}
-				if (!username.trim()) {
-					signInError = 'Username is required';
-					signingIn = false;
-					return;
-				}
-				if (password.length < 8) {
-					signInError = 'Password must be at least 8 characters';
-					signingIn = false;
-					return;
-				}
-				response = await register({
-					email,
-					username: username.trim().toLowerCase(),
-					full_name: fullName.trim() || undefined,
-					password,
-					role: selectedRole
-				});
 			}
 			session.refresh();
 			redirectByRole(response.user.role);
@@ -118,7 +175,7 @@
 			introReady = true;
 		});
 
-		void initSignupState();
+		void initAuthState();
 
 		return () => {
 			cancelAnimationFrame(rafId);
@@ -143,7 +200,37 @@
 				{#if signInError}
 					<p class="signin-error" role="alert">{signInError}</p>
 				{/if}
-				{#if mode === 'register'}
+				{#if mode === 'bootstrap'}
+					<div class="bootstrap-notice">
+						<h3>Welcome to VQuest!</h3>
+						<p>This appears to be your first time setting up the system. Let's create your administrator account to get started.</p>
+					</div>
+					<label class="signin-field">
+						<span class="signin-label">Username *</span>
+						<input
+							type="text"
+							class="signin-input"
+							bind:value={username}
+							placeholder="e.g. admin"
+							autocomplete="username"
+							required
+							minlength={3}
+							maxlength={50}
+						/>
+					</label>
+					<label class="signin-field">
+						<span class="signin-label">Full Name *</span>
+						<input
+							type="text"
+							class="signin-input"
+							bind:value={fullName}
+							placeholder="System Administrator"
+							autocomplete="name"
+							required
+							maxlength={255}
+						/>
+					</label>
+				{:else if mode === 'register'}
 					<label class="signin-field">
 						<span class="signin-label">Username</span>
 						<input
@@ -224,25 +311,33 @@
 					/>
 				</label>
 				<button type="submit" class="signin-submit" disabled={signingIn}>
-					{signingIn ? (mode === 'login' ? 'Signing In...' : 'Creating Account...') : (mode === 'login' ? 'Sign In' : 'Create Account')}
-				</button>
-				<div class="mode-switch">
-					{#if mode === 'login'}
-						{#if signupEnabled || checkingSignup}
-							<span>Don't have an account?</span>
-							<button class="switch-btn" type="button" onclick={() => { mode = 'register'; signInError = ''; }}>
-								Sign Up
-							</button>
-						{:else}
-							<span>Signup is currently disabled.</span>
-						{/if}
+					{#if mode === 'bootstrap'}
+						{signingIn ? 'Creating Admin Account...' : 'Create Admin Account'}
+					{:else if mode === 'login'}
+						{signingIn ? 'Signing In...' : 'Sign In'}
 					{:else}
-						<span>Already have an account?</span>
-						<button class="switch-btn" type="button" onclick={() => { mode = 'login'; signInError = ''; }}>
-							Sign In
-						</button>
+						{signingIn ? 'Creating Account...' : 'Create Account'}
 					{/if}
-				</div>
+				</button>
+				{#if mode !== 'bootstrap'}
+					<div class="mode-switch">
+						{#if mode === 'login'}
+							{#if signupEnabled || checkingSignup}
+								<span>Don't have an account?</span>
+								<button class="switch-btn" type="button" onclick={() => { mode = 'register'; signInError = ''; }}>
+									Sign Up
+								</button>
+							{:else}
+								<span>Signup is currently disabled.</span>
+							{/if}
+						{:else}
+							<span>Already have an account?</span>
+							<button class="switch-btn" type="button" onclick={() => { mode = 'login'; signInError = ''; }}>
+								Sign In
+							</button>
+						{/if}
+					</div>
+				{/if}
 			</form>
 		</div>
 	</section>
@@ -478,12 +573,12 @@
 		letter-spacing: -0.02em;
 		margin: 0;
 		/* color: var(--theme-text-primary); */
-		color: black;
+		color: #373737;
 	}
 
 	.hero-sub {
 		font-size: 1.2rem;
-		color: black;
+		color: #4a4a4a;
 		/* color: var(--theme-text-secondary); */
 		margin: 0;
 		line-height: 1.55;
@@ -638,6 +733,29 @@
 
 	.switch-btn:hover {
 		text-decoration: underline;
+	}
+
+	.bootstrap-notice {
+		margin: 0 0 1rem 0;
+		padding: 1rem;
+		background: rgba(55, 146, 53, 0.1);
+		border: 1px solid rgba(99, 102, 241, 0.3);
+		border-radius: 0.62rem;
+		text-align: center;
+	}
+
+	.bootstrap-notice h3 {
+		margin: 0 0 0.5rem 0;
+		font-size: 1.1rem;
+		font-weight: 700;
+		color: #004a02d0;
+	}
+
+	.bootstrap-notice p {
+		margin: 0;
+		font-size: 0.85rem;
+		color: #0b3018;
+		line-height: 1.4;
 	}
 
 	.signin-error {

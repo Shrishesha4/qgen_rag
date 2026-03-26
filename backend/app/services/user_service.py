@@ -10,7 +10,7 @@ import hashlib
 from sqlalchemy import select, update
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.models.user import User, default_permissions_for_role
+from app.models.user import User, default_permissions_for_role, ROLE_ADMIN
 from app.models.auth import RefreshToken, AuditLog
 from app.schemas.user import UserCreate, UserUpdate
 from app.core.security import (
@@ -58,11 +58,19 @@ class UserService:
             can_manage_groups=role_defaults["can_manage_groups"],
             can_generate=role_defaults["can_generate"],
             can_vet=role_defaults["can_vet"],
+            is_superuser=role == ROLE_ADMIN,
         )
         self.db.add(user)
         await self.db.commit()
         await self.db.refresh(user)
         return user
+
+    async def admin_exists(self) -> bool:
+        """Check if at least one admin user exists."""
+        result = await self.db.execute(
+            select(User.id).where(User.role == ROLE_ADMIN)
+        )
+        return result.scalar_one_or_none() is not None
 
     async def authenticate_user(
         self,
