@@ -11,14 +11,15 @@
 	let password = $state('');
 	let username = $state('');
 	let fullName = $state('');
-	let selectedRole: 'teacher' | 'vetter' = $state('teacher');
+	let selectedRole: 'teacher' | 'vetter' | 'student' = $state('teacher');
 	let signingIn = $state(false);
 	let signInError = $state('');
 	let signupEnabled = $state(true);
+	let studentSignupEnabled = $state(false);
 	let checkingSignup = $state(true);
 	const SIGNUP_SETTINGS_TIMEOUT_MS = 5000;
 
-	async function fetchSignupEnabled(): Promise<boolean> {
+	async function fetchSignupSettings(): Promise<{ signupEnabled: boolean; studentSignupEnabled: boolean }> {
 		const controller = new AbortController();
 		const timeoutId = window.setTimeout(() => controller.abort(), SIGNUP_SETTINGS_TIMEOUT_MS);
 
@@ -27,18 +28,25 @@
 				signal: controller.signal,
 				cache: 'no-store'
 			});
-			if (!res.ok) return true;
+			if (!res.ok) {
+				return { signupEnabled: true, studentSignupEnabled: true };
+			}
 			const data = await res.json();
-			return data.signup_enabled ?? true;
+			return {
+				signupEnabled: data.signup_enabled ?? true,
+				studentSignupEnabled: data.student_signup_enabled ?? false
+			};
 		} catch {
-			return true;
+			return { signupEnabled: true, studentSignupEnabled: true };
 		} finally {
 			window.clearTimeout(timeoutId);
 		}
 	}
 
 	async function initSignupState() {
-		signupEnabled = await fetchSignupEnabled();
+		const settings = await fetchSignupSettings();
+		signupEnabled = settings.signupEnabled;
+		studentSignupEnabled = settings.studentSignupEnabled;
 		checkingSignup = false;
 	}
 
@@ -49,6 +57,9 @@
 				break;
 			case 'vetter':
 				goto('/vetter/dashboard');
+				break;
+			case 'student':
+				goto('/student');
 				break;
 			case 'teacher':
 			default:
@@ -65,7 +76,12 @@
 			if (mode === 'login') {
 				response = await login({ email, password });
 			} else {
-				if (!signupEnabled && !checkingSignup) {
+				if (selectedRole === 'student' && !studentSignupEnabled && !checkingSignup) {
+					signInError = 'Student self-signup is currently disabled. Please contact your teacher.';
+					signingIn = false;
+					return;
+				}
+				if (selectedRole !== 'student' && !signupEnabled && !checkingSignup) {
 					signInError = 'Signup is currently disabled. Please contact an administrator.';
 					signingIn = false;
 					return;
@@ -170,6 +186,16 @@
 								onclick={() => selectedRole = 'vetter'}
 							>
 								Vetter
+							</button>
+							<button
+								type="button"
+								class="role-option"
+								class:selected={selectedRole === 'student'}
+								onclick={() => selectedRole = 'student'}
+								disabled={!studentSignupEnabled && !checkingSignup}
+								title={!studentSignupEnabled && !checkingSignup ? 'Student signup is currently disabled' : 'Sign up as a student'}
+							>
+								Student
 							</button>
 						</div>
 					</div>

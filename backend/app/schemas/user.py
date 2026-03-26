@@ -30,7 +30,7 @@ class UserBase(BaseModel):
 class UserCreate(UserBase):
     """Schema for user registration."""
     password: str = Field(..., min_length=8, max_length=128)
-    role: RoleType = Field(default="teacher", description="User role: teacher, vetter, or admin")
+    role: RoleType = Field(default="teacher", description="User role: teacher, vetter, admin, or student")
 
     @field_validator("password")
     @classmethod

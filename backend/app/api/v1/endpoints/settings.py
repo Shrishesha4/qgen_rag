@@ -11,6 +11,7 @@ from app.core.auth_database import get_auth_db
 from app.models.system_settings import (
     SystemSettings,
     SETTING_SIGNUP_ENABLED,
+    SETTING_STUDENT_SIGNUP_ENABLED,
     SETTING_PROVIDER_GENERATION_CONFIG,
     DEFAULT_SETTINGS,
 )
@@ -24,10 +25,12 @@ router = APIRouter()
 
 class SignupSettingsResponse(BaseModel):
     signup_enabled: bool
+    student_signup_enabled: bool
 
 
 class SignupSettingsUpdate(BaseModel):
-    signup_enabled: bool
+    signup_enabled: bool | None = None
+    student_signup_enabled: bool | None = None
 
 
 class ProviderGenerationItem(BaseModel):
@@ -151,8 +154,10 @@ async def get_signup_settings(
     Get signup settings (public endpoint).
     """
     value = await get_setting(db, SETTING_SIGNUP_ENABLED)
+    student_value = await get_setting(db, SETTING_STUDENT_SIGNUP_ENABLED)
     return SignupSettingsResponse(
-        signup_enabled=value.get("enabled", True)
+        signup_enabled=value.get("enabled", True),
+        student_signup_enabled=student_value.get("enabled", False),
     )
 
 
@@ -170,15 +175,36 @@ async def update_signup_settings(
             status_code=status.HTTP_403_FORBIDDEN,
             detail="Only admins can update signup settings",
         )
-    
+
+    current_signup = await get_setting(db, SETTING_SIGNUP_ENABLED)
+    current_student_signup = await get_setting(db, SETTING_STUDENT_SIGNUP_ENABLED)
+
+    new_signup_enabled = update.signup_enabled
+    if new_signup_enabled is None:
+        new_signup_enabled = current_signup.get("enabled", True)
+
+    new_student_signup_enabled = update.student_signup_enabled
+    if new_student_signup_enabled is None:
+        new_student_signup_enabled = current_student_signup.get("enabled", False)
+
     await set_setting(
         db,
         SETTING_SIGNUP_ENABLED,
-        {"enabled": update.signup_enabled},
+        {"enabled": new_signup_enabled},
         current_user.id,
     )
-    
-    return SignupSettingsResponse(signup_enabled=update.signup_enabled)
+
+    await set_setting(
+        db,
+        SETTING_STUDENT_SIGNUP_ENABLED,
+        {"enabled": new_student_signup_enabled},
+        current_user.id,
+    )
+
+    return SignupSettingsResponse(
+        signup_enabled=new_signup_enabled,
+        student_signup_enabled=new_student_signup_enabled,
+    )
 
 
 @router.get("/providers-generation", response_model=ProviderGenerationSettingsResponse)

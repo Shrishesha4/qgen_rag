@@ -52,6 +52,7 @@
 	let activeAITab = $state<AITab>('connectors');
 	let metricsWindowDays = $state(30);
 	let signupEnabled = $state(true);
+	let studentSignupEnabled = $state(false);
 
 	let providers = $state<ProviderConfig[]>([]);
 	let providerMetrics = $state<ProviderMetricsResponse | null>(null);
@@ -84,10 +85,11 @@
 		pageError = '';
 		try {
 			const [signup, providerSettings] = await Promise.all([
-				apiFetch<{ signup_enabled: boolean }>('/settings/signup'),
+				apiFetch<{ signup_enabled: boolean; student_signup_enabled?: boolean }>('/settings/signup'),
 				apiFetch<ProviderSettingsResponse>('/settings/providers-generation')
 			]);
 			signupEnabled = signup.signup_enabled;
+			studentSignupEnabled = signup.student_signup_enabled ?? false;
 			providers = (providerSettings.providers || []).map((p) => normalizeProvider(p));
 			await loadMetrics();
 		} catch (e: unknown) {
@@ -185,16 +187,22 @@
 		}
 	}
 
-	async function toggleSignup() {
+	async function toggleSignup(type: 'general' | 'student') {
 		settingsLoading = true;
 		pageError = '';
 		settingsSaved = false;
 		try {
-			const res = await apiFetch<{ signup_enabled: boolean }>('/settings/signup', {
+			const payload =
+				type === 'general'
+					? { signup_enabled: !signupEnabled }
+					: { student_signup_enabled: !studentSignupEnabled };
+
+			const res = await apiFetch<{ signup_enabled: boolean; student_signup_enabled?: boolean }>('/settings/signup', {
 				method: 'PUT',
-				body: JSON.stringify({ signup_enabled: !signupEnabled })
+				body: JSON.stringify(payload)
 			});
 			signupEnabled = res.signup_enabled;
+			studentSignupEnabled = res.student_signup_enabled ?? studentSignupEnabled;
 			settingsSaved = true;
 			setTimeout(() => (settingsSaved = false), 1800);
 		} catch (e: unknown) {
@@ -250,11 +258,26 @@
 
 			<div class="setting-item">
 				<div>
-					<h3>Signup Access</h3>
-					<p>Allow or restrict self-signup for new users.</p>
+					<h3>Teacher/Vetter Signup</h3>
+					<p>Allow teachers and vetters to create their own accounts.</p>
 				</div>
-				<button class="status-pill" class:active={signupEnabled} onclick={toggleSignup} disabled={settingsLoading}>
+				<button class="status-pill" class:active={signupEnabled} onclick={() => toggleSignup('general')} disabled={settingsLoading}>
 					{signupEnabled ? 'Enabled' : 'Disabled'}
+				</button>
+			</div>
+
+			<div class="setting-item">
+				<div>
+					<h3>Student Self-Signup</h3>
+					<p>Allow students to create accounts directly (skips teacher invitation).</p>
+				</div>
+				<button
+					class="status-pill"
+					class:active={studentSignupEnabled}
+					onclick={() => toggleSignup('student')}
+					disabled={settingsLoading}
+				>
+					{studentSignupEnabled ? 'Enabled' : 'Disabled'}
 				</button>
 			</div>
 		</section>

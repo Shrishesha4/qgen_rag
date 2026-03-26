@@ -18,7 +18,7 @@ export interface RegisterRequest {
 	username: string;
 	full_name?: string;
 	password: string;
-	role: 'teacher' | 'vetter' | 'admin';
+	role: 'teacher' | 'vetter' | 'admin' | 'student';
 }
 
 export interface TokenResponse {

@@ -13,14 +13,15 @@
 	let password = $state('');
 	let username = $state('');
 	let fullName = $state('');
-	let selectedRole: 'teacher' | 'vetter' = $state('teacher');
+	let selectedRole: 'teacher' | 'vetter' | 'student' = $state('teacher');
 	let error = $state('');
 	let loading = $state(false);
 	let signupEnabled = $state(true);
+	let studentSignupEnabled = $state(false);
 	let checkingSignup = $state(true);
 	const SIGNUP_SETTINGS_TIMEOUT_MS = 5000;
 
-	async function fetchSignupEnabled(): Promise<boolean> {
+	async function fetchSignupSettings(): Promise<{ signupEnabled: boolean; studentSignupEnabled: boolean }> {
 		const controller = new AbortController();
 		const timeoutId = window.setTimeout(() => controller.abort(), SIGNUP_SETTINGS_TIMEOUT_MS);
 
@@ -29,11 +30,16 @@
 				signal: controller.signal,
 				cache: 'no-store'
 			});
-			if (!res.ok) return true;
+			if (!res.ok) {
+				return { signupEnabled: true, studentSignupEnabled: true };
+			}
 			const data = await res.json();
-			return data.signup_enabled ?? true;
+			return {
+				signupEnabled: data.signup_enabled ?? true,
+				studentSignupEnabled: data.student_signup_enabled ?? false
+			};
 		} catch {
-			return true;
+			return { signupEnabled: true, studentSignupEnabled: true };
 		} finally {
 			window.clearTimeout(timeoutId);
 		}
@@ -47,7 +53,9 @@
 			return;
 		}
 
-		signupEnabled = await fetchSignupEnabled();
+		const settings = await fetchSignupSettings();
+		signupEnabled = settings.signupEnabled;
+		studentSignupEnabled = settings.studentSignupEnabled;
 		checkingSignup = false;
 	});
 
@@ -58,6 +66,9 @@
 				break;
 			case 'vetter':
 				goto('/vetter/dashboard');
+				break;
+			case 'student':
+				goto('/student');
 				break;
 			case 'teacher':
 			default:
@@ -74,7 +85,12 @@
 			if (mode === 'login') {
 				response = await login({ email, password });
 			} else {
-				if (!signupEnabled && !checkingSignup) {
+				if (selectedRole === 'student' && !studentSignupEnabled && !checkingSignup) {
+					error = 'Student self-signup is currently disabled. Please contact your teacher.';
+					loading = false;
+					return;
+				}
+				if (selectedRole !== 'student' && !signupEnabled && !checkingSignup) {
 					error = 'Signup is currently disabled. Please contact an administrator.';
 					loading = false;
 					return;
@@ -188,6 +204,22 @@
 								<path d="m21 21-4.3-4.3"></path>
 							</svg>
 							Vetter
+						</button>
+						<button
+							type="button"
+							class="role-option"
+							class:selected={selectedRole === 'student'}
+							onclick={() => selectedRole = 'student'}
+							disabled={!studentSignupEnabled && !checkingSignup}
+							title={!studentSignupEnabled && !checkingSignup ? 'Student signup is currently disabled' : 'Sign up as a student'}
+						>
+							<svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+								<path d="M4 4h16v4H4z"></path>
+								<path d="M4 12h16v8H4z"></path>
+								<path d="M9 8v4"></path>
+								<path d="M15 8v4"></path>
+							</svg>
+							Student
 						</button>
 					</div>
 				</div>

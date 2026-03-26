@@ -24,8 +24,8 @@ from app.schemas.auth import (
 )
 from app.services.user_service import UserService
 from app.api.v1.deps import get_current_user, get_client_info
-from app.models.user import User
-from app.models.system_settings import SystemSettings, SETTING_SIGNUP_ENABLED, DEFAULT_SETTINGS
+from app.models.user import User, ROLE_STUDENT
+from app.models.system_settings import SystemSettings, SETTING_SIGNUP_ENABLED, SETTING_STUDENT_SIGNUP_ENABLED, DEFAULT_SETTINGS
 
 
 router = APIRouter()
@@ -42,6 +42,17 @@ async def is_signup_enabled(db: AsyncSession) -> bool:
     return DEFAULT_SETTINGS.get(SETTING_SIGNUP_ENABLED, {}).get("enabled", True)
 
 
+async def is_student_signup_enabled(db: AsyncSession) -> bool:
+    """Check if student self-signup is enabled in system settings."""
+    result = await db.execute(
+        select(SystemSettings).where(SystemSettings.key == SETTING_STUDENT_SIGNUP_ENABLED)
+    )
+    setting = result.scalar_one_or_none()
+    if setting and setting.value:
+        return setting.value.get("enabled", False)
+    return DEFAULT_SETTINGS.get(SETTING_STUDENT_SIGNUP_ENABLED, {}).get("enabled", False)
+
+
 @router.post("/register", response_model=TokenResponse, status_code=status.HTTP_201_CREATED)
 async def register(
     request: Request,
@@ -51,12 +62,19 @@ async def register(
     """
     Register a new user account.
     """
-    # Check if signup is enabled
-    if not await is_signup_enabled(db):
-        raise HTTPException(
-            status_code=status.HTTP_403_FORBIDDEN,
-            detail="User registration is currently disabled. Please contact an administrator.",
-        )
+    # Check signup toggles per role
+    if user_data.role == ROLE_STUDENT:
+        if not await is_student_signup_enabled(db):
+            raise HTTPException(
+                status_code=status.HTTP_403_FORBIDDEN,
+                detail="Student self-signup is currently disabled. Please contact your teacher or an administrator.",
+            )
+    else:
+        if not await is_signup_enabled(db):
+            raise HTTPException(
+                status_code=status.HTTP_403_FORBIDDEN,
+                detail="User registration is currently disabled. Please contact an administrator.",
+            )
     
     user_service = UserService(db)
     client_info = get_client_info(request)
