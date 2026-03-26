@@ -42,10 +42,14 @@ from app.schemas.gel import (
     AttemptReviewRequest,
     AttemptReviewResponse,
     StudentDashboardResponse,
+    StudentHistoryResponse,
+    StudentProgressResponse,
+    StudentProfileResponse,
     GELStatisticsResponse,
     BulkEvaluationItemCreate,
     BulkAssignmentItemAdd,
 )
+from app.schemas.user import UserResponse
 
 router = APIRouter(prefix="/gel", tags=["GEL"])
 
@@ -321,6 +325,58 @@ async def get_student_dashboard(
         completed_count=dashboard["completed_count"],
         due_soon_count=dashboard["due_soon_count"],
         average_score=dashboard["average_score"],
+    )
+
+
+@router.get("/student/history", response_model=StudentHistoryResponse)
+async def get_student_history(
+    page: int = Query(1, ge=1),
+    page_size: int = Query(50, ge=1, le=200),
+    db: AsyncSession = Depends(get_db),
+    current_user: User = Depends(get_current_student),
+):
+    """List the student's recent attempts for history view."""
+    service = GELService(db)
+    history = await service.get_student_history(
+        str(current_user.id),
+        page=page,
+        page_size=page_size,
+    )
+    return StudentHistoryResponse(**history)
+
+
+@router.get("/student/progress", response_model=StudentProgressResponse)
+async def get_student_progress(
+    db: AsyncSession = Depends(get_db),
+    current_user: User = Depends(get_current_student),
+):
+    """Return aggregated progress metrics for the current student."""
+    service = GELService(db)
+    return await service.get_student_progress(
+        str(current_user.id),
+        cohort=getattr(current_user, 'cohort', None),
+        grade=getattr(current_user, 'grade', None),
+    )
+
+
+@router.get("/student/profile", response_model=StudentProfileResponse)
+async def get_student_profile(
+    db: AsyncSession = Depends(get_db),
+    current_user: User = Depends(get_current_student),
+):
+    """Return student profile with lightweight progress stats."""
+    service = GELService(db)
+    progress = await service.get_student_progress(
+        str(current_user.id),
+        cohort=getattr(current_user, 'cohort', None),
+        grade=getattr(current_user, 'grade', None),
+    )
+    return StudentProfileResponse(
+        user=UserResponse.model_validate(current_user),
+        total_assignments=progress.get("total_assignments", 0),
+        completed_attempts=progress.get("completed_attempts", 0),
+        average_score=progress.get("average_score"),
+        streak_days=progress.get("streak_days", 0),
     )
 
 

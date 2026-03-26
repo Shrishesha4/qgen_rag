@@ -52,7 +52,12 @@
 	const hideGlobalBackPrefixes = ['/teacher/train/loop', '/privacy-policy', '/disclaimer'];
 	let showDesktopChrome = $derived.by(() => {
 		if (pathname.includes('/login')) return false;
-		return pathname.startsWith('/teacher') || pathname.startsWith('/vetter') || pathname.startsWith('/admin');
+		return (
+			pathname.startsWith('/teacher') ||
+			pathname.startsWith('/vetter') ||
+			pathname.startsWith('/admin') ||
+			pathname.startsWith('/student')
+		);
 	});
 	let navItems = $derived.by(() => {
 		if (pathname.startsWith('/teacher')) {
@@ -82,6 +87,15 @@
 				{ href: '/admin/vetters', label: 'Vetters', icon: '✅' },
 				{ href: '/admin/settings', label: 'Settings', icon: '⚙️' },
 				{ href: '/admin/profile', label: 'Profile', icon: '👤' },
+			];
+		}
+		if (pathname.startsWith('/student')) {
+			return [
+				{ href: '/student', label: 'Dashboard', icon: '🏠' },
+				{ href: '/student/assignments', label: 'Assignments', icon: '🧾' },
+				{ href: '/student/history', label: 'History', icon: '🕒' },
+				{ href: '/student/progress', label: 'Progress', icon: '📈' },
+				{ href: '/student/profile', label: 'Profile', icon: '👤' },
 			];
 		}
 		return [];

@@ -8,10 +8,12 @@
 		updateAdminUser,
 		type AdminUserSummary,
 		type AdminUserCreateRequest,
-		type AdminUserUpdateRequest
+		type AdminUserUpdateRequest,
+		type AdminRole
 	} from '$lib/api/admin';
 
-	type UserRole = 'teacher' | 'vetter' | 'admin';
+	type UserRole = AdminRole;
+	type TabId = 'staff' | 'students';
 
 	type DraftPermissions = {
 		role: UserRole;
@@ -30,6 +32,7 @@
 	let users = $state<AdminUserSummary[]>([]);
 	let drafts = $state<Record<string, DraftPermissions>>({});
 	let saveBusyByUser = $state<Record<string, boolean>>({});
+	let selectedTab = $state<TabId>('staff');
 
 	let showCreateForm = $state(false);
 	let createPayload = $state<AdminUserCreateRequest>({
@@ -43,6 +46,11 @@
 		can_generate: true,
 		can_vet: true
 	});
+
+	const tabs: { id: TabId; label: string }[] = [
+		{ id: 'staff', label: 'Users' },
+		{ id: 'students', label: 'Students' }
+	];
 
 	onMount(() => {
 		const unsub = session.subscribe((s) => {
@@ -70,6 +78,9 @@
 		}
 		if (role === 'vetter') {
 			return { can_manage_groups: false, can_generate: false, can_vet: true };
+		}
+		if (role === 'student') {
+			return { can_manage_groups: false, can_generate: false, can_vet: false };
 		}
 		return { can_manage_groups: true, can_generate: true, can_vet: true };
 	}
@@ -207,16 +218,27 @@
 		}
 	}
 
+
+	const staffUsers = $derived.by(() => users.filter((user) => user.role !== 'student'));
+	const studentUsers = $derived.by(() => users.filter((user) => user.role === 'student'));
+
 	const filteredUsers = $derived.by(() => {
 		const needle = query.trim().toLowerCase();
-		if (!needle) return users;
-		return users.filter((user) =>
+		const base = selectedTab === 'students' ? studentUsers : staffUsers;
+		if (!needle) return base;
+		return base.filter((user) =>
 			[user.username, user.email, user.full_name || '', user.role].some((value) =>
 				value.toLowerCase().includes(needle)
 			)
 		);
 	});
 
+	function setTab(tab: TabId) {
+		selectedTab = tab;
+		if (tab === 'students') {
+			showCreateForm = false;
+		}
+	}
 	function formatDate(value: string | null): string {
 		if (!value) return '—';
 		return new Date(value).toLocaleString();
@@ -228,6 +250,20 @@
 </svelte:head>
 
 <div class="page">
+	<div class="tab-bar glass-panel animate-slide-up">
+		{#each tabs as tab}
+			<button
+				type="button"
+				class="tab-btn"
+				class:tab-btn--active={selectedTab === tab.id}
+				onclick={() => setTab(tab.id)}
+			>
+				<span>{tab.label}</span>
+				<span class="tab-count">{tab.id === 'students' ? studentUsers.length : staffUsers.length}</span>
+			</button>
+		{/each}
+	</div>
+
 	<!-- <div class="hero animate-fade-in">
 		<div>
 			<p class="eyebrow">Admin Console</p>
@@ -238,9 +274,11 @@
 
 	<div class="toolbar glass-panel animate-slide-up">
 		<input class="search-input" bind:value={query} placeholder="Search by username, email, name, or role" />
-		<button class="primary-btn" onclick={() => (showCreateForm = !showCreateForm)}>
-			{showCreateForm ? 'Close' : 'Add User'}
-		</button>
+		{#if selectedTab === 'staff'}
+			<button class="primary-btn" onclick={() => (showCreateForm = !showCreateForm)}>
+				{showCreateForm ? 'Close' : 'Add User'}
+			</button>
+		{/if}
 	</div>
 
 	{#if error}
@@ -251,7 +289,7 @@
 		<div class="success-banner" role="status">{success}</div>
 	{/if}
 
-	{#if showCreateForm}
+	{#if showCreateForm && selectedTab === 'staff'}
 		<section class="create-panel glass-panel animate-fade-in" aria-label="Create user form">
 			<h2>Create User</h2>
 			<div class="create-grid">
@@ -302,7 +340,7 @@
 		</div>
 	{:else if filteredUsers.length === 0}
 		<div class="center-state glass-panel">
-			<p>No users found.</p>
+			<p>No {selectedTab === 'students' ? 'students' : 'users'} found.</p>
 		</div>
 	{:else}
 		<div class="table-wrap glass-panel animate-fade-in desktop-only">
@@ -347,6 +385,7 @@
 										<option value="teacher">Teacher</option>
 										<option value="vetter">Vetter</option>
 										<option value="admin">Admin</option>
+										<option value="student">Student</option>
 									</select>
 								{/if}
 							</td>
@@ -433,6 +472,7 @@
 									<option value="teacher">Teacher</option>
 									<option value="vetter">Vetter</option>
 									<option value="admin">Admin</option>
+									<option value="student">Student</option>
 								</select>
 							</label>
 						{/if}
@@ -464,6 +504,49 @@
 		display: flex;
 		flex-direction: column;
 		gap: 1rem;
+	}
+
+	.tab-bar {
+		display: inline-flex;
+		align-items: center;
+		gap: 0.5rem;
+		padding: 0.45rem;
+		border-radius: 0.85rem;
+		border: 1px solid var(--theme-glass-border);
+		backdrop-filter: blur(18px);
+	}
+
+	.tab-btn {
+		border: 1px solid transparent;
+		background: transparent;
+		color: var(--theme-text);
+		padding: 0.55rem 0.9rem;
+		border-radius: 0.75rem;
+		display: inline-flex;
+		align-items: center;
+		gap: 0.5rem;
+		cursor: pointer;
+		transition: border-color 0.15s ease, background 0.15s ease, color 0.15s ease;
+		font-weight: 700;
+	}
+
+	.tab-btn--active {
+		background: color-mix(in srgb, var(--theme-primary) 18%, var(--theme-input-bg));
+		border-color: color-mix(in srgb, var(--theme-primary) 35%, var(--theme-glass-border));
+		color: #fff;
+	}
+
+	.tab-count {
+		display: inline-flex;
+		align-items: center;
+		justify-content: center;
+		min-width: 2.2rem;
+		padding: 0.2rem 0.55rem;
+		border-radius: 999px;
+		background: rgba(255, 255, 255, 0.08);
+		border: 1px solid rgba(255, 255, 255, 0.12);
+		font-size: 0.85rem;
+		color: #e2e8f0;
 	}
 
 	.toolbar {

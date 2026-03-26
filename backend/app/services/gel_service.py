@@ -9,9 +9,9 @@ Service for managing GEL (Graded Error Learning) operations:
 """
 
 from typing import Optional, List, Dict, Any, Tuple
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, date
 from sqlalchemy.ext.asyncio import AsyncSession
-from sqlalchemy import select, func, and_, or_, update
+from sqlalchemy import select, func, and_, or_, update, desc
 from sqlalchemy.orm import selectinload
 import logging
 import uuid
@@ -825,6 +825,175 @@ class GELService:
             "completed_count": completed,
             "due_soon_count": due_soon,
             "average_score": round(avg_score, 2) if avg_score else None,
+        }
+
+
+    async def get_student_history(
+        self,
+        student_id: str,
+        page: int = 1,
+        page_size: int = 50,
+    ) -> Dict[str, Any]:
+        """Return paginated attempt history for a student."""
+        safe_page = max(page, 1)
+        safe_page_size = max(min(page_size, 200), 1)
+
+        total_query = select(func.count()).select_from(
+            select(StudentAttempt.id).where(StudentAttempt.student_id == student_id).subquery()
+        )
+        total = (await self.db.execute(total_query)).scalar() or 0
+
+        query = (
+            select(
+                StudentAttempt,
+                EvaluationItem,
+                Assignment,
+                Question,
+            )
+            .join(EvaluationItem, StudentAttempt.evaluation_item_id == EvaluationItem.id)
+            .outerjoin(Assignment, StudentAttempt.assignment_id == Assignment.id)
+            .outerjoin(Question, EvaluationItem.question_id == Question.id)
+            .where(StudentAttempt.student_id == student_id)
+            .order_by(StudentAttempt.updated_at.desc())
+            .offset((safe_page - 1) * safe_page_size)
+            .limit(safe_page_size)
+        )
+
+        result = await self.db.execute(query)
+        rows = result.all()
+
+        items = []
+        for attempt, eval_item, assignment, question in rows:
+            final_score = attempt.score_override if attempt.score_override is not None else attempt.total_score
+            items.append({
+                "attempt_id": attempt.id,
+                "evaluation_item_id": attempt.evaluation_item_id,
+                "assignment_id": assignment.id if assignment else None,
+                "assignment_title": assignment.title if assignment else None,
+                "question_text": question.question_text if question else "",
+                "question_type": question.question_type if question else None,
+                "difficulty_label": eval_item.difficulty_label if eval_item else None,
+                "bloom_level": eval_item.bloom_level if eval_item else None,
+                "status": attempt.status,
+                "score": final_score,
+                "submitted_at": attempt.submitted_at,
+                "updated_at": attempt.updated_at,
+                "attempt_number": attempt.attempt_number,
+            })
+
+        return {"items": items, "total": total}
+
+
+    async def get_student_progress(
+        self,
+        student_id: str,
+        cohort: Optional[str] = None,
+        grade: Optional[str] = None,
+    ) -> Dict[str, Any]:
+        """Aggregate progress metrics for a student."""
+        assignments = await self.get_student_assignments(student_id, cohort, grade)
+        total_assignments = len(assignments)
+        total_items_assigned = sum(a["item_count"] for a in assignments)
+
+        attempted_items_query = select(func.count(func.distinct(StudentAttempt.evaluation_item_id))).where(
+            StudentAttempt.student_id == student_id
+        )
+        attempted_items = (await self.db.execute(attempted_items_query)).scalar() or 0
+
+        in_progress_query = select(func.count()).select_from(StudentAttempt).where(
+            and_(
+                StudentAttempt.student_id == student_id,
+                StudentAttempt.status == AttemptStatus.IN_PROGRESS.value,
+            )
+        )
+        in_progress_attempts = (await self.db.execute(in_progress_query)).scalar() or 0
+
+        completed_query = select(func.count()).select_from(StudentAttempt).where(
+            and_(
+                StudentAttempt.student_id == student_id,
+                StudentAttempt.status.in_([
+                    AttemptStatus.SUBMITTED.value,
+                    AttemptStatus.SCORED.value,
+                    AttemptStatus.REVIEWED.value,
+                ]),
+            )
+        )
+        completed_attempts = (await self.db.execute(completed_query)).scalar() or 0
+
+        avg_score_query = select(func.avg(func.coalesce(StudentAttempt.score_override, StudentAttempt.total_score))).where(
+            and_(
+                StudentAttempt.student_id == student_id,
+                func.coalesce(StudentAttempt.score_override, StudentAttempt.total_score).isnot(None),
+            )
+        )
+        average_score = (await self.db.execute(avg_score_query)).scalar()
+
+        best_score_query = select(func.max(func.coalesce(StudentAttempt.score_override, StudentAttempt.total_score))).where(
+            and_(
+                StudentAttempt.student_id == student_id,
+                func.coalesce(StudentAttempt.score_override, StudentAttempt.total_score).isnot(None),
+            )
+        )
+        best_score = (await self.db.execute(best_score_query)).scalar()
+
+        # Last activity and streak
+        activity_query = (
+            select(func.coalesce(StudentAttempt.submitted_at, StudentAttempt.updated_at).label("activity_at"))
+            .where(StudentAttempt.student_id == student_id)
+            .order_by(desc("activity_at"))
+        )
+        activity_rows = (await self.db.execute(activity_query)).scalars().all()
+        last_activity_at = None
+        unique_dates: List[date] = []
+        for ts in activity_rows:
+            if ts is None:
+                continue
+            if last_activity_at is None:
+                last_activity_at = ts
+            d = ts.date()
+            if d not in unique_dates:
+                unique_dates.append(d)
+
+        streak_days = 0
+        if unique_dates:
+            streak_days = 1
+            expected = unique_dates[0]
+            for d in unique_dates[1:]:
+                expected = expected - timedelta(days=1)
+                if d == expected:
+                    streak_days += 1
+                else:
+                    break
+
+        completion_rate = None
+        if total_items_assigned > 0:
+            completion_rate = round((completed_attempts / total_items_assigned) * 100, 2)
+
+        recent_history = await self.get_student_history(student_id, page=1, page_size=5)
+        recent_attempts = [
+            {
+                "attempt_id": item["attempt_id"],
+                "assignment_title": item.get("assignment_title"),
+                "question_text": item.get("question_text", ""),
+                "status": item.get("status", ""),
+                "score": item.get("score"),
+                "submitted_at": item.get("submitted_at"),
+            }
+            for item in recent_history.get("items", [])
+        ]
+
+        return {
+            "total_assignments": total_assignments,
+            "total_items_assigned": total_items_assigned,
+            "attempted_items": attempted_items,
+            "in_progress_attempts": in_progress_attempts,
+            "completed_attempts": completed_attempts,
+            "average_score": round(average_score, 2) if average_score is not None else None,
+            "best_score": round(best_score, 2) if best_score is not None else None,
+            "completion_rate": completion_rate,
+            "streak_days": streak_days,
+            "last_activity_at": last_activity_at,
+            "recent_attempts": recent_attempts,
         }
 
     # ==================== Statistics ====================

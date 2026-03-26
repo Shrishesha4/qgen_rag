@@ -66,6 +66,7 @@
 		</button>
 	</div>
 
+	<!-- svelte-ignore a11y_label_has_associated_control -->
 	<div class="grid md:grid-cols-3 gap-4">
 		<div class="glass-panel border border-white/10 p-4 rounded-xl">
 			<label class="text-sm font-semibold text-slate-200">Subject ID (optional)</label>

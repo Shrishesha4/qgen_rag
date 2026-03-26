@@ -8,6 +8,7 @@ from datetime import datetime
 from typing import Optional, List, Literal
 from pydantic import BaseModel, Field, field_validator
 import uuid
+from app.schemas.user import UserResponse
 
 
 # Enums as Literals for Pydantic
@@ -297,6 +298,63 @@ class StudentDashboardResponse(BaseModel):
     completed_count: int
     due_soon_count: int
     average_score: Optional[float]
+
+
+class StudentHistoryItemResponse(BaseModel):
+    """Schema for a student's past attempt entry."""
+    attempt_id: uuid.UUID
+    evaluation_item_id: uuid.UUID
+    assignment_id: Optional[uuid.UUID]
+    assignment_title: Optional[str]
+    question_text: str
+    question_type: Optional[str]
+    difficulty_label: Optional[str]
+    bloom_level: Optional[str]
+    status: str
+    score: Optional[float]
+    submitted_at: Optional[datetime]
+    updated_at: Optional[datetime]
+    attempt_number: int
+
+
+class StudentHistoryResponse(BaseModel):
+    """Schema for student attempt history."""
+    items: List[StudentHistoryItemResponse]
+    total: int
+
+
+class StudentProgressAttempt(BaseModel):
+    """Recent attempt summary for progress view."""
+    attempt_id: uuid.UUID
+    assignment_title: Optional[str]
+    question_text: str
+    status: str
+    score: Optional[float]
+    submitted_at: Optional[datetime]
+
+
+class StudentProgressResponse(BaseModel):
+    """Aggregated progress metrics for a student."""
+    total_assignments: int
+    total_items_assigned: int
+    attempted_items: int
+    in_progress_attempts: int
+    completed_attempts: int
+    average_score: Optional[float]
+    best_score: Optional[float]
+    completion_rate: Optional[float]
+    streak_days: int
+    last_activity_at: Optional[datetime]
+    recent_attempts: List[StudentProgressAttempt]
+
+
+class StudentProfileResponse(BaseModel):
+    """Profile detail plus quick stats for a student."""
+    user: UserResponse
+    total_assignments: int
+    completed_attempts: int
+    average_score: Optional[float]
+    streak_days: int
 
 
 # ============== Feedback Schemas ==============

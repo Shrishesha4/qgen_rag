@@ -2,9 +2,15 @@
 	import { onMount } from 'svelte';
 	import { apiFetch } from '$lib/api/client';
 	import { currentUser } from '$lib/session';
-	import { 
-		ClipboardCheck, Clock, CheckCircle, AlertCircle, 
-		TrendingUp, Calendar, ArrowRight 
+	import {
+		ClipboardCheck,
+		Clock,
+		CheckCircle,
+		AlertCircle,
+		TrendingUp,
+		Calendar,
+		ArrowRight,
+		History
 	} from 'lucide-svelte';
 
 	interface AssignedItem {
@@ -58,248 +64,341 @@
 		const now = new Date();
 		const diff = date.getTime() - now.getTime();
 		const days = Math.ceil(diff / (1000 * 60 * 60 * 24));
-		
+
 		if (days < 0) return 'Overdue';
 		if (days === 0) return 'Due today';
 		if (days === 1) return 'Due tomorrow';
-		if (days <= 7) return `Due in ${days} days`;
-		return date.toLocaleDateString();
+		if (days <= 7) return `Due in ${days} day${days === 1 ? '' : 's'}`;
+		return date.toLocaleDateString(undefined, { month: 'short', day: 'numeric' });
 	}
 
-	function getDifficultyColor(difficulty: string | null): string {
-		switch (difficulty?.toLowerCase()) {
-			case 'easy': return 'bg-green-100 text-green-800 dark:bg-green-900 dark:text-green-300';
-			case 'medium': return 'bg-yellow-100 text-yellow-800 dark:bg-yellow-900 dark:text-yellow-300';
-			case 'hard': return 'bg-red-100 text-red-800 dark:bg-red-900 dark:text-red-300';
-			default: return 'bg-gray-100 text-gray-800 dark:bg-gray-700 dark:text-gray-300';
+	const completedStatuses = new Set(['completed', 'reviewed', 'scored', 'graded']);
+	$: pendingItems =
+		dashboard?.assigned_items.filter((item) => !completedStatuses.has(item.last_attempt_status ?? '')) ?? [];
+	$: completedItems =
+		dashboard?.assigned_items
+			.filter((item) => completedStatuses.has(item.last_attempt_status ?? ''))
+			.slice()
+			.sort((a, b) => {
+				const aDate = a.due_date ? new Date(a.due_date).getTime() : 0;
+				const bDate = b.due_date ? new Date(b.due_date).getTime() : 0;
+				return bDate - aDate;
+			}) ?? [];
+
+	function getDifficultyColor(label: string | null) {
+		switch (label) {
+			case 'advanced':
+				return 'bg-rose-500/20 text-rose-100 border border-rose-400/30';
+			case 'intermediate':
+				return 'bg-amber-500/20 text-amber-100 border border-amber-400/30';
+			case 'beginner':
+				return 'bg-emerald-500/20 text-emerald-100 border border-emerald-400/30';
+			default:
+				return 'bg-white/10 text-white border border-white/20';
 		}
 	}
-
-	function getStatusColor(status: string | null): string {
-		switch (status) {
-			case 'scored':
-			case 'reviewed': return 'text-green-600 dark:text-green-400';
-			case 'in_progress': return 'text-yellow-600 dark:text-yellow-400';
-			case 'submitted': return 'text-blue-600 dark:text-blue-400';
-			default: return 'text-gray-600 dark:text-gray-400';
-		}
-	}
-
-	$: pendingItems = dashboard?.assigned_items.filter(
-		item => !item.last_attempt_status || item.last_attempt_status === 'in_progress'
-	) || [];
-	
-	$: completedItems = dashboard?.assigned_items.filter(
-		item => item.last_attempt_status === 'scored' || item.last_attempt_status === 'reviewed'
-	) || [];
 </script>
 
-<svelte:head>
-	<title>Student Dashboard | GELTrain</title>
-</svelte:head>
-
-<div class="space-y-6">
-	<!-- Welcome Header -->
-	<div class="bg-gradient-to-r from-primary-600 to-primary-700 rounded-lg shadow-lg p-6 text-white">
-		<h1 class="text-2xl font-bold">
-			Welcome back, {$currentUser?.full_name || $currentUser?.username}!
-		</h1>
-		<p class="mt-1 text-primary-100">
-			Continue your learning journey by evaluating AI-generated questions.
-		</p>
-	</div>
+<div class="page-container student-shell space-y-8">
+	<section class="glass-panel gradient-card">
+		<div>
+			<p class="text-sm text-white/70 uppercase tracking-[0.15em]">Welcome</p>
+			<h1 class="text-3xl font-semibold text-white mt-1">
+				Hello, {$currentUser?.full_name || $currentUser?.username}
+			</h1>
+			<p class="text-white/70 mt-2">
+				Continue your GEL journey and keep your streak going.
+			</p>
+		</div>
+	</section>
 
 	{#if isLoading}
-		<div class="flex items-center justify-center py-12">
-			<div class="animate-spin rounded-full h-12 w-12 border-b-2 border-primary-600"></div>
+		<div class="center-state">
+			<div class="spinner"></div>
+			<p class="text-white/70 mt-3">Loading dashboard...</p>
 		</div>
 	{:else if error}
-		<div class="bg-red-50 dark:bg-red-900/20 border border-red-200 dark:border-red-800 rounded-lg p-4">
-			<div class="flex items-center space-x-2 text-red-700 dark:text-red-400">
+		<div class="glass-panel border border-red-500/30 bg-red-500/10">
+			<div class="flex items-center gap-3 text-red-100">
 				<AlertCircle class="h-5 w-5" />
 				<span>{error}</span>
 			</div>
-			<button
-				on:click={loadDashboard}
-				class="mt-2 text-sm text-red-600 dark:text-red-400 hover:underline"
-			>
-				Try again
-			</button>
+			<button class="glass-btn-secondary mt-3" on:click={loadDashboard}>Try again</button>
 		</div>
 	{:else if dashboard}
-		<!-- Stats Cards -->
-		<div class="grid grid-cols-2 md:grid-cols-4 gap-4">
-			<div class="bg-white dark:bg-gray-800 rounded-lg shadow p-4">
-				<div class="flex items-center space-x-3">
-					<div class="p-2 bg-yellow-100 dark:bg-yellow-900 rounded-lg">
-						<Clock class="h-6 w-6 text-yellow-600 dark:text-yellow-400" />
-					</div>
-					<div>
-						<p class="text-2xl font-bold text-gray-900 dark:text-white">
-							{dashboard.in_progress_count}
-						</p>
-						<p class="text-sm text-gray-500 dark:text-gray-400">In Progress</p>
-					</div>
+		<div class="grid grid-cols-1 sm:grid-cols-2 xl:grid-cols-4 gap-4">
+			<div class="glass-panel stat-card">
+				<div class="icon-pill bg-amber-500/20 text-amber-200"><Clock class="h-5 w-5" /></div>
+				<div>
+					<p class="stat-value">{dashboard.in_progress_count}</p>
+					<p class="stat-label">In Progress</p>
 				</div>
 			</div>
-
-			<div class="bg-white dark:bg-gray-800 rounded-lg shadow p-4">
-				<div class="flex items-center space-x-3">
-					<div class="p-2 bg-green-100 dark:bg-green-900 rounded-lg">
-						<CheckCircle class="h-6 w-6 text-green-600 dark:text-green-400" />
-					</div>
-					<div>
-						<p class="text-2xl font-bold text-gray-900 dark:text-white">
-							{dashboard.completed_count}
-						</p>
-						<p class="text-sm text-gray-500 dark:text-gray-400">Completed</p>
-					</div>
+			<div class="glass-panel stat-card">
+				<div class="icon-pill bg-emerald-500/20 text-emerald-200"><CheckCircle class="h-5 w-5" /></div>
+				<div>
+					<p class="stat-value">{dashboard.completed_count}</p>
+					<p class="stat-label">Completed</p>
 				</div>
 			</div>
-
-			<div class="bg-white dark:bg-gray-800 rounded-lg shadow p-4">
-				<div class="flex items-center space-x-3">
-					<div class="p-2 bg-red-100 dark:bg-red-900 rounded-lg">
-						<Calendar class="h-6 w-6 text-red-600 dark:text-red-400" />
-					</div>
-					<div>
-						<p class="text-2xl font-bold text-gray-900 dark:text-white">
-							{dashboard.due_soon_count}
-						</p>
-						<p class="text-sm text-gray-500 dark:text-gray-400">Due Soon</p>
-					</div>
+			<div class="glass-panel stat-card">
+				<div class="icon-pill bg-rose-500/20 text-rose-200"><Calendar class="h-5 w-5" /></div>
+				<div>
+					<p class="stat-value">{dashboard.due_soon_count}</p>
+					<p class="stat-label">Due Soon</p>
 				</div>
 			</div>
-
-			<div class="bg-white dark:bg-gray-800 rounded-lg shadow p-4">
-				<div class="flex items-center space-x-3">
-					<div class="p-2 bg-primary-100 dark:bg-primary-900 rounded-lg">
-						<TrendingUp class="h-6 w-6 text-primary-600 dark:text-primary-400" />
-					</div>
-					<div>
-						<p class="text-2xl font-bold text-gray-900 dark:text-white">
-							{dashboard.average_score !== null ? `${dashboard.average_score.toFixed(0)}%` : '-'}
-						</p>
-						<p class="text-sm text-gray-500 dark:text-gray-400">Avg Score</p>
-					</div>
+			<div class="glass-panel stat-card">
+				<div class="icon-pill bg-primary-500/25 text-primary-100"><TrendingUp class="h-5 w-5" /></div>
+				<div>
+					<p class="stat-value">{dashboard.average_score !== null ? `${dashboard.average_score.toFixed(0)}%` : '-'}</p>
+					<p class="stat-label">Avg Score</p>
 				</div>
 			</div>
 		</div>
 
-		<!-- Pending Items -->
-		{#if pendingItems.length > 0}
-			<div class="bg-white dark:bg-gray-800 rounded-lg shadow">
-				<div class="px-6 py-4 border-b border-gray-200 dark:border-gray-700">
-					<h2 class="text-lg font-semibold text-gray-900 dark:text-white flex items-center space-x-2">
-						<ClipboardCheck class="h-5 w-5 text-primary-600" />
-						<span>Pending Evaluations</span>
-					</h2>
-				</div>
-				<div class="divide-y divide-gray-200 dark:divide-gray-700">
-					{#each pendingItems.slice(0, 5) as item}
-						<a
-							href="/student/evaluate/{item.evaluation_item_id}?assignment={item.assignment_id}"
-							class="block px-6 py-4 hover:bg-gray-50 dark:hover:bg-gray-700 transition-colors"
-						>
-							<div class="flex items-center justify-between">
-								<div class="flex-1 min-w-0">
-									<p class="text-sm font-medium text-gray-900 dark:text-white truncate">
-										{item.question_text.slice(0, 100)}{item.question_text.length > 100 ? '...' : ''}
-									</p>
-									<div class="mt-1 flex items-center space-x-2 text-sm">
-										<span class="text-gray-500 dark:text-gray-400">
-											{item.assignment_title}
-										</span>
-										{#if item.difficulty_label}
-											<span class="px-2 py-0.5 rounded-full text-xs {getDifficultyColor(item.difficulty_label)}">
-												{item.difficulty_label}
-											</span>
-										{/if}
-										{#if item.last_attempt_status === 'in_progress'}
-											<span class="text-yellow-600 dark:text-yellow-400 text-xs">
-												• In Progress
-											</span>
-										{/if}
-									</div>
-								</div>
-								<div class="ml-4 flex items-center space-x-4">
-									<span class="text-sm text-gray-500 dark:text-gray-400">
-										{formatDate(item.due_date)}
-									</span>
-									<ArrowRight class="h-5 w-5 text-gray-400" />
-								</div>
-							</div>
-						</a>
-					{/each}
+		<section class="glass-panel">
+			<header class="section-head">
+				<div class="section-title">
+					<ClipboardCheck class="h-5 w-5 text-primary-200" />
+					<div>
+						<p class="text-white font-semibold">Pending Evaluations</p>
+						<p class="text-white/60 text-sm">Start where you left off</p>
+					</div>
 				</div>
 				{#if pendingItems.length > 5}
-					<div class="px-6 py-3 bg-gray-50 dark:bg-gray-700/50 border-t border-gray-200 dark:border-gray-700">
-						<a
-							href="/student/assignments"
-							class="text-sm text-primary-600 dark:text-primary-400 hover:underline"
-						>
-							View all {pendingItems.length} pending items →
-						</a>
-					</div>
+					<a class="glass-pill text-primary-100" href="/student/assignments">View all</a>
 				{/if}
-			</div>
-		{:else}
-			<div class="bg-white dark:bg-gray-800 rounded-lg shadow p-8 text-center">
-				<CheckCircle class="h-12 w-12 text-green-500 mx-auto mb-4" />
-				<h3 class="text-lg font-medium text-gray-900 dark:text-white">All caught up!</h3>
-				<p class="mt-1 text-gray-500 dark:text-gray-400">
-					You have no pending evaluations. Check back later for new assignments.
-				</p>
-			</div>
-		{/if}
+			</header>
 
-		<!-- Recent Completions -->
-		{#if completedItems.length > 0}
-			<div class="bg-white dark:bg-gray-800 rounded-lg shadow">
-				<div class="px-6 py-4 border-b border-gray-200 dark:border-gray-700">
-					<h2 class="text-lg font-semibold text-gray-900 dark:text-white flex items-center space-x-2">
-						<CheckCircle class="h-5 w-5 text-green-600" />
-						<span>Recent Completions</span>
-					</h2>
+			{#if pendingItems.length === 0}
+				<div class="empty-state">
+					<CheckCircle class="h-10 w-10 text-emerald-300" />
+					<h3>All caught up!</h3>
+					<p>No pending evaluations right now.</p>
 				</div>
-				<div class="divide-y divide-gray-200 dark:divide-gray-700">
-					{#each completedItems.slice(0, 3) as item}
-						<a
-							href="/student/history/{item.evaluation_item_id}"
-							class="block px-6 py-4 hover:bg-gray-50 dark:hover:bg-gray-700 transition-colors"
-						>
-							<div class="flex items-center justify-between">
-								<div class="flex-1 min-w-0">
-									<p class="text-sm font-medium text-gray-900 dark:text-white truncate">
-										{item.question_text.slice(0, 80)}{item.question_text.length > 80 ? '...' : ''}
-									</p>
-									<p class="mt-1 text-sm text-gray-500 dark:text-gray-400">
-										{item.assignment_title}
-									</p>
-								</div>
-								<div class="ml-4 flex items-center space-x-2">
-									{#if item.last_attempt_score !== null}
-										<span class="text-lg font-semibold {item.last_attempt_score >= 60 ? 'text-green-600 dark:text-green-400' : 'text-red-600 dark:text-red-400'}">
-											{item.last_attempt_score.toFixed(0)}%
+			{:else}
+				<div class="divide-y divide-white/5">
+					{#each pendingItems.slice(0, 5) as item}
+						<a class="row" href="/student/evaluate/{item.evaluation_item_id}?assignment={item.assignment_id}">
+							<div class="flex-1 min-w-0">
+								<p class="text-white font-medium truncate">{item.assignment_title}</p>
+								<p class="text-white/70 text-sm truncate mt-1">
+									{item.question_text.slice(0, 120)}{item.question_text.length > 120 ? '…' : ''}
+								</p>
+								<div class="mt-2 flex items-center gap-2 text-xs">
+									{#if item.difficulty_label}
+										<span class={`pill ${getDifficultyColor(item.difficulty_label)}`}>
+											{item.difficulty_label}
 										</span>
 									{/if}
-									<ArrowRight class="h-5 w-5 text-gray-400" />
+									<span class="text-white/60">{formatDate(item.due_date)}</span>
+									{#if item.last_attempt_status === 'in_progress'}
+										<span class="text-amber-200">• In Progress</span>
+									{/if}
 								</div>
 							</div>
+							<ArrowRight class="h-5 w-5 text-white/50" />
 						</a>
 					{/each}
 				</div>
-				{#if completedItems.length > 3}
-					<div class="px-6 py-3 bg-gray-50 dark:bg-gray-700/50 border-t border-gray-200 dark:border-gray-700">
-						<a
-							href="/student/history"
-							class="text-sm text-primary-600 dark:text-primary-400 hover:underline"
-						>
-							View all history →
-						</a>
+			{/if}
+		</section>
+
+		{#if completedItems.length > 0}
+			<section class="glass-panel">
+				<header class="section-head">
+					<div class="section-title">
+						<History class="h-5 w-5 text-primary-200" />
+						<div>
+							<p class="text-white font-semibold">Recently Completed</p>
+							<p class="text-white/60 text-sm">Latest scored or reviewed attempts</p>
+						</div>
 					</div>
-				{/if}
-			</div>
+				</header>
+				<ul class="divide-y divide-white/5">
+					{#each completedItems.slice(0, 5) as item}
+						<li class="row">
+							<div class="flex-1 min-w-0">
+								<p class="text-white font-medium truncate">{item.assignment_title}</p>
+								<p class="text-white/70 text-sm truncate mt-1">
+									{item.question_text.slice(0, 120)}{item.question_text.length > 120 ? '…' : ''}
+								</p>
+							</div>
+							<div class="flex items-center gap-3 text-sm text-white/80">
+								{#if item.last_attempt_score !== null}
+									<span class="pill bg-primary-500/20 text-primary-100 border border-primary-400/30">
+										{item.last_attempt_score.toFixed(0)}%
+									</span>
+								{/if}
+								<span>{item.last_attempt_status === 'reviewed' ? 'Reviewed' : 'Scored'}</span>
+							</div>
+						</li>
+					{/each}
+				</ul>
+			</section>
 		{/if}
 	{/if}
 </div>
+
+<style>
+	.page-container {
+		max-width: 1180px;
+		margin: 0 auto;
+		padding: clamp(1rem, 2vw, 1.5rem) clamp(1.25rem, 3vw, 2.25rem) clamp(2rem, 3vw, 2.75rem);
+	}
+
+	.gradient-card {
+		background: radial-gradient(circle at 20% 20%, rgba(99, 102, 241, 0.35), transparent 30%),
+			radial-gradient(circle at 80% 0%, rgba(16, 185, 129, 0.3), transparent 30%),
+			radial-gradient(circle at 40% 80%, rgba(236, 72, 153, 0.25), transparent 35%),
+			linear-gradient(135deg, rgba(23, 23, 40, 0.9), rgba(15, 23, 42, 0.85));
+	}
+
+	.glass-panel {
+		background: rgba(255, 255, 255, 0.04);
+		border: 1px solid rgba(255, 255, 255, 0.08);
+		border-radius: 18px;
+		padding: 20px;
+		box-shadow: 0 20px 70px rgba(0, 0, 0, 0.35);
+		backdrop-filter: blur(18px);
+	}
+
+	.section-head {
+		display: flex;
+		align-items: center;
+		justify-content: space-between;
+		margin-bottom: 14px;
+	}
+
+	.section-title {
+		display: flex;
+		align-items: center;
+		gap: 10px;
+	}
+
+	.icon-pill {
+		display: inline-flex;
+		align-items: center;
+		justify-content: center;
+		padding: 10px;
+		border-radius: 12px;
+		border: 1px solid rgba(255, 255, 255, 0.1);
+	}
+
+	.stat-card {
+		display: flex;
+		align-items: center;
+		gap: 12px;
+	}
+
+	.stat-value {
+		font-size: 1.8rem;
+		font-weight: 700;
+		color: #fff;
+		line-height: 1.1;
+	}
+
+	.stat-label {
+		color: rgba(255, 255, 255, 0.7);
+		font-size: 0.95rem;
+	}
+
+	.row {
+		display: flex;
+		align-items: center;
+		gap: 14px;
+		padding: 14px 0;
+		transition: transform 0.15s ease, opacity 0.15s ease;
+	}
+
+	.row:hover {
+		transform: translateY(-2px);
+		opacity: 0.96;
+	}
+
+	.pill {
+		display: inline-flex;
+		align-items: center;
+		gap: 6px;
+		padding: 4px 10px;
+		border-radius: 999px;
+		border: 1px solid rgba(255, 255, 255, 0.12);
+		font-weight: 600;
+	}
+
+	.empty-state {
+		text-align: center;
+		padding: 28px 12px;
+		color: rgba(255, 255, 255, 0.8);
+		display: grid;
+		gap: 8px;
+		place-items: center;
+	}
+
+	.center-state {
+		display: flex;
+		flex-direction: column;
+		align-items: center;
+		justify-content: center;
+		min-height: 200px;
+	}
+
+	.spinner {
+		width: 44px;
+		height: 44px;
+		border-radius: 999px;
+		border: 3px solid rgba(255, 255, 255, 0.2);
+		border-top-color: rgba(255, 255, 255, 0.8);
+		animation: spin 0.8s linear infinite;
+	}
+
+	@keyframes spin {
+		to {
+			transform: rotate(360deg);
+		}
+	}
+
+	:global([data-color-mode='light']) .student-shell {
+		color: #0f172a;
+	}
+
+	:global([data-color-mode='light']) .student-shell .gradient-card {
+		background: linear-gradient(135deg, #f8fafc, #e0f2fe);
+	}
+
+	:global([data-color-mode='light']) .student-shell .glass-panel {
+		background: rgba(255, 255, 255, 0.92);
+		border-color: rgba(15, 23, 42, 0.08);
+		box-shadow: 0 18px 50px rgba(15, 23, 42, 0.14);
+		color: #0f172a;
+	}
+
+	:global([data-color-mode='light']) .student-shell .icon-pill {
+		border-color: rgba(15, 23, 42, 0.1);
+	}
+
+	:global([data-color-mode='light']) .student-shell .stat-value,
+	:global([data-color-mode='light']) .student-shell .row .text-white,
+	:global([data-color-mode='light']) .student-shell h1,
+	:global([data-color-mode='light']) .student-shell h3 {
+		color: #0f172a;
+	}
+
+	:global([data-color-mode='light']) .student-shell .stat-label,
+	:global([data-color-mode='light']) .student-shell .empty-state,
+	:global([data-color-mode='light']) :global(.student-shell) :global(.text-white\/60),
+	:global([data-color-mode='light']) :global(.student-shell) :global(.text-white\/70),
+	:global([data-color-mode='light']) :global(.student-shell) :global(.text-white\/80),
+	:global([data-color-mode='light']) :global(.student-shell) :global(.text-white\/50) {
+		color: #475569;
+	}
+
+	:global([data-color-mode='light']) :global(.student-shell) :global(.text-white) {
+		color: #0f172a !important;
+	}
+
+	:global([data-color-mode='light']) .student-shell .pill {
+		border-color: rgba(15, 23, 42, 0.12);
+	}
+</style>
