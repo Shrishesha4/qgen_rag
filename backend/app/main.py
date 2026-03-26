@@ -18,6 +18,7 @@ from app.core.logging import setup_logging, logger, request_id_ctx
 from app.api.v1 import api_router
 from app.services.embedding_service import warmup_embedding_service
 from app.services.reranker_service import warmup_reranker_service
+from app.services.provider_service import ProviderService
 
 
 @asynccontextmanager
@@ -36,6 +37,22 @@ async def lifespan(app: FastAPI):
     # Initialize database and create tables/indexes
     await init_db()
     logger.info("✅ Database initialized")
+
+    # Load provider config to hydrate LLM credentials (e.g., DeepSeek) from DB settings
+    try:
+        provider_service = ProviderService()
+        provider_config = await provider_service.get_config(force_refresh=True)
+        for provider in provider_config.providers:
+            if provider.key == "deepseek" and provider.api_key:
+                settings.DEEPSEEK_API_KEY = provider.api_key
+                if provider.base_url:
+                    settings.DEEPSEEK_BASE_URL = provider.base_url
+                if provider.model:
+                    settings.DEEPSEEK_MODEL = provider.model
+                logger.info("🔧 DeepSeek credentials loaded from provider settings")
+                break
+    except Exception as e:
+        logger.warning(f"⚠️ Could not load provider credentials from settings: {e}")
     
     # Warmup ML models to avoid cold start latency on first request
     try:

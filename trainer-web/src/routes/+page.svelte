@@ -1,12 +1,14 @@
 <script lang="ts">
 	import { goto } from '$app/navigation';
 	import { onMount } from 'svelte';
-	import { login, register, type TokenResponse } from '$lib/api/auth';
+	import { login, register, type TokenResponse, getBootstrapStatus } from '$lib/api/auth';
 	import { apiUrl } from '$lib/api/client';
 	import { session } from '$lib/session';
 
+	type AuthMode = 'login' | 'register' | 'bootstrap';
+
 	let introReady = $state(false);
-	let mode: 'login' | 'register' | 'bootstrap' = $state('login');
+	let mode = $state<AuthMode>('login');
 	let email = $state('');
 	let password = $state('');
 	let username = $state('');
@@ -20,6 +22,23 @@
 	let adminExists = $state(true);
 	let checkingAdmin = $state(true);
 	const SIGNUP_SETTINGS_TIMEOUT_MS = 5000;
+
+		const selectableRoles = $derived(
+			mode === 'bootstrap'
+				? ['admin']
+				: [
+					...(signupEnabled ? ['teacher', 'vetter'] : []),
+					...(studentSignupEnabled ? ['student'] : [])
+				]
+		);
+
+		$effect(() => {
+			if (!selectableRoles.includes(selectedRole)) {
+				selectedRole = (selectableRoles[0] as typeof selectedRole | undefined) ?? 'teacher';
+			}
+		});
+
+		const canShowSignupSwitch = $derived(mode !== 'bootstrap' && (signupEnabled || studentSignupEnabled || checkingSignup));
 
 	async function fetchSignupSettings(): Promise<{ signupEnabled: boolean; studentSignupEnabled: boolean }> {
 		const controller = new AbortController();
@@ -45,29 +64,19 @@
 		}
 	}
 
-	async function checkAdminExists(): Promise<boolean> {
-		try {
-			const res = await fetch(apiUrl('/auth/admin-exists'), {
-				cache: 'no-store'
-			});
-			if (!res.ok) {
-				return false; // Assume no admin if endpoint fails
-			}
-			const data = await res.json();
-			return data.exists ?? false;
-		} catch {
-			return false; // Assume no admin if network fails
-		}
-	}
-
 	async function initAuthState() {
 		// Check if admin exists first
-		const admin = await checkAdminExists();
-		adminExists = admin;
+		try {
+			const bootstrap = await getBootstrapStatus();
+			adminExists = bootstrap?.admin_exists ?? true;
+		} catch (err) {
+			// If we cannot determine, assume admins exist so we don't block access
+			adminExists = true;
+		}
 		checkingAdmin = false;
 
 		// If no admin exists, show bootstrap mode
-		if (!admin) {
+		if (!adminExists) {
 			mode = 'bootstrap';
 			selectedRole = 'admin';
 			return;
@@ -258,32 +267,34 @@
 					<div class="signin-field">
 						<span class="signin-label">Role</span>
 						<div class="role-selector">
-							<button
-								type="button"
-								class="role-option"
-								class:selected={selectedRole === 'teacher'}
-								onclick={() => selectedRole = 'teacher'}
-							>
-								Teacher
-							</button>
-							<button
-								type="button"
-								class="role-option"
-								class:selected={selectedRole === 'vetter'}
-								onclick={() => selectedRole = 'vetter'}
-							>
-								Vetter
-							</button>
-							<button
-								type="button"
-								class="role-option"
-								class:selected={selectedRole === 'student'}
-								onclick={() => selectedRole = 'student'}
-								disabled={!studentSignupEnabled && !checkingSignup}
-								title={!studentSignupEnabled && !checkingSignup ? 'Student signup is currently disabled' : 'Sign up as a student'}
-							>
-								Student
-							</button>
+							{#if signupEnabled}
+								<button
+									type="button"
+									class="role-option"
+									class:selected={selectedRole === 'teacher'}
+									onclick={() => selectedRole = 'teacher'}
+								>
+									Teacher
+								</button>
+								<button
+									type="button"
+									class="role-option"
+									class:selected={selectedRole === 'vetter'}
+									onclick={() => selectedRole = 'vetter'}
+								>
+									Vetter
+								</button>
+							{/if}
+							{#if studentSignupEnabled}
+								<button
+									type="button"
+									class="role-option"
+									class:selected={selectedRole === 'student'}
+									onclick={() => selectedRole = 'student'}
+								>
+									Student
+								</button>
+							{/if}
 						</div>
 					</div>
 				{/if}
@@ -319,10 +330,10 @@
 						{signingIn ? 'Creating Account...' : 'Create Account'}
 					{/if}
 				</button>
-				{#if mode !== 'bootstrap'}
+				{#if canShowSignupSwitch}
 					<div class="mode-switch">
 						{#if mode === 'login'}
-							{#if signupEnabled || checkingSignup}
+							{#if signupEnabled || studentSignupEnabled || checkingSignup}
 								<span>Don't have an account?</span>
 								<button class="switch-btn" type="button" onclick={() => { mode = 'register'; signInError = ''; }}>
 									Sign Up
