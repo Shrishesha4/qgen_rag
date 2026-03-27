@@ -521,6 +521,27 @@
 
 	const latestProgressIsComplete = $derived.by(() => isProgressComplete(latestProgress));
 
+	// All incomplete (resumable) progress snapshots, sorted by most recent first
+	const allIncompleteSnapshots = $derived.by(() => {
+		return Object.values(progressStore)
+			.filter(s => hasMeaningfulProgress(s) && !isProgressComplete(s))
+			.sort((a, b) => toMillis(b.updatedAt) - toMillis(a.updatedAt));
+	});
+
+	function snapshotSubjectLabel(snapshot: TeacherVettingProgressSnapshot): string {
+		const subjectNameFromList = subjects.find((s) => s.id === snapshot.subjectId)?.name;
+		if (subjectNameFromList) return subjectNameFromList;
+		const subjectNameFromQuestion = snapshot.questions.find((q) => q.subject_name)?.subject_name;
+		return subjectNameFromQuestion || snapshot.subjectId;
+	}
+
+	function snapshotProgressLabel(snapshot: TeacherVettingProgressSnapshot): string {
+		const total = snapshot.questions.length;
+		if (total <= 0) return '0/0 reviewed';
+		const current = Math.min(total, Math.max(1, snapshot.currentIndex + 1));
+		return `${current}/${total} reviewed`;
+	}
+
 	const filteredSubjects = $derived.by(() => {
 		const q = searchQuery.trim().toLowerCase();
 		if (!q) return subjects;
@@ -685,27 +706,27 @@
 			<div class="error-banner" role="alert">{error}</div>
 		{/if}
 
-		{#if latestProgress && hasMeaningfulProgress(latestProgress) && !latestProgressIsComplete}
+		{#each allIncompleteSnapshots as snapshot}
 			<section class="resume-strip glass-panel">
 				<div class="summary-grid">
 					<div class="summary-item">
 						<span class="summary-label">Subject</span>
-						<strong>{latestProgressSubjectLabel}</strong>
+						<strong>{snapshotSubjectLabel(snapshot)}</strong>
 					</div>
 					<div class="summary-item">
 						<span class="summary-label">Progress</span>
-						<strong>{currentProgressLabel}</strong>
+						<strong>{snapshotProgressLabel(snapshot)}</strong>
 					</div>
 					<div class="summary-item">
 						<span class="summary-label">Last Updated</span>
-						<strong>{formatDateTime(latestProgress.updatedAt)}</strong>
+						<strong>{formatDateTime(snapshot.updatedAt)}</strong>
 					</div>
 				</div>
 				<div class="actions-row">
-					<button class="primary-btn" onclick={resumeLastProgress}>Resume Vetting</button>
+					<button class="primary-btn" onclick={() => resumeSpecificProgress(snapshot)}>Resume Vetting</button>
 				</div>
 			</section>
-		{/if}
+		{/each}
 
 		<section class="content-panel glass-panel">
 			<div class="panel-head">
@@ -1076,7 +1097,7 @@
 	}
 
 	.resume-strip {
-		padding: 0.95rem;
+		padding: 1rem;
 		border-radius: 1rem;
 		display: flex;
 		flex-direction: column;

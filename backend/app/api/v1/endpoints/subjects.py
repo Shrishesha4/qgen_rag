@@ -20,6 +20,7 @@ from app.models.subject import Subject, Topic, SubjectGroup
 from app.models.question import Question
 from app.models.user import User
 from app.models.document import Document, DocumentChunk
+from app.models.topic_audit import TopicAuditLog
 from app.schemas.subject import (
     SubjectCreate,
     SubjectUpdate,
@@ -822,12 +823,94 @@ async def update_topic(
         )
     
     update_data = topic_data.model_dump(exclude_unset=True)
+    
+    # Record audit entries for each changed field
+    user_name = current_user.full_name or current_user.username or "Unknown"
+    audit_field_map = {
+        "name": "topic_name",
+        "description": "description",
+        "syllabus_content": "syllabus_content",
+    }
     for field, value in update_data.items():
+        audit_field = audit_field_map.get(field)
+        if audit_field:
+            old_val = getattr(topic, field, None)
+            new_val = value
+            # Only log if the value actually changed
+            if str(old_val or "") != str(new_val or ""):
+                db.add(TopicAuditLog(
+                    topic_id=topic_id,
+                    user_id=current_user.id,
+                    user_name=user_name,
+                    action="update",
+                    field_name=audit_field,
+                    old_value=str(old_val)[:2000] if old_val else None,
+                    new_value=str(new_val)[:2000] if new_val else None,
+                ))
         setattr(topic, field, value)
     
     await db.commit()
     await db.refresh(topic)
     return TopicResponse.model_validate(topic)
+
+
+@router.get("/topics/{topic_id}/audit-log")
+async def get_topic_audit_log(
+    topic_id: str,
+    page: int = Query(1, ge=1),
+    limit: int = Query(50, ge=1, le=200),
+    current_user: User = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+):
+    """Get audit log entries for a topic (for the History tab)."""
+    # Verify topic exists
+    result = await db.execute(
+        select(Topic).where(Topic.id == topic_id)
+    )
+    if not result.scalar_one_or_none():
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="Topic not found",
+        )
+    
+    # Count total entries
+    count_result = await db.execute(
+        select(func.count()).where(TopicAuditLog.topic_id == topic_id)
+    )
+    total = count_result.scalar_one()
+    
+    # Paginate, newest first
+    offset = (page - 1) * limit
+    result = await db.execute(
+        select(TopicAuditLog)
+        .where(TopicAuditLog.topic_id == topic_id)
+        .order_by(TopicAuditLog.created_at.desc())
+        .offset(offset)
+        .limit(limit)
+    )
+    entries = result.scalars().all()
+    
+    return {
+        "entries": [
+            {
+                "id": e.id,
+                "topic_id": e.topic_id,
+                "user_name": e.user_name,
+                "action": e.action,
+                "field_name": e.field_name,
+                "old_value": e.old_value,
+                "new_value": e.new_value,
+                "created_at": e.created_at.isoformat() if e.created_at else None,
+            }
+            for e in entries
+        ],
+        "pagination": {
+            "page": page,
+            "limit": limit,
+            "total": total,
+            "total_pages": (total + limit - 1) // limit if total > 0 else 0,
+        },
+    }
 
 
 @router.delete("/{subject_id}/topics/{topic_id}", status_code=status.HTTP_204_NO_CONTENT)

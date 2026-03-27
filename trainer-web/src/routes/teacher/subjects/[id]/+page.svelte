@@ -3,7 +3,7 @@
 	import { goto } from '$app/navigation';
 	import { page } from '$app/stores';
 	import { session } from '$lib/session';
-	import { apiUrl, getStoredSession } from '$lib/api/client';
+	import { apiFetch, apiUrl, getStoredSession } from '$lib/api/client';
 	import {
 		createTopic,
 		deleteSubject,
@@ -69,12 +69,102 @@
 	let editTopicName = $state('');
 	let editTopicDescription = $state('');
 	let editTopicSyllabus = $state('');
+	let showSyllabusExpand = $state(false);
+
+	// History tab state
+	type EditModalTab = 'edit' | 'history';
+	let editModalTab = $state<EditModalTab>('edit');
+	type AuditEntry = {
+		id: string;
+		topic_id: string;
+		user_name: string;
+		action: string;
+		field_name: string | null;
+		old_value: string | null;
+		new_value: string | null;
+		created_at: string | null;
+	};
+	let auditEntries = $state<AuditEntry[]>([]);
+	let auditLoading = $state(false);
+	let auditError = $state('');
+
+	async function loadAuditLog(topicId: string) {
+		auditLoading = true;
+		auditError = '';
+		try {
+			const data = await apiFetch<{ entries: AuditEntry[] }>(`/subjects/topics/${topicId}/audit-log?limit=100`);
+			auditEntries = data.entries ?? [];
+		} catch (e: unknown) {
+			auditError = e instanceof Error ? e.message : 'Failed to load history';
+		} finally {
+			auditLoading = false;
+		}
+	}
+
+	function formatAuditDate(iso: string | null): string {
+		if (!iso) return 'Unknown';
+		const d = new Date(iso);
+		if (isNaN(d.getTime())) return 'Unknown';
+		return d.toLocaleString();
+	}
+
+	function formatFieldName(field: string | null): string {
+		const map: Record<string, string> = {
+			topic_name: 'Topic Name',
+			description: 'Description',
+			syllabus_content: 'Syllabus Content',
+			reference_pdf: 'Reference PDF',
+		};
+		return map[field ?? ''] ?? field ?? 'Unknown';
+	}
+
+	function truncateValue(val: string | null, max: number = 120): string {
+		if (!val) return '(empty)';
+		return val.length > max ? val.slice(0, max) + '...' : val;
+	}
 
 	let referenceTab = $state<'pdfs' | 'questions'>('pdfs');
 	let referenceLoading = $state(false);
 	let referenceUploading = $state(false);
-	let deletingRefId = $state('');
-	let referenceError = $state('');
+	let referenceError = $state<string>('');
+	let deletingRefId = $state<string | null>(null);
+
+	// PDF Preview Modal
+	let showPreviewModal = $state(false);
+	let previewLoading = $state(false);
+	let previewError = $state('');
+	let previewUrl = $state<string | null>(null);
+	let previewFilename = $state('');
+
+	async function openPdfPreview(docId: string, filename: string) {
+		previewFilename = filename;
+		previewLoading = true;
+		previewError = '';
+		showPreviewModal = true;
+		
+		try {
+			const s = getStoredSession();
+			const res = await fetch(apiUrl(`/documents/${docId}/download`), {
+				headers: s?.access_token ? { Authorization: `Bearer ${s.access_token}` } : {},
+			});
+			if (!res.ok) throw new Error('Failed to load PDF preview');
+			const blob = await res.blob();
+			previewUrl = URL.createObjectURL(blob);
+		} catch (e: any) {
+			previewError = e.message || 'Error loading PDF';
+		} finally {
+			previewLoading = false;
+		}
+	}
+
+	function closePdfPreview() {
+		showPreviewModal = false;
+		if (previewUrl) {
+			URL.revokeObjectURL(previewUrl);
+			previewUrl = null;
+		}
+		previewFilename = '';
+	}
 	let pdfUploadType = $state<'reference_book' | 'template_paper'>('reference_book');
 	let referenceBooks = $state<ReferenceDocumentItem[]>([]);
 	let templatePapers = $state<ReferenceDocumentItem[]>([]);
@@ -880,6 +970,9 @@
 		editTopicSyllabus = topic.syllabus_content || '';
 		referenceTab = 'pdfs';
 		referenceError = '';
+		editModalTab = 'edit';
+		auditEntries = [];
+		auditError = '';
 		showEditTopicModal = true;
 		void loadReferenceMaterials();
 	}
@@ -1507,15 +1600,25 @@
 	<!-- svelte-ignore a11y_click_events_have_key_events a11y_no_static_element_interactions -->
 	<div class="modal-backdrop" role="button" tabindex="0" aria-label="Close" onclick={closeEditTopicModal}>
 		<!-- svelte-ignore a11y_click_events_have_key_events a11y_no_static_element_interactions -->
-		<div class="modal-card" role="dialog" aria-modal="true" tabindex="-1" onclick={(e) => e.stopPropagation()}>
+		<div class="modal-card edit-topic-card" role="dialog" aria-modal="true" tabindex="-1" onclick={(e) => e.stopPropagation()}>
 			<div class="modal-head">
-				<h3>Edit Topic</h3>
+				<div class="modal-head-tabs">
+					<h3>Edit Topic</h3>
+					<div class="modal-tab-bar">
+						<button class="modal-tab" class:active={editModalTab === 'edit'} onclick={() => editModalTab = 'edit'}>Edit</button>
+						<button class="modal-tab" class:active={editModalTab === 'history'} onclick={() => { editModalTab = 'history'; if (!auditEntries.length && editTopicId) loadAuditLog(editTopicId); }}>History</button>
+					</div>
+				</div>
 				<button class="modal-close" onclick={closeEditTopicModal} aria-label="Close">✕</button>
 			</div>
+			{#if editModalTab === 'edit'}
 			<div class="modal-body">
 				<input id="editTopicName" class="input" placeholder="Topic name" bind:value={editTopicName} />
 				<input id="editTopicDescription" class="input" placeholder="Description (optional)" bind:value={editTopicDescription} />
-				<textarea id="editTopicSyllabus" class="input textarea" rows="4" placeholder="Syllabus content" bind:value={editTopicSyllabus}></textarea>
+				<div class="syllabus-field-wrapper">
+					<textarea id="editTopicSyllabus" class="input textarea" rows="4" placeholder="Syllabus content" bind:value={editTopicSyllabus}></textarea>
+					<button class="syllabus-expand-btn" type="button" onclick={() => showSyllabusExpand = true} title="Expand syllabus editor">⤢</button>
+				</div>
 
 				{#if referenceError}
 					<p class="modal-error inline-error">{referenceError}</p>
@@ -1551,8 +1654,9 @@
 							{#each editTopicReferenceDocs as doc}
 								<div class="doc-row">
 									<div class="doc-main">
-										<div class="doc-name">{doc.filename}</div>
-										<div class="doc-meta">{doc.index_type.replace('_', ' ')} • {doc.processing_status}</div>
+										<!-- svelte-ignore a11y_click_events_have_key_events a11y_no_static_element_interactions -->
+										<div class="doc-name clickable" onclick={() => openPdfPreview(doc.id, doc.filename)}>{doc.filename}</div>
+										<div class="doc-meta">{doc.index_type.replace('_', ' ')} • {doc.processing_status}{#if doc.uploaded_by_name} • <span class="doc-uploader">by {doc.uploaded_by_name}</span>{/if}</div>
 										{#if isDocProcessing(doc.processing_status)}
 											<div class="doc-progress-track">
 												<div class="doc-progress-fill" style:width="{referenceProgressByDoc[doc.id] ?? 0}%"></div>
@@ -1599,11 +1703,15 @@
 							{#each editTopicQuestionDocs as doc}
 								<div class="doc-row">
 									<div class="doc-main">
-										<div class="doc-name">{doc.filename}</div>
+										<!-- svelte-ignore a11y_click_events_have_key_events a11y_no_static_element_interactions -->
+										<div class="doc-name clickable" onclick={() => openPdfPreview(doc.id, doc.filename)}>{doc.filename}</div>
 										<div class="doc-meta">
 											{doc.processing_status}
 											{#if doc.parsed_question_count !== null && doc.parsed_question_count !== undefined}
 												• {doc.parsed_question_count} parsed
+											{/if}
+											{#if doc.uploaded_by_name}
+												• <span class="doc-uploader">by {doc.uploaded_by_name}</span>
 											{/if}
 										</div>
 										{#if isDocProcessing(doc.processing_status)}
@@ -1631,6 +1739,82 @@
 				<button class="action-btn action-edit" onclick={submitEditTopic} disabled={editingTopic || !editTopicName.trim()}>
 					{editingTopic ? 'Saving...' : 'Save Changes'}
 				</button>
+			</div>
+			{:else}
+			<!-- History Tab -->
+			<div class="modal-body history-body">
+				{#if auditLoading}
+					<div class="center-state" style="min-height: 200px;"><div class="spinner"></div><p>Loading history...</p></div>
+				{:else if auditError}
+					<p class="modal-error">{auditError}</p>
+				{:else if auditEntries.length === 0}
+					<p class="topics-empty" style="text-align: center; padding: 2rem;">No edit history yet. Changes will appear here after edits are made.</p>
+				{:else}
+					<div class="audit-timeline">
+						{#each auditEntries as entry}
+							<div class="timeline-item">
+								<div class="timeline-dot"></div>
+								<div class="timeline-content">
+									<div class="timeline-header">
+										<span class="timeline-user">{entry.user_name}</span>
+										<span class="timeline-action">{entry.action}</span>
+										<span class="timeline-field">{formatFieldName(entry.field_name)}</span>
+									</div>
+									<div class="timeline-date">{formatAuditDate(entry.created_at)}</div>
+									{#if entry.old_value || entry.new_value}
+										<div class="timeline-diff">
+											{#if entry.old_value}
+												<div class="diff-line diff-old"><span class="diff-prefix">−</span>{truncateValue(entry.old_value)}</div>
+											{/if}
+											{#if entry.new_value}
+												<div class="diff-line diff-new"><span class="diff-prefix">+</span>{truncateValue(entry.new_value)}</div>
+											{/if}
+										</div>
+									{/if}
+								</div>
+							</div>
+						{/each}
+					</div>
+				{/if}
+			</div>
+			{/if}
+		</div>
+	</div>
+{/if}
+
+{#if showSyllabusExpand}
+	<!-- svelte-ignore a11y_click_events_have_key_events a11y_no_static_element_interactions -->
+	<div class="modal-backdrop syllabus-expand-backdrop" role="button" tabindex="0" aria-label="Close" onclick={() => showSyllabusExpand = false}>
+		<!-- svelte-ignore a11y_click_events_have_key_events a11y_no_static_element_interactions -->
+		<div class="syllabus-expand-card" role="dialog" aria-modal="true" tabindex="-1" onclick={(e) => e.stopPropagation()}>
+			<div class="modal-head">
+				<h3>Syllabus Content</h3>
+				<button class="modal-close" onclick={() => showSyllabusExpand = false} aria-label="Close">✕</button>
+			</div>
+			<div class="syllabus-expand-body">
+				<textarea class="input textarea syllabus-expand-textarea" placeholder="Syllabus content" bind:value={editTopicSyllabus}></textarea>
+			</div>
+		</div>
+	</div>
+{/if}
+
+<!-- PDF Preview Modal -->
+{#if showPreviewModal}
+	<!-- svelte-ignore a11y_click_events_have_key_events a11y_no_static_element_interactions -->
+	<div class="modal-backdrop preview-backdrop" role="button" tabindex="0" aria-label="Close" onclick={closePdfPreview}>
+		<div class="modal-card preview-card" role="dialog" aria-modal="true" tabindex="-1" onclick={(e) => e.stopPropagation()}>
+			<div class="modal-head">
+				<h3>{previewFilename}</h3>
+				<button class="modal-close" onclick={closePdfPreview} aria-label="Close">✕</button>
+			</div>
+			<div class="modal-body preview-body">
+				{#if previewLoading}
+					<div class="center-state"><div class="spinner"></div><p>Loading PDF...</p></div>
+				{:else if previewError}
+					<div class="center-state modal-error"><p>{previewError}</p></div>
+				{:else if previewUrl}
+					<iframe src={previewUrl} title={previewFilename} class="pdf-frame" frameborder="0"></iframe>
+				{/if}
 			</div>
 		</div>
 	</div>
@@ -2091,6 +2275,7 @@
 		gap: 0.82rem;
 		padding: 1rem 1.1rem;
 		overflow: auto;
+		flex: 1;
 		min-height: 0;
 	}
 
@@ -2507,6 +2692,269 @@
 		.topics-table-shell {
 			max-height: none;
 		}
+	}
+
+	.syllabus-field-wrapper {
+		position: relative;
+	}
+
+	.syllabus-expand-btn {
+		position: absolute;
+		top: 6px;
+		right: 6px;
+		width: 28px;
+		height: 28px;
+		border-radius: 0.5rem;
+		border: 1px solid var(--theme-glass-border);
+		background: var(--theme-glass-bg, rgba(255, 255, 255, 0.12));
+		color: var(--theme-text-muted);
+		cursor: pointer;
+		display: flex;
+		align-items: center;
+		justify-content: center;
+		font-size: 1rem;
+		transition: background 0.15s, color 0.15s;
+		z-index: 1;
+	}
+
+	.syllabus-expand-btn:hover {
+		background: var(--theme-primary);
+		color: #fff;
+	}
+
+	.syllabus-expand-backdrop {
+		z-index: 1100;
+	}
+
+	.syllabus-expand-card {
+		width: min(900px, 96vw);
+		height: min(80dvh, 700px);
+		border-radius: 1.2rem;
+		border: 1px solid color-mix(in srgb, var(--theme-glass-border) 70%, rgba(255, 255, 255, 0.45));
+		background: linear-gradient(
+			165deg,
+			color-mix(in srgb, var(--theme-modal-surface) 94%, var(--theme-surface)) 0%,
+			color-mix(in srgb, var(--theme-modal-surface) 88%, var(--theme-input-bg)) 100%
+		);
+		box-shadow:
+			0 24px 58px rgba(15, 23, 42, 0.24),
+			inset 0 1px 0 rgba(255, 255, 255, 0.42);
+		overflow: hidden;
+		display: flex;
+		flex-direction: column;
+	}
+
+	.syllabus-expand-body {
+		flex: 1;
+		padding: 1rem;
+		display: flex;
+		flex-direction: column;
+		min-height: 0;
+	}
+
+	.syllabus-expand-textarea {
+		flex: 1;
+		resize: none;
+		font-size: 0.92rem;
+		line-height: 1.6;
+	}
+
+	/* Modal Edit/History tab bar */
+	.modal-head-tabs {
+		display: flex;
+		align-items: center;
+		gap: 1rem;
+	}
+
+	.modal-tab-bar {
+		display: flex;
+		gap: 0.25rem;
+		background: var(--theme-glass-bg, rgba(255, 255, 255, 0.08));
+		border-radius: 0.5rem;
+		padding: 2px;
+	}
+
+	.modal-tab {
+		padding: 0.3rem 0.7rem;
+		border-radius: 0.4rem;
+		border: none;
+		background: transparent;
+		color: var(--theme-text-muted);
+		font-size: 0.78rem;
+		font-weight: 600;
+		cursor: pointer;
+		transition: all 0.15s;
+	}
+
+	.modal-tab.active {
+		background: var(--theme-primary);
+		color: #fff;
+	}
+
+	.modal-tab:hover:not(.active) {
+		color: var(--theme-text-primary);
+	}
+
+	.edit-topic-card {
+		height: min(86dvh, 800px);
+	}
+
+	/* History tab body */
+	.history-body {
+		flex: 1;
+	}
+
+	/* Vertical timeline */
+	.audit-timeline {
+		position: relative;
+		padding-left: 1.5rem;
+	}
+
+	.audit-timeline::before {
+		content: '';
+		position: absolute;
+		left: 7px;
+		top: 0;
+		bottom: 0;
+		width: 2px;
+		background: var(--theme-glass-border, rgba(255, 255, 255, 0.12));
+		border-radius: 1px;
+	}
+
+	.timeline-item {
+		position: relative;
+		padding-bottom: 1.25rem;
+		display: flex;
+		gap: 0.75rem;
+	}
+
+	.timeline-item:last-child {
+		padding-bottom: 0;
+	}
+
+	.timeline-dot {
+		position: absolute;
+		left: -1.5rem;
+		top: 4px;
+		width: 12px;
+		height: 12px;
+		border-radius: 50%;
+		background: var(--theme-primary);
+		border: 2px solid var(--theme-surface, #1e293b);
+		z-index: 1;
+		flex-shrink: 0;
+	}
+
+	.timeline-content {
+		flex: 1;
+		min-width: 0;
+	}
+
+	.timeline-header {
+		display: flex;
+		align-items: center;
+		gap: 0.35rem;
+		flex-wrap: wrap;
+		font-size: 0.82rem;
+	}
+
+	.timeline-user {
+		font-weight: 700;
+		color: var(--theme-text-primary);
+	}
+
+	.timeline-action {
+		color: var(--theme-text-muted);
+		font-style: italic;
+	}
+
+	.timeline-field {
+		padding: 0.1rem 0.4rem;
+		border-radius: 0.3rem;
+		background: color-mix(in srgb, var(--theme-primary) 18%, transparent);
+		color: var(--theme-primary);
+		font-size: 0.72rem;
+		font-weight: 600;
+	}
+
+	.timeline-date {
+		font-size: 0.72rem;
+		color: var(--theme-text-muted);
+		margin-top: 0.2rem;
+	}
+
+	.timeline-diff {
+		margin-top: 0.4rem;
+		border-radius: 0.5rem;
+		overflow: hidden;
+		border: 1px solid var(--theme-glass-border);
+		font-family: 'Menlo', 'Consolas', monospace;
+		font-size: 0.75rem;
+	}
+
+	.diff-line {
+		padding: 0.3rem 0.5rem;
+		white-space: pre-wrap;
+		word-break: break-word;
+	}
+
+	.diff-old {
+		background: rgba(239, 68, 68, 0.1);
+		color: #fca5a5;
+	}
+
+	.diff-new {
+		background: rgba(34, 197, 94, 0.1);
+		color: #86efac;
+	}
+
+	.diff-prefix {
+		font-weight: 700;
+		margin-right: 0.35rem;
+		opacity: 0.7;
+	}
+
+	.doc-uploader {
+		font-style: italic;
+		color: var(--theme-primary);
+	}
+
+	.doc-name.clickable {
+		cursor: pointer;
+		color: var(--theme-primary);
+		text-decoration: underline;
+		text-decoration-color: transparent;
+		transition: text-decoration-color 0.2s;
+	}
+
+	.doc-name.clickable:hover {
+		text-decoration-color: var(--theme-primary);
+	}
+
+	/* Preview Modal */
+	.preview-backdrop {
+		z-index: 1200;
+	}
+
+	.preview-card {
+		width: min(1000px, 98vw);
+		height: min(90dvh, 900px);
+	}
+
+	.preview-body {
+		padding: 0;
+		display: flex;
+		flex: 1;
+		flex-direction: column;
+	}
+
+	.pdf-frame {
+		width: 100%;
+		height: 100%;
+		flex: 1;
+		border: none;
+		border-radius: 0 0 1.2rem 1.2rem;
+		background: #fff; /* PDF viewer is typically white */
 	}
 
 </style>

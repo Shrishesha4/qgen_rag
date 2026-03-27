@@ -26,6 +26,7 @@ export interface ReferenceDocumentItem {
 	upload_timestamp: string | null;
 	processed_at: string | null;
 	parsed_question_count?: number | null;
+	uploaded_by_name?: string;
 }
 
 export interface ReferenceDocumentsResponse {

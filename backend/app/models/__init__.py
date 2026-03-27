@@ -17,6 +17,7 @@ from app.models.training import (
 )
 from app.models.generation_run import GenerationRun
 from app.models.system_settings import SystemSettings, SETTING_SIGNUP_ENABLED
+from app.models.topic_audit import TopicAuditLog
 
 __all__ = [
     "User",
@@ -40,4 +41,5 @@ __all__ = [
     "GenerationRun",
     "SystemSettings",
     "SETTING_SIGNUP_ENABLED",
+    "TopicAuditLog",
 ]

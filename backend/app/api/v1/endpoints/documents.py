@@ -7,6 +7,7 @@ import os
 from typing import Optional, Literal
 
 from fastapi import APIRouter, Depends, HTTPException, status, UploadFile, File, Query, Form
+from fastapi.responses import FileResponse
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.database import get_db
@@ -147,6 +148,38 @@ async def get_document(
         )
     
     return DocumentResponse.model_validate(document)
+
+
+@router.get("/{document_id}/download", response_class=FileResponse)
+async def download_document(
+	document_id: str,
+	current_user: User = Depends(get_current_user),
+	db: AsyncSession = Depends(get_db),
+):
+	"""
+	Download the actual document file.
+	"""
+	document_service = DocumentService(db)
+	
+	document = await document_service.get_document(document_id, current_user.id, all_users=True)
+	
+	if not document:
+		raise HTTPException(
+			status_code=status.HTTP_404_NOT_FOUND,
+			detail="Document not found",
+		)
+		
+	if not os.path.exists(document.storage_path):
+		raise HTTPException(
+			status_code=status.HTTP_404_NOT_FOUND,
+			detail="File not found on disk",
+		)
+		
+	return FileResponse(
+		path=document.storage_path,
+		filename=document.filename,
+		media_type=document.mime_type or "application/pdf"
+	)
 
 
 @router.delete("/{document_id}")
@@ -686,7 +719,11 @@ async def list_reference_documents(
 ):
     """
     List reference documents (books, template papers, and reference questions).
+    Returns documents from ALL users so the edit topic window can show all uploads.
     """
+    from app.core.auth_database import AuthSessionLocal
+    from sqlalchemy import select as sa_select
+
     document_service = DocumentService(db)
     
     documents = await document_service.get_reference_documents(
@@ -694,7 +731,19 @@ async def list_reference_documents(
         subject_id=subject_id,
         index_type=index_type,
         topic_id=topic_id,
+        all_users=True,
     )
+    
+    # Look up user names from auth DB for all unique user_ids
+    unique_user_ids = list({doc.user_id for doc in documents if doc.user_id})
+    user_name_map: dict[str, str] = {}
+    if unique_user_ids:
+        async with AuthSessionLocal() as auth_session:
+            result = await auth_session.execute(
+                sa_select(User.id, User.full_name, User.username).where(User.id.in_(unique_user_ids))
+            )
+            for row in result.fetchall():
+                user_name_map[row[0]] = row[1] or row[2] or "Unknown"
     
     doc_responses = [
         {
@@ -710,6 +759,7 @@ async def list_reference_documents(
             "upload_timestamp": doc.upload_timestamp.isoformat() if doc.upload_timestamp else None,
             "processed_at": doc.processed_at.isoformat() if doc.processed_at else None,
             "parsed_question_count": (doc.document_metadata or {}).get("total_parsed", 0) if doc.index_type == "reference_questions" else None,
+            "uploaded_by_name": user_name_map.get(doc.user_id, "Unknown"),
         }
         for doc in documents
     ]
