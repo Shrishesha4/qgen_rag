@@ -29,6 +29,13 @@ class UserService:
     def __init__(self, db: AsyncSession):
         self.db = db
 
+    @staticmethod
+    def _as_utc(dt: datetime) -> datetime:
+        """Normalize datetime to UTC-aware for safe comparisons."""
+        if dt.tzinfo is None:
+            return dt.replace(tzinfo=timezone.utc)
+        return dt.astimezone(timezone.utc)
+
     async def create_user(self, user_data: UserCreate) -> User:
         """Create a new user."""
         # Check if email exists
@@ -88,16 +95,18 @@ class UserService:
             return None
 
         # Check if account is locked
-        if user.locked_until and user.locked_until > datetime.now(timezone.utc):
-            await self._log_auth_event(
-                user_id=user.id,
-                event_type="login_blocked",
-                ip_address=ip_address,
-                user_agent=user_agent,
-                success=False,
-                error_message="Account locked",
-            )
-            raise ValueError("Account is locked. Please try again later.")
+        if user.locked_until:
+            locked_until = self._as_utc(user.locked_until)
+            if locked_until > datetime.now(timezone.utc):
+                await self._log_auth_event(
+                    user_id=user.id,
+                    event_type="login_blocked",
+                    ip_address=ip_address,
+                    user_agent=user_agent,
+                    success=False,
+                    error_message="Account locked",
+                )
+                raise ValueError("Account is locked. Please try again later.")
 
         # Verify password
         if not verify_password(password, user.password_hash):
