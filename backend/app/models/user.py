@@ -18,6 +18,7 @@ ROLE_TEACHER = "teacher"
 ROLE_VETTER = "vetter"
 ROLE_ADMIN = "admin"
 VALID_ROLES = {ROLE_TEACHER, ROLE_VETTER, ROLE_ADMIN}
+DEFAULT_SECURITY_QUESTION = "What is your security reset word?"
 
 # Permission keys for action-level authorization
 PERMISSION_MANAGE_GROUPS = "can_manage_groups"
@@ -82,6 +83,8 @@ class User(AuthBase):
     failed_login_attempts: Mapped[int] = mapped_column(Integer, default=0)
     locked_until: Mapped[Optional[datetime]] = mapped_column(DateTime)
     password_changed_at: Mapped[Optional[datetime]] = mapped_column(DateTime)
+    security_question: Mapped[Optional[str]] = mapped_column(String(255), default=DEFAULT_SECURITY_QUESTION)
+    security_answer_hash: Mapped[Optional[str]] = mapped_column(String(255))
     
     # Timestamps
     created_at: Mapped[Optional[datetime]] = mapped_column(DateTime, default=datetime.utcnow)

@@ -2,6 +2,7 @@
 	import { onMount } from 'svelte';
 	import { goto } from '$app/navigation';
 	import { session } from '$lib/session';
+	import { DEFAULT_SECURITY_QUESTION } from '$lib/api/auth';
 	import {
 		listAdminUsers,
 		createAdminUser,
@@ -37,6 +38,8 @@
 		username: '',
 		password: '',
 		full_name: '',
+		security_question: DEFAULT_SECURITY_QUESTION,
+		security_answer: '',
 		role: 'teacher',
 		is_active: true,
 		can_manage_groups: true,
@@ -115,11 +118,17 @@
 		success = '';
 		saving = true;
 		try {
+			if (!createPayload.security_question.trim() || !createPayload.security_answer.trim()) {
+				throw new Error('Security question and answer are required');
+			}
+
 			const payload: AdminUserCreateRequest = {
 				email: createPayload.email.trim(),
 				username: createPayload.username.trim().toLowerCase(),
 				password: createPayload.password,
 				full_name: createPayload.full_name?.trim() || undefined,
+				security_question: createPayload.security_question.trim(),
+				security_answer: createPayload.security_answer.trim(),
 				role: createPayload.role,
 				is_active: createPayload.is_active,
 				can_manage_groups: createPayload.can_manage_groups,
@@ -134,6 +143,8 @@
 				username: '',
 				password: '',
 				full_name: '',
+				security_question: DEFAULT_SECURITY_QUESTION,
+				security_answer: '',
 				role: 'teacher',
 				is_active: true,
 				...defaultPermissionsForRole('teacher')
@@ -280,6 +291,14 @@
 				<label class="field">
 					<span>Password</span>
 					<input bind:value={createPayload.password} type="password" placeholder="At least 8 characters" />
+				</label>
+				<label class="field field-span-2">
+					<span>Security Question</span>
+					<input bind:value={createPayload.security_question} type="text" placeholder="Set a password reset question" />
+				</label>
+				<label class="field">
+					<span>Security Answer</span>
+					<input bind:value={createPayload.security_answer} type="text" placeholder="Answer used for password reset" />
 				</label>
 				<label class="field">
 					<span>Role</span>
@@ -626,6 +645,10 @@
 		gap: 0.35rem;
 	}
 
+	.field-span-2 {
+		grid-column: span 2;
+	}
+
 	.field span {
 		font-size: 0.78rem;
 		color: var(--theme-text-muted);
@@ -873,6 +896,10 @@
 
 		.create-grid {
 			grid-template-columns: 1fr;
+		}
+
+		.field-span-2 {
+			grid-column: span 1;
 		}
 	}
 </style>

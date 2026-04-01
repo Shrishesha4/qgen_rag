@@ -10,16 +10,19 @@ Phase 4 of the Dual-Engine self-correcting loop:
 This service runs as a background pipeline, independent of the web request cycle.
 """
 
+import asyncio
 import json
 import logging
 import math
 import os
 import re
+import time
 import uuid
 import hashlib
+from collections import Counter, defaultdict
 from datetime import datetime, timezone, timedelta
 from pathlib import Path
-from typing import Optional, Any
+from typing import Optional, Any, Iterable
 
 from sqlalchemy import select, func, update, desc
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -48,6 +51,7 @@ from app.services.metrics_service import (
     generation_timeout_rate,
     training_job_success_rate,
 )
+from app.services.llm_service import LLMService, LLMError
 
 
 logger = logging.getLogger(__name__)
@@ -73,6 +77,44 @@ DEFAULT_MAX_DPO_SAMPLES = int(os.environ.get("DEFAULT_MAX_DPO_SAMPLES", "5000"))
 DEFAULT_SAMPLE_STRATEGY = os.environ.get("DEFAULT_SAMPLE_STRATEGY", "recent_first")
 MIN_SOURCE_CONTEXT_LENGTH = int(os.environ.get("MIN_SOURCE_CONTEXT_LENGTH", "50"))
 VALID_SAMPLE_STRATEGIES = {"recent_first", "stratified", "random"}
+REFERENCE_DATASET_PREFIXES = {
+        "training": "ds",
+        "evaluation": "eval",
+        "holdout": "holdout",
+        "anchor": "anchor",
+}
+REFERENCE_DATASET_ROLES = tuple(REFERENCE_DATASET_PREFIXES.keys())
+
+STRICT_EVAL_SYSTEM_PROMPT = """You are a strict evaluator for university exam-question generation systems.
+
+Evaluate the candidate response against the requested specification, topic, difficulty, and source context.
+Return ONLY JSON with this exact schema:
+{
+    "format_correctness": <float 0 to 1>,
+    "difficulty_alignment": <float 0 to 1>,
+    "topic_relevance": <float 0 to 1>,
+    "hallucination_error_rate": <float 0 to 1>,
+    "accept": <true or false>,
+    "notes": ["short issue or strength notes"]
+}
+
+Acceptance rule: true only when the response is well-formed, on-topic, difficulty-aligned, and does not introduce unsupported claims.
+Do not include any prose outside JSON."""
+
+STRICT_EVAL_USER_TEMPLATE = """Requested question contract:
+Type: {question_type}
+Difficulty: {difficulty}
+Topic: {topic}
+
+Source context:
+{source_context}
+
+Reference accepted output:
+{reference_output}
+
+Candidate model output:
+{candidate_output}
+"""
 
 
 class TrainingService:
@@ -427,19 +469,23 @@ class TrainingService:
         self,
         *,
         dataset_tag: str,
+        dataset_role: str,
         created_at: datetime,
         snapshot_filter: dict[str, Any],
         sample_counts: dict[str, int],
         composition: dict[str, Any],
+        sample_ids: Optional[dict[str, list[str]]] = None,
         quality_metrics: Optional[dict[str, Any]] = None,
     ) -> dict[str, Any]:
         return {
-            "schema_version": 3,
+            "schema_version": 4,
             "dataset_tag": dataset_tag,
+            "dataset_role": dataset_role,
             "created_at": created_at.isoformat(),
             "snapshot_filter": snapshot_filter,
             "sample_counts": sample_counts,
             "composition": composition,
+            "sample_ids": sample_ids or {},
             "quality_metrics": quality_metrics or {},
             "data_contract": {
                 "sft": {
@@ -517,6 +563,663 @@ class TrainingService:
             return adapter_path.strip()
         return None
 
+    @staticmethod
+    def _default_base_model() -> str:
+        return settings.TRAINING_PRIMARY_BASE_MODEL or BASE_MODEL_NAME
+
+    @staticmethod
+    def _dataset_prefix_for_role(role: Optional[str]) -> str:
+        normalized = str(role or "training").strip().lower()
+        return REFERENCE_DATASET_PREFIXES.get(normalized, REFERENCE_DATASET_PREFIXES["training"])
+
+    @classmethod
+    def _dataset_role_from_tag(cls, dataset_tag: Optional[str]) -> str:
+        normalized = str(dataset_tag or "").strip().lower()
+        if normalized in REFERENCE_DATASET_ROLES:
+            return normalized
+        for role, prefix in REFERENCE_DATASET_PREFIXES.items():
+            if normalized.startswith(f"{prefix}-"):
+                return role
+        return "training"
+
+    @staticmethod
+    def _stable_rank(value: str, salt: str = "") -> int:
+        payload = f"{salt}:{value}".encode("utf-8")
+        return int(hashlib.sha256(payload).hexdigest(), 16)
+
+    @staticmethod
+    def _safe_mean(values: Iterable[Optional[float]]) -> float:
+        cleaned = [float(value) for value in values if value is not None]
+        if not cleaned:
+            return 0.0
+        return float(sum(cleaned) / len(cleaned))
+
+    @staticmethod
+    def _distribution_shares(distribution: dict[str, int]) -> dict[str, float]:
+        total = int(sum(distribution.values()))
+        if total <= 0:
+            return {}
+        return {
+            key: float(value / total)
+            for key, value in distribution.items()
+            if value > 0
+        }
+
+    @classmethod
+    def _total_variation_distance(
+        cls,
+        current_distribution: dict[str, int],
+        reference_distribution: dict[str, int],
+    ) -> float:
+        current = cls._distribution_shares(current_distribution)
+        reference = cls._distribution_shares(reference_distribution)
+        labels = set(current) | set(reference)
+        if not labels:
+            return 0.0
+        return round(
+            0.5 * sum(abs(current.get(label, 0.0) - reference.get(label, 0.0)) for label in labels),
+            4,
+        )
+
+    @staticmethod
+    def _percentile(values: list[float], percentile: float) -> float:
+        if not values:
+            return 0.0
+        ordered = sorted(values)
+        index = max(0, min(len(ordered) - 1, int(math.ceil((percentile / 100.0) * len(ordered))) - 1))
+        return float(ordered[index])
+
+    @classmethod
+    def _question_quality_score(cls, question: Question) -> float:
+        return round(
+            cls._average_quality_signal(
+                question.answerability_score,
+                question.specificity_score,
+                question.generation_confidence,
+                question.novelty_score,
+            ),
+            4,
+        )
+
+    @staticmethod
+    def _load_manifest(manifest_path: Optional[str]) -> dict[str, Any]:
+        resolved_path = (manifest_path or "").strip()
+        if not resolved_path or not os.path.exists(resolved_path):
+            return {}
+        with open(resolved_path, "r") as handle:
+            return json.load(handle)
+
+    @staticmethod
+    def _extract_manifest_question_ids(manifest: dict[str, Any]) -> list[str]:
+        sample_ids = manifest.get("sample_ids") if isinstance(manifest, dict) else {}
+        question_ids = sample_ids.get("sft_question_ids") if isinstance(sample_ids, dict) else []
+        return [str(question_id) for question_id in (question_ids or []) if question_id]
+
+    @staticmethod
+    def _extract_manifest_pair_ids(manifest: dict[str, Any]) -> list[str]:
+        sample_ids = manifest.get("sample_ids") if isinstance(manifest, dict) else {}
+        pair_ids = sample_ids.get("dpo_pair_ids") if isinstance(sample_ids, dict) else []
+        return [str(pair_id) for pair_id in (pair_ids or []) if pair_id]
+
+    @staticmethod
+    def _tokenizer_fingerprint_from_tokenizer(tokenizer: Any) -> dict[str, Any]:
+        return {
+            "name_or_path": getattr(tokenizer, "name_or_path", None),
+            "vocab_size": int(len(tokenizer)) if hasattr(tokenizer, "__len__") else None,
+            "bos_token_id": getattr(tokenizer, "bos_token_id", None),
+            "eos_token_id": getattr(tokenizer, "eos_token_id", None),
+            "pad_token_id": getattr(tokenizer, "pad_token_id", None),
+            "unk_token_id": getattr(tokenizer, "unk_token_id", None),
+        }
+
+    @staticmethod
+    def _compare_tokenizer_fingerprints(
+        expected: Optional[dict[str, Any]],
+        actual: dict[str, Any],
+    ) -> tuple[bool, str]:
+        if not expected:
+            return (True, "no_expected_fingerprint")
+
+        drift_fields = [
+            field
+            for field in ("vocab_size", "bos_token_id", "eos_token_id", "pad_token_id", "unk_token_id")
+            if expected.get(field) != actual.get(field)
+        ]
+        if drift_fields:
+            return (
+                False,
+                "tokenizer drift detected in: " + ", ".join(drift_fields),
+            )
+        return (True, "match")
+
+    @classmethod
+    def _build_inference_prompt(cls, question: Question) -> str:
+        instruction = cls._build_sft_instruction(question)
+        input_text = cls._build_sft_input(question)
+        if input_text:
+            return f"### Instruction:\n{instruction}\n\n### Input:\n{input_text}\n\n### Response:\n"
+        return f"### Instruction:\n{instruction}\n\n### Response:\n"
+
+    @staticmethod
+    def _deterministic_format_score(response_text: str, question_type: Optional[str]) -> float:
+        text = (response_text or "").strip()
+        if not text:
+            return 0.0
+
+        required_sections = ["Question:", "Correct Answer:", "Explanation:"]
+        score = 0.0
+        for section in required_sections:
+            if section.lower() in text.lower():
+                score += 1.0
+
+        normalized_type = str(question_type or "").strip().lower()
+        if normalized_type in {"mcq", "multiple_choice", "multiple-choice"}:
+            if "Options:" in text:
+                option_lines = re.findall(r"^[A-D][\).:-]\s+.+$", text, flags=re.MULTILINE)
+                if len(option_lines) >= 4:
+                    score += 1.0
+        else:
+            score += 1.0
+
+        return round(score / 4.0, 4)
+
+    async def _get_dataset_by_role(
+        self,
+        db: AsyncSession,
+        role: str,
+    ) -> Optional[TrainingDataset]:
+        prefix = self._dataset_prefix_for_role(role)
+        result = await db.execute(
+            select(TrainingDataset)
+            .where(TrainingDataset.dataset_tag.like(f"{prefix}-%"))
+            .order_by(desc(TrainingDataset.created_at))
+            .limit(1)
+        )
+        return result.scalar_one_or_none()
+
+    async def _reference_dataset_bundle(
+        self,
+        db: AsyncSession,
+        role: str,
+    ) -> dict[str, Any]:
+        dataset = await self._get_dataset_by_role(db, role)
+        manifest = self._load_manifest(dataset.manifest_path) if dataset else {}
+        question_ids = self._extract_manifest_question_ids(manifest)
+        pair_ids = self._extract_manifest_pair_ids(manifest)
+        sample_counts = dataset.sample_counts if dataset and isinstance(dataset.sample_counts, dict) else {}
+        return {
+            "role": role,
+            "dataset": dataset,
+            "manifest": manifest,
+            "question_ids": question_ids,
+            "pair_ids": pair_ids,
+            "available": dataset is not None,
+            "dataset_tag": dataset.dataset_tag if dataset else None,
+            "created_at": dataset.created_at.isoformat() if dataset and dataset.created_at else None,
+            "sample_count": len(question_ids) if question_ids else int(sample_counts.get("sft", 0)),
+        }
+
+    def _select_reference_question_ids(
+        self,
+        questions: list[Question],
+        target_size: int,
+        role: str,
+    ) -> list[str]:
+        if target_size <= 0 or not questions:
+            return []
+
+        def sort_key(question: Question) -> tuple[Any, ...]:
+            quality = self._question_quality_score(question)
+            novelty = float(question.novelty_score or 0.0)
+            vetted_at = question.vetted_at or datetime.min.replace(tzinfo=timezone.utc)
+
+            if role == "anchor":
+                return (-quality, vetted_at, self._stable_rank(str(question.id), role))
+            if role == "evaluation":
+                return (novelty, -quality, self._stable_rank(str(question.id), role))
+            return (self._stable_rank(str(question.id), role), vetted_at)
+
+        buckets: dict[str, list[Question]] = defaultdict(list)
+        for question in questions:
+            difficulty = str(question.difficulty_level or "unknown").strip().lower()
+            buckets[difficulty].append(question)
+
+        labels = ["easy", "medium", "hard", "unknown"]
+        for label in labels:
+            buckets[label].sort(key=sort_key)
+
+        selected_ids: list[str] = []
+        seen_ids: set[str] = set()
+
+        while len(selected_ids) < target_size:
+            progressed = False
+            for label in labels:
+                while buckets[label]:
+                    candidate = buckets[label].pop(0)
+                    if candidate.id in seen_ids:
+                        continue
+                    seen_ids.add(candidate.id)
+                    selected_ids.append(str(candidate.id))
+                    progressed = True
+                    break
+                if len(selected_ids) >= target_size:
+                    break
+            if not progressed:
+                break
+
+        if len(selected_ids) < target_size:
+            remaining = [question for question in questions if question.id not in seen_ids]
+            remaining.sort(key=sort_key)
+            for question in remaining:
+                if len(selected_ids) >= target_size:
+                    break
+                selected_ids.append(str(question.id))
+
+        return selected_ids[:target_size]
+
+    async def _ensure_reference_datasets(
+        self,
+        db: AsyncSession,
+        created_by: str = "system",
+    ) -> dict[str, Any]:
+        bundles = {
+            role: await self._reference_dataset_bundle(db, role)
+            for role in ("evaluation", "holdout", "anchor")
+        }
+        if all(bundle["available"] for bundle in bundles.values()):
+            return bundles
+
+        approved_result = await db.execute(
+            select(Question)
+            .where(
+                Question.vetting_status == "approved",
+                Question.is_latest == True,
+            )
+        )
+        approved_questions = list(approved_result.scalars().all())
+
+        reserved_ids = set()
+        for bundle in bundles.values():
+            reserved_ids.update(bundle["question_ids"])
+
+        available_questions = [
+            question for question in approved_questions if str(question.id) not in reserved_ids
+        ]
+
+        dataset_sizes = {
+            "evaluation": settings.TRAINING_REFERENCE_EVAL_SIZE,
+            "holdout": settings.TRAINING_REFERENCE_HOLDOUT_SIZE,
+            "anchor": settings.TRAINING_REFERENCE_ANCHOR_SIZE,
+        }
+
+        for role in ("evaluation", "holdout", "anchor"):
+            if bundles[role]["available"]:
+                continue
+
+            target_size = int(dataset_sizes[role])
+            selected_ids = self._select_reference_question_ids(
+                available_questions,
+                target_size=target_size,
+                role=role,
+            )
+            if not selected_ids:
+                logger.warning(
+                    "Unable to bootstrap %s reference dataset: no eligible approved questions.",
+                    role,
+                )
+                continue
+
+            snapshot_filter = {
+                "dataset_role": role,
+                "immutable": True,
+                "question_ids": selected_ids,
+            }
+            await self.build_dataset_snapshot(
+                db=db,
+                created_by=created_by,
+                snapshot_filter=snapshot_filter,
+            )
+
+            selected_set = set(selected_ids)
+            available_questions = [
+                question for question in available_questions if str(question.id) not in selected_set
+            ]
+            bundles[role] = await self._reference_dataset_bundle(db, role)
+
+        return bundles
+
+    async def _select_policy_training_questions(
+        self,
+        db: AsyncSession,
+        since: datetime,
+        cap: int,
+        strategy: str,
+    ) -> tuple[list[Question], dict[str, int]]:
+        bundles = await self._ensure_reference_datasets(db, created_by="system:policy")
+        excluded_ids = set(bundles["evaluation"]["question_ids"]) | set(bundles["holdout"]["question_ids"])
+        anchor_ids = [
+            question_id
+            for question_id in bundles["anchor"]["question_ids"]
+            if question_id not in excluded_ids
+        ]
+
+        recent_fraction = min(max(float(settings.TRAINING_RECENT_DATA_FRACTION), 0.6), 0.8)
+        recent_cap = cap
+        anchor_cap = 0
+        if anchor_ids:
+            recent_cap = max(1, int(round(cap * recent_fraction)))
+            anchor_cap = max(0, cap - recent_cap)
+
+        base_filters = [
+            Question.vetting_status == "approved",
+            Question.is_latest == True,
+            Question.vetted_at >= since,
+        ]
+        if excluded_ids:
+            base_filters.append(Question.id.notin_(list(excluded_ids)))
+
+        if strategy == "stratified":
+            recent_questions = await self._stratified_sample_sft(db, base_filters, recent_cap)
+        elif strategy == "random":
+            recent_query = (
+                select(Question)
+                .where(*base_filters)
+                .order_by(func.random())
+                .limit(recent_cap)
+            )
+            recent_questions = list((await db.execute(recent_query)).scalars().all())
+        else:
+            recent_query = (
+                select(Question)
+                .where(*base_filters)
+                .order_by(Question.vetted_at.desc())
+                .limit(recent_cap)
+            )
+            recent_questions = list((await db.execute(recent_query)).scalars().all())
+
+        anchor_questions: list[Question] = []
+        if anchor_cap > 0 and anchor_ids:
+            anchor_query = select(Question).where(Question.id.in_(anchor_ids))
+            anchor_questions = list((await db.execute(anchor_query)).scalars().all())
+            anchor_questions.sort(
+                key=lambda question: (
+                    -self._question_quality_score(question),
+                    question.vetted_at or datetime.min.replace(tzinfo=timezone.utc),
+                )
+            )
+            anchor_questions = anchor_questions[:anchor_cap]
+
+        selected_questions: list[Question] = []
+        seen_ids: set[str] = set()
+        for question in recent_questions + anchor_questions:
+            question_id = str(question.id)
+            if question_id in seen_ids:
+                continue
+            seen_ids.add(question_id)
+            selected_questions.append(question)
+
+        if len(selected_questions) < cap and anchor_ids:
+            remaining_anchor = [
+                question for question in anchor_questions if str(question.id) not in seen_ids
+            ]
+            for question in remaining_anchor:
+                if len(selected_questions) >= cap:
+                    break
+                seen_ids.add(str(question.id))
+                selected_questions.append(question)
+
+        return (
+            selected_questions[:cap],
+            {
+                "recent": sum(1 for question in selected_questions if str(question.id) not in set(anchor_ids)),
+                "anchor": sum(1 for question in selected_questions if str(question.id) in set(anchor_ids)),
+            },
+        )
+
+    async def _latest_completed_training_job(self, db: AsyncSession) -> Optional[TrainingJob]:
+        result = await db.execute(
+            select(TrainingJob)
+            .where(TrainingJob.status == "completed")
+            .order_by(desc(TrainingJob.completed_at), desc(TrainingJob.created_at))
+            .limit(1)
+        )
+        return result.scalar_one_or_none()
+
+    async def _latest_completed_sft_version(self, db: AsyncSession) -> Optional[ModelVersion]:
+        result = await db.execute(
+            select(ModelVersion)
+            .where(
+                ModelVersion.status == "completed",
+                ModelVersion.sft_samples_count > 0,
+            )
+            .order_by(desc(ModelVersion.training_completed_at), desc(ModelVersion.created_at))
+            .limit(1)
+        )
+        return result.scalar_one_or_none()
+
+    async def _compute_pending_pair_diversity(
+        self,
+        db: AsyncSession,
+        since: datetime,
+    ) -> tuple[float, dict[str, Any]]:
+        pair_result = await db.execute(
+            select(TrainingPair)
+            .where(
+                TrainingPair.status.in_(["pending", "queued"]),
+                TrainingPair.created_at >= since,
+            )
+        )
+        pairs = list(pair_result.scalars().all())
+        if not pairs:
+            return (0.0, {"pair_count": 0})
+
+        pair_type_counts = Counter(str(pair.pair_type or "unknown") for pair in pairs)
+        reason_codes = {
+            code
+            for pair in pairs
+            for code in (pair.rejected_reason_codes or [])
+            if code
+        }
+        languages = {str(pair.language or "unknown") for pair in pairs if pair.language}
+
+        chosen_question_ids = [pair.chosen_question_id for pair in pairs if pair.chosen_question_id]
+        difficulty_counts: Counter[str] = Counter()
+        if chosen_question_ids:
+            question_rows = await db.execute(
+                select(Question.difficulty_level)
+                .where(Question.id.in_(chosen_question_ids))
+            )
+            difficulty_counts.update(
+                str(row[0] or "unknown") for row in question_rows.all()
+            )
+
+        diversity_score = round(
+            self._safe_mean(
+                [
+                    min(1.0, len(pair_type_counts) / 4.0),
+                    min(1.0, len(reason_codes) / 5.0),
+                    min(1.0, len(difficulty_counts) / 3.0),
+                    min(1.0, len(languages) / 2.0),
+                ]
+            ),
+            4,
+        )
+        return (
+            diversity_score,
+            {
+                "pair_count": len(pairs),
+                "pair_type_distribution": dict(pair_type_counts),
+                "reason_code_count": len(reason_codes),
+                "difficulty_distribution": dict(difficulty_counts),
+                "language_count": len(languages),
+            },
+        )
+
+    async def evaluate_auto_training_policy(
+        self,
+        db: AsyncSession,
+        *,
+        created_by: str = "system",
+        bootstrap_reference_datasets: bool = True,
+    ) -> dict[str, Any]:
+        if bootstrap_reference_datasets:
+            reference_bundles = await self._ensure_reference_datasets(db, created_by=created_by)
+        else:
+            reference_bundles = {
+                role: await self._reference_dataset_bundle(db, role)
+                for role in ("evaluation", "holdout", "anchor")
+            }
+        reference_ready = all(
+            bundle["available"] for bundle in reference_bundles.values()
+        )
+
+        latest_job = await self._latest_completed_training_job(db)
+        latest_sft_version = await self._latest_completed_sft_version(db)
+        since = latest_job.completed_at if latest_job and latest_job.completed_at else self._resolve_training_since(days=DEFAULT_TRAINING_WINDOW_DAYS)
+        hours_since_last_training = (
+            (datetime.now(timezone.utc) - latest_job.completed_at).total_seconds() / 3600.0
+            if latest_job and latest_job.completed_at
+            else float("inf")
+        )
+
+        approved_result = await db.execute(
+            select(Question)
+            .where(
+                Question.vetting_status == "approved",
+                Question.is_latest == True,
+                Question.vetted_at >= since,
+            )
+        )
+        recent_questions = list(approved_result.scalars().all())
+
+        quality_result = await db.execute(
+            select(func.avg(VettingLog.quality_score)).where(
+                VettingLog.decision == "approve",
+                VettingLog.created_at >= since,
+            )
+        )
+        review_quality_score = quality_result.scalar()
+
+        recent_difficulty_counts = Counter(
+            str(question.difficulty_level or "unknown") for question in recent_questions
+        )
+        recent_type_counts = Counter(
+            str(question.question_type or "unknown") for question in recent_questions
+        )
+        data_quality_score = round(
+            self._average_quality_signal(
+                review_quality_score,
+                self._safe_mean(question.answerability_score for question in recent_questions),
+                self._safe_mean(question.specificity_score for question in recent_questions),
+                self._safe_mean(question.generation_confidence for question in recent_questions),
+            ),
+            4,
+        )
+        novelty_score = round(
+            self._safe_mean(question.novelty_score for question in recent_questions),
+            4,
+        )
+
+        dynamic_threshold = settings.AUTO_TRAINING_SFT_BASE_THRESHOLD
+        if data_quality_score > settings.AUTO_TRAINING_HIGH_QUALITY_THRESHOLD:
+            dynamic_threshold = settings.AUTO_TRAINING_SFT_MIN_THRESHOLD
+        elif data_quality_score < settings.AUTO_TRAINING_LOW_QUALITY_THRESHOLD:
+            dynamic_threshold = settings.AUTO_TRAINING_SFT_MAX_THRESHOLD
+
+        anchor_manifest = reference_bundles["anchor"].get("manifest") or {}
+        anchor_composition = anchor_manifest.get("composition") if isinstance(anchor_manifest, dict) else {}
+        anchor_sft = anchor_composition.get("sft") if isinstance(anchor_composition, dict) else {}
+        difficulty_shift = self._total_variation_distance(
+            dict(recent_difficulty_counts),
+            anchor_sft.get("by_difficulty", {}) if isinstance(anchor_sft, dict) else {},
+        )
+        type_shift = self._total_variation_distance(
+            dict(recent_type_counts),
+            anchor_sft.get("by_question_type", {}) if isinstance(anchor_sft, dict) else {},
+        )
+        distribution_shift_score = round(self._safe_mean([difficulty_shift, type_shift]), 4)
+
+        pair_diversity_score, pair_diversity_details = await self._compute_pending_pair_diversity(db, since)
+        pending_pair_count = int(pair_diversity_details.get("pair_count", 0))
+        recent_sft_checkpoint_exists = latest_sft_version is not None and bool(
+            latest_sft_version.training_completed_at
+            and latest_sft_version.training_completed_at >= self._resolve_training_since(days=DEFAULT_TRAINING_WINDOW_DAYS)
+        )
+
+        interval_ready = hours_since_last_training >= float(settings.AUTO_TRAINING_MIN_INTERVAL_HOURS)
+        sft_ready = (
+            reference_ready
+            and len(recent_questions) >= int(dynamic_threshold)
+            and interval_ready
+            and novelty_score >= float(settings.AUTO_TRAINING_MIN_NOVELTY_SCORE)
+        )
+        dpo_ready = (
+            pending_pair_count >= int(settings.AUTO_TRAINING_DPO_MIN_PAIRS)
+            and pair_diversity_score >= float(settings.AUTO_TRAINING_DPO_MIN_DIVERSITY_SCORE)
+            and recent_sft_checkpoint_exists
+        )
+
+        training_method = "skip"
+        if sft_ready and dpo_ready:
+            training_method = "sft+dpo"
+        elif sft_ready:
+            training_method = "sft"
+        elif dpo_ready:
+            training_method = "dpo"
+
+        reasons: list[str] = []
+        if not reference_ready and settings.TRAINING_REFERENCE_DATASETS_REQUIRED:
+            reasons.append("reference datasets not ready")
+        if not interval_ready:
+            reasons.append("minimum interval since last training not reached")
+        if len(recent_questions) < int(dynamic_threshold):
+            reasons.append("insufficient newly approved SFT samples")
+        if novelty_score < float(settings.AUTO_TRAINING_MIN_NOVELTY_SCORE):
+            reasons.append("recent data novelty below floor")
+        if pending_pair_count < int(settings.AUTO_TRAINING_DPO_MIN_PAIRS):
+            reasons.append("insufficient DPO preference pairs")
+        if pair_diversity_score < float(settings.AUTO_TRAINING_DPO_MIN_DIVERSITY_SCORE):
+            reasons.append("DPO pair diversity below floor")
+        if not recent_sft_checkpoint_exists:
+            reasons.append("recent SFT checkpoint unavailable")
+
+        return {
+            "should_train": training_method != "skip",
+            "training_method": training_method,
+            "reason": "training triggered" if training_method != "skip" else "; ".join(dict.fromkeys(reasons)) or "no trigger conditions met",
+            "reasons": list(dict.fromkeys(reasons)),
+            "inputs": {
+                "new_vetted_samples": len(recent_questions),
+                "data_quality_score": data_quality_score,
+                "data_novelty_score": novelty_score,
+                "dynamic_sft_threshold": int(dynamic_threshold),
+                "hours_since_last_training": round(hours_since_last_training, 2) if math.isfinite(hours_since_last_training) else None,
+                "pending_preference_pairs": pending_pair_count,
+                "pair_diversity_score": pair_diversity_score,
+                "recent_sft_checkpoint_exists": recent_sft_checkpoint_exists,
+                "distribution_shift_score": distribution_shift_score,
+            },
+            "distribution_shift": {
+                "overall": distribution_shift_score,
+                "difficulty": difficulty_shift,
+                "question_type": type_shift,
+            },
+            "pair_diversity": pair_diversity_details,
+            "reference_datasets": {
+                role: {
+                    "available": bundle["available"],
+                    "dataset_tag": bundle["dataset_tag"],
+                    "sample_count": bundle["sample_count"],
+                    "created_at": bundle["created_at"],
+                }
+                for role, bundle in reference_bundles.items()
+            },
+            "benchmark_models": {
+                "primary": self._default_base_model(),
+                "secondary": settings.TRAINING_BENCHMARK_BASE_MODEL,
+            },
+        }
+
     # ═══════════════════════════════════════════
     # Phase 1: SFT Data Preparation
     # ═══════════════════════════════════════════
@@ -552,32 +1255,44 @@ class TrainingService:
             logger.warning("Unknown sample_strategy '%s', falling back to 'recent_first'", strategy)
             strategy = "recent_first"
 
-        base_filters = [
-            Question.vetting_status == "approved",
-            Question.is_latest == True,
-            Question.vetted_at >= since,
-        ]
+        mix_counts = {"recent": 0, "anchor": 0}
+        questions: list[Question] = []
+        if settings.TRAINING_REFERENCE_DATASETS_REQUIRED:
+            questions, mix_counts = await self._select_policy_training_questions(
+                db=db,
+                since=since,
+                cap=cap,
+                strategy=strategy,
+            )
 
-        if strategy == "stratified":
-            questions = await self._stratified_sample_sft(db, base_filters, cap)
-        elif strategy == "random":
-            query = (
-                select(Question)
-                .where(*base_filters)
-                .order_by(func.random())
-                .limit(cap)
-            )
-            result = await db.execute(query)
-            questions = list(result.scalars().all())
-        else:
-            query = (
-                select(Question)
-                .where(*base_filters)
-                .order_by(Question.vetted_at.asc())
-                .limit(cap)
-            )
-            result = await db.execute(query)
-            questions = list(result.scalars().all())
+        if not questions:
+            base_filters = [
+                Question.vetting_status == "approved",
+                Question.is_latest == True,
+                Question.vetted_at >= since,
+            ]
+
+            if strategy == "stratified":
+                questions = await self._stratified_sample_sft(db, base_filters, cap)
+            elif strategy == "random":
+                query = (
+                    select(Question)
+                    .where(*base_filters)
+                    .order_by(func.random())
+                    .limit(cap)
+                )
+                result = await db.execute(query)
+                questions = list(result.scalars().all())
+            else:
+                query = (
+                    select(Question)
+                    .where(*base_filters)
+                    .order_by(Question.vetted_at.desc())
+                    .limit(cap)
+                )
+                result = await db.execute(query)
+                questions = list(result.scalars().all())
+                mix_counts["recent"] = len(questions)
 
         if not questions:
             logger.info("No approved questions since %s — nothing to export.", since)
@@ -624,8 +1339,15 @@ class TrainingService:
             logger.warning("SFT export: %d samples skipped due to empty output", skipped_empty_output)
 
         logger.info(
-            "Exported %d SFT samples to %s (strategy=%s, cap=%d, skipped_context=%d, skipped_empty=%d)",
-            count, output_path, strategy, cap, skipped_no_context, skipped_empty_output,
+            "Exported %d SFT samples to %s (strategy=%s, cap=%d, recent=%d, anchor=%d, skipped_context=%d, skipped_empty=%d)",
+            count,
+            output_path,
+            strategy,
+            cap,
+            mix_counts.get("recent", 0),
+            mix_counts.get("anchor", 0),
+            skipped_no_context,
+            skipped_empty_output,
         )
         return (str(output_path), count)
 
@@ -718,7 +1440,7 @@ class TrainingService:
             logger.warning("Unknown sample_strategy '%s' for DPO, falling back to 'recent_first'", strategy)
             strategy = "recent_first"
 
-        order_clause = func.random() if strategy == "random" else TrainingPair.created_at.asc()
+        order_clause = func.random() if strategy == "random" else TrainingPair.created_at.desc()
 
         query = (
             select(TrainingPair)
@@ -726,6 +1448,7 @@ class TrainingService:
                 TrainingPair.status == "pending",
                 TrainingPair.created_at >= since,
                 TrainingPair.chosen_response != "",
+                (TrainingPair.source_split.is_(None) | (TrainingPair.source_split == "train")),
             )
             .order_by(order_clause)
             .limit(cap)
@@ -825,6 +1548,7 @@ class TrainingService:
         idempotency_key: Optional[str] = None,
         max_samples: Optional[int] = None,
         sample_strategy: Optional[str] = None,
+        policy_snapshot: Optional[dict[str, Any]] = None,
     ) -> dict:
         """
         Trigger a new fine-tuning job.
@@ -837,21 +1561,33 @@ class TrainingService:
 
         Returns status dict with job_id, version_id, sample counts.
         """
-        base_model = base_model or BASE_MODEL_NAME
+        base_model = base_model or self._default_base_model()
         default_hp = {
-            "learning_rate": 2e-4,
-            "num_epochs": 3,
+            "learning_rate": 2e-5,
+            "num_epochs": 2,
             "batch_size": 4,
             "gradient_accumulation_steps": 4,
             "lora_r": 16,
             "lora_alpha": 32,
             "lora_dropout": 0.05,
             "max_seq_length": 2048,
-            "warmup_steps": 0,
+            "warmup_ratio": settings.TRAINING_MAX_WARMUP_RATIO,
             "weight_decay": 0.01,
+            "max_grad_norm": 1.0,
+            "early_stopping_patience": settings.TRAINING_EARLY_STOPPING_PATIENCE,
+            "peft_method": settings.TRAINING_PREFERRED_PEFT_METHOD,
         }
         if hyperparameters:
             default_hp.update(hyperparameters)
+        default_hp["learning_rate"] = min(
+            max(float(default_hp.get("learning_rate", 2e-5)), settings.TRAINING_MIN_LEARNING_RATE),
+            settings.TRAINING_MAX_LEARNING_RATE,
+        )
+        default_hp["warmup_ratio"] = min(
+            max(float(default_hp.get("warmup_ratio", settings.TRAINING_MAX_WARMUP_RATIO)), 0.0),
+            settings.TRAINING_MAX_WARMUP_RATIO,
+        )
+        default_hp.pop("warmup_steps", None)
 
         resolved_parent_adapter_path = self._normalize_adapter_path(
             parent_adapter_path or default_hp.get("parent_adapter_path")
@@ -907,6 +1643,40 @@ class TrainingService:
             parent_version = parent_version_result.scalar_one_or_none()
             if parent_version:
                 parent_id = parent_version.id
+
+        tokenizer_fingerprint = None
+        fingerprint_source_version = parent_version if resolved_parent_adapter_path and 'parent_version' in locals() else active_version
+        if settings.TRAINING_ENABLE_TOKENIZER_DRIFT_CHECK:
+            from transformers import AutoTokenizer  # type: ignore
+
+            tokenizer = AutoTokenizer.from_pretrained(self._resolve_model_source(base_model))
+            if tokenizer.pad_token is None:
+                tokenizer.pad_token = tokenizer.eos_token
+            tokenizer_fingerprint = self._tokenizer_fingerprint_from_tokenizer(tokenizer)
+
+            expected_fingerprint = None
+            if fingerprint_source_version and isinstance(fingerprint_source_version.hyperparameters, dict):
+                expected_fingerprint = fingerprint_source_version.hyperparameters.get("tokenizer_fingerprint")
+
+            matches, fingerprint_reason = self._compare_tokenizer_fingerprints(
+                expected_fingerprint,
+                tokenizer_fingerprint,
+            )
+            if not matches:
+                return {
+                    "status": "error",
+                    "message": fingerprint_reason,
+                    "base_model": base_model,
+                    "tokenizer_fingerprint": tokenizer_fingerprint,
+                }
+            default_hp["tokenizer_fingerprint"] = tokenizer_fingerprint
+
+        if policy_snapshot:
+            default_hp["policy_snapshot"] = policy_snapshot
+        default_hp["benchmark_models"] = {
+            "primary": self._default_base_model(),
+            "secondary": settings.TRAINING_BENCHMARK_BASE_MODEL,
+        }
 
         # Determine next version tag
         count_result = await db.execute(
@@ -1040,6 +1810,7 @@ class TrainingService:
             "idempotency_key": resolved_idempotency_key,
             "queue": queue_result,
             "hyperparameters": default_hp,
+            "policy": policy_snapshot,
         }
 
     async def run_training_job(self, job_id: str, db: AsyncSession) -> dict:
@@ -1107,24 +1878,29 @@ class TrainingService:
             )
             await db.commit()
 
-            # Auto-queue post-training evaluation
-            eval_result = None
+            # Auto-queue post-training evaluation on immutable reference datasets.
+            eval_results: dict[str, Any] = {}
             try:
-                eval_result = await self.evaluate_version(
-                    db=db,
-                    version_id=version.id,
-                    dataset_tag="latest",
-                    eval_type="post_training",
-                    evaluated_by="system",
-                )
-                logger.info(
-                    "Auto-queued post-training evaluation for %s: %s",
-                    version.version_tag, eval_result.get("evaluation_id"),
-                )
+                for dataset_role in ("evaluation", "holdout"):
+                    eval_result = await self.evaluate_version(
+                        db=db,
+                        version_id=version.id,
+                        dataset_tag=dataset_role,
+                        eval_type="post_training",
+                        evaluated_by="system",
+                    )
+                    eval_results[dataset_role] = eval_result
+                    logger.info(
+                        "Auto-queued %s evaluation for %s: %s",
+                        dataset_role,
+                        version.version_tag,
+                        eval_result.get("evaluation_id"),
+                    )
             except Exception as eval_err:
                 logger.warning(
-                    "Failed to auto-queue evaluation for %s: %s",
-                    version.version_tag, eval_err,
+                    "Failed to auto-queue reference evaluations for %s: %s",
+                    version.version_tag,
+                    eval_err,
                 )
 
             return {
@@ -1132,7 +1908,7 @@ class TrainingService:
                 "job_id": str(job.id),
                 "version_tag": version.version_tag,
                 "adapter_path": version.lora_adapter_path,
-                "auto_evaluation": eval_result,
+                "auto_evaluation": eval_results,
             }
 
         except Exception as e:
@@ -1216,14 +1992,27 @@ class TrainingService:
         await db.commit()
 
         try:
-            metrics = await self._compute_evaluation_metrics(db, version, evaluation)
+            dataset_role = self._dataset_role_from_tag(evaluation.dataset_tag)
+            if dataset_role in {"evaluation", "holdout"}:
+                metrics = await self._score_version_on_reference_dataset(
+                    db,
+                    version,
+                    evaluation.dataset_tag,
+                )
+            else:
+                metrics = await self._compute_evaluation_metrics(db, version, evaluation)
             gate_checks = self._run_quality_gates(metrics, version)
             all_gates_pass = all(gate_checks.values())
 
             spot_check_status = "not_required"
             spot_check_samples: Optional[dict] = None
             if all_gates_pass and evaluation.eval_type in ("offline", "post_training"):
-                spot_check_samples = await self._select_spot_check_samples(db, version)
+                spot_check_samples = await self._select_spot_check_samples(
+                    db,
+                    version,
+                    dataset_tag=evaluation.dataset_tag,
+                    metrics=metrics,
+                )
                 if spot_check_samples and spot_check_samples.get("question_ids"):
                     spot_check_status = "pending"
 
@@ -1235,6 +2024,24 @@ class TrainingService:
             evaluation.spot_check_status = spot_check_status
             evaluation.spot_check_samples = spot_check_samples
 
+            auto_rollback = None
+            regression_delta = metrics.get("regression_delta_vs_champion") or {}
+            worst_regression = min([float(value) for value in regression_delta.values()], default=0.0)
+            acceptance_delta = float(metrics.get("acceptance_delta_vs_champion", 0.0) or 0.0)
+            previous_champion_id = None
+            if isinstance(version.hyperparameters, dict):
+                previous_champion_id = version.hyperparameters.get("previous_champion_id")
+            if (
+                version.is_active
+                and previous_champion_id
+                and (
+                    acceptance_delta <= -float(settings.TRAINING_METRIC_DROP_ROLLBACK_THRESHOLD)
+                    or worst_regression <= -float(settings.TRAINING_METRIC_DROP_ROLLBACK_THRESHOLD)
+                )
+            ):
+                auto_rollback = await self.rollback_to_version(db=db, version_id=str(previous_champion_id))
+                gate_checks["auto_rollback"] = auto_rollback.get("status") == "rolled_back"
+
             if version.eval_metrics:
                 version.eval_metrics.update(metrics)
             else:
@@ -1244,7 +2051,7 @@ class TrainingService:
                 float(metrics.get("timeout_rate", 0.0))
             )
             approve_rate_by_model.labels(model_version=version.version_tag).set(
-                float(metrics.get("approve_rate", 0.0))
+                float(metrics.get("acceptance_rate", metrics.get("approve_rate", 0.0)))
             )
             reject_rate_by_reason_code.labels(reason_code="critical").set(
                 float(metrics.get("critical_reject_rate", 0.0))
@@ -1258,6 +2065,7 @@ class TrainingService:
                 "pass_fail": all_gates_pass,
                 "gate_checks": gate_checks,
                 "spot_check_status": spot_check_status,
+                "auto_rollback": auto_rollback,
             }
 
         except Exception as e:
@@ -1267,6 +2075,350 @@ class TrainingService:
             evaluation.completed_at = datetime.now(timezone.utc)
             await db.commit()
             return {"status": "failed", "error": str(e)}
+
+
+    async def _load_questions_for_dataset_tag(
+        self,
+        db: AsyncSession,
+        dataset_tag: str,
+    ) -> tuple[list[Question], dict[str, Any]]:
+        dataset_result = await db.execute(
+            select(TrainingDataset).where(TrainingDataset.dataset_tag == dataset_tag)
+        )
+        dataset = dataset_result.scalar_one_or_none()
+        if not dataset:
+            return ([], {})
+
+        manifest = self._load_manifest(dataset.manifest_path)
+        question_ids = self._extract_manifest_question_ids(manifest)
+        if not question_ids:
+            return ([], {"dataset": dataset, "manifest": manifest})
+
+        question_result = await db.execute(
+            select(Question).where(Question.id.in_(question_ids))
+        )
+        question_map = {
+            str(question.id): question
+            for question in question_result.scalars().all()
+        }
+        ordered_questions = [
+            question_map[question_id]
+            for question_id in question_ids
+            if question_id in question_map
+        ]
+        return (
+            ordered_questions,
+            {
+                "dataset": dataset,
+                "manifest": manifest,
+            },
+        )
+
+    @staticmethod
+    def _question_topic_label(question: Question) -> str:
+        topic_tags = list(question.topic_tags or [])
+        if topic_tags:
+            return str(topic_tags[0])
+        raw_response = {}
+        if isinstance(question.generation_metadata, dict):
+            raw_response = question.generation_metadata.get("raw_response") or {}
+        if isinstance(raw_response, dict) and raw_response.get("topic"):
+            return str(raw_response["topic"])
+        if question.topic_id:
+            return str(question.topic_id)
+        return "general"
+
+    @staticmethod
+    def _clamp_unit_interval(value: Any, *, default: float = 0.0) -> float:
+        try:
+            numeric = float(value)
+        except (TypeError, ValueError):
+            numeric = default
+        return round(min(max(numeric, 0.0), 1.0), 4)
+
+    @staticmethod
+    def _group_mean_stddev(grouped_values: dict[str, list[float]]) -> float:
+        means = [sum(values) / len(values) for values in grouped_values.values() if values]
+        if len(means) <= 1:
+            return 0.0
+        average = sum(means) / len(means)
+        variance = sum((value - average) ** 2 for value in means) / len(means)
+        return round(math.sqrt(variance), 4)
+
+    async def _generate_outputs_for_version(
+        self,
+        version: ModelVersion,
+        prompts: list[str],
+    ) -> tuple[list[str], list[float]]:
+        import torch  # type: ignore
+        from transformers import AutoModelForCausalLM, AutoTokenizer, BitsAndBytesConfig, pipeline  # type: ignore
+        from peft import PeftModel  # type: ignore
+
+        model_source = self._resolve_model_source(version.base_model)
+        hp = version.hyperparameters or {}
+        peft_method = str(hp.get("peft_method", settings.TRAINING_PREFERRED_PEFT_METHOD)).strip().lower()
+
+        tokenizer = AutoTokenizer.from_pretrained(model_source)
+        if tokenizer.pad_token is None:
+            tokenizer.pad_token = tokenizer.eos_token
+
+        use_cuda = torch.cuda.is_available()
+        model_kwargs: dict[str, Any]
+        if use_cuda and peft_method == "qlora":
+            model_kwargs = {
+                "device_map": "auto",
+                "torch_dtype": torch.float16,
+                "quantization_config": BitsAndBytesConfig(
+                    load_in_4bit=True,
+                    bnb_4bit_quant_type="nf4",
+                    bnb_4bit_use_double_quant=True,
+                    bnb_4bit_compute_dtype=torch.float16,
+                ),
+            }
+        elif use_cuda:
+            model_kwargs = {
+                "device_map": "auto",
+                "torch_dtype": torch.float16,
+            }
+        else:
+            model_kwargs = {
+                "low_cpu_mem_usage": True,
+                "torch_dtype": torch.float32,
+            }
+
+        model = AutoModelForCausalLM.from_pretrained(model_source, **model_kwargs)
+        if self._has_adapter_checkpoint(version.lora_adapter_path):
+            model = PeftModel.from_pretrained(model, version.lora_adapter_path)
+        model.config.use_cache = True
+
+        generator = pipeline(
+            "text-generation",
+            model=model,
+            tokenizer=tokenizer,
+            return_full_text=False,
+            do_sample=False,
+            temperature=0.0,
+            batch_size=1,
+            pad_token_id=tokenizer.eos_token_id,
+        )
+
+        max_new_tokens = max(256, min(1024, int(hp.get("max_seq_length", 2048) // 2)))
+        outputs: list[str] = []
+        latencies_ms: list[float] = []
+        try:
+            for prompt in prompts:
+                started_at = time.perf_counter()
+                result = await asyncio.to_thread(
+                    generator,
+                    prompt,
+                    max_new_tokens=max_new_tokens,
+                    pad_token_id=tokenizer.eos_token_id,
+                    return_full_text=False,
+                )
+                latencies_ms.append(round((time.perf_counter() - started_at) * 1000.0, 3))
+                if isinstance(result, list) and result:
+                    first = result[0]
+                    if isinstance(first, dict):
+                        outputs.append(str(first.get("generated_text", "")).strip())
+                    else:
+                        outputs.append(str(first).strip())
+                else:
+                    outputs.append("")
+        finally:
+            del generator
+            del model
+            del tokenizer
+            if torch.cuda.is_available():
+                torch.cuda.empty_cache()
+
+        return (outputs, latencies_ms)
+
+    async def _judge_generated_outputs(
+        self,
+        questions: list[Question],
+        candidate_outputs: list[str],
+    ) -> list[dict[str, Any]]:
+        judge = LLMService(model=settings.TRAINING_JUDGE_MODEL)
+        semaphore = asyncio.Semaphore(4)
+
+        async def judge_one(question: Question, candidate_output: str) -> dict[str, Any]:
+            deterministic_format = self._deterministic_format_score(
+                candidate_output,
+                question.question_type,
+            )
+            if not candidate_output.strip():
+                return {
+                    "format_correctness": deterministic_format,
+                    "difficulty_alignment": 0.0,
+                    "topic_relevance": 0.0,
+                    "hallucination_error_rate": 1.0,
+                    "accept": False,
+                    "notes": ["empty model output"],
+                }
+
+            prompt = STRICT_EVAL_USER_TEMPLATE.format(
+                question_type=question.question_type or "unknown",
+                difficulty=question.difficulty_level or "medium",
+                topic=self._question_topic_label(question),
+                source_context=self._build_sft_input(question)[:2500],
+                reference_output=self._build_sft_output(question)[:2000],
+                candidate_output=candidate_output[:2000],
+            )
+
+            async with semaphore:
+                try:
+                    raw_scores = await judge.generate_json(
+                        prompt=prompt,
+                        system_prompt=STRICT_EVAL_SYSTEM_PROMPT,
+                        temperature=0.0,
+                        max_tokens=400,
+                    )
+                except LLMError as exc:
+                    raise RuntimeError(f"Judge model failed: {exc}") from exc
+
+            format_correctness = self._clamp_unit_interval(
+                raw_scores.get("format_correctness"),
+                default=deterministic_format,
+            )
+            format_correctness = round(min(format_correctness, deterministic_format), 4)
+            hallucination_error_rate = self._clamp_unit_interval(
+                raw_scores.get("hallucination_error_rate"),
+                default=1.0,
+            )
+            accept = bool(raw_scores.get("accept"))
+            accept = accept and format_correctness >= 0.75 and hallucination_error_rate <= 0.2
+
+            notes = raw_scores.get("notes") or []
+            if not isinstance(notes, list):
+                notes = [str(notes)]
+
+            return {
+                "format_correctness": format_correctness,
+                "difficulty_alignment": self._clamp_unit_interval(raw_scores.get("difficulty_alignment"), default=0.0),
+                "topic_relevance": self._clamp_unit_interval(raw_scores.get("topic_relevance"), default=0.0),
+                "hallucination_error_rate": hallucination_error_rate,
+                "accept": accept,
+                "notes": [str(note) for note in notes if note][:3],
+            }
+
+        tasks = [
+            judge_one(question, candidate_output)
+            for question, candidate_output in zip(questions, candidate_outputs)
+        ]
+        return await asyncio.gather(*tasks)
+
+    async def _score_version_on_reference_dataset(
+        self,
+        db: AsyncSession,
+        version: ModelVersion,
+        dataset_tag: str,
+        *,
+        include_champion_delta: bool = True,
+    ) -> dict[str, Any]:
+        questions, dataset_bundle = await self._load_questions_for_dataset_tag(db, dataset_tag)
+        if not questions:
+            raise RuntimeError(f"No frozen questions found for dataset {dataset_tag}")
+
+        prompts = [self._build_inference_prompt(question) for question in questions]
+        candidate_outputs, latencies_ms = await self._generate_outputs_for_version(version, prompts)
+        judgments = await self._judge_generated_outputs(questions, candidate_outputs)
+
+        difficulty_groups: dict[str, list[float]] = defaultdict(list)
+        topic_groups: dict[str, list[float]] = defaultdict(list)
+        sample_outputs: list[dict[str, Any]] = []
+        acceptance_values: list[float] = []
+        format_values: list[float] = []
+        difficulty_values: list[float] = []
+        topic_values: list[float] = []
+        hallucination_values: list[float] = []
+
+        for question, candidate_output, judgment in zip(questions, candidate_outputs, judgments):
+            accepted = 1.0 if judgment["accept"] else 0.0
+            acceptance_values.append(accepted)
+            format_values.append(float(judgment["format_correctness"]))
+            difficulty_values.append(float(judgment["difficulty_alignment"]))
+            topic_values.append(float(judgment["topic_relevance"]))
+            hallucination_values.append(float(judgment["hallucination_error_rate"]))
+
+            difficulty_groups[str(question.difficulty_level or "unknown")].append(accepted)
+            topic_groups[self._question_topic_label(question)].append(accepted)
+            if len(sample_outputs) < 8:
+                sample_outputs.append(
+                    {
+                        "question_id": str(question.id),
+                        "accepted": bool(judgment["accept"]),
+                        "notes": judgment["notes"],
+                        "candidate_preview": candidate_output[:300],
+                    }
+                )
+
+        metrics: dict[str, Any] = {
+            "dataset_tag": dataset_tag,
+            "dataset_role": self._dataset_role_from_tag(dataset_tag),
+            "samples_evaluated": len(questions),
+            "format_correctness": round(self._safe_mean(format_values), 4),
+            "difficulty_alignment": round(self._safe_mean(difficulty_values), 4),
+            "topic_relevance": round(self._safe_mean(topic_values), 4),
+            "hallucination_rate": round(self._safe_mean(hallucination_values), 4),
+            "acceptance_rate": round(self._safe_mean(acceptance_values), 4),
+            "latency_p95_ms": round(self._percentile(latencies_ms, 95.0), 3),
+            "timeout_rate": 0.0,
+            "cost_per_request": 0.0,
+            "primary_kpi": "acceptance_rate",
+            "variance_by_category": {
+                "difficulty_acceptance_stddev": self._group_mean_stddev(difficulty_groups),
+                "topic_acceptance_stddev": self._group_mean_stddev(topic_groups),
+            },
+            "sample_outputs": sample_outputs,
+            "dataset_manifest_checksum": dataset_bundle.get("dataset").checksum if dataset_bundle.get("dataset") else None,
+        }
+
+        if include_champion_delta:
+            stable_result = await db.execute(
+                select(ModelVersion).where(ModelVersion.is_active == True)
+            )
+            stable = stable_result.scalar_one_or_none()
+            if stable and stable.id != version.id:
+                latest_eval_result = await db.execute(
+                    select(ModelEvaluation)
+                    .where(
+                        ModelEvaluation.model_version_id == stable.id,
+                        ModelEvaluation.dataset_tag == dataset_tag,
+                        ModelEvaluation.eval_status == "completed",
+                    )
+                    .order_by(desc(ModelEvaluation.created_at))
+                    .limit(1)
+                )
+                latest_eval = latest_eval_result.scalar_one_or_none()
+                stable_metrics = (
+                    latest_eval.metrics
+                    if latest_eval and isinstance(latest_eval.metrics, dict)
+                    else await self._score_version_on_reference_dataset(
+                        db,
+                        stable,
+                        dataset_tag,
+                        include_champion_delta=False,
+                    )
+                )
+                tracked_metrics = [
+                    "format_correctness",
+                    "difficulty_alignment",
+                    "topic_relevance",
+                    "acceptance_rate",
+                ]
+                regression_delta = {
+                    metric_name: round(float(metrics.get(metric_name, 0.0)) - float(stable_metrics.get(metric_name, 0.0)), 4)
+                    for metric_name in tracked_metrics
+                }
+                metrics["regression_delta_vs_champion"] = regression_delta
+                metrics["acceptance_delta_vs_champion"] = regression_delta["acceptance_rate"]
+                metrics["hallucination_delta_vs_champion"] = round(
+                    float(metrics.get("hallucination_rate", 0.0)) - float(stable_metrics.get("hallucination_rate", 0.0)),
+                    4,
+                )
+                metrics["champion_version"] = stable.version_tag
+
+        return metrics
 
     async def _compute_evaluation_metrics(
         self,
@@ -1386,6 +2538,17 @@ class TrainingService:
     @staticmethod
     def _run_quality_gates(metrics: dict[str, Any], version: ModelVersion) -> dict[str, bool]:
         """Run quality gate checks against computed evaluation metrics."""
+        if "acceptance_rate" in metrics:
+            return {
+                "format_correctness": float(metrics.get("format_correctness", 0.0)) >= 0.8,
+                "difficulty_alignment": float(metrics.get("difficulty_alignment", 0.0)) >= 0.75,
+                "topic_relevance": float(metrics.get("topic_relevance", 0.0)) >= 0.8,
+                "hallucination_budget": float(metrics.get("hallucination_rate", 1.0)) <= 0.2,
+                "acceptance_rate": float(metrics.get("acceptance_rate", 0.0)) >= 0.6,
+                "variance_stable": float((metrics.get("variance_by_category") or {}).get("difficulty_acceptance_stddev", 0.0)) <= 0.25,
+                "min_evaluated_samples": int(metrics.get("samples_evaluated", 0)) >= 10,
+            }
+
         offline_pass_rate = float(metrics.get("offline_pass_rate", 0.0))
         critical_reject_rate = float(metrics.get("critical_reject_rate", 0.0))
         latency_p95_ms = float(metrics.get("latency_p95_ms", 0.0))
@@ -1406,9 +2569,28 @@ class TrainingService:
         }
 
     async def _select_spot_check_samples(
-        self, db: AsyncSession, version: ModelVersion, sample_size: int = 10,
+        self,
+        db: AsyncSession,
+        version: ModelVersion,
+        sample_size: int = 10,
+        dataset_tag: Optional[str] = None,
+        metrics: Optional[dict[str, Any]] = None,
     ) -> dict[str, Any]:
-        """Select a random sample of recent approved questions for human spot-check review."""
+        """Select frozen evaluation samples for human spot-check review."""
+        sample_outputs = metrics.get("sample_outputs") if isinstance(metrics, dict) else []
+        question_ids = [
+            str(item.get("question_id"))
+            for item in (sample_outputs or [])
+            if isinstance(item, dict) and item.get("question_id")
+        ]
+        if question_ids:
+            return {
+                "question_ids": question_ids[:sample_size],
+                "sample_size": min(sample_size, len(question_ids)),
+                "model_version": version.version_tag,
+                "dataset_tag": dataset_tag,
+            }
+
         since = self._resolve_training_since(days=DEFAULT_TRAINING_WINDOW_DAYS)
         result = await db.execute(
             select(Question.id)
@@ -1425,6 +2607,7 @@ class TrainingService:
             "question_ids": question_ids,
             "sample_size": len(question_ids),
             "model_version": version.version_tag,
+            "dataset_tag": dataset_tag,
         }
 
     async def complete_spot_check(
@@ -1529,9 +2712,11 @@ class TrainingService:
         from transformers import (        # type: ignore
             AutoModelForCausalLM,
             AutoTokenizer,
+            BitsAndBytesConfig,
+            EarlyStoppingCallback,
             TrainingArguments,
         )
-        from peft import LoraConfig, PeftModel, TaskType  # type: ignore
+        from peft import LoraConfig, PeftModel, TaskType, prepare_model_for_kbit_training  # type: ignore
         from trl import SFTTrainer          # type: ignore
         from datasets import load_dataset   # type: ignore
 
@@ -1547,17 +2732,43 @@ class TrainingService:
         if tokenizer.pad_token is None:
             tokenizer.pad_token = tokenizer.eos_token
 
+        expected_fingerprint = hp.get("tokenizer_fingerprint") if isinstance(hp, dict) else None
+        actual_fingerprint = self._tokenizer_fingerprint_from_tokenizer(tokenizer)
+        fingerprint_match, fingerprint_reason = self._compare_tokenizer_fingerprints(
+            expected_fingerprint,
+            actual_fingerprint,
+        )
+        if settings.TRAINING_ENABLE_TOKENIZER_DRIFT_CHECK and not fingerprint_match:
+            raise RuntimeError(fingerprint_reason)
+
         use_cuda = torch.cuda.is_available()
+        peft_method = str(hp.get("peft_method", settings.TRAINING_PREFERRED_PEFT_METHOD)).strip().lower()
+        use_qlora = False
         if use_cuda:
-            model_load_kwargs = {
-                "dtype": torch.float16,
-                "device_map": "auto",
-            }
-            use_fp16 = True
-            use_bf16 = False
+            if peft_method == "qlora":
+                model_load_kwargs = {
+                    "device_map": "auto",
+                    "quantization_config": BitsAndBytesConfig(
+                        load_in_4bit=True,
+                        bnb_4bit_quant_type="nf4",
+                        bnb_4bit_use_double_quant=True,
+                        bnb_4bit_compute_dtype=torch.float16,
+                    ),
+                }
+                use_qlora = True
+                use_fp16 = False
+                use_bf16 = False
+                optim_name = "paged_adamw_8bit"
+            else:
+                model_load_kwargs = {
+                    "dtype": torch.float16,
+                    "device_map": "auto",
+                }
+                use_fp16 = True
+                use_bf16 = False
+                optim_name = "adamw_torch_fused"
             dataloader_pin_memory = True
             use_cpu = False
-            optim_name = "adamw_torch_fused"
         else:
             model_load_kwargs = {
                 "dtype": torch.float32,
@@ -1589,6 +2800,14 @@ class TrainingService:
             gradient_accumulation_steps = hp.get("gradient_accumulation_steps", 4)
             max_steps = hp.get("max_steps", -1)
 
+        train_dataset = dataset
+        eval_dataset = None
+        if len(dataset) >= 20:
+            eval_size = max(1, min(len(dataset) - 1, int(round(len(dataset) * 0.1))))
+            split_dataset = dataset.train_test_split(test_size=eval_size, seed=42, shuffle=True)
+            train_dataset = split_dataset["train"]
+            eval_dataset = split_dataset["test"]
+
         # LoRA config
         lora_config = LoraConfig(
             task_type=TaskType.CAUSAL_LM,
@@ -1606,6 +2825,8 @@ class TrainingService:
                 model_source,
                 **model_load_kwargs,
             )
+            if use_qlora:
+                base_model = prepare_model_for_kbit_training(base_model)
             model = PeftModel.from_pretrained(
                 base_model,
                 parent_adapter_path,
@@ -1617,17 +2838,20 @@ class TrainingService:
                 model_source,
                 **model_load_kwargs,
             )
+            if use_qlora:
+                model = prepare_model_for_kbit_training(model)
         model.config.use_cache = False
 
         output_dir = version.lora_adapter_path
         warmup_steps = self._resolve_warmup_steps(
             hp=hp,
-            dataset_size=len(dataset),
+            dataset_size=len(train_dataset),
             num_train_epochs=num_train_epochs,
             per_device_train_batch_size=per_device_train_batch_size,
             gradient_accumulation_steps=gradient_accumulation_steps,
             max_steps=max_steps,
         )
+        eval_strategy = "epoch" if eval_dataset is not None else "no"
         training_args = TrainingArguments(
             output_dir=output_dir,
             num_train_epochs=num_train_epochs,
@@ -1640,12 +2864,17 @@ class TrainingService:
             optim=optim_name,
             logging_steps=1 if local_smoke_test else 10,
             save_strategy="epoch",
+            eval_strategy=eval_strategy,
             fp16=use_fp16,
             bf16=use_bf16,
             max_grad_norm=1.0,
             use_cpu=use_cpu,
             dataloader_pin_memory=dataloader_pin_memory,
             report_to="none",
+            load_best_model_at_end=eval_dataset is not None,
+            metric_for_best_model="eval_loss" if eval_dataset is not None else None,
+            greater_is_better=False,
+            save_total_limit=2,
         )
 
         def formatting_func(example):
@@ -1658,12 +2887,19 @@ class TrainingService:
 
         trainer = SFTTrainer(
             model=model,
-            train_dataset=dataset,
+            train_dataset=train_dataset,
+            eval_dataset=eval_dataset,
             peft_config=trainer_peft_config,
             args=training_args,
             processing_class=tokenizer,
             formatting_func=formatting_func,
         )
+        if eval_dataset is not None:
+            trainer.add_callback(
+                EarlyStoppingCallback(
+                    early_stopping_patience=int(hp.get("early_stopping_patience", settings.TRAINING_EARLY_STOPPING_PATIENCE)),
+                )
+            )
 
         logger.info("Starting SFT training...")
         train_result = trainer.train()
@@ -1680,6 +2916,9 @@ class TrainingService:
             "train_samples_per_second": train_result.metrics.get(
                 "train_samples_per_second"
             ),
+            "eval_loss": train_result.metrics.get("eval_loss"),
+            "validation_samples": len(eval_dataset) if eval_dataset is not None else 0,
+            "peft_method": "qlora" if use_qlora else "lora",
         }
         version.eval_metrics = job.eval_metrics
 
@@ -1698,8 +2937,8 @@ class TrainingService:
         Uses: trl (DPOTrainer).
         """
         import torch  # type: ignore
-        from transformers import AutoModelForCausalLM, AutoTokenizer  # type: ignore
-        from peft import LoraConfig, PeftModel, TaskType  # type: ignore
+        from transformers import AutoModelForCausalLM, AutoTokenizer, BitsAndBytesConfig, EarlyStoppingCallback  # type: ignore
+        from peft import LoraConfig, PeftModel, TaskType, prepare_model_for_kbit_training  # type: ignore
         from trl import DPOConfig, DPOTrainer  # type: ignore
         from datasets import load_dataset  # type: ignore
 
@@ -1729,17 +2968,43 @@ class TrainingService:
         if tokenizer.pad_token is None:
             tokenizer.pad_token = tokenizer.eos_token
 
+        expected_fingerprint = hp.get("tokenizer_fingerprint") if isinstance(hp, dict) else None
+        actual_fingerprint = self._tokenizer_fingerprint_from_tokenizer(tokenizer)
+        fingerprint_match, fingerprint_reason = self._compare_tokenizer_fingerprints(
+            expected_fingerprint,
+            actual_fingerprint,
+        )
+        if settings.TRAINING_ENABLE_TOKENIZER_DRIFT_CHECK and not fingerprint_match:
+            raise RuntimeError(fingerprint_reason)
+
         use_cuda = torch.cuda.is_available()
+        peft_method = str(hp.get("peft_method", settings.TRAINING_PREFERRED_PEFT_METHOD)).strip().lower()
+        use_qlora = False
         if use_cuda:
-            model_load_kwargs = {
-                "dtype": torch.float16,
-                "device_map": "auto",
-            }
-            use_fp16 = True
-            use_bf16 = False
+            if peft_method == "qlora":
+                model_load_kwargs = {
+                    "device_map": "auto",
+                    "quantization_config": BitsAndBytesConfig(
+                        load_in_4bit=True,
+                        bnb_4bit_quant_type="nf4",
+                        bnb_4bit_use_double_quant=True,
+                        bnb_4bit_compute_dtype=torch.float16,
+                    ),
+                }
+                use_qlora = True
+                use_fp16 = False
+                use_bf16 = False
+                optim_name = "paged_adamw_8bit"
+            else:
+                model_load_kwargs = {
+                    "dtype": torch.float16,
+                    "device_map": "auto",
+                }
+                use_fp16 = True
+                use_bf16 = False
+                optim_name = "adamw_torch_fused"
             dataloader_pin_memory = True
             use_cpu = False
-            optim_name = "adamw_torch_fused"
         else:
             model_load_kwargs = {
                 "dtype": torch.float32,
@@ -1763,6 +3028,14 @@ class TrainingService:
             gradient_accumulation_steps = hp.get("gradient_accumulation_steps", 4)
             max_steps = hp.get("max_steps", -1)
 
+        train_dataset = dataset
+        eval_dataset = None
+        if len(dataset) >= 20:
+            eval_size = max(1, min(len(dataset) - 1, int(round(len(dataset) * 0.1))))
+            split_dataset = dataset.train_test_split(test_size=eval_size, seed=42, shuffle=True)
+            train_dataset = split_dataset["train"]
+            eval_dataset = split_dataset["test"]
+
         lora_config = LoraConfig(
             task_type=TaskType.CAUSAL_LM,
             r=hp.get("lora_r", 16),
@@ -1784,6 +3057,8 @@ class TrainingService:
             base_model = AutoModelForCausalLM.from_pretrained(
                 model_source, **model_load_kwargs
             )
+            if use_qlora:
+                base_model = prepare_model_for_kbit_training(base_model)
             model = PeftModel.from_pretrained(
                 base_model,
                 warm_start_adapter_path,
@@ -1794,6 +3069,8 @@ class TrainingService:
             model = AutoModelForCausalLM.from_pretrained(
                 model_source, **model_load_kwargs
             )
+            if use_qlora:
+                model = prepare_model_for_kbit_training(model)
             trainer_peft_config = lora_config
         model.config.use_cache = False
 
@@ -1809,12 +3086,13 @@ class TrainingService:
             dpo_output = adapter_path or str(LORA_ADAPTERS_DIR / f"{version.version_tag}-dpo")
         warmup_steps = self._resolve_warmup_steps(
             hp=hp,
-            dataset_size=len(dataset),
+            dataset_size=len(train_dataset),
             num_train_epochs=num_train_epochs,
             per_device_train_batch_size=per_device_train_batch_size,
             gradient_accumulation_steps=gradient_accumulation_steps,
             max_steps=max_steps,
         )
+        eval_strategy = "epoch" if eval_dataset is not None else "no"
         training_args = DPOConfig(
             output_dir=dpo_output,
             num_train_epochs=num_train_epochs,
@@ -1825,6 +3103,7 @@ class TrainingService:
             warmup_steps=warmup_steps,
             logging_steps=1 if local_smoke_test else 10,
             save_strategy="epoch",
+            eval_strategy=eval_strategy,
             fp16=use_fp16,
             bf16=use_bf16,
             use_cpu=use_cpu,
@@ -1834,16 +3113,27 @@ class TrainingService:
             remove_unused_columns=False,
             beta=0.1,
             max_length=hp.get("max_seq_length", 2048),
+            load_best_model_at_end=eval_dataset is not None,
+            metric_for_best_model="eval_loss" if eval_dataset is not None else None,
+            greater_is_better=False,
+            save_total_limit=2,
         )
 
         trainer = DPOTrainer(
             model=model,
             ref_model=ref_model,
             args=training_args,
-            train_dataset=dataset,
+            train_dataset=train_dataset,
+            eval_dataset=eval_dataset,
             processing_class=tokenizer,
             peft_config=trainer_peft_config,
         )
+        if eval_dataset is not None:
+            trainer.add_callback(
+                EarlyStoppingCallback(
+                    early_stopping_patience=int(hp.get("early_stopping_patience", settings.TRAINING_EARLY_STOPPING_PATIENCE)),
+                )
+            )
 
         logger.info("Starting DPO training...")
         train_result = trainer.train()
@@ -1857,6 +3147,9 @@ class TrainingService:
         dpo_metrics = {
             "dpo_loss": train_result.training_loss,
             "dpo_runtime": train_result.metrics.get("train_runtime"),
+            "dpo_eval_loss": train_result.metrics.get("eval_loss"),
+            "validation_pairs": len(eval_dataset) if eval_dataset is not None else 0,
+            "peft_method": "qlora" if use_qlora else "lora",
         }
         if version.eval_metrics:
             version.eval_metrics.update(dpo_metrics)
@@ -1921,6 +3214,14 @@ class TrainingService:
         )
         active = active_result.scalar_one_or_none()
 
+        challenger_result = await db.execute(
+            select(ModelVersion)
+            .where(ModelVersion.is_active == False)
+            .order_by(desc(ModelVersion.training_completed_at), desc(ModelVersion.created_at))
+            .limit(1)
+        )
+        challenger = challenger_result.scalar_one_or_none()
+
         # Pending pairs count
         pairs_result = await db.execute(
             select(func.count(TrainingPair.id)).where(
@@ -1958,6 +3259,12 @@ class TrainingService:
         )
         version_count = version_count_result.scalar() or 0
 
+        orchestration_policy = await self.evaluate_auto_training_policy(
+            db,
+            created_by="system:status",
+            bootstrap_reference_datasets=False,
+        )
+
         return {
             "active_version": {
                 "version_tag": active.version_tag,
@@ -1983,6 +3290,19 @@ class TrainingService:
                 "created_at": latest_job.created_at.isoformat() if latest_job.created_at else None,
                 "error": latest_job.error_message,
             } if latest_job else None,
+            "orchestration": {
+                "champion": {
+                    "version_tag": active.version_tag,
+                    "base_model": active.base_model,
+                    "status": active.status,
+                } if active else None,
+                "challenger": {
+                    "version_tag": challenger.version_tag,
+                    "base_model": challenger.base_model,
+                    "status": challenger.status,
+                } if challenger else None,
+                "policy": orchestration_policy,
+            },
         }
 
     async def build_dataset_snapshot(
@@ -1995,17 +3315,34 @@ class TrainingService:
         resolved_snapshot_filter, _, since_dt, confidence_min = self._resolve_snapshot_filter(
             snapshot_filter
         )
+        dataset_role = self._dataset_role_from_tag(resolved_snapshot_filter.get("dataset_role"))
+        explicit_question_ids = [
+            str(question_id)
+            for question_id in (resolved_snapshot_filter.get("question_ids") or [])
+            if question_id
+        ]
+        explicit_pair_ids = [
+            str(pair_id)
+            for pair_id in (resolved_snapshot_filter.get("pair_ids") or [])
+            if pair_id
+        ]
 
-        sft_filters = [
-            Question.vetting_status == "approved",
-            Question.is_latest == True,
-            Question.vetted_at >= since_dt,
-        ]
-        dpo_filters = [
-            TrainingPair.status.in_(["pending", "queued", "used"]),
-            (TrainingPair.confidence.is_(None) | (TrainingPair.confidence >= confidence_min)),
-            TrainingPair.created_at >= since_dt,
-        ]
+        if explicit_question_ids:
+            sft_filters = [Question.id.in_(explicit_question_ids)]
+        else:
+            sft_filters = [
+                Question.vetting_status == "approved",
+                Question.is_latest == True,
+                Question.vetted_at >= since_dt,
+            ]
+        if explicit_pair_ids:
+            dpo_filters = [TrainingPair.id.in_(explicit_pair_ids)]
+        else:
+            dpo_filters = [
+                TrainingPair.status.in_(["pending", "queued", "used"]),
+                (TrainingPair.confidence.is_(None) | (TrainingPair.confidence >= confidence_min)),
+                TrainingPair.created_at >= since_dt,
+            ]
 
         sft_count_result = await db.execute(
             select(func.count(Question.id)).where(*sft_filters)
@@ -2078,8 +3415,17 @@ class TrainingService:
             high_similarity_count,
         ) = sft_quality_result.one()
 
+        question_id_rows = await db.execute(
+            select(Question.id).where(*sft_filters).order_by(Question.vetted_at.desc(), Question.id.asc())
+        )
+        question_ids = [str(row[0]) for row in question_id_rows.all()]
+        pair_id_rows = await db.execute(
+            select(TrainingPair.id).where(*dpo_filters).order_by(TrainingPair.created_at.desc(), TrainingPair.id.asc())
+        )
+        pair_ids = [str(row[0]) for row in pair_id_rows.all()]
+
         stamp = datetime.now(timezone.utc).strftime("%Y%m%d-%H%M%S")
-        dataset_tag = f"ds-{stamp}"
+        dataset_tag = f"{self._dataset_prefix_for_role(dataset_role)}-{stamp}"
         difficulty_distribution = self._distribution_from_rows(sft_by_difficulty_result.all())
         bloom_distribution = self._distribution_from_rows(sft_by_bloom_result.all())
         subject_distribution = self._named_distribution_from_rows(
@@ -2133,10 +3479,15 @@ class TrainingService:
 
         manifest = self._build_dataset_manifest(
             dataset_tag=dataset_tag,
+            dataset_role=dataset_role,
             created_at=manifest_created_at,
             snapshot_filter=resolved_snapshot_filter,
             sample_counts=sample_counts,
             composition=composition,
+            sample_ids={
+                "sft_question_ids": question_ids,
+                "dpo_pair_ids": pair_ids,
+            },
             quality_metrics=quality_metrics,
         )
         manifest_json = json.dumps(manifest, sort_keys=True)
@@ -2345,11 +3696,25 @@ class TrainingService:
                 "message": f"Cannot evaluate version in '{version.status}' state; must be completed first.",
             }
 
-        dataset_tag = dataset_tag or "latest"
+        requested_dataset_tag = dataset_tag or "evaluation"
+        resolved_dataset_tag = requested_dataset_tag
+        dataset_role = self._dataset_role_from_tag(requested_dataset_tag)
+        if requested_dataset_tag in {"latest", "evaluation", "holdout"}:
+            reference_bundles = await self._ensure_reference_datasets(
+                db,
+                created_by=evaluated_by or "system",
+            )
+            resolved_bundle = reference_bundles.get(dataset_role if dataset_role in {"evaluation", "holdout"} else "evaluation")
+            resolved_dataset_tag = resolved_bundle.get("dataset_tag") if resolved_bundle else None
+            if not resolved_dataset_tag:
+                return {
+                    "status": "error",
+                    "message": f"Reference dataset for role '{dataset_role}' is not ready.",
+                }
 
         evaluation = ModelEvaluation(
             model_version_id=version.id,
-            dataset_tag=dataset_tag,
+            dataset_tag=resolved_dataset_tag,
             eval_type=eval_type,
             eval_status="pending",
             evaluated_by=evaluated_by or "system",
@@ -2364,10 +3729,10 @@ class TrainingService:
             {
                 "evaluation_id": str(evaluation.id),
                 "model_version_id": str(version.id),
-                "dataset_tag": dataset_tag,
+                "dataset_tag": resolved_dataset_tag,
                 "eval_type": eval_type,
             },
-            idempotency_key=f"{version.id}:{dataset_tag}:{eval_type}",
+            idempotency_key=f"{version.id}:{resolved_dataset_tag}:{eval_type}",
             trace_id=request_id_ctx.get() or None,
         )
 
@@ -2375,7 +3740,7 @@ class TrainingService:
             "status": "created",
             "evaluation_id": str(evaluation.id),
             "eval_type": eval_type,
-            "dataset_tag": dataset_tag,
+            "dataset_tag": resolved_dataset_tag,
             "eval_status": "pending",
         }
 
@@ -2387,9 +3752,25 @@ class TrainingService:
 
         stable_result = await db.execute(select(ModelVersion).where(ModelVersion.is_active == True))
         stable = stable_result.scalar_one_or_none()
-        stable_approve = float((stable.eval_metrics or {}).get("approve_rate", 0.78)) if stable else 0.78
-        candidate_approve = float((candidate.eval_metrics or {}).get("approve_rate", 0.79))
+        stable_approve = float((stable.eval_metrics or {}).get("acceptance_rate", (stable.eval_metrics or {}).get("approve_rate", 0.78))) if stable else 0.78
+        candidate_approve = float((candidate.eval_metrics or {}).get("acceptance_rate", (candidate.eval_metrics or {}).get("approve_rate", 0.79)))
         win_rate = candidate_approve - stable_approve
+
+        canary_plan = {
+            "status": "planned",
+            "min_days": settings.TRAINING_AB_TEST_MIN_DAYS,
+            "champion_traffic_share": round(1.0 - float(settings.TRAINING_CHALLENGER_TRAFFIC_SHARE), 2),
+            "challenger_traffic_share": round(float(settings.TRAINING_CHALLENGER_TRAFFIC_SHARE), 2),
+            "started_at": datetime.now(timezone.utc).isoformat(),
+            "candidate_version": candidate.version_tag,
+            "champion_version": stable.version_tag if stable else None,
+        }
+        candidate.status = "canary"
+        if candidate.eval_metrics:
+            candidate.eval_metrics["ab_test_plan"] = canary_plan
+        else:
+            candidate.eval_metrics = {"ab_test_plan": canary_plan}
+        await db.commit()
 
         model_canary_win_rate.labels(
             candidate_version=candidate.version_tag,
@@ -2414,6 +3795,7 @@ class TrainingService:
             "candidate_version": candidate.version_tag,
             "stable_version": stable.version_tag if stable else None,
             "approve_rate_delta": win_rate,
+            "ab_test_plan": canary_plan,
         }
 
     async def promote_version(self, db: AsyncSession, version_id: str, promoted_by: str) -> dict[str, Any]:
@@ -2434,9 +3816,18 @@ class TrainingService:
                 "checks": gate["checks"],
             }
 
+        stable_result = await db.execute(select(ModelVersion).where(ModelVersion.is_active == True))
+        stable = stable_result.scalar_one_or_none()
         await db.execute(update(ModelVersion).values(is_active=False))
         candidate.is_active = True
-        candidate.status = "completed"
+        candidate.status = "active"
+        if stable and stable.id != candidate.id:
+            stable.status = "archived"
+            hyperparameters = candidate.hyperparameters if isinstance(candidate.hyperparameters, dict) else {}
+            hyperparameters["previous_champion_id"] = stable.id
+            hyperparameters["promotion_checks"] = gate["checks"]
+            hyperparameters["promoted_at"] = datetime.now(timezone.utc).isoformat()
+            candidate.hyperparameters = hyperparameters
         await db.commit()
 
         await self.queue_service.enqueue(
@@ -2467,6 +3858,7 @@ class TrainingService:
 
         await db.execute(update(ModelVersion).values(is_active=False))
         target.is_active = True
+        target.status = "active"
         await db.commit()
 
         await self.queue_service.enqueue(
@@ -2542,49 +3934,58 @@ class TrainingService:
         }
 
     async def _evaluate_promotion_gate(self, db: AsyncSession, candidate: ModelVersion) -> dict[str, Any]:
-        stable_result = await db.execute(select(ModelVersion).where(ModelVersion.is_active == True))
-        stable = stable_result.scalar_one_or_none()
-
-        latest_eval_result = await db.execute(
-            select(ModelEvaluation)
-            .where(
-                ModelEvaluation.model_version_id == candidate.id,
-                ModelEvaluation.eval_status == "completed",
+        role_evaluations: dict[str, Optional[ModelEvaluation]] = {}
+        for role in ("evaluation", "holdout"):
+            prefix = self._dataset_prefix_for_role(role)
+            latest_eval_result = await db.execute(
+                select(ModelEvaluation)
+                .where(
+                    ModelEvaluation.model_version_id == candidate.id,
+                    ModelEvaluation.eval_status == "completed",
+                    ModelEvaluation.dataset_tag.like(f"{prefix}-%"),
+                )
+                .order_by(desc(ModelEvaluation.created_at))
+                .limit(1)
             )
-            .order_by(ModelEvaluation.created_at.desc())
-            .limit(1)
-        )
-        latest_eval = latest_eval_result.scalar_one_or_none()
+            role_evaluations[role] = latest_eval_result.scalar_one_or_none()
 
-        evaluation_exists = latest_eval is not None and latest_eval.pass_fail is True
-        spot_check_clear = (
-            latest_eval is not None
-            and latest_eval.spot_check_status in ("not_required", "approved")
-        ) if latest_eval else False
+        primary_eval = role_evaluations.get("evaluation")
+        holdout_eval = role_evaluations.get("holdout")
+        primary_metrics = primary_eval.metrics if primary_eval and isinstance(primary_eval.metrics, dict) else {}
+        holdout_metrics = holdout_eval.metrics if holdout_eval and isinstance(holdout_eval.metrics, dict) else {}
 
-        eval_metrics = latest_eval.metrics if latest_eval and latest_eval.metrics else (candidate.eval_metrics or {})
-        stable_metrics = stable.eval_metrics if stable and stable.eval_metrics else {}
-
-        offline_pass_rate = float(eval_metrics.get("offline_pass_rate", 0.0))
-        candidate_approve_rate = float(eval_metrics.get("canary_approve_rate", eval_metrics.get("approve_rate", 0.0)))
-        stable_approve_rate = float(stable_metrics.get("approve_rate", 0.0))
-        candidate_critical_reject_rate = float(eval_metrics.get("critical_reject_rate", 0.0))
-        stable_critical_reject_rate = float(stable_metrics.get("critical_reject_rate", 0.0))
-        latency_p95_ms = float(eval_metrics.get("latency_p95_ms", 0.0))
-        timeout_rate = float(eval_metrics.get("timeout_rate", 0.0))
+        primary_regressions = primary_metrics.get("regression_delta_vs_champion") or {}
+        holdout_regressions = holdout_metrics.get("regression_delta_vs_champion") or {}
 
         checks = {
-            "evaluation_exists": evaluation_exists,
-            "spot_check_clear": spot_check_clear,
-            "offline_pass_rate": offline_pass_rate >= settings.PROMOTION_MIN_OFFLINE_PASS_RATE,
-            "canary_approve_margin": (
-                candidate_approve_rate >= (stable_approve_rate - settings.PROMOTION_MAX_CANARY_APPROVE_DROP)
+            "evaluation_exists": primary_eval is not None and primary_eval.pass_fail is True,
+            "holdout_exists": holdout_eval is not None and holdout_eval.pass_fail is True,
+            "human_review_passed": all(
+                evaluation is not None and evaluation.spot_check_status in ("not_required", "approved")
+                for evaluation in role_evaluations.values()
             ),
-            "critical_reject_rate": (
-                candidate_critical_reject_rate <= (stable_critical_reject_rate + settings.PROMOTION_MAX_CRITICAL_REJECT_INCREASE)
+            "acceptance_improvement": float(primary_metrics.get("acceptance_delta_vs_champion", -1.0)) >= float(settings.TRAINING_ACCEPTANCE_IMPROVEMENT_GATE),
+            "no_eval_regression": all(
+                float(delta) >= -float(settings.TRAINING_MAX_METRIC_REGRESSION)
+                for delta in primary_regressions.values()
+            ) if primary_regressions else False,
+            "no_holdout_regression": all(
+                float(delta) >= -float(settings.TRAINING_MAX_METRIC_REGRESSION)
+                for delta in holdout_regressions.values()
+            ) if holdout_regressions else False,
+            "hallucination_non_increase": (
+                float(primary_metrics.get("hallucination_delta_vs_champion", 1.0)) <= 0.0
+                and float(holdout_metrics.get("hallucination_delta_vs_champion", 1.0)) <= 0.0
             ),
-            "latency_budget": latency_p95_ms <= settings.PROMOTION_MAX_P95_LATENCY_MS or latency_p95_ms == 0.0,
-            "timeout_budget": timeout_rate <= settings.PROMOTION_MAX_TIMEOUT_RATE or timeout_rate == 0.0,
+            "latency_budget": (
+                float(primary_metrics.get("latency_p95_ms", 0.0)) <= settings.PROMOTION_MAX_P95_LATENCY_MS
+                or float(primary_metrics.get("latency_p95_ms", 0.0)) == 0.0
+            ),
+            "timeout_budget": (
+                float(primary_metrics.get("timeout_rate", 0.0)) <= settings.PROMOTION_MAX_TIMEOUT_RATE
+                or float(primary_metrics.get("timeout_rate", 0.0)) == 0.0
+            ),
+            "canary_plan_recorded": isinstance((candidate.eval_metrics or {}).get("ab_test_plan"), dict),
         }
 
         failed_checks = [name for name, passed in checks.items() if not passed]
@@ -2600,15 +4001,17 @@ class TrainingService:
             "checks": checks,
             "failure_summary": failure_summary,
             "details": {
-                "offline_pass_rate": offline_pass_rate,
-                "candidate_approve_rate": candidate_approve_rate,
-                "stable_approve_rate": stable_approve_rate,
-                "candidate_critical_reject_rate": candidate_critical_reject_rate,
-                "stable_critical_reject_rate": stable_critical_reject_rate,
-                "latency_p95_ms": latency_p95_ms,
-                "timeout_rate": timeout_rate,
-                "evaluation_id": str(latest_eval.id) if latest_eval else None,
-                "spot_check_status": latest_eval.spot_check_status if latest_eval else None,
+                "primary_evaluation_id": str(primary_eval.id) if primary_eval else None,
+                "holdout_evaluation_id": str(holdout_eval.id) if holdout_eval else None,
+                "acceptance_delta_vs_champion": primary_metrics.get("acceptance_delta_vs_champion"),
+                "primary_regressions": primary_regressions,
+                "holdout_regressions": holdout_regressions,
+                "primary_hallucination_delta": primary_metrics.get("hallucination_delta_vs_champion"),
+                "holdout_hallucination_delta": holdout_metrics.get("hallucination_delta_vs_champion"),
+                "spot_check_status": {
+                    role: evaluation.spot_check_status if evaluation else None
+                    for role, evaluation in role_evaluations.items()
+                },
             },
         }
 

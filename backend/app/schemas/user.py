@@ -31,6 +31,8 @@ class UserCreate(UserBase):
     """Schema for user registration."""
     password: str = Field(..., min_length=8, max_length=128)
     role: RoleType = Field(default="teacher", description="User role: teacher, vetter, or admin")
+    security_question: str = Field(..., min_length=3, max_length=255)
+    security_answer: str = Field(..., min_length=1, max_length=128)
 
     @field_validator("password")
     @classmethod
@@ -65,6 +67,8 @@ class UserUpdate(BaseModel):
     timezone: Optional[str] = Field(None, max_length=50)
     language: Optional[str] = Field(None, max_length=10)
     preferences: Optional[dict] = None
+    security_question: Optional[str] = Field(None, min_length=3, max_length=255)
+    security_answer: Optional[str] = Field(None, min_length=1, max_length=128)
 
     @field_validator("username")
     @classmethod
@@ -83,6 +87,7 @@ class UserResponse(BaseModel):
     email: EmailStr
     username: str
     full_name: Optional[str]
+    security_question: Optional[str]
     avatar_url: Optional[str]
     timezone: str
     language: str
@@ -103,6 +108,7 @@ class UserResponse(BaseModel):
 class UserInDB(UserResponse):
     """Schema for user in database (includes sensitive fields)."""
     password_hash: str
+    security_answer_hash: Optional[str]
     is_superuser: bool
     failed_login_attempts: int
     locked_until: Optional[datetime]

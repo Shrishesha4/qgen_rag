@@ -4,7 +4,7 @@ Authentication-related Pydantic schemas.
 
 from datetime import datetime
 from typing import Optional, List
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, EmailStr, Field
 import uuid
 
 from app.schemas.user import UserResponse
@@ -36,6 +36,39 @@ class PasswordChange(BaseModel):
     """Schema for password change request."""
     current_password: str
     new_password: str = Field(..., min_length=8, max_length=128)
+
+
+class PasswordResetRequest(BaseModel):
+    """Schema for requesting a password reset email."""
+    email: EmailStr
+
+
+class PasswordResetConfirm(BaseModel):
+    """Schema for completing a password reset."""
+    token: str
+    new_password: str = Field(..., min_length=8, max_length=128)
+
+
+class SecurityQuestionRequest(BaseModel):
+    """Schema for fetching a user's security question."""
+    email: EmailStr
+
+
+class SecurityQuestionResponse(BaseModel):
+    """Schema for returning a security question."""
+    security_question: str
+
+
+class SecurityQuestionPasswordReset(BaseModel):
+    """Schema for resetting a password with a security answer."""
+    email: EmailStr
+    security_answer: str = Field(..., min_length=1, max_length=128)
+    new_password: str = Field(..., min_length=8, max_length=128)
+
+
+class MessageResponse(BaseModel):
+    """Schema for simple message responses."""
+    message: str
 
 
 class SessionInfo(BaseModel):

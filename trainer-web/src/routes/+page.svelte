@@ -1,14 +1,28 @@
 <script lang="ts">
 	import { goto } from '$app/navigation';
 	import { onMount } from 'svelte';
-	import { login } from '$lib/api/auth';
+	import {
+		DEFAULT_SECURITY_QUESTION,
+		login,
+		register,
+		type TokenResponse
+	} from '$lib/api/auth';
+	import { apiUrl, getStoredSession } from '$lib/api/client';
 	import { session } from '$lib/session';
 
 	let introReady = $state(false);
+	let mode = $state<'login' | 'register'>('login');
 	let email = $state('');
 	let password = $state('');
-	let signingIn = $state(false);
-	let signInError = $state('');
+	let username = $state('');
+	let fullName = $state('');
+	let securityQuestion = $state(DEFAULT_SECURITY_QUESTION);
+	let securityAnswer = $state('');
+	let selectedRole = $state<'teacher' | 'vetter'>('teacher');
+	let authLoading = $state(false);
+	let authError = $state('');
+	let signupEnabled = $state(true);
+	let checkingSignup = $state(true);
 
 	function redirectByRole(role: string) {
 		switch (role) {
@@ -25,26 +39,90 @@
 		}
 	}
 
-	async function handleLandingSignIn() {
-		signInError = '';
-		signingIn = true;
+	async function handleLandingAuth() {
+		authError = '';
+
+		if (mode === 'register') {
+			if (!signupEnabled) {
+				authError = 'Sign up is currently disabled';
+				return;
+			}
+			if (!username.trim()) {
+				authError = 'Username is required';
+				return;
+			}
+			if (password.length < 8) {
+				authError = 'Password must be at least 8 characters';
+				return;
+			}
+			if (!securityQuestion.trim() || !securityAnswer.trim()) {
+				authError = 'Security question and answer are required';
+				return;
+			}
+		}
+
+		authLoading = true;
 		try {
-			const response = await login({ email, password });
+			let response: TokenResponse;
+			if (mode === 'login') {
+				response = await login({ email, password });
+			} else {
+				response = await register({
+					email,
+					username: username.trim().toLowerCase(),
+					full_name: fullName.trim() || undefined,
+					password,
+					security_question: securityQuestion.trim(),
+					security_answer: securityAnswer.trim(),
+					role: selectedRole
+				});
+			}
 			session.refresh();
 			redirectByRole(response.user.role);
 		} catch (e: unknown) {
-			signInError = e instanceof Error ? e.message : 'Sign in failed';
+			authError = e instanceof Error ? e.message : 'Sign in failed';
 		} finally {
-			signingIn = false;
+			authLoading = false;
 		}
 	}
 
 	onMount(() => {
+		const existingSession = getStoredSession();
+		if (existingSession?.user?.role) {
+			redirectByRole(existingSession.user.role);
+			return;
+		}
+
+		let cancelled = false;
 		const rafId = requestAnimationFrame(() => {
 			introReady = true;
 		});
 
+		void (async () => {
+			try {
+				const res = await fetch(apiUrl('/settings/signup'));
+				if (res.ok) {
+					const data = await res.json();
+					if (!cancelled) {
+						signupEnabled = data.signup_enabled ?? true;
+						if (!signupEnabled && mode === 'register') {
+							mode = 'login';
+						}
+					}
+				}
+			} catch {
+				if (!cancelled) {
+					signupEnabled = true;
+				}
+			} finally {
+				if (!cancelled) {
+					checkingSignup = false;
+				}
+			}
+		})();
+
 		return () => {
+			cancelled = true;
 			cancelAnimationFrame(rafId);
 		};
 	});
@@ -63,36 +141,164 @@
 		</div>
 
 		<div class="signin-wrap">
-			<form class="signin-form" onsubmit={(e) => { e.preventDefault(); handleLandingSignIn(); }}>
-				{#if signInError}
-					<p class="signin-error" role="alert">{signInError}</p>
+			<div class="signin-panel">
+				<form class="signin-form" onsubmit={(e) => { e.preventDefault(); handleLandingAuth(); }}>
+					{#if authError}
+						<p class="signin-error" role="alert">{authError}</p>
+					{/if}
+
+					{#if mode === 'register'}
+						<label class="signin-field">
+							<span class="signin-label">Username</span>
+							<input
+								type="text"
+								class="signin-input"
+								bind:value={username}
+								placeholder="e.g. jane_doe"
+								autocomplete="username"
+								required
+							/>
+						</label>
+						<label class="signin-field">
+							<span class="signin-label">Full Name</span>
+							<input
+								type="text"
+								class="signin-input"
+								bind:value={fullName}
+								placeholder="Jane Doe"
+								autocomplete="name"
+							/>
+						</label>
+						<div class="signin-field">
+							<span class="signin-label">Role</span>
+							<div class="role-selector">
+								<button
+									type="button"
+									class="role-option"
+									class:selected={selectedRole === 'teacher'}
+									onclick={() => {
+										selectedRole = 'teacher';
+									}}
+								>
+									<svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+										<path d="M12 20h9"></path>
+										<path d="M16.5 3.5a 2.12 2.12 0 0 1 3 3L7 19l-4 1 1-4Z"></path>
+									</svg>
+									Teacher
+								</button>
+								<button
+									type="button"
+									class="role-option"
+									class:selected={selectedRole === 'vetter'}
+									onclick={() => {
+										selectedRole = 'vetter';
+									}}
+								>
+									<svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+										<circle cx="11" cy="11" r="8"></circle>
+										<path d="m21 21-4.3-4.3"></path>
+									</svg>
+									Vetter
+								</button>
+							</div>
+						</div>
+						<label class="signin-field">
+							<span class="signin-label">Security Question</span>
+							<input
+								type="text"
+								class="signin-input"
+								bind:value={securityQuestion}
+								placeholder="Set your password reset question"
+								required
+							/>
+						</label>
+						<label class="signin-field">
+							<span class="signin-label">Security Answer</span>
+							<input
+								type="password"
+								class="signin-input"
+								bind:value={securityAnswer}
+								placeholder="Answer used for password reset"
+								autocomplete="off"
+								required
+							/>
+						</label>
+					{/if}
+
+					<label class="signin-field">
+						<span class="signin-label">Email</span>
+						<input
+							type="email"
+							class="signin-input"
+							bind:value={email}
+							placeholder="your email address"
+							autocomplete="email"
+							required
+						/>
+					</label>
+					<label class="signin-field">
+						<span class="signin-label">Password</span>
+						<input
+							type="password"
+							class="signin-input"
+							bind:value={password}
+							placeholder={mode === 'register' ? 'Min 8 characters' : '••••••••'}
+							autocomplete={mode === 'login' ? 'current-password' : 'new-password'}
+							minlength={mode === 'register' ? 8 : undefined}
+							required
+						/>
+					</label>
+
+					{#if mode === 'login'}
+						<div class="aux-link-row">
+							<a href="/forgot-password" class="inline-link">Forgot password?</a>
+						</div>
+					{/if}
+
+					<button type="submit" class="signin-submit" disabled={authLoading}>
+						{authLoading
+							? mode === 'login'
+								? 'Signing In...'
+								: 'Creating Account...'
+							: mode === 'login'
+								? 'Sign In'
+								: 'Create Account'}
+					</button>
+				</form>
+
+				{#if !checkingSignup}
+					<div class="mode-switch">
+						{#if mode === 'login'}
+							{#if signupEnabled}
+								<button
+									type="button"
+									class="text-link"
+									onclick={() => {
+										mode = 'register';
+										authError = '';
+									}}
+								>
+									Create one
+								</button>
+							{:else}
+								<!-- <span class="muted-copy">Sign up is currently disabled.</span> -->
+							{/if}
+						{:else}
+							<span>Already have an account?</span>
+							<button
+								type="button"
+								class="text-link"
+								onclick={() => {
+									mode = 'login';
+									authError = '';
+								}}
+							>
+								Sign In
+							</button>
+						{/if}
+					</div>
 				{/if}
-				<label class="signin-field">
-					<span class="signin-label">Email</span>
-					<input
-						type="email"
-						class="signin-input"
-						bind:value={email}
-						placeholder="your email address"
-						autocomplete="email"
-						required
-					/>
-				</label>
-				<label class="signin-field">
-					<span class="signin-label">Password</span>
-					<input
-						type="password"
-						class="signin-input"
-						bind:value={password}
-						placeholder="••••••••"
-						autocomplete="current-password"
-						required
-					/>
-				</label>
-				<button type="submit" class="signin-submit" disabled={signingIn}>
-					{signingIn ? 'Signing In...' : 'Sign In'}
-				</button>
-			</form>
+			</div>
 		</div>
 	</section>
 </div>
@@ -345,8 +551,55 @@
 		margin-top: 0.55rem;
 	}
 
+	.signin-panel {
+		width: min(420px, 94vw);
+		padding: 1rem;
+		border-radius: 1.2rem;
+		background: linear-gradient(
+			160deg,
+			rgba(255, 255, 255, 0.3) 0%,
+			rgba(255, 255, 255, 0.18) 100%
+		);
+		border: 1px solid rgba(255, 255, 255, 0.46);
+		backdrop-filter: blur(14px) saturate(135%);
+		-webkit-backdrop-filter: blur(14px) saturate(135%);
+		box-shadow:
+			0 18px 40px rgba(15, 23, 42, 0.16),
+			inset 0 1px 0 rgba(255, 255, 255, 0.58);
+	}
+
+	.form-heading {
+		display: flex;
+		flex-direction: column;
+		gap: 0.22rem;
+		margin-bottom: 0.8rem;
+	}
+
+	.form-eyebrow {
+		margin: 0;
+		font-size: 0.72rem;
+		font-weight: 700;
+		letter-spacing: 0.08em;
+		text-transform: uppercase;
+		color: rgba(15, 23, 42, 0.62);
+	}
+
+	.form-title {
+		margin: 0;
+		font-size: 1.45rem;
+		font-weight: 800;
+		color: #0f172a;
+	}
+
+	.form-copy {
+		margin: 0;
+		font-size: 0.88rem;
+		line-height: 1.5;
+		color: rgba(15, 23, 42, 0.72);
+	}
+
 	.signin-form {
-		width: min(360px, 94vw);
+		width: 100%;
 		display: flex;
 		flex-direction: column;
 		gap: 0.56rem;
@@ -436,6 +689,33 @@
 		cursor: wait;
 	}
 
+	.aux-link-row {
+		display: flex;
+		justify-content: flex-end;
+		margin-top: 0.05rem;
+	}
+
+	.inline-link,
+	.text-link {
+		font-size: 0.84rem;
+		font-weight: 700;
+		color: var(--theme-primary);
+		text-decoration: none;
+	}
+
+	.text-link {
+		background: none;
+		border: none;
+		padding: 0;
+		cursor: pointer;
+		font: inherit;
+	}
+
+	.inline-link:hover,
+	.text-link:hover {
+		text-decoration: underline;
+	}
+
 	.signin-error {
 		margin: 0;
 		padding: 0.48rem 0.6rem;
@@ -444,6 +724,55 @@
 		background: rgba(254, 226, 226, 0.6);
 		border: 1px solid rgba(239, 68, 68, 0.24);
 		border-radius: 0.62rem;
+	}
+
+	.role-selector {
+		display: flex;
+		gap: 0.5rem;
+	}
+
+	.role-option {
+		flex: 1;
+		display: inline-flex;
+		align-items: center;
+		justify-content: center;
+		gap: 0.45rem;
+		padding: 0.72rem 0.78rem;
+		border-radius: 0.8rem;
+		border: 1px solid rgba(255, 255, 255, 0.45);
+		background: rgba(255, 255, 255, 0.24);
+		color: #0f172a;
+		font: inherit;
+		font-size: 0.88rem;
+		font-weight: 700;
+		cursor: pointer;
+		transition: transform 0.18s ease, background 0.18s ease, border-color 0.18s ease;
+	}
+
+	.role-option:hover {
+		transform: translateY(-1px);
+		background: rgba(255, 255, 255, 0.34);
+	}
+
+	.role-option.selected {
+		border-color: rgba(var(--theme-primary-rgb), 0.38);
+		background: rgba(var(--theme-primary-rgb), 0.14);
+		color: var(--theme-primary);
+	}
+
+	.mode-switch {
+		display: flex;
+		justify-content: center;
+		align-items: center;
+		gap: 0.35rem;
+		margin-top: 0.9rem;
+		font-size: 0.84rem;
+		color: rgba(15, 23, 42, 0.72);
+	}
+
+	.muted-copy {
+		font-size: 0.8rem;
+		color: rgba(15, 23, 42, 0.58);
 	}
 
 	@media (max-width: 768px) {
@@ -475,8 +804,18 @@
 			max-width: 100%;
 		}
 
-		.signin-form {
-			width: min(350px, 94vw);
+		.signin-panel {
+			width: min(390px, 94vw);
+			padding: 0.95rem;
+		}
+
+		.form-title {
+			font-size: 1.28rem;
+		}
+
+		.role-selector,
+		.mode-switch {
+			flex-direction: column;
 		}
 
 		.signin-submit {
@@ -515,8 +854,22 @@
 			font-size: 0.92rem;
 		}
 
-		.signin-form {
-			width: min(320px, 95vw);
+		.signin-panel {
+			width: min(330px, 95vw);
+			padding: 0.88rem;
+		}
+
+		.form-copy,
+		.mode-switch,
+		.inline-link,
+		.text-link,
+		.muted-copy {
+			font-size: 0.8rem;
+		}
+
+		.role-option {
+			padding: 0.62rem 0.7rem;
+			font-size: 0.82rem;
 		}
 
 		.signin-submit {

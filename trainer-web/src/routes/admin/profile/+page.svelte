@@ -1,15 +1,26 @@
 <script lang="ts">
 	import { onMount } from 'svelte';
 	import { goto } from '$app/navigation';
-	import { changePassword, logout, updateProfile } from '$lib/api/auth';
+	import {
+		DEFAULT_SECURITY_QUESTION,
+		changePassword,
+		getCurrentUser,
+		logout,
+		updateProfile
+	} from '$lib/api/auth';
 	import { currentUser, session } from '$lib/session';
 
 	let initialized = false;
 	let fullName = '';
 	let username = '';
+	let securityQuestion = DEFAULT_SECURITY_QUESTION;
+	let securityAnswer = '';
 	let profileLoading = false;
 	let profileMessage = '';
 	let profileError = '';
+	let securityLoading = false;
+	let securityMessage = '';
+	let securityError = '';
 
 	let currentPassword = '';
 	let newPassword = '';
@@ -24,13 +35,27 @@
 				goto('/admin/login');
 			}
 		});
+		void hydrateProfile();
 		return unsub;
 	});
 
 	$: if ($currentUser && !initialized) {
 		fullName = $currentUser.full_name || '';
 		username = $currentUser.username || '';
+		securityQuestion = $currentUser.security_question || DEFAULT_SECURITY_QUESTION;
 		initialized = true;
+	}
+
+	async function hydrateProfile() {
+		try {
+			const user = await getCurrentUser();
+			fullName = user.full_name || '';
+			username = user.username || '';
+			securityQuestion = user.security_question || DEFAULT_SECURITY_QUESTION;
+			initialized = true;
+		} catch {
+			// Best effort hydration for already-authenticated sessions.
+		}
 	}
 
 	function getInitials(name?: string | null, usernameValue?: string | null) {
@@ -120,6 +145,35 @@
 			passwordLoading = false;
 		}
 	}
+
+	async function handleSecurityUpdate() {
+		securityError = '';
+		securityMessage = '';
+
+		const normalizedQuestion = securityQuestion.trim();
+		const normalizedAnswer = securityAnswer.trim();
+
+		if (!normalizedQuestion || !normalizedAnswer) {
+			securityError = 'Security question and answer are required.';
+			return;
+		}
+
+		securityLoading = true;
+		try {
+			const updated = await updateProfile({
+				security_question: normalizedQuestion,
+				security_answer: normalizedAnswer
+			});
+			session.refresh();
+			securityQuestion = updated.security_question || DEFAULT_SECURITY_QUESTION;
+			securityAnswer = '';
+			securityMessage = 'Security question updated successfully.';
+		} catch (error) {
+			securityError = error instanceof Error ? error.message : 'Failed to update security question.';
+		} finally {
+			securityLoading = false;
+		}
+	}
 </script>
 
 <svelte:head>
@@ -157,7 +211,7 @@
 
 	<div class="settings-stack animate-fade-in">
 		<form
-			class="settings-form glass-panel"
+			class="settings-form settings-form--profile glass-panel"
 			onsubmit={(event) => {
 				event.preventDefault();
 				handleProfileUpdate();
@@ -184,7 +238,35 @@
 		</form>
 
 		<form
-			class="settings-form glass-panel"
+			class="settings-form settings-form--security glass-panel"
+			onsubmit={(event) => {
+				event.preventDefault();
+				handleSecurityUpdate();
+			}}
+		>
+			<p class="section-title">Security Question</p>
+			<label class="field">
+				<span>Question</span>
+				<input bind:value={securityQuestion} type="text" maxlength="255" placeholder="Set your password reset question" />
+			</label>
+			<label class="field">
+				<span>Answer</span>
+				<input bind:value={securityAnswer} type="password" maxlength="128" autocomplete="off" placeholder="Enter a new answer" />
+			</label>
+			<p class="helper-copy">Update both the question and the answer together to change your security-question reset method.</p>
+			{#if securityError}
+				<p class="feedback error">{securityError}</p>
+			{/if}
+			{#if securityMessage}
+				<p class="feedback success">{securityMessage}</p>
+			{/if}
+			<button class="save-action" type="submit" disabled={securityLoading}>
+				{securityLoading ? 'Saving...' : 'Save Security Question'}
+			</button>
+		</form>
+
+		<form
+			class="settings-form settings-form--password glass-panel"
 			onsubmit={(event) => {
 				event.preventDefault();
 				handlePasswordUpdate();
@@ -227,11 +309,12 @@
 
 <style>
 	.profile-page {
-		width: min(100%, 860px);
+		width: min(100%, 980px);
 		margin: 0 auto;
 		min-height: 100%;
 		max-height: 100%;
 		overflow-y: auto;
+		overflow-x: hidden;
 		padding: 1.25rem 1.25rem max(1.5rem, env(safe-area-inset-bottom));
 		display: flex;
 		flex-direction: column;
@@ -246,11 +329,14 @@
 		width: 100%;
 		display: grid;
 		grid-template-columns: repeat(2, minmax(0, 1fr));
+		align-items: start;
 		gap: 0.9rem;
+		flex-shrink: 0;
 	}
 
 	.profile-card {
 		width: 100%;
+		flex-shrink: 0;
 		padding: 2rem 1.5rem;
 		border-radius: 1.5rem;
 		display: flex;
@@ -386,9 +472,21 @@
 		display: flex;
 		flex-direction: column;
 		gap: 0.75rem;
+		min-width: 0;
 		background: rgba(255, 255, 255, 0.82);
 		border: 1px solid rgba(17, 24, 39, 0.12);
 		box-shadow: 0 14px 26px rgba(15, 23, 42, 0.1), inset 0 1px 0 rgba(255, 255, 255, 0.65);
+	}
+
+	.settings-form--profile,
+	.settings-form--security {
+		min-height: 100%;
+	}
+
+	.settings-form--password {
+		grid-column: 1 / -1;
+		width: min(100%, 560px);
+		justify-self: center;
 	}
 
 	.section-title {
@@ -458,6 +556,14 @@
 		border: 1px solid rgba(16, 185, 129, 0.28);
 	}
 
+	.helper-copy {
+		margin: 0;
+		font-size: 0.8rem;
+		line-height: 1.45;
+		color: var(--theme-text-muted);
+		text-align: left;
+	}
+
 	.save-action {
 		margin-top: 0.15rem;
 		padding: 0.68rem 0.85rem;
@@ -477,7 +583,7 @@
 		cursor: wait;
 	}
 
-	@media (max-width: 768px) {
+	@media (max-width: 900px) {
 		.profile-page {
 			width: 100%;
 			padding: 1.25rem 1rem max(1.25rem, env(safe-area-inset-bottom));
@@ -487,6 +593,12 @@
 		.settings-stack {
 			grid-template-columns: 1fr;
 			gap: 0.75rem;
+		}
+
+		.settings-form--password {
+			grid-column: auto;
+			width: 100%;
+			justify-self: stretch;
 		}
 
 		.profile-card {

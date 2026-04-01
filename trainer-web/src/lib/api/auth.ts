@@ -13,12 +13,33 @@ export interface LoginRequest {
 	password: string;
 }
 
+export type PasswordResetMethod = 'smtp' | 'security_question';
+export const DEFAULT_SECURITY_QUESTION = 'What is your security reset word?';
+
 export interface RegisterRequest {
 	email: string;
 	username: string;
 	full_name?: string;
 	password: string;
+	security_question: string;
+	security_answer: string;
 	role: 'teacher' | 'vetter' | 'admin';
+}
+
+export interface AuthenticatedUser {
+	id: string;
+	email: string;
+	username: string;
+	full_name: string | null;
+	security_question: string | null;
+	role: string;
+	avatar_url: string | null;
+	can_manage_groups: boolean;
+	can_generate: boolean;
+	can_vet: boolean;
+	is_active: boolean;
+	created_at: string;
+	last_login_at: string | null;
 }
 
 export interface TokenResponse {
@@ -26,29 +47,45 @@ export interface TokenResponse {
 	refresh_token: string;
 	token_type: string;
 	expires_in: number;
-	user: {
-		id: string;
-		email: string;
-		username: string;
-		full_name: string | null;
-		role: string;
-		avatar_url: string | null;
-		can_manage_groups: boolean;
-		can_generate: boolean;
-		can_vet: boolean;
-		is_active: boolean;
-		created_at: string;
-		last_login_at: string | null;
-	};
+	user: AuthenticatedUser;
 }
 
 export interface UpdateProfileRequest {
 	username?: string;
 	full_name?: string;
+	security_question?: string;
+	security_answer?: string;
 }
 
 export interface ChangePasswordRequest {
 	current_password: string;
+	new_password: string;
+}
+
+export interface ForgotPasswordRequest {
+	email: string;
+}
+
+export interface ResetPasswordRequest {
+	token: string;
+	new_password: string;
+}
+
+export interface PasswordResetMethodResponse {
+	method: PasswordResetMethod;
+}
+
+export interface SecurityQuestionLookupRequest {
+	email: string;
+}
+
+export interface SecurityQuestionResponse {
+	security_question: string;
+}
+
+export interface SecurityQuestionPasswordResetRequest {
+	email: string;
+	security_answer: string;
 	new_password: string;
 }
 
@@ -71,6 +108,7 @@ export async function login(credentials: LoginRequest): Promise<TokenResponse> {
 			email: data.user.email,
 			username: data.user.username,
 			full_name: data.user.full_name,
+			security_question: data.user.security_question,
 			role: data.user.role,
 			avatar_url: data.user.avatar_url,
 			can_manage_groups: data.user.can_manage_groups,
@@ -100,6 +138,7 @@ export async function register(data: RegisterRequest): Promise<TokenResponse> {
 			email: tokenRes.user.email,
 			username: tokenRes.user.username,
 			full_name: tokenRes.user.full_name,
+			security_question: tokenRes.user.security_question,
 			role: tokenRes.user.role,
 			avatar_url: tokenRes.user.avatar_url,
 			can_manage_groups: tokenRes.user.can_manage_groups,
@@ -131,11 +170,11 @@ export async function logout(): Promise<void> {
 }
 
 export async function getCurrentUser() {
-	return apiFetch<TokenResponse['user']>('/auth/me');
+	return apiFetch<AuthenticatedUser>('/auth/me');
 }
 
-export async function updateProfile(payload: UpdateProfileRequest): Promise<TokenResponse['user']> {
-	const updatedUser = await apiFetch<TokenResponse['user']>('/auth/update-profile', {
+export async function updateProfile(payload: UpdateProfileRequest): Promise<AuthenticatedUser> {
+	const updatedUser = await apiFetch<AuthenticatedUser>('/auth/update-profile', {
 		method: 'PUT',
 		body: JSON.stringify(payload)
 	});
@@ -149,6 +188,7 @@ export async function updateProfile(payload: UpdateProfileRequest): Promise<Toke
 				email: updatedUser.email,
 				username: updatedUser.username,
 				full_name: updatedUser.full_name,
+				security_question: updatedUser.security_question,
 				role: updatedUser.role,
 				avatar_url: updatedUser.avatar_url,
 				can_manage_groups: updatedUser.can_manage_groups,
@@ -166,4 +206,69 @@ export async function changePassword(payload: ChangePasswordRequest): Promise<{ 
 		method: 'POST',
 		body: JSON.stringify(payload)
 	});
+}
+
+export async function requestPasswordReset(payload: ForgotPasswordRequest): Promise<{ message: string }> {
+	const res = await fetch(apiUrl('/auth/forgot-password'), {
+		method: 'POST',
+		headers: { 'Content-Type': 'application/json' },
+		body: JSON.stringify(payload)
+	});
+	if (!res.ok) {
+		const body = await res.json().catch(() => null);
+		throw new Error(body?.detail || `Password reset request failed (${res.status})`);
+	}
+	return res.json();
+}
+
+export async function resetPassword(payload: ResetPasswordRequest): Promise<{ message: string }> {
+	const res = await fetch(apiUrl('/auth/reset-password'), {
+		method: 'POST',
+		headers: { 'Content-Type': 'application/json' },
+		body: JSON.stringify(payload)
+	});
+	if (!res.ok) {
+		const body = await res.json().catch(() => null);
+		throw new Error(body?.detail || `Password reset failed (${res.status})`);
+	}
+	return res.json();
+}
+
+export async function getPasswordResetMethod(): Promise<PasswordResetMethodResponse> {
+	const res = await fetch(apiUrl('/settings/password-reset'));
+	if (!res.ok) {
+		const body = await res.json().catch(() => null);
+		throw new Error(body?.detail || `Failed to load password reset method (${res.status})`);
+	}
+	return res.json();
+}
+
+export async function getSecurityQuestion(
+	payload: SecurityQuestionLookupRequest
+): Promise<SecurityQuestionResponse> {
+	const res = await fetch(apiUrl('/auth/security-question'), {
+		method: 'POST',
+		headers: { 'Content-Type': 'application/json' },
+		body: JSON.stringify(payload)
+	});
+	if (!res.ok) {
+		const body = await res.json().catch(() => null);
+		throw new Error(body?.detail || `Unable to load security question (${res.status})`);
+	}
+	return res.json();
+}
+
+export async function resetPasswordWithSecurityQuestion(
+	payload: SecurityQuestionPasswordResetRequest
+): Promise<{ message: string }> {
+	const res = await fetch(apiUrl('/auth/security-question/reset-password'), {
+		method: 'POST',
+		headers: { 'Content-Type': 'application/json' },
+		body: JSON.stringify(payload)
+	});
+	if (!res.ok) {
+		const body = await res.json().catch(() => null);
+		throw new Error(body?.detail || `Password reset failed (${res.status})`);
+	}
+	return res.json();
 }

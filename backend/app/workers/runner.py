@@ -10,8 +10,7 @@ from __future__ import annotations
 import asyncio
 import logging
 import uuid
-from datetime import datetime, timedelta
-from zoneinfo import ZoneInfo
+from datetime import datetime
 
 from app.core.config import settings
 from app.core.database import AsyncSessionLocal
@@ -100,106 +99,59 @@ async def run_worker_pool(queue_name: str) -> None:
 
 
 async def _auto_training_scheduler() -> None:
-    """Trigger one fine-tuning job daily at configured local time."""
+    """Poll adaptive training policy and trigger jobs only when justified."""
     from sqlalchemy import select, func
-    from app.models.training import TrainingJob, VettingLog, TrainingPair
+    from app.models.training import TrainingJob
 
-    timezone = ZoneInfo(settings.AUTO_TRAINING_TIMEZONE)
     logger.info(
-        "✅ Auto-training scheduler enabled: %02d:%02d %s method=%s",
-        settings.AUTO_TRAINING_HOUR,
-        settings.AUTO_TRAINING_MINUTE,
-        settings.AUTO_TRAINING_TIMEZONE,
-        settings.AUTO_TRAINING_METHOD,
+        "✅ Auto-training scheduler enabled: poll=%d min min_interval=%d h",
+        settings.AUTO_TRAINING_POLL_MINUTES,
+        settings.AUTO_TRAINING_MIN_INTERVAL_HOURS,
     )
 
     while True:
-        now_local = datetime.now(timezone)
-        next_run = now_local.replace(
-            hour=settings.AUTO_TRAINING_HOUR,
-            minute=settings.AUTO_TRAINING_MINUTE,
-            second=0,
-            microsecond=0,
-        )
-        if now_local >= next_run:
-            next_run = next_run + timedelta(days=1)
-
-        sleep_seconds = max(1.0, (next_run - now_local).total_seconds())
-        logger.debug(
-            "Auto-training scheduler sleeping for %.0f seconds, next run at %s",
-            sleep_seconds,
-            next_run.strftime("%Y-%m-%d %H:%M:%S %Z"),
-        )
-        await asyncio.sleep(sleep_seconds)
-
-        run_date = datetime.now(timezone).strftime("%Y-%m-%d")
-        idempotency_key = f"auto-training:{run_date}:{settings.AUTO_TRAINING_METHOD}"
-        run_time = datetime.now(timezone).strftime("%H:%M:%S %Z")
-
         try:
             async with AsyncSessionLocal() as db:
-                logger.info("⏱️ Auto-training trigger starting at %s", run_time)
-
-                # Check if training job already running today (avoid conflicts)
-                running_today = await db.execute(
+                running_jobs = await db.execute(
                     select(func.count(TrainingJob.id)).where(
-                        TrainingJob.triggered_by == "system:auto-scheduler",
-                        TrainingJob.status.in_(["pending", "running"]),
-                        TrainingJob.created_at >= datetime.now(timezone).replace(
-                            hour=0, minute=0, second=0, microsecond=0
-                        ),
+                        TrainingJob.status.in_(["pending", "preparing", "running"]),
                     )
                 )
-                pending_count = running_today.scalar() or 0
+                pending_count = running_jobs.scalar() or 0
                 if pending_count > 0:
                     logger.info(
-                        "⏭️ Skip auto-training: %d job(s) already pending/running today",
+                        "⏭️ Skip auto-training: %d job(s) already pending or running",
                         pending_count,
                     )
-                    continue
-
-                # Check data availability
-                vetting_count = await db.execute(
-                    select(func.count(VettingLog.id)).where(
-                        VettingLog.action == "approve"
+                else:
+                    decision = await training_service.evaluate_auto_training_policy(
+                        db,
+                        created_by="system:auto-scheduler",
                     )
-                )
-                approved_q = vetting_count.scalar() or 0
-
-                dpo_count = await db.execute(
-                    select(func.count(TrainingPair.id)).where(
-                        TrainingPair.status.in_(["pending", "queued"])
-                    )
-                )
-                pending_pairs = dpo_count.scalar() or 0
-
-                logger.info(
-                    "📊 Data check: %d approved questions, %d pending DPO pairs",
-                    approved_q,
-                    pending_pairs,
-                )
-
-                if approved_q == 0 and pending_pairs == 0:
-                    logger.info(
-                        "⚠️ Skip auto-training: no approved questions or DPO pairs (need vetting activity)"
-                    )
-                    continue
-
-                logger.info(
-                    "🚀 Triggering auto-training with idempotency_key=%s method=%s",
-                    idempotency_key,
-                    settings.AUTO_TRAINING_METHOD,
-                )
-                result = await training_service.trigger_training(
-                    db=db,
-                    triggered_by="system:auto-scheduler",
-                    training_method=settings.AUTO_TRAINING_METHOD,
-                    idempotency_key=idempotency_key,
-                )
-                logger.info("✅ Auto-training triggered result=%s", result)
+                    if not decision.get("should_train"):
+                        logger.info(
+                            "⏭️ Skip auto-training: %s",
+                            decision.get("reason", "policy conditions not met"),
+                        )
+                    else:
+                        time_bucket = datetime.utcnow().strftime("%Y%m%d%H")
+                        idempotency_key = f"auto-policy:{decision['training_method']}:{time_bucket}"
+                        logger.info(
+                            "🚀 Triggering policy-based auto-training method=%s idempotency_key=%s",
+                            decision["training_method"],
+                            idempotency_key,
+                        )
+                        result = await training_service.trigger_training(
+                            db=db,
+                            triggered_by="system:auto-scheduler",
+                            training_method=decision["training_method"],
+                            idempotency_key=idempotency_key,
+                            policy_snapshot=decision,
+                        )
+                        logger.info("✅ Auto-training triggered result=%s", result)
         except Exception as exc:
             logger.exception("❌ Auto-training trigger failed error=%s", exc)
-            await asyncio.sleep(60)
+        await asyncio.sleep(max(300, int(settings.AUTO_TRAINING_POLL_MINUTES) * 60))
 
 
 async def main() -> None:

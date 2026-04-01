@@ -22,7 +22,7 @@ from app.api.v1.deps import get_current_admin
 from app.models.user import User, VALID_ROLES, default_permissions_for_role
 from app.models.question import Question, GenerationSession
 from app.models.subject import Subject, Topic
-from app.core.security import hash_password
+from app.core.security import hash_password, hash_security_answer
 
 
 router = APIRouter()
@@ -128,6 +128,8 @@ class AdminUserCreateRequest(BaseModel):
     username: str
     password: str
     full_name: Optional[str] = None
+    security_question: str
+    security_answer: str
     role: str = "teacher"
     is_active: bool = True
     can_manage_groups: Optional[bool] = None
@@ -583,6 +585,13 @@ async def create_admin_user(
 
     role = _validate_role(payload.role)
     username = _validate_username(payload.username)
+    security_question = " ".join((payload.security_question or "").strip().split())
+    security_answer = str(payload.security_answer or "").strip()
+    if not security_question or not security_answer:
+        raise HTTPException(
+            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+            detail="Security question and answer are required",
+        )
     permissions = _resolve_permissions(
         role,
         {
@@ -607,6 +616,8 @@ async def create_admin_user(
             username=username,
             password_hash=hash_password(payload.password),
             full_name=payload.full_name,
+            security_question=security_question,
+            security_answer_hash=hash_security_answer(security_answer),
             role=role,
             is_active=payload.is_active,
             can_manage_groups=permissions["can_manage_groups"],

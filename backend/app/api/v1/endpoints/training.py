@@ -154,6 +154,19 @@ async def get_training_status(
     return await training_service.get_training_status(db)
 
 
+@router.get("/policy", response_model=dict)
+async def get_training_policy(
+    current_user: User = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+):
+    """Get the current adaptive training policy decision and supporting metrics."""
+    return await training_service.evaluate_auto_training_policy(
+        db=db,
+        created_by=current_user.id,
+        bootstrap_reference_datasets=False,
+    )
+
+
 @router.post("/trigger")
 async def trigger_training(
     request: TriggerTrainingRequest,

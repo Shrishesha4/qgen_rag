@@ -46,6 +46,8 @@ export interface AdminUserCreateRequest {
 	username: string;
 	password: string;
 	full_name?: string;
+	security_question: string;
+	security_answer: string;
 	role: 'teacher' | 'vetter' | 'admin';
 	is_active?: boolean;
 	can_manage_groups?: boolean;
