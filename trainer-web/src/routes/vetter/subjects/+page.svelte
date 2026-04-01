@@ -2,7 +2,9 @@
 	import { onMount } from 'svelte';
 	import { goto } from '$app/navigation';
 	import { session } from '$lib/session';
+	import { getSubjectsTree, type SubjectTreeResponse } from '$lib/api/subjects';
 	import { getVetterSubjects, type VetterSubjectSummary } from '$lib/api/vetting';
+	import { buildSubjectGroupMetaById, getSubjectGroupPath, matchesSubjectSearch } from '$lib/subject-group-search';
 
 	onMount(() => {
 		const unsub = session.subscribe((s) => {
@@ -13,6 +15,7 @@
 	});
 
 	let subjects = $state<VetterSubjectSummary[]>([]);
+	let subjectTree = $state<SubjectTreeResponse | null>(null);
 	let loading = $state(true);
 	let error = $state('');
 	let searchQuery = $state('');
@@ -22,7 +25,9 @@
 		loading = true;
 		error = '';
 		try {
-			subjects = await getVetterSubjects();
+			const [subjectList, tree] = await Promise.all([getVetterSubjects(), getSubjectsTree()]);
+			subjects = subjectList;
+			subjectTree = tree;
 		} catch (e: unknown) {
 			error = e instanceof Error ? e.message : 'Failed to load subjects';
 		} finally {
@@ -38,6 +43,10 @@
 		goto('/vetter/loop');
 	}
 
+	const subjectGroupMetaById = $derived.by(() => buildSubjectGroupMetaById(subjectTree?.groups ?? []));
+
+	const hasSearchQuery = $derived.by(() => searchQuery.trim().length > 0);
+
 	const filteredSubjects = $derived.by(() => {
 		const q = searchQuery.trim().toLowerCase();
 		return subjects.filter((subject) => {
@@ -48,8 +57,7 @@
 			if (!statusMatch) return false;
 
 			if (!q) return true;
-			const subjectText = `${subject.name} ${subject.code} ${subject.description || ''}`.toLowerCase();
-			if (subjectText.includes(q)) return true;
+			if (matchesSubjectSearch(subject, q, subjectGroupMetaById)) return true;
 			return subject.topics.some((topic) => topic.name.toLowerCase().includes(q));
 		});
 	});
@@ -85,7 +93,7 @@
 				class="search-input"
 				type="search"
 				bind:value={searchQuery}
-				placeholder="Search subject, code, or topic"
+				placeholder="Search subject, code, topic, or group"
 			/>
 			<!-- <div class="filter-row">
 				<button class="filter-chip" class:active={statusFilter === 'all'} onclick={() => (statusFilter = 'all')}>All</button>
@@ -113,6 +121,7 @@
 				<div class="empty-filter">No subjects match your current search/filter.</div>
 			{/if}
 			{#each filteredSubjects as s}
+				{@const groupPath = getSubjectGroupPath(s.id, subjectGroupMetaById)}
 				<button class="subject-card glass" onclick={() => openSubject(s.id)}>
 					<div class="sc-top">
 						<span class="sc-code">{s.code}</span>
@@ -123,6 +132,9 @@
 						{/if}
 					</div>
 					<h2 class="sc-name">{s.name}</h2>
+					{#if hasSearchQuery && groupPath}
+						<p class="sc-group">Group: {groupPath}</p>
+					{/if}
 					{#if s.description}
 						<p class="sc-desc">{s.description}</p>
 					{/if}
@@ -406,6 +418,12 @@
 		font-weight: 700;
 		margin: 0 0 0.3rem;
 		color: var(--theme-text);
+	}
+	.sc-group {
+		font-size: 0.8rem;
+		color: var(--theme-text-muted);
+		margin: 0 0 0.45rem;
+		line-height: 1.4;
 	}
 	.sc-desc {
 		font-size: 0.85rem;

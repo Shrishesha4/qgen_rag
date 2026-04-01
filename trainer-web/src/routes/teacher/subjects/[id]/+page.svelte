@@ -1655,6 +1655,7 @@
 								<div class="doc-row">
 									<div class="doc-main">
 										<!-- svelte-ignore a11y_click_events_have_key_events a11y_no_static_element_interactions -->
+										<!-- svelte-ignore a11y_no_static_element_interactions -->
 										<div class="doc-name clickable" onclick={() => openPdfPreview(doc.id, doc.filename)}>{doc.filename}</div>
 										<div class="doc-meta">{doc.index_type.replace('_', ' ')} • {doc.processing_status}{#if doc.uploaded_by_name} • <span class="doc-uploader">by {doc.uploaded_by_name}</span>{/if}</div>
 										{#if isDocProcessing(doc.processing_status)}
@@ -1704,6 +1705,7 @@
 								<div class="doc-row">
 									<div class="doc-main">
 										<!-- svelte-ignore a11y_click_events_have_key_events a11y_no_static_element_interactions -->
+										<!-- svelte-ignore a11y_no_static_element_interactions -->
 										<div class="doc-name clickable" onclick={() => openPdfPreview(doc.id, doc.filename)}>{doc.filename}</div>
 										<div class="doc-meta">
 											{doc.processing_status}

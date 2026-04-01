@@ -13,6 +13,7 @@
 	} from '$lib/api/subjects';
 	import { getBackgroundGenerationStatuses } from '$lib/api/documents';
 	import { getQuestionsForVetting } from '$lib/api/vetting';
+	import { buildSubjectGroupMetaById, getSubjectGroupPath, matchesSubjectSearch } from '$lib/subject-group-search';
 	import {
 		createTeacherVettingLoopUrl,
 		hydrateTeacherVettingProgressStoreFromRemote,
@@ -542,18 +543,18 @@
 		return `${current}/${total} reviewed`;
 	}
 
+	const subjectGroupMetaById = $derived.by(() => buildSubjectGroupMetaById(treeData?.groups ?? []));
+
+	function matchesTrainingSubjectSearch(subject: SubjectResponse, query: string): boolean {
+		if (matchesSubjectSearch(subject, query, subjectGroupMetaById)) return true;
+		const topics = topicsMap[subject.id] || [];
+		return topics.some((topic) => topic.name.toLowerCase().includes(query));
+	}
+
 	const filteredSubjects = $derived.by(() => {
 		const q = searchQuery.trim().toLowerCase();
 		if (!q) return subjects;
-		return subjects.filter((subject) => {
-			const subjectMatch =
-				subject.name.toLowerCase().includes(q) ||
-				subject.code.toLowerCase().includes(q) ||
-				(subject.description || '').toLowerCase().includes(q);
-			if (subjectMatch) return true;
-			const topics = topicsMap[subject.id] || [];
-			return topics.some((topic) => topic.name.toLowerCase().includes(q));
-		});
+		return subjects.filter((subject) => matchesTrainingSubjectSearch(subject, q));
 	});
 
 	function collectGroupedSubjectIds(groups: SubjectGroupTreeNode[]): Set<string> {
@@ -581,15 +582,7 @@
 		const q = searchQuery.trim().toLowerCase();
 		const groupedSubjects = subjects.filter((subject) => groupedSubjectIds.has(subject.id));
 		if (!q) return groupedSubjects;
-		return groupedSubjects.filter((subject) => {
-			const subjectMatch =
-				subject.name.toLowerCase().includes(q) ||
-				subject.code.toLowerCase().includes(q) ||
-				(subject.description || '').toLowerCase().includes(q);
-			if (subjectMatch) return true;
-			const topics = topicsMap[subject.id] || [];
-			return topics.some((topic) => topic.name.toLowerCase().includes(q));
-		});
+		return groupedSubjects.filter((subject) => matchesTrainingSubjectSearch(subject, q));
 	});
 
 	const mobileVisibleSubjects = $derived.by(() => {
@@ -764,7 +757,7 @@
 						</button>
 					</div>
 				</div>
-				<input class="search-input" bind:value={searchQuery} placeholder="Search subjects or topics" />
+				<input class="search-input" bind:value={searchQuery} placeholder="Search subjects, topics, or groups" />
 			</div>
 
 			<div class="table-shell desktop-only">
@@ -828,6 +821,7 @@
 					<div class="mobile-card glass-panel empty-cell">No matching subjects.</div>
 				{:else}
 					{#each mobileVisibleSubjects as subject}
+						{@const groupPath = getSubjectGroupPath(subject.id, subjectGroupMetaById)}
 						<div class="mobile-card glass-panel">
 							<div class="mobile-card-head">
 								<div class="name-header">
@@ -838,6 +832,9 @@
 									{isExpanded(subject.id) ? 'Hide Topics' : 'Show Topics'}
 								</button>
 							</div>
+							{#if hasSearchQuery && groupPath}
+								<span class="group-context">Group: {groupPath}</span>
+							{/if}
 							<div class="mobile-metrics">
 								<span>Questions <strong>{subject.total_questions}</strong></span>
 								<span>Pending <strong>{subject.total_pending ?? 0}</strong></span>
@@ -935,6 +932,7 @@
 {/snippet}
 
 {#snippet vettingSubjectRow(subject: SubjectResponse, depth: number)}
+	{@const groupPath = getSubjectGroupPath(subject.id, subjectGroupMetaById)}
 	<tr class="subject-row" role="button" tabindex="0" onclick={() => toggleSubject(subject.id)} onkeydown={(event) => {
 		if (event.key === 'Enter' || event.key === ' ') {
 			event.preventDefault();
@@ -957,6 +955,9 @@
 						<strong>{subject.name}</strong>
 						<span class="code-chip">{subject.code}</span>
 					</div>
+					{#if hasSearchQuery && groupPath}
+						<span class="group-context">Group: {groupPath}</span>
+					{/if}
 				</div>
 			</div>
 		</td>
@@ -1435,6 +1436,12 @@
 	.name-header strong {
 		font-size: 1.02rem;
 		color: var(--theme-text-primary);
+	}
+
+	.group-context {
+		font-size: 0.78rem;
+		line-height: 1.35;
+		color: var(--theme-text-muted);
 	}
 
 	.code-chip {

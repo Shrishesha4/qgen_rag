@@ -327,17 +327,6 @@
 		line-height: 1.45;
 	}
 
-	.method-pill {
-		margin-bottom: 1rem;
-		padding: 0.6rem 0.8rem;
-		border-radius: 999px;
-		background: rgba(var(--theme-primary-rgb), 0.12);
-		border: 1px solid rgba(var(--theme-primary-rgb), 0.24);
-		font-size: 0.82rem;
-		font-weight: 700;
-		color: var(--theme-text);
-		text-align: center;
-	}
 
 	.error-banner,
 	.success-banner {

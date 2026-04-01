@@ -568,35 +568,6 @@
 			inset 0 1px 0 rgba(255, 255, 255, 0.58);
 	}
 
-	.form-heading {
-		display: flex;
-		flex-direction: column;
-		gap: 0.22rem;
-		margin-bottom: 0.8rem;
-	}
-
-	.form-eyebrow {
-		margin: 0;
-		font-size: 0.72rem;
-		font-weight: 700;
-		letter-spacing: 0.08em;
-		text-transform: uppercase;
-		color: rgba(15, 23, 42, 0.62);
-	}
-
-	.form-title {
-		margin: 0;
-		font-size: 1.45rem;
-		font-weight: 800;
-		color: #0f172a;
-	}
-
-	.form-copy {
-		margin: 0;
-		font-size: 0.88rem;
-		line-height: 1.5;
-		color: rgba(15, 23, 42, 0.72);
-	}
 
 	.signin-form {
 		width: 100%;
@@ -770,11 +741,6 @@
 		color: rgba(15, 23, 42, 0.72);
 	}
 
-	.muted-copy {
-		font-size: 0.8rem;
-		color: rgba(15, 23, 42, 0.58);
-	}
-
 	@media (max-width: 768px) {
 		.landing {
 			padding: 1rem 0.85rem;
@@ -807,10 +773,6 @@
 		.signin-panel {
 			width: min(390px, 94vw);
 			padding: 0.95rem;
-		}
-
-		.form-title {
-			font-size: 1.28rem;
 		}
 
 		.role-selector,
@@ -859,11 +821,9 @@
 			padding: 0.88rem;
 		}
 
-		.form-copy,
 		.mode-switch,
 		.inline-link,
-		.text-link,
-		.muted-copy {
+		.text-link {
 			font-size: 0.8rem;
 		}
 

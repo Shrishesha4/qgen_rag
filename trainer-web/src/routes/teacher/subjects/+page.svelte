@@ -15,6 +15,7 @@
 		type SubjectTreeResponse
 	} from '$lib/api/subjects';
 	import { getGenerationWebSocketClient, type StatsData } from '$lib/api/generation-websocket';
+	import { buildSubjectGroupMetaById, getSubjectGroupPath, matchesSubjectSearch } from '$lib/subject-group-search';
 
 	// Tab state
 	type ViewTab = 'subjects' | 'groups';
@@ -234,47 +235,26 @@
 		}
 	}
 
-	// Flatten tree for search in groups view
-	function flattenSubjects(groups: SubjectGroupTreeNode[], ungrouped: SubjectResponse[]): SubjectResponse[] {
-		const result: SubjectResponse[] = [...ungrouped];
-		function traverse(group: SubjectGroupTreeNode) {
-			result.push(...group.subjects);
-			group.children.forEach(traverse);
-		}
-		groups.forEach(traverse);
-		return result;
-	}
+	const subjectGroupMetaById = $derived.by(() => buildSubjectGroupMetaById(treeData?.groups ?? []));
 
-	const allSubjectsFromTree = $derived.by(() => {
-		if (!treeData) return [];
-		return flattenSubjects(treeData.groups, treeData.ungrouped_subjects);
+	const groupedSubjects = $derived.by(() => {
+		return subjects.filter((subject) => subjectGroupMetaById.has(subject.id));
 	});
 
-	const groupedSubjectsFromTree = $derived.by(() => {
-		if (!treeData) return [];
-		return flattenSubjects(treeData.groups, []);
-	});
+	const hasActiveSearch = $derived.by(() => query.trim().length > 0);
 
 	// Filtered subjects for subjects view
 	const filteredSubjectsView = $derived.by(() => {
 		const search = query.trim().toLowerCase();
 		if (!search) return subjects;
-		return subjects.filter((subject) => {
-			return [subject.name, subject.code, subject.description ?? ''].some((value) =>
-				value.toLowerCase().includes(search)
-			);
-		});
+		return subjects.filter((subject) => matchesSubjectSearch(subject, search, subjectGroupMetaById));
 	});
 
 	// Filtered subjects for groups view (returns null when no search to show tree)
 	const filteredGroupsView = $derived.by(() => {
 		const search = query.trim().toLowerCase();
 		if (!search) return null;
-		return groupedSubjectsFromTree.filter((subject) => {
-			return [subject.name, subject.code, subject.description ?? ''].some((value) =>
-				value.toLowerCase().includes(search)
-			);
-		});
+		return groupedSubjects.filter((subject) => matchesSubjectSearch(subject, search, subjectGroupMetaById));
 	});
 
 	const totals = $derived.by(() => {
@@ -929,7 +909,7 @@
 	</div>
 
 	<div class="toolbar animate-slide-up">
-		<input class="search-input" bind:value={query} placeholder="Search by subject, code, or description" />
+		<input class="search-input" bind:value={query} placeholder="Search by subject, code, description, or group" />
 	</div>
 
 	{#if error}
@@ -1020,6 +1000,7 @@
 						</tr>
 					{:else}
 						{#each filteredSubjectsView as subject}
+							{@const groupPath = getSubjectGroupPath(subject.id, subjectGroupMetaById)}
 							<tr class="subject-row" role="button" tabindex="0" onclick={() => openSubject(subject.id)} onkeydown={(event) => {
 								if (event.key === 'Enter' || event.key === ' ') {
 									event.preventDefault();
@@ -1032,6 +1013,9 @@
 											<strong>{subject.name}</strong>
 											<span class="code-chip">{subject.code}</span>
 										</div>
+										{#if hasActiveSearch && groupPath}
+											<span class="group-context">Group: {groupPath}</span>
+										{/if}
 									</div>
 								</td>
 								<td>{subject.total_questions}</td>
@@ -1064,11 +1048,15 @@
 				<div class="subject-mobile-card glass-panel empty-cell">No subjects matched your search.</div>
 			{:else}
 				{#each filteredSubjectsView as subject}
+					{@const groupPath = getSubjectGroupPath(subject.id, subjectGroupMetaById)}
 					<button class="subject-mobile-card glass-panel" onclick={() => openSubject(subject.id)}>
 						<div class="name-header">
 							<span class="code-chip">{subject.code}</span>
 							<strong>{subject.name}</strong>
 						</div>
+						{#if hasActiveSearch && groupPath}
+							<span class="group-context">Group: {groupPath}</span>
+						{/if}
 						<div class="mobile-metrics">
 							<span>Questions <strong>{subject.total_questions}</strong></span>
 							<span>Pending <strong>{subject.total_pending ?? 0}</strong></span>
@@ -1133,6 +1121,7 @@
 							</tr>
 						{:else}
 							{#each filteredGroupsView as subject}
+								{@const groupPath = getSubjectGroupPath(subject.id, subjectGroupMetaById)}
 								<tr 
 									class="subject-row" 
 									role="button" 
@@ -1154,6 +1143,9 @@
 												<strong>{subject.name}</strong>
 												<span class="code-chip">{subject.code}</span>
 											</div>
+											{#if groupPath}
+												<span class="group-context">Group: {groupPath}</span>
+											{/if}
 										</div>
 									</td>
 									<td>{subject.total_questions}</td>
@@ -1218,11 +1210,15 @@
 						<div class="subject-mobile-card glass-panel empty-cell">No grouped subjects matched your search.</div>
 				{:else}
 					{#each filteredGroupsView as subject}
+						{@const groupPath = getSubjectGroupPath(subject.id, subjectGroupMetaById)}
 						<button class="subject-mobile-card glass-panel" onclick={() => openSubject(subject.id)}>
 							<div class="name-header">
 								<span class="code-chip">{subject.code}</span>
 								<strong>{subject.name}</strong>
 							</div>
+							{#if groupPath}
+								<span class="group-context">Group: {groupPath}</span>
+							{/if}
 							<div class="mobile-metrics">
 								<span>Questions <strong>{subject.total_questions}</strong></span>
 								<span>Pending <strong>{subject.total_pending ?? 0}</strong></span>
@@ -1930,6 +1926,12 @@
 	.name-header strong {
 		font-size: 1rem;
 		color: var(--theme-text-primary);
+	}
+
+	.group-context {
+		font-size: 0.78rem;
+		line-height: 1.35;
+		color: var(--theme-text-muted);
 	}
 
 	.code-chip {
