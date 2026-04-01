@@ -40,7 +40,10 @@
 		"vite": "^7.3.1"
 	},
 	"dependencies": {
+		"isomorphic-dompurify": "^3.7.1",
 		"lucide-svelte": "^1.0.1",
+		"marked": "^17.0.5",
+		"mermaid": "^11.14.0",
 		"motion": "^12.35.2"
 	}
 }

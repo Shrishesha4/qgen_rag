@@ -32,6 +32,7 @@
 		if (pathname === '/teacher/profile') return 'Profile';
 		if (pathname === '/teacher/ops') return 'Operations';
 		if (pathname === '/teacher/ab-test') return 'A/B Test';
+		if (String(pathname) === '/student/train') return 'GEL Train';
 		// Vetter routes
 		if (pathname === '/vetter' || pathname === '/vetter/dashboard') return 'Home';
 		if (pathname.startsWith('/vetter/subjects/')) return 'Subject';
@@ -52,6 +53,7 @@
 		'/teacher/stats',
 		'/teacher/profile', '/teacher/ops', '/teacher/verify', '/teacher/ab-test',
 		'/vetter', '/vetter/dashboard', '/vetter/subjects', '/vetter/profile',
+		'/student/train', '/student', '/student/assignments', '/student/history', '/student/progress', '/student/profile',
 		'/admin/dashboard', '/admin/subjects', '/admin/teachers', '/admin/vetters',
 	]);
 

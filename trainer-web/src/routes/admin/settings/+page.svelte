@@ -6,6 +6,7 @@
 
 	type SettingsTab = 'general' | 'ai';
 	type AITab = 'connectors' | 'statistics';
+	type StatisticsTab = 'gel' | 'vquest';
 
 	interface ProviderConfig {
 		key: string;
@@ -50,6 +51,7 @@
 	let settingsSaved = $state(false);
 	let activeSettingsTab = $state<SettingsTab>('general');
 	let activeAITab = $state<AITab>('connectors');
+	let activeStatisticsTab = $state<StatisticsTab>('vquest');
 	let metricsWindowDays = $state(30);
 	let signupEnabled = $state(true);
 	let studentSignupEnabled = $state(false);
@@ -102,7 +104,8 @@
 	async function loadMetrics() {
 		metricsLoading = true;
 		try {
-			providerMetrics = await apiFetch<ProviderMetricsResponse>(`/admin/provider-metrics?days=${metricsWindowDays}`);
+			const usageType = activeStatisticsTab === 'gel' ? 'gel' : 'vquest';
+			providerMetrics = await apiFetch<ProviderMetricsResponse>(`/admin/provider-metrics?days=${metricsWindowDays}&usage_type=${usageType}`);
 		} catch (e: unknown) {
 			pageError = e instanceof Error ? e.message : 'Failed to load provider metrics';
 		} finally {
@@ -407,7 +410,7 @@
 						<p>Overview of AI generation performance and vetting outcomes</p>
 					</div>
 					<div class="metric-controls">
-						<select bind:value={metricsWindowDays} class="cell-input window-select">
+						<select bind:value={metricsWindowDays} class="cell-input window-select" onchange={loadMetrics}>
 							<option value={7}>7 days</option>
 							<option value={30}>30 days</option>
 							<option value={90}>90 days</option>
@@ -418,16 +421,27 @@
 					</div>
 				</div>
 
+				<div class="tabs ai-tabs stats-tabs" role="tablist" aria-label="Statistics type">
+					<button class="tab-btn" class:active={activeStatisticsTab === 'vquest'} onclick={() => { activeStatisticsTab = 'vquest'; void loadMetrics(); }}>VQuest</button>
+					<button class="tab-btn" class:active={activeStatisticsTab === 'gel'} onclick={() => { activeStatisticsTab = 'gel'; void loadMetrics(); }}>GEL Train</button>
+				</div>
+
 				{#if !providerMetrics}
 					<div class="center-state">
 						<p>No statistics available yet.</p>
 					</div>
 				{:else}
 					<div class="summary-grid">
-						<div class="summary-item"><span>Total Generations</span><strong>{providerMetrics.total_generated}</strong></div>
-						<div class="summary-item"><span>Total Rejected</span><strong>{providerMetrics.total_rejected}</strong></div>
-						<div class="summary-item"><span>Total Regenerated</span><strong>{providerMetrics.total_regenerated}</strong></div>
-						<div class="summary-item"><span>Acceptance Rate</span><strong>{providerMetrics.total_generated > 0 ? Math.round(((providerMetrics.total_generated - providerMetrics.total_rejected) / providerMetrics.total_generated) * 100) : 0}%</strong></div>
+						<div class="summary-item"><span>Total {activeStatisticsTab === 'gel' ? 'Interactions' : 'Generations'}</span><strong>{activeStatisticsTab === 'gel' ? (providerMetrics.providers.reduce((sum, p) => sum + p.api_calls, 0)) : providerMetrics.total_generated}</strong></div>
+						{#if activeStatisticsTab === 'vquest'}
+							<div class="summary-item"><span>Total Rejected</span><strong>{providerMetrics.total_rejected}</strong></div>
+							<div class="summary-item"><span>Total Regenerated</span><strong>{providerMetrics.total_regenerated}</strong></div>
+							<div class="summary-item"><span>Acceptance Rate</span><strong>{providerMetrics.total_generated > 0 ? Math.round(((providerMetrics.total_generated - providerMetrics.total_rejected) / providerMetrics.total_generated) * 100) : 0}%</strong></div>
+						{:else}
+							<div class="summary-item"><span>Total Sessions</span><strong>{providerMetrics.providers.reduce((sum, p) => sum + p.api_calls, 0)}</strong></div>
+							<div class="summary-item"><span>Active Providers</span><strong>{providerMetrics.providers.filter(p => p.api_calls > 0).length}</strong></div>
+							<div class="summary-item"><span>Avg Usage</span><strong>{providerMetrics.providers.length > 0 ? Math.round(providerMetrics.providers.reduce((sum, p) => sum + p.api_calls, 0) / providerMetrics.providers.filter(p => p.api_calls > 0).length) : 0}</strong></div>
+						{/if}
 					</div>
 
 					<div class="table-wrap">
@@ -435,24 +449,32 @@
 							<thead>
 								<tr>
 									<th>Service</th>
-									<th>Generations</th>
-									<th>Calls</th>
-									<th>Avg/Call</th>
-									<th>Rejected</th>
-									<th>Regenerated</th>
-									<th>Preference</th>
+									{#if activeStatisticsTab === 'vquest'}
+										<th>Generations</th>
+									{/if}
+									<th>{activeStatisticsTab === 'gel' ? 'Sessions' : 'Calls'}</th>
+									{#if activeStatisticsTab === 'vquest'}
+										<th>Avg/Call</th>
+										<th>Rejected</th>
+										<th>Regenerated</th>
+										<th>Preference</th>
+									{/if}
 								</tr>
 							</thead>
 							<tbody>
 								{#each providerMetrics.providers as metric}
 									<tr>
 										<td>{metric.provider_key}</td>
-										<td>{metric.total_generated}</td>
+										{#if activeStatisticsTab === 'vquest'}
+											<td>{metric.total_generated}</td>
+										{/if}
 										<td>{metric.api_calls}</td>
-										<td>{metric.avg_questions_per_call}</td>
-										<td>{metric.total_rejected}</td>
-										<td>{metric.total_regenerated}</td>
-										<td><span class={`pref-pill ${preferenceClass(metric.inferred_preference)}`}>{metric.inferred_preference}</span></td>
+										{#if activeStatisticsTab === 'vquest'}
+											<td>{metric.avg_questions_per_call}</td>
+											<td>{metric.total_rejected}</td>
+											<td>{metric.total_regenerated}</td>
+											<td><span class={`pref-pill ${preferenceClass(metric.inferred_preference)}`}>{metric.inferred_preference}</span></td>
+										{/if}
 									</tr>
 								{/each}
 							</tbody>
@@ -696,6 +718,17 @@
 
 	.window-select {
 		max-width: 100px;
+	}
+
+	.stats-tabs {
+		margin-bottom: 1.1rem;
+		padding: 0.35rem;
+		background: color-mix(in srgb, var(--theme-surface) 75%, transparent);
+	}
+
+	.stats-tabs .tab-btn {
+		font-size: 0.82rem;
+		padding: 0.5rem 1rem;
 	}
 
 	.summary-grid {

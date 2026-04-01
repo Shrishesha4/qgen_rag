@@ -6,7 +6,7 @@
 services:
   db:
     image: pgvector/pgvector:pg16
-    container_name: qgen_db
+    container_name: qgen_db_p1
     restart: unless-stopped
     environment:
       POSTGRES_USER: ${POSTGRES_USER}
@@ -14,12 +14,12 @@ services:
       POSTGRES_DB: ${POSTGRES_DB}
       POSTGRES_INITDB_ARGS: "--encoding=UTF8 --locale=C"
     volumes:
-      - postgres_data:/var/lib/postgresql/data
+      - postgres_data_p1:/var/lib/postgresql/data
       - ./backend/init_db.sql:/docker-entrypoint-initdb.d/init.sql:ro
     ports:
       - "${POSTGRES_PORT:-5432}:5432"
     networks:
-      - qgen_net
+      - qgen_net_p1
     healthcheck:
       test:
         [
@@ -30,16 +30,10 @@ services:
       timeout: 5s
       retries: 5
       start_period: 10s
-    deploy:
-      resources:
-        limits:
-          memory: 12G
-        reservations:
-          memory: 4G
 
   redis:
     image: redis:7-alpine
-    container_name: qgen_redis
+    container_name: qgen_redis_p1
     restart: unless-stopped
     command: >
       redis-server
@@ -49,23 +43,17 @@ services:
       --save 60 1000
       ${REDIS_PASSWORD:+--requirepass ${REDIS_PASSWORD}}
     volumes:
-      - redis_data:/data
+      - redis_data_p1:/data
     ports:
       - "${REDIS_PORT:-6379}:6379"
     networks:
-      - qgen_net
+      - qgen_net_p1
     healthcheck:
       test: ["CMD", "redis-cli", "${REDIS_PASSWORD:+-a ${REDIS_PASSWORD}}", "ping"]
       interval: 10s
       timeout: 5s
       retries: 5
       start_period: 5s
-    deploy:
-      resources:
-        limits:
-          memory: ${REDIS_MAX_MEMORY:-512M}
-        reservations:
-          memory: 128M
 
   # api:
   #   build:
@@ -236,10 +224,10 @@ services:
   #         memory: ${WEB_MIN_MEMORY:-256M}
 
 volumes:
-  postgres_data:
-    name: qgen_postgres_data
-  redis_data:
-    name: qgen_redis_data
+  postgres_data_p1:
+    name: qgen_postgres_data_p1
+  redis_data_p1:
+    name: qgen_redis_data_p1
   # upload_data:
   #   name: qgen_upload_data
   # model_cache:
@@ -252,6 +240,6 @@ volumes:
   #   name: qgen_logs
 
 networks:
-  qgen_net:
-    name: qgen_network
+  qgen_net_p1:
+    name: qgen_network_p1
     driver: bridge

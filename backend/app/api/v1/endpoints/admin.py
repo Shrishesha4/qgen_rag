@@ -24,6 +24,7 @@ from app.models.user import User, VALID_ROLES, default_permissions_for_role
 from app.models.question import Question, GenerationSession
 from app.models.subject import Subject, Topic
 from app.models.training import VettingLog
+from app.models.provider_usage import ProviderUsageLog
 from app.core.security import hash_password
 
 
@@ -744,10 +745,17 @@ async def update_admin_user(
 @router.get("/provider-metrics", response_model=ProviderMetricsResponse)
 async def get_provider_metrics(
     days: int = 30,
+    usage_type: Optional[str] = None,  # "gel", "vquest", or None for all
     current_user: User = Depends(get_current_admin),
     db: AsyncSession = Depends(get_db),
 ):
-    """Return provider-level generation and rejection/regeneration metrics."""
+    """Return provider-level generation and rejection/regeneration metrics.
+    
+    Args:
+        days: Number of days to look back (1-365)
+        usage_type: Filter by usage type - "gel" for GEL Train conversational inquiry, 
+                   "vquest" for question generation, or None for combined stats
+    """
     window_days = max(1, min(days, 365))
     since = datetime.now(timezone.utc) - timedelta(days=window_days)
     provider_expr = _provider_key_expr().label("provider_key")
@@ -773,6 +781,42 @@ async def get_provider_metrics(
         }
         for row in generated_rows
     }
+    
+    # Query provider_usage_logs for GEL Train and other non-question-generation usage
+    # Only include if usage_type is "gel" or None (all)
+    if usage_type != "vquest":
+        usage_log_rows = (
+            await db.execute(
+                select(
+                    ProviderUsageLog.provider_key,
+                    func.count(ProviderUsageLog.id).label("usage_count"),
+                )
+                .where(
+                    ProviderUsageLog.created_at >= since,
+                )
+                .group_by(ProviderUsageLog.provider_key)
+            )
+        ).all()
+        
+        # Add usage log calls to the generated_map
+        for row in usage_log_rows:
+            provider_key = str(row.provider_key or "unknown")
+            usage_count = int(row.usage_count or 0)
+            if usage_type == "gel":
+                # For GEL-only view, only show GEL stats
+                generated_map[provider_key] = {
+                    "generated": 0,
+                    "api_calls": usage_count,
+                }
+            elif provider_key in generated_map:
+                # For "all" view, add to existing api_calls
+                generated_map[provider_key]["api_calls"] += usage_count
+            else:
+                # Create new entry for providers only used in GEL Train
+                generated_map[provider_key] = {
+                    "generated": 0,
+                    "api_calls": usage_count,
+                }
 
     rejected_rows = (
         await db.execute(

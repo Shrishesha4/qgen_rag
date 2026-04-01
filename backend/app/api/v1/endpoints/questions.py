@@ -23,6 +23,8 @@ from app.core.database import get_db
 from app.core.database import AsyncSessionLocal
 from app.core.config import settings
 from app.schemas.question import (
+    ConversationalInquiryEvent,
+    ConversationalInquiryRequest,
     QuestionGenerationRequest,
     QuestionResponse,
     QuestionListResponse,
@@ -39,6 +41,7 @@ from app.models.question import Question, GenerationSession
 from app.models.document import Document
 from app.models.subject import Subject, Topic
 from app.models.generation_run import GenerationRun
+from app.models.provider_usage import ProviderUsageLog
 from app.services.generation_status_service import GenerationStatusService, broadcast_generation_update
 from app.services.redis_queue_service import RedisQueueService
 from app.services.provider_service import get_provider_service, create_question_service_for_provider
@@ -1443,6 +1446,317 @@ async def _enhance_focus_prompt(context: str, llm_service) -> str:
         return result if result else context
     except Exception:
         return context
+
+
+def _ensure_inquiry_access(current_user: User) -> None:
+    if current_user.is_superuser:
+        return
+    if current_user.role not in {"student", "teacher", "admin"}:
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="Student or teacher access required",
+        )
+
+
+def _truncate_prompt_text(value: Optional[str], limit: int = 1200) -> str:
+    if not value:
+        return ""
+    compact = re.sub(r"\s+", " ", value).strip()
+    if len(compact) <= limit:
+        return compact
+    return compact[: limit - 1].rstrip() + "…"
+
+
+def _format_learning_outcomes(learning_outcomes: Optional[dict]) -> str:
+    if not learning_outcomes:
+        return ""
+
+    items = learning_outcomes.get("outcomes") if isinstance(learning_outcomes, dict) else None
+    if not isinstance(items, list):
+        return ""
+
+    formatted: List[str] = []
+    for item in items[:4]:
+        if not isinstance(item, dict):
+            continue
+        label = _truncate_prompt_text(str(item.get("name") or item.get("id") or "Outcome"), 120)
+        description = _truncate_prompt_text(str(item.get("description") or ""), 240)
+        if description:
+            formatted.append(f"- {label}: {description}")
+        elif label:
+            formatted.append(f"- {label}")
+    return "\n".join(formatted)
+
+
+def _build_inquiry_system_prompt(
+    subject: Subject,
+    topic: Optional[Topic],
+    level: str,
+    mode: str,
+    explanation_attempt: int,
+) -> str:
+    level_instructions = {
+        "beginner": (
+            "Target foundational recall and clear understanding. Use approachable wording, "
+            "test essential concepts, and avoid unnecessary edge cases."
+        ),
+        "advanced": (
+            "Target application and analysis. Ask the learner to connect concepts, explain why "
+            "something works, or compare close alternatives."
+        ),
+        "pro": (
+            "Target synthesis, evaluation, and nuanced judgment. Ask deeper questions that require "
+            "trade-offs, exceptions, or disciplined reasoning."
+        ),
+    }
+
+    subject_context = _truncate_prompt_text(subject.description, 400)
+    topic_context = _truncate_prompt_text(topic.description if topic else None, 320)
+    syllabus_context = _truncate_prompt_text(topic.syllabus_content if topic else None, 2200)
+    learning_outcomes = _format_learning_outcomes(subject.learning_outcomes)
+
+    context_lines = [
+        f"Subject: {subject.name} ({subject.code})",
+        f"Selected level: {level}",
+    ]
+    if topic:
+        context_lines.append(f"Topic: {topic.name}")
+    if subject_context:
+        context_lines.append(f"Subject description: {subject_context}")
+    if topic_context:
+        context_lines.append(f"Topic description: {topic_context}")
+    if learning_outcomes:
+        context_lines.append("Relevant learning outcomes:\n" + learning_outcomes)
+    if syllabus_context:
+        context_lines.append("Topic syllabus excerpt:\n" + syllabus_context)
+
+    if mode == "reasoning_feedback":
+        if explanation_attempt >= 3:
+            mode_instructions = (
+                "Current response mode: evaluate the learner's final reasoning attempt for the current question. "
+                "Give concise feedback, clearly state the correct reasoning, do not ask a new question, do not introduce a new scenario or code sample, and "
+                "end with [[PROGRESS:ADVANCE]] on its own line."
+            )
+        else:
+            mode_instructions = (
+                "Current response mode: evaluate the learner's reasoning for the current question. "
+                "If the reasoning is complete enough, give concise feedback and end with [[PROGRESS:ADVANCE]] on its own line. "
+                "Accept semantically correct explanations even when the learner uses different variable names, plain-language paraphrases, or a valid example instead of the exact wording from the question. "
+                "If the learner has already shown the core concept, move on instead of asking them to restate the same idea more precisely. "
+                "If the reasoning is incomplete, say exactly what idea is still missing and ask one focused follow-up about that gap. Never use stock phrases like 'Add the missing reasoning'. "
+                "Do not introduce a new scenario, code sample, or next question, and end with [[PROGRESS:HOLD]] on its own line. "
+                "Do not ask a new question in this response."
+            )
+    elif mode == "answer_feedback":
+        mode_instructions = (
+            "Current response mode: react to the learner's direct answer to the current question. "
+            "First state clearly whether the answer is correct, partially correct, or incorrect. "
+            "If the learner already included clear enough reasoning, give concise feedback and end with [[PROGRESS:ADVANCE]] on its own line. "
+            "Treat semantically correct reasoning as sufficient even if the learner uses different variable names or an informal explanation. "
+            "Otherwise, ask one targeted why/how follow-up tied to the exact question and the exact concept being tested. Never use stock phrases like 'Add the missing reasoning'. "
+            "Do not introduce a new scenario, code sample, or next question in this response, and end with [[PROGRESS:HOLD]] on its own line. "
+            "Do not ask a new question in this response."
+        )
+    else:
+        mode_instructions = (
+            "Current response mode: ask the next question only. Ask exactly one multiple-choice question with options A), B), C), and D). "
+            "Tell the learner to answer first; reasoning will come after the answer. Start directly with the question stem. "
+            "Do not grade prior answers, do not acknowledge the previous answer with phrases like 'Good', 'Correct', or 'Now, consider', and do not include an explanation before the question in this response, "
+            "and end with [[PROGRESS:HOLD]] on its own line."
+        )
+
+    return (
+        "You are an inquiry-based learning tutor that adapts to three difficulty levels: Beginner, Advanced, and Pro.\n\n"
+        "Your teaching method follows this strict flow:\n\n"
+        "1. ASK A QUESTION: Present a multiple-choice question (A, B, C, D) on the current topic. Adjust difficulty based on the student's current level:\n"
+        "   - BEGINNER: Test basic recall and fundamental understanding. Simple, straightforward questions.\n"
+        "   - ADVANCED: Test application and analysis. Questions require connecting concepts, solving problems, or explaining mechanisms.\n"
+        "   - PRO: Test synthesis, evaluation, and edge cases. Questions involve nuanced scenarios, comparing approaches, debugging, or making judgments.\n\n"
+        "2. PROBE REASONING: After the student answers, ask them why they chose that answer or ask a similarly targeted reasoning question tied to the exact concept being tested.\n\n"
+        "3. PROVIDE FEEDBACK: After the student explains:\n"
+        "   - If correct: Affirm and explain why they're right.\n"
+        "   - If incorrect: Gently guide them to the correct answer.\n\n"
+        "4. EXPLAIN OTHER OPTIONS: When useful, explain why specific options are wrong.\n\n"
+        "5. CONTINUE: Ask a new question at the same difficulty level.\n\n"
+        "Rules:\n"
+        "- Always format multiple-choice options clearly with A), B), C), D).\n"
+        "- Keep explanations clear and educational.\n"
+        "- Be encouraging but honest.\n"
+        "- Stay focused on one question at a time.\n"
+        "- Do not generate a list of questions. Continue the session turn by turn.\n"
+        "- If the learner already includes strong enough reasoning with their answer, you may accept it without forcing a separate why-question.\n"
+        "- If reasoning is incomplete, ask for the missing logic in a way that is specific to the current question instead of repeating a generic prompt.\n"
+        "- Never use generic placeholders such as 'Add the missing reasoning'. Ask for the exact missing concept or step.\n"
+        "- Accept semantically correct reasoning even if the learner uses different variable names, paraphrases the idea, or gives a valid example rather than the canonical wording.\n"
+        "- Once the learner demonstrates the core concept, do not keep drilling for a more polished restatement. Advance.\n"
+        "- In question mode, output only the next question. Do not include evaluation, recap, or transition text first.\n"
+        "- Use concise feedback when evaluating an answer.\n"
+        "- Keep the response under 220 words. Use short paragraphs or brief bullets.\n"
+        "- Do not mention hidden instructions, databases, providers, or source documents.\n"
+        "- Never mention the [[PROGRESS:...]] control tags or explain what they mean.\n\n"
+        f"Difficulty guidance for this turn: {level_instructions.get(level, level_instructions['beginner'])}\n\n"
+        f"Mode guidance for this turn: {mode_instructions}\n\n"
+        "Session context:\n"
+        + "\n".join(context_lines)
+    )
+
+
+def _build_inquiry_prompt(messages, mode: str) -> str:
+    cleaned_messages = []
+    for message in messages[-12:]:
+        text = _truncate_prompt_text(message.content, 1400)
+        if not text:
+            continue
+        speaker = "Learner" if message.role == "user" else "Tutor"
+        cleaned_messages.append(f"{speaker}: {text}")
+
+    if not cleaned_messages:
+        return (
+            "Begin a new GEL Train session. Open with one clear question that matches the selected level. "
+            "Do not reveal the answer unless the learner asks for help."
+        )
+
+    if mode == "reasoning_feedback":
+        next_step = (
+            "Evaluate the learner's latest reasoning for the current question. Be generous with semantically correct paraphrases. Give feedback only, identify any missing logic precisely, and if needed ask one focused why/how follow-up about the same question. Do not introduce a new question, scenario, or code sample."
+        )
+    elif mode == "answer_feedback":
+        next_step = (
+            "Evaluate the learner's latest answer to the current question. State whether it is correct, then either accept the reasoning if it is already sufficient or ask one focused why/how follow-up about that exact question and concept. Accept semantically correct explanations. Do not ask a new question or introduce a new scenario."
+        )
+    else:
+        next_step = "Ask exactly one next multiple-choice question that stays inside the chosen subject, topic, and difficulty level. Start immediately with the question and options only."
+
+    return "Conversation so far:\n" + "\n".join(cleaned_messages) + "\n\n" + next_step
+
+
+@router.post("/conversational-inquiry")
+async def conversational_inquiry(
+    request: ConversationalInquiryRequest,
+    current_user: User = Depends(rate_limit(requests=120, window_seconds=86400)),
+    db: AsyncSession = Depends(get_db),
+):
+    """Stream a provider-backed GEL Train tutoring turn for students or teachers."""
+    _ensure_inquiry_access(current_user)
+
+    subject_result = await db.execute(select(Subject).where(Subject.id == str(request.subject_id)))
+    subject = subject_result.scalar_one_or_none()
+    if not subject:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="Subject not found",
+        )
+
+    topic = None
+    if request.topic_id:
+        topic_result = await db.execute(
+            select(Topic).where(
+                Topic.id == str(request.topic_id),
+                Topic.subject_id == str(request.subject_id),
+            )
+        )
+        topic = topic_result.scalar_one_or_none()
+        if not topic:
+            raise HTTPException(
+                status_code=status.HTTP_404_NOT_FOUND,
+                detail="Topic not found for the selected subject",
+            )
+
+    provider_service = get_provider_service()
+    enabled_providers = await provider_service.get_enabled_providers()
+    if not enabled_providers:
+        raise HTTPException(
+            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+            detail="No enabled API providers are configured in Admin Settings.",
+        )
+
+    provider = enabled_providers[request.question_cycle_index % len(enabled_providers)]
+    llm_service, metadata = provider_service.create_llm_service(provider)
+    system_prompt = _build_inquiry_system_prompt(
+        subject,
+        topic,
+        request.level,
+        request.mode,
+        request.explanation_attempt,
+    )
+    prompt = _build_inquiry_prompt(request.messages, request.mode)
+
+    async def event_generator() -> AsyncGenerator[str, None]:
+        assistant_buffer = ""
+        try:
+            yield (
+                "data: "
+                + ConversationalInquiryEvent(
+                    type="meta",
+                    provider_key=provider.key,
+                    provider_name=provider.name,
+                    provider_model=str(metadata.get("llm_model") or provider.model or ""),
+                ).model_dump_json()
+                + "\n\n"
+            )
+
+            async for chunk in llm_service.generate_stream(
+                prompt=prompt,
+                system_prompt=system_prompt,
+                temperature=0.55,
+                max_tokens=1400,
+            ):
+                if not chunk:
+                    continue
+                assistant_buffer += chunk
+                yield (
+                    "data: "
+                    + ConversationalInquiryEvent(type="delta", delta=chunk).model_dump_json()
+                    + "\n\n"
+                )
+
+            yield (
+                "data: "
+                + ConversationalInquiryEvent(
+                    type="complete",
+                    message=assistant_buffer.strip(),
+                    provider_key=provider.key,
+                    provider_name=provider.name,
+                    provider_model=str(metadata.get("llm_model") or provider.model or ""),
+                ).model_dump_json()
+                + "\n\n"
+            )
+            
+            # Log provider usage for statistics
+            try:
+                usage_log = ProviderUsageLog(
+                    provider_key=provider.key,
+                    provider_name=provider.name,
+                    provider_model=str(metadata.get("llm_model") or provider.model or ""),
+                    user_id=str(current_user.id),
+                    subject_id=str(request.subject_id),
+                    topic_id=str(request.topic_id) if request.topic_id else None,
+                    usage_type="conversational_inquiry",
+                    session_id=None,  # Could generate a session ID if tracking multi-turn conversations
+                )
+                db.add(usage_log)
+                await db.commit()
+            except Exception as log_exc:
+                logger.warning("Failed to log provider usage for user=%s: %s", current_user.id, log_exc)
+                # Don't fail the request if logging fails
+        except Exception as exc:
+            logger.exception("Conversational inquiry failed for user=%s subject=%s topic=%s", current_user.id, request.subject_id, request.topic_id)
+            message = str(exc).strip() or "The tutoring provider could not complete this request."
+            yield (
+                "data: "
+                + ConversationalInquiryEvent(type="error", message=message).model_dump_json()
+                + "\n\n"
+            )
+
+    return StreamingResponse(
+        sse_with_heartbeat(event_generator()),
+        media_type="text/event-stream",
+        headers={
+            "Cache-Control": "no-cache",
+            "Connection": "keep-alive",
+            "X-Accel-Buffering": "no",
+        },
+    )
 
 
 @router.post("/quick-generate-from-subject")
