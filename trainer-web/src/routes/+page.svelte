@@ -26,14 +26,10 @@
 	let signupEnabled = $state(true);
 	let studentSignupEnabled = $state(false);
 	let checkingSignup = $state(true);
-	let adminExists = $state(true);
-	let checkingAdmin = $state(true);
 	const SIGNUP_SETTINGS_TIMEOUT_MS = 5000;
 
 	const selectableRoles = $derived(
-		mode === 'bootstrap'
-			? ['admin']
-			: [
+		[
 				...(signupEnabled ? ['teacher', 'vetter'] : []),
 				...(studentSignupEnabled ? ['student'] : [])
 			]
@@ -69,31 +65,6 @@
 		} finally {
 			window.clearTimeout(timeoutId);
 		}
-	}
-
-	async function initAuthState() {
-		// Check if admin exists first
-		try {
-			const bootstrap = await getBootstrapStatus();
-			adminExists = bootstrap?.admin_exists ?? true;
-		} catch (err) {
-			// If we cannot determine, assume admins exist so we don't block access
-			adminExists = true;
-		}
-		checkingAdmin = false;
-
-		// If no admin exists, show bootstrap mode
-		if (!adminExists) {
-			mode = 'bootstrap';
-			selectedRole = 'admin';
-			return;
-		}
-
-		// Otherwise, check signup settings
-		const settings = await fetchSignupSettings();
-		signupEnabled = settings.signupEnabled;
-		studentSignupEnabled = settings.studentSignupEnabled;
-		checkingSignup = false;
 	}
 
 	function selectedRoleCanSignUp(): boolean {
@@ -135,11 +106,9 @@
 				authError = 'Password must be at least 8 characters';
 				return;
 			}
-			if (mode !== 'bootstrap') {
-				if (!securityQuestion.trim() || !securityAnswer.trim()) {
-					authError = 'Security question and answer are required';
-					return;
-				}
+			if (!securityQuestion.trim() || !securityAnswer.trim()) {
+				authError = 'Security question and answer are required';
+				return;
 			}
 		}
 
@@ -155,9 +124,9 @@
 					username: username.trim().toLowerCase(),
 					full_name: fullName.trim() || undefined,
 					password,
-					security_question: mode === 'bootstrap' ? DEFAULT_SECURITY_QUESTION : securityQuestion.trim(),
-					security_answer: mode === 'bootstrap' ? 'admin' : securityAnswer.trim(),
-					role: mode === 'bootstrap' ? 'admin' : selectedRole
+					security_question: securityQuestion.trim(),
+					security_answer: securityAnswer.trim(),
+					role: selectedRole
 				});
 				authSuccess = response.message;
 				mode = 'login';
@@ -392,7 +361,7 @@
 						{/if}
 					</div>
 				{/if}
-			</form>
+			</div>
 		</div>
 	</section>
 </div>
@@ -665,11 +634,6 @@
 		color: rgba(15, 23, 42, 0.78);
 	}
 
-	.optional {
-		font-weight: 500;
-		opacity: 0.8;
-	}
-
 	.signin-input {
 		padding: 0.62rem 0.74rem;
 		border-radius: 0.7rem;
@@ -681,42 +645,6 @@
 		);
 		color: #111827;
 		font-size: 0.9rem;
-		outline: none;
-		backdrop-filter: blur(12px) saturate(135%);
-		-webkit-backdrop-filter: blur(12px) saturate(135%);
-		box-shadow:
-			inset 0 1px 0 rgba(255, 255, 255, 0.65),
-			inset 0 -1px 0 rgba(255, 255, 255, 0.2);
-		transition: border-color 0.18s ease, box-shadow 0.18s ease, background 0.18s ease;
-	}
-
-	.signin-input::placeholder {
-		color: rgba(31, 41, 55, 0.48);
-	}
-
-	.signin-input:hover {
-		background: linear-gradient(
-			160deg,
-			rgba(255, 255, 255, 0.56) 0%,
-			rgba(255, 255, 255, 0.38) 100%
-		);
-	}
-
-	.signin-input:focus {
-		border-color: rgba(255, 255, 255, 0.8);
-		background: linear-gradient(
-			160deg,
-			rgba(255, 255, 255, 0.62) 0%,
-			rgba(255, 255, 255, 0.44) 100%
-		);
-		box-shadow:
-			0 0 0 3px rgba(255, 255, 255, 0.28),
-			0 0 0 5px rgba(var(--theme-primary-rgb), 0.14);
-	}
-
-	.signin-submit {
-		display: inline-flex;
-		align-items: center;
 		justify-content: center;
 		font-size: 0.98rem;
 		font-weight: 700;
@@ -774,43 +702,6 @@
 		justify-content: center;
 		align-items: center;
 		gap: 0.35rem;
-	}
-
-	.switch-btn {
-		border: none;
-		background: transparent;
-		font-size: 0.82rem;
-		font-weight: 700;
-		color: var(--theme-primary);
-		cursor: pointer;
-		padding: 0;
-	}
-
-	.switch-btn:hover {
-		text-decoration: underline;
-	}
-
-	.bootstrap-notice {
-		margin: 0 0 1rem 0;
-		padding: 1rem;
-		background: rgba(55, 146, 53, 0.1);
-		border: 1px solid rgba(99, 102, 241, 0.3);
-		border-radius: 0.62rem;
-		text-align: center;
-	}
-
-	.bootstrap-notice h3 {
-		margin: 0 0 0.5rem 0;
-		font-size: 1.1rem;
-		font-weight: 700;
-		color: #004a02d0;
-	}
-
-	.bootstrap-notice p {
-		margin: 0;
-		font-size: 0.85rem;
-		color: #0b3018;
-		line-height: 1.4;
 	}
 
 	.signin-error {
