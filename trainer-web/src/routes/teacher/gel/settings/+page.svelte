@@ -16,87 +16,84 @@
 	<title>GEL Settings | Teacher Dashboard</title>
 </svelte:head>
 
-<div class="glass-panel p-6 space-y-6 border border-white/10 shadow-2xl text-slate-100">
-	<div class="flex items-center justify-between">
+<div class="gel-page">
+	<section class="gel-panel gel-page__hero">
 		<div>
-			<p class="text-xs uppercase tracking-[0.2em] text-slate-300">GEL</p>
-			<h1 class="text-3xl font-semibold text-white">Settings</h1>
-			<p class="text-slate-200/80">Tune defaults for new GEL assignments and notifications.</p>
-		</div>
-		<button
-			on:click={saveSettings}
-			class="inline-flex items-center space-x-2 px-4 py-2 rounded-xl bg-rose-500 hover:bg-rose-400 text-white shadow-lg shadow-rose-500/20"
-		>
-			<Save class="h-5 w-5" />
-			<span>Save</span>
-		</button>
-	</div>
-
-	<div class="grid md:grid-cols-2 gap-6">
-		<div class="glass-panel border border-white/10 rounded-xl shadow p-5 space-y-4">
-			<div class="flex items-center space-x-2">
-				<ShieldCheck class="h-5 w-5 text-rose-200" />
-				<h2 class="text-lg font-semibold text-white">Assignment defaults</h2>
-			</div>
-			<label class="block text-sm text-slate-200/90" for="maxAttempts">Max attempts per item</label>
-			<input
-				type="number"
-				min="1"
-				bind:value={$defaultMaxAttempts}
-				id="maxAttempts"
-				class="w-full px-3 py-2 rounded-lg bg-white/5 border border-white/10 text-white placeholder:text-slate-400 focus:border-rose-400/60 focus:ring-0"
-			/>
-
-			<div class="flex items-center justify-between py-2">
-				<div>
-					<p class="text-sm font-medium text-white">Show feedback immediately</p>
-					<p class="text-sm text-slate-300/80">If off, students see feedback after review.</p>
-				</div>
-				<label class="relative inline-flex items-center cursor-pointer">
-					<input type="checkbox" class="sr-only peer" bind:checked={$showFeedbackImmediately}>
-					<div class="w-11 h-6 bg-white/10 border border-white/20 rounded-full peer-checked:bg-rose-500 transition"></div>
-					<div class="absolute left-1 top-1 w-4 h-4 bg-white rounded-full transition peer-checked:translate-x-5"></div>
-				</label>
-			</div>
-		</div>
-
-		<div class="glass-panel border border-white/10 rounded-xl shadow p-5 space-y-4">
-			<div class="flex items-center space-x-2">
-				<Bell class="h-5 w-5 text-rose-200" />
-				<h2 class="text-lg font-semibold text-white">Notifications</h2>
-			</div>
-			<div class="flex items-center justify-between py-2">
-				<div>
-					<p class="text-sm font-medium text-white">When students submit attempts</p>
-					<p class="text-sm text-slate-300/80">Email digest for new submissions.</p>
-				</div>
-				<label class="relative inline-flex items-center cursor-pointer">
-					<input type="checkbox" class="sr-only peer" bind:checked={$notifyOnSubmit}>
-					<div class="w-11 h-6 bg-white/10 border border-white/20 rounded-full peer-checked:bg-rose-500 transition"></div>
-					<div class="absolute left-1 top-1 w-4 h-4 bg-white rounded-full transition peer-checked:translate-x-5"></div>
-				</label>
-			</div>
-			<div class="flex items-center justify-between py-2">
-				<div>
-					<p class="text-sm font-medium text-white">Score drops</p>
-					<p class="text-sm text-slate-300/80">Alert when average drops below expectations.</p>
-				</div>
-				<label class="relative inline-flex items-center cursor-pointer">
-					<input type="checkbox" class="sr-only peer" bind:checked={$notifyOnScoreDrop}>
-					<div class="w-11 h-6 bg-white/10 border border-white/20 rounded-full peer-checked:bg-rose-500 transition"></div>
-					<div class="absolute left-1 top-1 w-4 h-4 bg-white rounded-full transition peer-checked:translate-x-5"></div>
-				</label>
-			</div>
-		</div>
-	</div>
-
-	<div class="glass-panel border border-amber-200/40 bg-amber-900/30 rounded-xl p-4 flex items-start space-x-3">
-		<Info class="h-5 w-5 text-amber-200 mt-0.5" />
-		<div>
-			<p class="text-sm text-amber-100 font-semibold">Heads up</p>
-			<p class="text-sm text-amber-100/90">
-				These controls are front-end only for now. Wire them to a settings endpoint when it becomes available.
+			<p class="gel-page__eyebrow">GEL</p>
+			<h1 class="gel-page__title">Settings</h1>
+			<p class="gel-page__copy">
+				Tune the defaults teachers rely on when creating assignments, then define the notification
+				behavior you want once the backing settings endpoint is connected.
 			</p>
+		</div>
+		<div class="gel-page__actions">
+			<button on:click={saveSettings} class="gel-button gel-button--primary">
+				<Save class="h-5 w-5" />
+				<span>Save Settings</span>
+			</button>
+		</div>
+	</section>
+
+	<section class="gel-grid-2">
+		<div class="gel-panel gel-card">
+			<div class="gel-card__header">
+				<ShieldCheck class="h-5 w-5" />
+				<h2 class="gel-card__title">Assignment Defaults</h2>
+			</div>
+			<p class="gel-card__copy">Set the baseline behavior applied to newly created GEL assignments.</p>
+			<div class="gel-field">
+				<label for="maxAttempts">Max attempts per item</label>
+				<input id="maxAttempts" class="gel-input" type="number" min="1" bind:value={$defaultMaxAttempts} />
+			</div>
+			<div class="gel-switch-row">
+				<div class="gel-switch-copy">
+					<strong>Show feedback immediately</strong>
+					<span>If disabled, students only see feedback after review is complete.</span>
+				</div>
+				<label class="gel-switch" aria-label="Toggle immediate feedback">
+					<input type="checkbox" bind:checked={$showFeedbackImmediately} />
+					<span class="gel-switch__track"></span>
+					<span class="gel-switch__thumb"></span>
+				</label>
+			</div>
+		</div>
+
+		<div class="gel-panel gel-card">
+			<div class="gel-card__header">
+				<Bell class="h-5 w-5" />
+				<h2 class="gel-card__title">Notifications</h2>
+			</div>
+			<p class="gel-card__copy">Choose which teacher-facing alerts should be turned on by default.</p>
+			<div class="gel-switch-row">
+				<div class="gel-switch-copy">
+					<strong>Student submissions</strong>
+					<span>Send a digest when new attempts arrive for review.</span>
+				</div>
+				<label class="gel-switch" aria-label="Toggle submission notifications">
+					<input type="checkbox" bind:checked={$notifyOnSubmit} />
+					<span class="gel-switch__track"></span>
+					<span class="gel-switch__thumb"></span>
+				</label>
+			</div>
+			<div class="gel-switch-row">
+				<div class="gel-switch-copy">
+					<strong>Score drops</strong>
+					<span>Alert teachers when cohort performance falls below expectations.</span>
+				</div>
+				<label class="gel-switch" aria-label="Toggle score drop notifications">
+					<input type="checkbox" bind:checked={$notifyOnScoreDrop} />
+					<span class="gel-switch__track"></span>
+					<span class="gel-switch__thumb"></span>
+				</label>
+			</div>
+		</div>
+	</section>
+
+	<div class="gel-note gel-panel">
+		<Info class="h-5 w-5" />
+		<div>
+			<p><strong>Heads up</strong></p>
+			<p>These controls are currently front-end only. Connect them to a teacher settings endpoint when it becomes available.</p>
 		</div>
 	</div>
 </div>

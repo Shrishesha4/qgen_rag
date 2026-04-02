@@ -4,11 +4,9 @@
 		AlertCircle,
 		ArrowLeft,
 		BookOpen,
-		Brain,
 		ChevronRight,
 		RefreshCw,
 		Send,
-		Sparkles,
 		Trophy,
 	} from 'lucide-svelte';
 	import {
@@ -79,6 +77,7 @@
 	];
 
 	const MAX_EXPLANATION_ATTEMPTS = 3;
+	const UNGROUPED_SUBJECT_LABEL = 'Ungrouped Subjects';
 	const PROGRESS_ADVANCE_TAG = /\[\[PROGRESS:ADVANCE\]\]/i;
 	const PROGRESS_TAGS = /\[\[PROGRESS:(?:ADVANCE|HOLD)\]\]/gi;
 	const PARTIAL_PROGRESS_TAG = /\[\[PROGRESS:[\s\S]*$/i;
@@ -161,6 +160,7 @@
 	let currentQuestionAttempt = $state(0);
 	let currentPhase = $state<SessionPhase>('awaiting-answer');
 	let subjectSearch = $state('');
+	let selectedGroupFilter = $state('__all__');
 
 	let messageViewport = $state<HTMLDivElement | null>(null);
 	let streamAbortController: AbortController | null = null;
@@ -201,21 +201,41 @@
 						: 'Explain why you chose that answer, or what makes the correct option right.'
 					: 'Answer the current question. You can include the reasoning now if you want to move faster.'
 	);
+	const groupFilterOptions = $derived.by(() => {
+		const labels = new Set<string>();
+		for (const subject of subjects) {
+			labels.add(subject.groupLabel ?? UNGROUPED_SUBJECT_LABEL);
+		}
+		return [...labels].sort((left, right) => {
+			if (left === UNGROUPED_SUBJECT_LABEL) return 1;
+			if (right === UNGROUPED_SUBJECT_LABEL) return -1;
+			return left.localeCompare(right);
+		});
+	});
 	const filteredSubjects = $derived.by(() => {
 		const query = subjectSearch.trim().toLowerCase();
-		if (!query) return subjects;
-		return subjects.filter((subject) =>
-			[
-				subject.name,
-				subject.code,
-				subject.description ?? '',
-				subject.groupLabel ?? '',
-			]
-				.join(' ')
-				.toLowerCase()
-				.includes(query)
-		);
+		return [...subjects]
+			.filter((subject) => {
+				const groupLabel = subject.groupLabel ?? UNGROUPED_SUBJECT_LABEL;
+				const matchesGroup =
+					selectedGroupFilter === '__all__' || groupLabel === selectedGroupFilter;
+				const matchesQuery =
+					!query ||
+					[
+						subject.name,
+						subject.code,
+						subject.description ?? '',
+						groupLabel,
+					]
+						.join(' ')
+						.toLowerCase()
+						.includes(query);
+
+				return matchesGroup && matchesQuery;
+			})
+			.sort((left, right) => left.name.localeCompare(right.name));
 	});
+	const filteredSubjectCount = $derived(filteredSubjects.length);
 
 	onMount(() => {
 		void loadSubjects();
@@ -230,6 +250,16 @@
 		void tick().then(() => {
 			messageViewport?.scrollTo({ top: messageViewport.scrollHeight, behavior: 'smooth' });
 		});
+	});
+
+	$effect(() => {
+		groupFilterOptions;
+		if (
+			selectedGroupFilter !== '__all__' &&
+			!groupFilterOptions.includes(selectedGroupFilter)
+		) {
+			selectedGroupFilter = '__all__';
+		}
 	});
 
 	function flattenSubjectsFromGroups(
@@ -545,6 +575,13 @@
 		}
 	}
 
+	function handleClickableRowKeydown(event: KeyboardEvent, action: () => void) {
+		if (event.key === 'Enter' || event.key === ' ') {
+			event.preventDefault();
+			action();
+		}
+	}
+
 	async function retryCurrentLevel() {
 		abortActiveStream();
 		messages = [];
@@ -603,20 +640,19 @@
 	{#if !selectedSubject}
 		<section class="glass-panel chooser-panel space-y-5">
 			<header class="panel-header">
-				<div class="section-title-wrap">
-					<div class="icon-pill"><Sparkles class="h-5 w-5" /></div>
-					<div>
-						<p class="panel-label">Step 1</p>
-						<h2 class="panel-title">Choose a subject</h2>
-						<p class="muted">Subjects come from the trainer backend, not the reference app's hardcoded list.</p>
-					</div>
-				</div>
-				<div class="search-box">
+				<div class="search-combo">
 					<input
 						type="text"
 						bind:value={subjectSearch}
 						placeholder="Search by subject, code, or group"
 					/>
+					<div class="search-combo-divider" aria-hidden="true"></div>
+					<select bind:value={selectedGroupFilter} aria-label="Filter subjects by group">
+						<option value="__all__">All groups</option>
+						{#each groupFilterOptions as groupLabel}
+							<option value={groupLabel}>{groupLabel}</option>
+						{/each}
+					</select>
 				</div>
 			</header>
 
@@ -635,50 +671,74 @@
 					<div class="spinner"></div>
 					<p class="muted">Loading subjects...</p>
 				</div>
-			{:else if filteredSubjects.length === 0}
+			{:else if filteredSubjectCount === 0}
 				<div class="center-state large-state">
 					<BookOpen class="h-10 w-10 icon-muted" />
 					<h3 class="empty-title">No subjects found</h3>
 					<p class="muted">Add or search for subjects in the main trainer workspace, then return here.</p>
 				</div>
 			{:else}
-				<div class="subject-grid">
-					{#each filteredSubjects as subject}
-						<button class="selection-card subject-card" onclick={() => selectSubject(subject)}>
-							<div class="card-topline">
-								<span class="pill subtle">{subject.code}</span>
-								{#if subject.groupLabel}
-									<span class="group-pill">{subject.groupLabel}</span>
-								{/if}
-							</div>
-							<h3>{subject.name}</h3>
-							<p>{subject.description || 'Open this subject to choose a topic or study across the full subject.'}</p>
-							<div class="card-meta">
-								<span>{subject.total_topics} topics</span>
-								<span>{subject.total_questions} generated items</span>
-							</div>
-						</button>
-					{/each}
+				<div class="table-wrap">
+					<table class="chooser-table">
+						<colgroup>
+							<col class="subject-col" />
+							<col class="code-col" />
+							<col class="group-col" />
+							<col class="count-col" />
+							<col class="count-col" />
+						</colgroup>
+						<thead>
+							<tr>
+								<th>Subject</th>
+								<th>Code</th>
+								<th>Group</th>
+								<th>Topics</th>
+								<th>Questions</th>
+							</tr>
+						</thead>
+						<tbody>
+							{#each filteredSubjects as subject}
+								<tr
+									class="clickable-row"
+									role="button"
+									tabindex="0"
+									aria-label={`Open ${subject.name}`}
+									onclick={() => selectSubject(subject)}
+									onkeydown={(event) => handleClickableRowKeydown(event, () => selectSubject(subject))}
+								>
+									<td>
+										<div class="table-title-stack">
+											<strong class="table-title">{subject.name}</strong>
+											<p class="table-description">{subject.description || 'Open this subject to choose a topic or study across the full subject.'}</p>
+										</div>
+									</td>
+									<td><span class="pill subtle">{subject.code}</span></td>
+									<td>{subject.groupLabel ?? UNGROUPED_SUBJECT_LABEL}</td>
+									<td>{subject.total_topics}</td>
+									<td>{subject.total_questions ?? 0}</td>
+								</tr>
+							{/each}
+						</tbody>
+					</table>
 				</div>
 			{/if}
 		</section>
 	{:else if !selectedTopic}
 		<section class="glass-panel chooser-panel space-y-5">
-			<header class="panel-header with-action">
-				<div class="section-title-wrap">
+			<header class="panel-header with-action subject-header">
+				<div class="subject-header-bar">
 					<button class="back-chip" onclick={backToSubjects} aria-label="Back to subjects">
 						<ArrowLeft class="h-4 w-4" />
 					</button>
-					<div class="icon-pill secondary"><BookOpen class="h-5 w-5" /></div>
-					<div>
-						<p class="panel-label">Step 2</p>
-						<h2 class="panel-title">Choose a topic for {selectedSubject.name}</h2>
-						<p class="muted">Pick a specific topic or start broad across the entire subject.</p>
+					<div class="subject-summary">
+						<div class="subject-summary-meta">
+							<span class="subject-summary-chip subject-summary-code">{selectedSubject.code}</span>
+							{#if selectedSubject.groupLabel}
+								<span class="subject-summary-chip subject-summary-group">{selectedSubject.groupLabel}</span>
+							{/if}
+						</div>
+						<span class="subject-summary-chip subject-summary-count">{selectedSubject.total_topics} topics</span>
 					</div>
-				</div>
-				<div class="subject-summary">
-					<span>{selectedSubject.code}</span>
-					<span>{selectedSubject.total_topics} topics</span>
 				</div>
 			</header>
 
@@ -697,24 +757,51 @@
 					<div class="spinner"></div>
 					<p class="muted">Loading topics...</p>
 				</div>
+			{:else if topics.length === 0}
+				<div class="center-state large-state">
+					<BookOpen class="h-10 w-10 icon-muted" />
+					<h3 class="empty-title">No topics available</h3>
+					<p class="muted">This subject does not have topic entries yet. You can still study the entire subject once it becomes available.</p>
+				</div>
 			{:else}
-				<div class="topic-grid">
-					{#each topics as topic}
-						<button class="selection-card topic-card" onclick={() => startTopicSession(topic)}>
-							<div class="card-topline">
-								<span class="pill subtle">{topic.scope === 'subject' ? 'Broad mode' : 'Topic mode'}</span>
-								{#if topic.total_questions !== null}
-									<span class="group-pill">{topic.total_questions} items</span>
-								{/if}
-							</div>
-							<h3>{topic.name}</h3>
-							<p>{topic.description || 'Start a guided practice session in this scope.'}</p>
-							<div class="card-link">
-								<span>Start session</span>
-								<ChevronRight class="h-4 w-4" />
-							</div>
-						</button>
-					{/each}
+				<div class="table-wrap">
+					<table class="chooser-table topic-table">
+						<colgroup>
+							<col class="scope-col" />
+							<col class="subject-col" />
+							<col class="count-col" />
+						</colgroup>
+						<thead>
+							<tr>
+								<th>Scope</th>
+								<th>Topic</th>
+								<th>Questions</th>
+							</tr>
+						</thead>
+						<tbody>
+							{#each topics as topic}
+								<tr
+									class="clickable-row"
+									role="button"
+									tabindex="0"
+									aria-label={`Start ${topic.name}`}
+									onclick={() => startTopicSession(topic)}
+									onkeydown={(event) => handleClickableRowKeydown(event, () => startTopicSession(topic))}
+								>
+									<td>
+										<span class="scope-pill">{topic.scope === 'subject' ? 'Entire subject' : 'Topic'}</span>
+									</td>
+									<td>
+										<div class="table-title-stack">
+											<strong class="table-title">{topic.name}</strong>
+											<p class="table-description">{topic.description || 'Start a guided practice session in this scope.'}</p>
+										</div>
+									</td>
+									<td>{topic.total_questions ?? '—'}</td>
+								</tr>
+							{/each}
+						</tbody>
+					</table>
 				</div>
 			{/if}
 		</section>
@@ -867,9 +954,7 @@
 	.summary-label,
 	.compact-chip,
 	.muted,
-	.selection-card p,
-	.card-meta,
-	.card-link,
+	.table-description,
 	.subject-summary,
 	.level-copy {
 		margin: 0;
@@ -951,6 +1036,18 @@
 		align-items: flex-start;
 	}
 
+	.subject-header {
+		align-items: center;
+	}
+
+	.subject-header-bar {
+		display: flex;
+		align-items: center;
+		gap: 1rem;
+		width: 100%;
+		min-width: 0;
+	}
+
 	.icon-pill {
 		display: inline-flex;
 		align-items: center;
@@ -972,11 +1069,42 @@
 		color: rgba(var(--theme-primary-rgb), 0.78);
 	}
 
-	.search-box {
-		flex: 0 1 320px;
+	.search-combo {
+		display: flex;
+		align-items: center;
+		width: 100%;
+		border-radius: 14px;
+		border: 1px solid rgba(0, 0, 0, 0.14);
+		background: rgba(0, 0, 0, 0.06);
+		overflow: hidden;
 	}
 
-	.search-box input,
+	.search-combo-divider {
+		width: 1px;
+		align-self: stretch;
+		background: color-mix(in srgb, var(--theme-glass-border) 80%, transparent);
+	}
+
+	.search-combo input,
+	.search-combo select {
+		border: none;
+		background: transparent;
+		color: var(--theme-text-primary);
+		padding: 0.85rem 0.95rem;
+		font: inherit;
+	}
+
+	.search-combo input {
+		flex: 1;
+		min-width: 0;
+	}
+
+	.search-combo select {
+		flex: 0 1 220px;
+		min-width: 160px;
+		max-width: 45%;
+	}
+
 	.composer textarea {
 		width: 100%;
 		border-radius: 14px;
@@ -988,59 +1116,31 @@
 		resize: vertical;
 	}
 
-	:global([data-color-mode='dark']) .search-box input,
+	:global([data-color-mode='dark']) .search-combo,
 	:global([data-color-mode='dark']) .composer textarea {
 		border-color: var(--theme-glass-border);
 		background: color-mix(in srgb, var(--theme-input-bg) 55%, var(--theme-surface) 45%);
 	}
 
-	.search-box input::placeholder,
+	.search-combo input::placeholder,
 	.composer textarea::placeholder {
 		color: var(--theme-text-secondary);
 	}
 
-	.search-box input:focus,
+	.search-combo:focus-within,
 	.composer textarea:focus {
 		outline: none;
 		border-color: rgba(var(--theme-primary-rgb), 0.42);
 		box-shadow: 0 0 0 3px rgba(var(--theme-primary-rgb), 0.12);
 	}
 
-	.subject-grid,
-	.topic-grid {
-		display: grid;
-		grid-template-columns: repeat(auto-fit, minmax(260px, 1fr));
-		gap: 1rem;
+	.search-combo input:focus,
+	.search-combo select:focus {
+		outline: none;
+		box-shadow: none;
 	}
 
-	.selection-card {
-		text-align: left;
-		padding: 1.1rem;
-		border-radius: 18px;
-		border: 1px solid var(--theme-glass-border);
-		background: color-mix(in srgb, var(--theme-surface) 90%, transparent);
-		color: var(--theme-text-primary);
-		transition: transform 0.18s ease, border-color 0.18s ease, background 0.18s ease;
-		cursor: pointer;
-	}
-
-	.selection-card:hover {
-		transform: translateY(-2px);
-		border-color: rgba(var(--theme-primary-rgb), 0.38);
-		background: color-mix(in srgb, var(--theme-surface) 84%, rgba(var(--theme-primary-rgb), 0.08));
-	}
-
-	.selection-card h3 {
-		margin: 0.45rem 0 0.45rem;
-		font-size: 1.08rem;
-		font-weight: 700;
-		color: var(--theme-text-primary);
-	}
-
-	.card-topline,
-	.card-meta,
-	.card-link,
-	.subject-summary,
+	.table-wrap,
 	.flex-row,
 	.compact-chip,
 	.rail-status,
@@ -1053,22 +1153,111 @@
 		gap: 0.5rem;
 	}
 
-	.card-topline,
-	.card-meta,
-	.subject-summary,
 	.session-header,
 	.stage-banner {
 		justify-content: space-between;
 		flex-wrap: wrap;
 	}
 
-	.card-link {
-		justify-content: flex-end;
-		margin-top: 0.9rem;
-		font-weight: 600;
+	.subject-summary {
+		flex: 1;
+		min-width: 0;
+		display: flex;
+		align-items: center;
+		justify-content: space-between;
+		gap: 0.75rem 1rem;
+		flex-wrap: wrap;
 	}
 
-	.group-pill,
+	.subject-summary-meta {
+		display: flex;
+		align-items: center;
+		gap: 0.65rem;
+		flex-wrap: wrap;
+		min-width: 0;
+	}
+
+	.subject-summary-chip {
+		display: inline-flex;
+		align-items: center;
+		padding: 0.45rem 0.8rem;
+		border-radius: 999px;
+		border: 1px solid var(--theme-glass-border);
+		background: color-mix(in srgb, var(--theme-input-bg) 78%, var(--theme-surface) 22%);
+		color: var(--theme-text-primary);
+		font-size: 0.86rem;
+		font-weight: 600;
+		line-height: 1.2;
+	}
+
+	.subject-summary-count {
+		margin-left: auto;
+		white-space: nowrap;
+	}
+
+	.table-wrap {
+		overflow-x: auto;
+		border-radius: 16px;
+		border: 1px solid var(--theme-glass-border);
+		background: color-mix(in srgb, var(--theme-surface) 88%, transparent);
+	}
+
+	.chooser-table {
+		width: 100%;
+		min-width: 760px;
+		border-collapse: collapse;
+	}
+
+	.chooser-table th,
+	.chooser-table td {
+		padding: 0.95rem 1rem;
+		text-align: left;
+		border-bottom: 1px solid color-mix(in srgb, var(--theme-glass-border) 82%, transparent);
+		vertical-align: top;
+	}
+
+	.chooser-table th {
+		font-size: 0.76rem;
+		font-weight: 700;
+		letter-spacing: 0.08em;
+		text-transform: uppercase;
+		color: var(--theme-text-secondary);
+		background: color-mix(in srgb, var(--theme-input-bg) 72%, var(--theme-surface) 28%);
+	}
+
+	.chooser-table tbody tr:hover {
+		background: color-mix(in srgb, var(--theme-surface) 72%, rgba(var(--theme-primary-rgb), 0.06));
+	}
+
+	.clickable-row {
+		cursor: pointer;
+	}
+
+	.clickable-row:focus-visible {
+		outline: 2px solid rgba(var(--theme-primary-rgb), 0.5);
+		outline-offset: -2px;
+	}
+
+	.chooser-table tbody tr:last-child td {
+		border-bottom: none;
+	}
+
+	.table-title-stack {
+		display: grid;
+		gap: 0.3rem;
+	}
+
+	.table-title {
+		color: var(--theme-text-primary);
+		font-size: 0.98rem;
+	}
+
+	.table-description {
+		font-size: 0.88rem;
+		line-height: 1.45;
+	}
+
+	.scope-pill,
 	.pill,
 	.compact-chip {
 		padding: 0.4rem 0.72rem;
@@ -1426,6 +1615,34 @@
 			align-items: stretch;
 		}
 
+		.subject-header-bar {
+			flex-direction: column;
+			align-items: stretch;
+		}
+
+		.subject-summary {
+			width: 100%;
+		}
+
+		.subject-summary-count {
+			margin-left: 0;
+		}
+
+		.search-combo {
+			flex-direction: column;
+			align-items: stretch;
+		}
+
+		.search-combo-divider {
+			width: auto;
+			height: 1px;
+		}
+
+		.search-combo select {
+			max-width: none;
+			min-width: 0;
+		}
+
 		.rail-actions,
 		.rail-status {
 			justify-content: flex-start;
@@ -1440,6 +1657,10 @@
 		.hero-metrics {
 			width: 100%;
 			justify-content: stretch;
+		}
+
+		.chooser-table {
+			min-width: 640px;
 		}
 
 		.composer {

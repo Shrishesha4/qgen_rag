@@ -127,6 +127,9 @@
 
 	let enableVettingLoopScroll = $derived(pathname.startsWith('/teacher/train/loop'));
 	let enableAdminWindowScroll = $derived(pathname.startsWith('/admin') && !pathname.includes('/login'));
+	let enableTeacherGelWindowScroll = $derived(
+		pathname === '/teacher/gel' || pathname.startsWith('/teacher/gel/')
+	);
 	let enableStudentTrainWindowScroll = $derived(
 		pathname === '/student/train' || pathname.startsWith('/student/train/')
 	);
@@ -236,7 +239,7 @@
 	</button>
 {/if}
 
-<div class="app-shell" class:with-desktop-chrome={showDesktopChrome} class:profile-window-scroll={pathname.endsWith('/profile')} class:vetting-loop-scroll={enableVettingLoopScroll} class:admin-window-scroll={enableAdminWindowScroll} class:train-window-scroll={enableStudentTrainWindowScroll} class:admin-ui={pathname.startsWith('/admin')}>
+<div class="app-shell" class:with-desktop-chrome={showDesktopChrome} class:profile-window-scroll={pathname.endsWith('/profile')} class:vetting-loop-scroll={enableVettingLoopScroll} class:admin-window-scroll={enableAdminWindowScroll} class:teacher-gel-window-scroll={enableTeacherGelWindowScroll} class:train-window-scroll={enableStudentTrainWindowScroll} class:admin-ui={pathname.startsWith('/admin')}>
 	{#if showDesktopChrome}
 		<aside class="desktop-sidebar glass-panel">
 			<div class="sidebar-brand">
@@ -683,6 +686,13 @@
 		.app-shell.admin-window-scroll .desktop-window-content {
 			overflow-y: auto;
 			overflow-x: hidden;
+			-webkit-overflow-scrolling: touch;
+		}
+
+		.app-shell.teacher-gel-window-scroll .desktop-window-content {
+			overflow-y: auto;
+			overflow-x: hidden;
+			overscroll-behavior-y: contain;
 			-webkit-overflow-scrolling: touch;
 		}
 

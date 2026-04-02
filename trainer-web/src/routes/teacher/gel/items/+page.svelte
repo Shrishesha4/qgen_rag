@@ -1,7 +1,7 @@
 <script lang="ts">
 	import { onMount } from 'svelte';
+	import { AlertCircle, ClipboardCheck, ListChecks, Plus, RefreshCw, Search } from 'lucide-svelte';
 	import { apiFetch } from '$lib/api/client';
-	import { Search, RefreshCw, AlertCircle, Plus, ClipboardCheck, ListChecks } from 'lucide-svelte';
 
 	type EvaluationItem = {
 		id: string;
@@ -40,16 +40,16 @@
 		}
 	}
 
-	function statusBadge(status: string): string {
+	function statusTone(status: string): string {
 		switch (status) {
 			case 'draft':
-				return 'bg-gray-100 text-gray-800 dark:bg-gray-700 dark:text-gray-300';
+				return 'draft';
 			case 'active':
-				return 'bg-green-100 text-green-800 dark:bg-green-900 dark:text-green-200';
+				return 'active';
 			case 'retired':
-				return 'bg-red-100 text-red-800 dark:bg-red-900 dark:text-red-200';
+				return 'retired';
 			default:
-				return 'bg-gray-100 text-gray-800 dark:bg-gray-700 dark:text-gray-300';
+				return 'muted';
 		}
 	}
 
@@ -78,141 +78,144 @@
 		if (!navigator?.clipboard) return;
 		navigator.clipboard.writeText(id).catch(() => {});
 	}
+
+	function formatCreated(value?: string) {
+		return value ? new Date(value).toLocaleString() : '—';
+	}
 </script>
 
 <svelte:head>
 	<title>GEL Evaluation Items | Teacher Dashboard</title>
 </svelte:head>
 
-<div class="glass-panel p-6 space-y-6 border border-white/10 shadow-2xl text-slate-100">
-	<div class="flex items-center justify-between">
-		<div>
-			<p class="text-xs uppercase tracking-[0.2em] text-slate-300">GEL</p>
-			<h1 class="text-3xl font-semibold text-white">Evaluation Items</h1>
-			<p class="text-slate-200/80">Review and curate items available for assignments.</p>
-		</div>
-		<div class="flex items-center space-x-3">
-			<button
-				on:click={loadItems}
-				class="inline-flex items-center space-x-2 px-3 py-2 rounded-lg border border-white/15 text-white hover:bg-white/5"
-			>
-				<RefreshCw class="h-4 w-4" />
-				<span>Refresh</span>
-			</button>
-			<button
-				on:click={() => alert('Use the API to bulk-create evaluation items from questions.')}
-				class="inline-flex items-center space-x-2 px-4 py-2 rounded-xl bg-rose-500 hover:bg-rose-400 text-white shadow-lg shadow-rose-500/20"
-			>
-				<Plus class="h-5 w-5" />
-				<span>Create Items</span>
-			</button>
-		</div>
-	</div>
-
-	<div class="grid grid-cols-2 md:grid-cols-4 gap-4">
-		<div class="glass-panel border border-white/10 p-4 rounded-xl">
-			<div class="flex items-center justify-between text-sm text-slate-300">
+<div class="gel-page">
+	<section class="gel-stat-grid">
+		<div class="gel-panel gel-stat-card">
+			<div class="gel-stat-card__head">
 				<span>Total Items</span>
 				<ListChecks class="h-4 w-4" />
 			</div>
-			<p class="mt-2 text-2xl font-semibold text-white">{stats.total}</p>
+			<p class="gel-stat-card__value">{stats.total}</p>
+			<p class="gel-stat-card__meta">Across the current GEL item bank</p>
 		</div>
-		<div class="glass-panel border border-white/10 p-4 rounded-xl">
-			<div class="flex items-center justify-between text-sm text-slate-300">
+		<div class="gel-panel gel-stat-card">
+			<div class="gel-stat-card__head">
 				<span>Active</span>
 				<ClipboardCheck class="h-4 w-4" />
 			</div>
-			<p class="mt-2 text-2xl font-semibold text-white">{stats.active}</p>
+			<p class="gel-stat-card__value">{stats.active}</p>
+			<p class="gel-stat-card__meta">Available to active assignment workflows</p>
 		</div>
-		<div class="glass-panel border border-white/10 p-4 rounded-xl">
-			<div class="flex items-center justify-between text-sm text-slate-300">
+		<div class="gel-panel gel-stat-card">
+			<div class="gel-stat-card__head">
 				<span>Draft</span>
-				<ClipboardCheck class="h-4 w-4 rotate-45" />
+				<ClipboardCheck class="h-4 w-4" />
 			</div>
-			<p class="mt-2 text-2xl font-semibold text-white">{stats.draft}</p>
+			<p class="gel-stat-card__value">{stats.draft}</p>
+			<p class="gel-stat-card__meta">Still being reviewed or curated</p>
 		</div>
-		<div class="glass-panel border border-white/10 p-4 rounded-xl">
-			<div class="flex items-center justify-between text-sm text-slate-300">
+		<div class="gel-panel gel-stat-card">
+			<div class="gel-stat-card__head">
 				<span>Control Items</span>
 				<ClipboardCheck class="h-4 w-4" />
 			</div>
-			<p class="mt-2 text-2xl font-semibold text-white">{stats.control}</p>
+			<p class="gel-stat-card__value">{stats.control}</p>
+			<p class="gel-stat-card__meta">Benchmark items used for comparison</p>
 		</div>
-	</div>
+	</section>
 
-	<div class="flex items-center gap-3">
-		<div class="flex-1 relative">
-			<Search class="absolute left-3 top-1/2 -translate-y-1/2 h-5 w-5 text-slate-400" />
+	<section class="gel-panel gel-toolbar gel-toolbar--single-row">
+		<div class="gel-toolbar__grow gel-search">
+			<Search class="h-5 w-5" />
 			<input
-				class="w-full pl-10 pr-4 py-2 rounded-lg bg-white/5 border border-white/10 text-white placeholder:text-slate-400 focus:border-rose-400/60 focus:ring-0"
-				placeholder="Search by ID, difficulty, or bloom level"
+				class="gel-input"
+				placeholder="Search by item ID, question ID, difficulty, or Bloom level"
 				type="text"
 				bind:value={searchQuery}
 			/>
 		</div>
-		<select
-			bind:value={statusFilter}
-			on:change={loadItems}
-			class="px-4 py-2 rounded-lg bg-white/5 border border-white/10 text-white focus:border-rose-400/60 focus:ring-0"
-		>
-			<option value="">All Status</option>
-			<option value="draft">Draft</option>
-			<option value="active">Active</option>
-			<option value="retired">Retired</option>
-		</select>
-	</div>
+		<div class="gel-toolbar__controls">
+			<select class="gel-select" bind:value={statusFilter} on:change={loadItems}>
+				<option value="">All Statuses</option>
+				<option value="draft">Draft</option>
+				<option value="active">Active</option>
+				<option value="retired">Retired</option>
+			</select>
+			<button on:click={loadItems} class="gel-button gel-button--ghost">
+				<RefreshCw class="h-4 w-4" />
+				<span>Refresh</span>
+			</button>
+			<button on:click={() => alert('Use the API to bulk-create evaluation items from questions.')} class="gel-button gel-button--primary">
+				<Plus class="h-5 w-5" />
+				<span>Create Items</span>
+			</button>
+		</div>
+	</section>
 
 	{#if error}
-		<div class="glass-panel p-4 border border-red-500/30 text-red-200 bg-red-900/20 flex items-center space-x-2">
+		<div class="gel-alert gel-panel">
 			<AlertCircle class="h-5 w-5" />
 			<span>{error}</span>
 		</div>
 	{:else if isLoading}
-		<div class="flex items-center justify-center py-12">
-			<div class="animate-spin rounded-full h-12 w-12 border-b-2 border-primary-600"></div>
+		<div class="gel-panel gel-loading">
+			<div class="gel-spinner"></div>
+			<p>Loading evaluation items...</p>
 		</div>
 	{:else if filteredItems.length === 0}
-		<div class="glass-panel border border-white/10 rounded-xl p-10 text-center space-y-2">
-			<p class="text-lg font-semibold text-white">No evaluation items found</p>
-			<p class="text-slate-300/80">Adjust your filters or create new items.</p>
+		<div class="gel-panel gel-empty">
+			<ListChecks class="h-12 w-12" />
+			<h3>No evaluation items found</h3>
+			<p>Adjust your filters or create new items to populate the bank.</p>
 		</div>
 	{:else}
-		<div class="glass-panel border border-white/10 rounded-2xl overflow-hidden shadow-xl">
-			<table class="min-w-full divide-y divide-white/10">
-				<thead class="bg-white/5 text-slate-200">
-					<tr>
-						<th class="px-6 py-3 text-left text-xs font-semibold text-gray-500 dark:text-gray-300 uppercase">Item</th>
-						<th class="px-6 py-3 text-left text-xs font-semibold text-gray-500 dark:text-gray-300 uppercase">Question</th>
-						<th class="px-6 py-3 text-left text-xs font-semibold text-gray-500 dark:text-gray-300 uppercase">Difficulty / Bloom</th>
-						<th class="px-6 py-3 text-left text-xs font-semibold text-gray-500 dark:text-gray-300 uppercase">Status</th>
-						<th class="px-6 py-3 text-left text-xs font-semibold text-gray-500 dark:text-gray-300 uppercase">Control</th>
-						<th class="px-6 py-3 text-left text-xs font-semibold text-gray-500 dark:text-gray-300 uppercase">Created</th>
-						<th class="px-6 py-3"></th>
-					</tr>
-				</thead>
-				<tbody class="divide-y divide-white/8 bg-white/2">
-					{#each filteredItems as item}
+		<section class="gel-panel gel-table-shell">
+			<div class="gel-table-scroll">
+				<table class="gel-table">
+					<thead>
 						<tr>
-							<td class="px-6 py-4 whitespace-nowrap text-sm font-semibold text-white">{short(item.id)}</td>
-							<td class="px-6 py-4 whitespace-nowrap text-sm text-slate-200/90">{short(item.question_id)}</td>
-							<td class="px-6 py-4 text-sm text-slate-200/90">{item.difficulty_label || '—'} / {item.bloom_level || '—'}</td>
-							<td class="px-6 py-4 whitespace-nowrap text-sm">
-								<span class={`px-2 py-1 rounded-full text-xs font-semibold ${statusBadge(item.status)}`}>{item.status}</span>
-							</td>
-							<td class="px-6 py-4 text-sm text-slate-200/90">{item.is_control_item ? item.control_type || 'control' : '—'}</td>
-							<td class="px-6 py-4 text-sm text-slate-200/90">{item.created_at ? new Date(item.created_at).toLocaleString() : '—'}</td>
-							<td class="px-6 py-4 text-right text-sm">
-								<button
-									on:click={() => copyId(item.id)}
-									class="text-rose-200 hover:underline"
-								>
-									Copy ID
-								</button>
-							</td>
+							<th>Item</th>
+							<th>Question</th>
+							<th>Difficulty / Bloom</th>
+							<th>Status</th>
+							<th>Control</th>
+							<th>Created</th>
+							<th></th>
 						</tr>
-					{/each}
-				</tbody>
-			</table>
-		</div>
+					</thead>
+					<tbody>
+						{#each filteredItems as item}
+							<tr>
+								<td>
+									<p class="gel-table__title">{short(item.id)}</p>
+									<p class="gel-table__subcopy">Subject {short(item.subject_id || '')} • Topic {short(item.topic_id || '')}</p>
+								</td>
+								<td>
+									<p class="gel-table__title">{short(item.question_id)}</p>
+									<p class="gel-table__subcopy">Rubric {short(item.rubric_id || '')}</p>
+								</td>
+								<td>
+									<p class="gel-table__title">{item.difficulty_label || 'Unlabelled'}</p>
+									<p class="gel-table__subcopy">Bloom {item.bloom_level || 'Not set'}</p>
+								</td>
+								<td>
+									<span class={`gel-status gel-status--${statusTone(item.status)}`}>{item.status}</span>
+								</td>
+								<td>
+									<p class="gel-table__title">{item.is_control_item ? item.control_type || 'control' : 'No'}</p>
+									<p class="gel-table__subcopy">{item.is_control_item ? 'Included in benchmarking sets' : 'Standard evaluation item'}</p>
+								</td>
+								<td>{formatCreated(item.created_at)}</td>
+								<td>
+									<div class="gel-table__actions">
+										<button on:click={() => copyId(item.id)} class="gel-button gel-button--quiet gel-button--sm">Copy ID</button>
+									</div>
+								</td>
+							</tr>
+						{/each}
+					</tbody>
+				</table>
+			</div>
+		</section>
 	{/if}
 </div>
