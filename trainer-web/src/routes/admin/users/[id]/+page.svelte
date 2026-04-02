@@ -4,17 +4,20 @@
 	import { page } from '$app/stores';
 	import { session } from '$lib/session';
 	import {
+		deleteAdminUser,
 		getAdminDashboard,
 		listAdminSubjects,
 		listAdminUsers,
 		resetAdminUserPassword,
 		type AdminSubjectSummary,
+		type AdminUserDeleteRequest,
 		type AdminUserSummary,
 		type UserStats
 	} from '$lib/api/admin';
 
 	let loading = $state(true);
 	let error = $state('');
+	let currentAdminUserId = $state('');
 	let user = $state<AdminUserSummary | null>(null);
 	let userStats = $state<UserStats | null>(null);
 	let assignedSubjects = $state<AdminSubjectSummary[]>([]);
@@ -24,6 +27,14 @@
 	let resetBusy = $state(false);
 	let resetError = $state('');
 	let resetSuccess = $state('');
+	let deleteBusy = $state(false);
+	let deleteError = $state('');
+	let showDeleteModal = $state(false);
+	let deleteOptions = $state<AdminUserDeleteRequest>({
+		delete_subjects: false,
+		delete_questions: false,
+		delete_vetting_data: false
+	});
 	let shouldFocusReset = $state(false);
 	let resetSectionElement = $state<HTMLElement | null>(null);
 
@@ -31,7 +42,9 @@
 		const unsubSession = session.subscribe((s) => {
 			if (!s || s.user.role !== 'admin') {
 				goto('/admin/login');
+				return;
 			}
+			currentAdminUserId = s.user.id;
 		});
 
 		const unsubPage = page.subscribe(($page) => {
@@ -66,6 +79,14 @@
 		confirmResetPassword = '';
 		resetError = '';
 		resetSuccess = '';
+		deleteError = '';
+		showDeleteModal = false;
+		deleteBusy = false;
+		deleteOptions = {
+			delete_subjects: false,
+			delete_questions: false,
+			delete_vetting_data: false
+		};
 
 		try {
 			const [users, dashboard, subjects] = await Promise.all([
@@ -92,6 +113,12 @@
 			}
 		}
 	}
+
+	const assignedQuestionCount = $derived.by(() =>
+		assignedSubjects.reduce((total, subject) => total + Number(subject.total_questions || 0), 0)
+	);
+
+	const isCurrentAdminUser = $derived.by(() => Boolean(user && user.id === currentAdminUserId));
 
 	async function focusResetSection() {
 		await tick();
@@ -127,6 +154,39 @@
 			resetError = e instanceof Error ? e.message : 'Failed to reset password.';
 		} finally {
 			resetBusy = false;
+		}
+	}
+
+	function openDeleteModal() {
+		if (!user || isCurrentAdminUser) return;
+		deleteError = '';
+		deleteOptions = {
+			delete_subjects: false,
+			delete_questions: false,
+			delete_vetting_data: false
+		};
+		showDeleteModal = true;
+	}
+
+	function closeDeleteModal() {
+		if (deleteBusy) return;
+		showDeleteModal = false;
+		deleteError = '';
+	}
+
+	async function handleDeleteUser() {
+		if (!user || deleteBusy || isCurrentAdminUser) return;
+
+		deleteError = '';
+		deleteBusy = true;
+		try {
+			const response = await deleteAdminUser(user.id, deleteOptions);
+			showDeleteModal = false;
+			await goto(`/admin/users?notice=${encodeURIComponent(response.message)}`);
+		} catch (e: unknown) {
+			deleteError = e instanceof Error ? e.message : 'Failed to delete user.';
+		} finally {
+			deleteBusy = false;
 		}
 	}
 
@@ -239,6 +299,7 @@
 
 		<section class="section glass-panel reset-section" bind:this={resetSectionElement}>
 			<h2>Admin Password Reset</h2>
+			<p class="section-copy">Set a new password directly for this user account. This revokes their active sessions.</p>
 			<div class="reset-grid">
 				<label class="field">
 					<span>New Password</span>
@@ -321,8 +382,92 @@
 				</div>
 			{/if}
 		</section>
+
+		<!-- <section class="section glass-panel danger-section">
+			<div class="danger-header">
+				<div>
+					<h2>Delete User Login</h2>
+				</div>
+				<button class="danger-btn" type="button" onclick={openDeleteModal} disabled={isCurrentAdminUser}>
+					Delete User
+				</button>
+			</div>
+			{#if isCurrentAdminUser}
+				<p class="feedback error">You cannot delete your own admin account from this page.</p>
+			{/if}
+		</section> -->
 	{/if}
 </div>
+
+{#if showDeleteModal && user}
+	<div class="modal-backdrop" role="presentation" onclick={(event) => {
+		if (event.currentTarget === event.target) {
+			closeDeleteModal();
+		}
+	}}>
+		<div class="delete-modal glass-panel" role="dialog" aria-modal="true" aria-labelledby="delete-user-title">
+			<div class="delete-modal-header">
+				<div>
+					<p class="modal-eyebrow">Danger Zone</p>
+					<h2 id="delete-user-title">Delete {user.full_name || user.username}</h2>
+					<p class="delete-copy">
+						This always deletes the user's login. Leave every checkbox unchecked if you want to preserve their subjects, questions, and vetting history.
+					</p>
+				</div>
+				<button class="secondary-btn" type="button" onclick={closeDeleteModal} disabled={deleteBusy}>Cancel</button>
+			</div>
+
+			<div class="delete-option-list">
+				<label class="delete-option" class:delete-option--disabled={assignedSubjects.length === 0}>
+					<input
+						type="checkbox"
+						bind:checked={deleteOptions.delete_subjects}
+						disabled={assignedSubjects.length === 0}
+					/>
+					<div>
+						<strong>Delete assigned subjects</strong>
+						<span>Also removes those subject records, topics, documents, related generation session links, and subject-scoped saved progress. {assignedSubjects.length} subject(s) will be affected.</span>
+					</div>
+				</label>
+
+				<label class="delete-option" class:delete-option--disabled={assignedQuestionCount === 0}>
+					<input
+						type="checkbox"
+						bind:checked={deleteOptions.delete_questions}
+						disabled={assignedQuestionCount === 0}
+					/>
+					<div>
+						<strong>Delete subject questions</strong>
+						<span>Removes generated questions linked to this user's subjects. Vetting records tied to those questions are also removed. {assignedQuestionCount} question(s) will be affected.</span>
+					</div>
+				</label>
+
+				<label class="delete-option">
+					<input type="checkbox" bind:checked={deleteOptions.delete_vetting_data} />
+					<div>
+						<strong>Delete vetting data</strong>
+						<span>Removes this user's vetting logs and saved vetting progress snapshots. {userStats?.total_vetted ?? 0} vetted question(s) are currently recorded.</span>
+					</div>
+				</label>
+			</div>
+
+			<p class="delete-note">
+				If you leave every checkbox unchecked, only the user's login is deleted and their platform data remains available for admins.
+			</p>
+
+			{#if deleteError}
+				<p class="feedback error">{deleteError}</p>
+			{/if}
+
+			<div class="actions-row modal-actions">
+				<button class="secondary-btn" type="button" onclick={closeDeleteModal} disabled={deleteBusy}>Keep User</button>
+				<button class="danger-btn" type="button" onclick={handleDeleteUser} disabled={deleteBusy}>
+					{deleteBusy ? 'Deleting...' : 'Delete Login'}
+				</button>
+			</div>
+		</div>
+	</div>
+{/if}
 
 <style>
 	.page {
@@ -423,6 +568,25 @@
 		color: var(--theme-text);
 	}
 
+	.section-copy {
+		margin: -0.2rem 0 0.9rem;
+		color: var(--theme-text-muted);
+		font-size: 0.9rem;
+		line-height: 1.45;
+	}
+	
+	/* For delete user button */
+	/*.danger-section {
+		border: 1px solid color-mix(in srgb, rgba(239, 68, 68, 0.34) 72%, var(--theme-glass-border));
+	}
+
+	.danger-header {
+		display: flex;
+		align-items: flex-start;
+		justify-content: space-between;
+		gap: 1rem;
+	} */
+
 	.reset-grid {
 		display: grid;
 		grid-template-columns: repeat(2, minmax(0, 1fr));
@@ -456,6 +620,10 @@
 		display: flex;
 		justify-content: flex-end;
 		margin-top: 0.85rem;
+	}
+
+	.modal-actions {
+		gap: 0.75rem;
 	}
 
 	.feedback {
@@ -493,6 +661,105 @@
 		align-items: center;
 		gap: 0.7rem;
 		color: var(--theme-text);
+	}
+
+	.modal-backdrop {
+		position: fixed;
+		inset: 0;
+		z-index: 80;
+		padding: 1rem;
+		background: rgba(2, 6, 23, 0.62);
+		backdrop-filter: blur(10px);
+		-webkit-backdrop-filter: blur(10px);
+		display: flex;
+		align-items: center;
+		justify-content: center;
+	}
+
+	.delete-modal {
+		width: min(760px, 100%);
+		padding: 1.1rem;
+		border-radius: 1.1rem;
+		display: flex;
+		flex-direction: column;
+		gap: 1rem;
+	}
+
+	.delete-modal-header {
+		display: flex;
+		align-items: flex-start;
+		justify-content: space-between;
+		gap: 1rem;
+	}
+
+	.modal-eyebrow {
+		margin: 0 0 0.3rem;
+		font-size: 0.75rem;
+		font-weight: 700;
+		letter-spacing: 0.12em;
+		text-transform: uppercase;
+		color: var(--theme-text-muted);
+	}
+
+	.delete-modal-header h2 {
+		margin: 0;
+		font-size: 1.25rem;
+		color: var(--theme-text);
+	}
+
+	.delete-copy {
+		margin: 0.35rem 0 0;
+		color: var(--theme-text-muted);
+		line-height: 1.5;
+	}
+
+	.delete-option-list {
+		display: flex;
+		flex-direction: column;
+		gap: 0.75rem;
+	}
+
+	.delete-option {
+		display: grid;
+		grid-template-columns: auto minmax(0, 1fr);
+		align-items: flex-start;
+		gap: 0.8rem;
+		padding: 0.9rem;
+		border-radius: 0.95rem;
+		border: 1px solid var(--theme-glass-border);
+		background: color-mix(in srgb, var(--theme-input-bg) 86%, transparent);
+	}
+
+	.delete-option input {
+		margin-top: 0.2rem;
+	}
+
+	.delete-option strong {
+		display: block;
+		color: var(--theme-text);
+	}
+
+	.delete-option span {
+		display: block;
+		margin-top: 0.25rem;
+		font-size: 0.88rem;
+		line-height: 1.45;
+		color: var(--theme-text-muted);
+	}
+
+	.delete-option--disabled {
+		opacity: 0.6;
+	}
+
+	.delete-note {
+		margin: 0;
+		padding: 0.9rem;
+		border-radius: 0.9rem;
+		background: rgba(245, 158, 11, 0.12);
+		border: 1px solid rgba(245, 158, 11, 0.24);
+		color: #fcd34d;
+		font-size: 0.88rem;
+		line-height: 1.45;
 	}
 
 	.table-wrap {
@@ -571,7 +838,29 @@
 		cursor: pointer;
 	}
 
-	.open-btn:disabled {
+	.secondary-btn,
+	.danger-btn {
+		padding: 0.72rem 1rem;
+		border-radius: 0.8rem;
+		font-weight: 700;
+		cursor: pointer;
+	}
+
+	.secondary-btn {
+		border: 1px solid color-mix(in srgb, var(--theme-glass-border) 88%, transparent);
+		background: color-mix(in srgb, var(--theme-input-bg) 84%, transparent);
+		color: var(--theme-text);
+	}
+
+	.danger-btn {
+		border: 1px solid color-mix(in srgb, rgba(239, 68, 68, 0.62) 70%, var(--theme-glass-border));
+		background: linear-gradient(180deg, rgba(239, 68, 68, 0.96) 0%, rgba(185, 28, 28, 0.96) 100%);
+		color: #fff7f7;
+	}
+
+	.open-btn:disabled,
+	.secondary-btn:disabled,
+	.danger-btn:disabled {
 		opacity: 0.65;
 		cursor: not-allowed;
 	}
@@ -652,6 +941,11 @@
 		.access-grid {
 			grid-template-columns: 1fr;
 		}
+
+		.danger-header,
+		.delete-modal-header {
+			flex-direction: column;
+		}
 	}
 
 	@media (max-width: 768px) {
@@ -676,34 +970,51 @@
 		.mobile-metrics {
 			grid-template-columns: 1fr;
 		}
+
+		.modal-backdrop {
+			padding: 0.75rem;
+			align-items: flex-end;
+		}
+
+		.delete-modal {
+			padding: 0.95rem;
+		}
+
+		.modal-actions {
+			flex-direction: column-reverse;
+		}
+
+		.modal-actions > button,
+		.danger-btn,
+		.secondary-btn {
+			width: 100%;
+		}
 	}
 
 	:global([data-color-mode='light']) .header,
+	:global([data-color-mode='light']) .meta-card,
 	:global([data-color-mode='light']) .stat-card,
 	:global([data-color-mode='light']) .section,
+	:global([data-color-mode='light']) .delete-modal,
 	:global([data-color-mode='light']) .center-state,
 	:global([data-color-mode='light']) .mobile-card {
 		background: #ffffff;
 		border: 1px solid rgba(148, 163, 184, 0.3);
 		box-shadow: 0 14px 34px rgba(15, 23, 42, 0.08);
 	}
-	/* :global([data-color-mode='light']) .header,
-	:global([data-color-mode='light']) .meta-card,
-	:global([data-color-mode='light']) .stat-card,
-	:global([data-color-mode='light']) .section,
-	:global([data-color-mode='light']) .center-state,
-	:global([data-color-mode='light']) .mobile-card {
-		background: #ffffff;
-		border: 1px solid rgba(148, 163, 184, 0.3);
-		box-shadow: 0 14px 34px rgba(15, 23, 42, 0.08);
-	} */
 
 	:global([data-color-mode='light']) .access-item,
 	:global([data-color-mode='light']) .back-link,
-	:global([data-color-mode='light']) .open-btn {
+	:global([data-color-mode='light']) .open-btn,
+	:global([data-color-mode='light']) .secondary-btn,
+	:global([data-color-mode='light']) .delete-option {
 		background: #f8fafc;
 		border-color: rgba(148, 163, 184, 0.35);
 		color: #0f172a;
+	}
+
+	:global([data-color-mode='light']) .modal-backdrop {
+		background: rgba(226, 232, 240, 0.58);
 	}
 
 	:global([data-color-mode='light']) .data-table th,

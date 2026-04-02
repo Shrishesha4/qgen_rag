@@ -64,7 +64,15 @@
 			currentAdminUserId = s.user.id;
 		});
 		if (typeof window !== 'undefined') {
-			const params = new URL(window.location.href).searchParams;
+			const url = new URL(window.location.href);
+			const params = url.searchParams;
+			const notice = params.get('notice');
+			if (notice) {
+				success = notice;
+				params.delete('notice');
+				const nextSearch = params.toString();
+				window.history.replaceState({}, '', `${url.pathname}${nextSearch ? `?${nextSearch}` : ''}`);
+			}
 			if (params.get('modal') === 'approvals') {
 				openApprovalModal(params.get('user') || undefined);
 			}
@@ -461,6 +469,8 @@
 				<div class="approval-modal-header">
 					<div>
 						<p class="modal-eyebrow">Registration Queue</p>
+						<h2 id="approval-modal-title">Pending Approvals</h2>
+						<p class="modal-copy">Approve registrations one by one or select several pending users and approve them together.</p>
 					</div>
 					<button class="secondary-btn" type="button" onclick={closeApprovalModal}>Close</button>
 				</div>

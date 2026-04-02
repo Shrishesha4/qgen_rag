@@ -7,11 +7,11 @@ from typing import Optional, List, Dict, Any
 import uuid
 import hashlib
 
-from sqlalchemy import select, update
+from sqlalchemy import select, update, delete
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.models.user import User, default_permissions_for_role
-from app.models.auth import RefreshToken, AuditLog
+from app.models.auth import RefreshToken, AuditLog, AdminNotification
 from app.schemas.user import UserCreate, UserUpdate
 from app.core.security import (
     hash_password,
@@ -341,6 +341,47 @@ class UserService:
             event_data={"admin_user_id": admin_user_id},
         )
         return user
+
+    async def delete_user_login(
+        self,
+        user_id: str,
+        *,
+        admin_user_id: str,
+        ip_address: Optional[str] = None,
+        user_agent: Optional[str] = None,
+        cleanup_summary: Optional[Dict[str, Any]] = None,
+    ) -> Dict[str, str]:
+        """Delete a user's auth login while leaving app data untouched unless separately cleaned."""
+        user = await self.get_user_by_id(user_id)
+        if not user:
+            raise ValueError("User not found")
+
+        deleted_user = {
+            "id": user.id,
+            "username": user.username,
+            "email": user.email,
+        }
+
+        await self.db.execute(
+            delete(AdminNotification).where(AdminNotification.target_user_id == user.id)
+        )
+        await self.db.delete(user)
+        await self.db.commit()
+
+        event_data: Dict[str, Any] = {"admin_user_id": admin_user_id}
+        if cleanup_summary:
+            event_data.update(cleanup_summary)
+
+        await self._log_auth_event(
+            user_id=deleted_user["id"],
+            event_type="user_deleted_by_admin",
+            ip_address=ip_address,
+            user_agent=user_agent,
+            success=True,
+            event_data=event_data,
+        )
+
+        return deleted_user
 
     async def get_security_question_for_email(self, email: str) -> Optional[str]:
         """Return the stored security question for an active user."""

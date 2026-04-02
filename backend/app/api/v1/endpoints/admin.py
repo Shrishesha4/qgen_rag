@@ -11,7 +11,7 @@ import re
 import uuid
 
 from fastapi import APIRouter, Depends, HTTPException, Request, status
-from sqlalchemy import select, func, and_, case, distinct
+from sqlalchemy import select, func, and_, case, distinct, delete, or_
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import selectinload
 from pydantic import BaseModel, Field
@@ -22,6 +22,9 @@ from app.api.v1.deps import get_client_info, get_current_admin
 from app.models.user import User, VALID_ROLES, default_permissions_for_role
 from app.models.question import Question, GenerationSession
 from app.models.subject import Subject, Topic
+from app.models.document import Document
+from app.models.vetting_progress import TeacherVettingProgress
+from app.models.training import VettingLog, TrainingPair
 from app.core.security import hash_password, hash_security_answer
 from app.schemas.auth import MessageResponse
 from app.services.admin_notification_service import AdminNotificationService
@@ -154,6 +157,20 @@ class AdminUserUpdateRequest(BaseModel):
 class AdminUserPasswordResetRequest(BaseModel):
     new_password: str = Field(..., min_length=8, max_length=128)
 
+
+class AdminUserDeleteRequest(BaseModel):
+    delete_subjects: bool = False
+    delete_questions: bool = False
+    delete_vetting_data: bool = False
+
+
+class AdminUserDeleteResponse(BaseModel):
+    message: str
+    deleted_subjects: int = 0
+    deleted_questions: int = 0
+    deleted_vetting_logs: int = 0
+    deleted_vetting_progress: int = 0
+
 class AdminBulkApproveUsersRequest(BaseModel):
     user_ids: List[str] = Field(default_factory=list, min_length=1, max_length=500)
 
@@ -271,6 +288,120 @@ def _serialize_admin_user(user: User) -> AdminUserSummary:
         created_at=user.created_at,
         last_login_at=user.last_login_at,
     )
+
+
+def _count_rows(result) -> int:
+    return int(getattr(result, "rowcount", 0) or 0)
+
+
+async def _delete_admin_user_data(
+    db: AsyncSession,
+    *,
+    user_id: str,
+    delete_subjects: bool,
+    delete_questions: bool,
+    delete_vetting_data: bool,
+) -> dict[str, int]:
+    counts = {
+        "deleted_subjects": 0,
+        "deleted_questions": 0,
+        "deleted_vetting_logs": 0,
+        "deleted_vetting_progress": 0,
+    }
+
+    subject_ids = [
+        str(subject_id)
+        for subject_id in (
+            await db.execute(select(Subject.id).where(Subject.user_id == user_id))
+        ).scalars().all()
+    ]
+
+    topic_ids: list[str] = []
+    if subject_ids:
+        topic_ids = [
+            str(topic_id)
+            for topic_id in (
+                await db.execute(select(Topic.id).where(Topic.subject_id.in_(subject_ids)))
+            ).scalars().all()
+        ]
+
+    question_ids: list[str] = []
+    if delete_questions and (subject_ids or topic_ids):
+        question_filters = []
+        if subject_ids:
+            question_filters.append(Question.subject_id.in_(subject_ids))
+        if topic_ids:
+            question_filters.append(Question.topic_id.in_(topic_ids))
+
+        question_ids = [
+            str(question_id)
+            for question_id in (
+                await db.execute(select(Question.id).where(or_(*question_filters)))
+            ).scalars().all()
+        ]
+        if question_ids:
+            question_vetting_log_ids = [
+                str(log_id)
+                for log_id in (
+                    await db.execute(select(VettingLog.id).where(VettingLog.question_id.in_(question_ids)))
+                ).scalars().all()
+            ]
+            training_pair_filters = [
+                TrainingPair.chosen_question_id.in_(question_ids),
+                TrainingPair.rejected_question_id.in_(question_ids),
+            ]
+            if question_vetting_log_ids:
+                training_pair_filters.append(TrainingPair.vetting_log_id.in_(question_vetting_log_ids))
+
+            await db.execute(delete(TrainingPair).where(or_(*training_pair_filters)))
+            counts["deleted_questions"] = _count_rows(
+                await db.execute(delete(Question).where(Question.id.in_(question_ids)))
+            )
+
+    if delete_vetting_data:
+        user_vetting_log_ids = [
+            str(log_id)
+            for log_id in (
+                await db.execute(select(VettingLog.id).where(VettingLog.vetter_id == user_id))
+            ).scalars().all()
+        ]
+        if user_vetting_log_ids:
+            await db.execute(delete(TrainingPair).where(TrainingPair.vetting_log_id.in_(user_vetting_log_ids)))
+
+        counts["deleted_vetting_logs"] = _count_rows(
+            await db.execute(delete(VettingLog).where(VettingLog.vetter_id == user_id))
+        )
+        counts["deleted_vetting_progress"] = _count_rows(
+            await db.execute(delete(TeacherVettingProgress).where(TeacherVettingProgress.user_id == user_id))
+        )
+
+    if delete_subjects and subject_ids:
+        document_filters = [Document.subject_id.in_(subject_ids)]
+        if topic_ids:
+            document_filters.append(Document.topic_id.in_(topic_ids))
+
+        document_ids = [
+            str(document_id)
+            for document_id in (
+                await db.execute(select(Document.id).where(or_(*document_filters)))
+            ).scalars().all()
+        ]
+
+        generation_session_filters = [GenerationSession.subject_id.in_(subject_ids)]
+        if topic_ids:
+            generation_session_filters.append(GenerationSession.topic_id.in_(topic_ids))
+        if document_ids:
+            generation_session_filters.append(GenerationSession.document_id.in_(document_ids))
+        await db.execute(delete(GenerationSession).where(or_(*generation_session_filters)))
+
+        if document_ids:
+            await db.execute(delete(Document).where(Document.id.in_(document_ids)))
+
+        counts["deleted_subjects"] = _count_rows(
+            await db.execute(delete(Subject).where(Subject.id.in_(subject_ids)))
+        )
+
+    return counts
 
 
 # ============== Endpoints ==============
@@ -919,3 +1050,76 @@ async def admin_reset_user_password(
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=str(exc))
 
     return MessageResponse(message="Password reset successfully")
+
+
+@router.delete("/users/{user_id}", response_model=AdminUserDeleteResponse)
+async def delete_admin_user(
+    user_id: str,
+    payload: AdminUserDeleteRequest,
+    request: Request,
+    current_user: User = Depends(get_current_admin),
+    db: AsyncSession = Depends(get_db),
+    auth_db: AsyncSession = Depends(get_auth_db),
+):
+    """Delete a user's login and optionally remove related platform data."""
+    if user_id == current_user.id:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="You cannot delete your own account")
+
+    user_service = UserService(auth_db)
+    target_user = await user_service.get_user_by_id(user_id)
+    if not target_user:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="User not found")
+
+    if target_user.role == "admin":
+        remaining_admins = await auth_db.execute(
+            select(func.count())
+            .select_from(User)
+            .where(User.role == "admin", User.id != user_id)
+        )
+        if int(remaining_admins.scalar() or 0) == 0:
+            raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="You cannot delete the last admin account")
+
+    cleanup_counts = await _delete_admin_user_data(
+        db,
+        user_id=user_id,
+        delete_subjects=payload.delete_subjects,
+        delete_questions=payload.delete_questions,
+        delete_vetting_data=payload.delete_vetting_data,
+    )
+    await db.commit()
+
+    client_info = get_client_info(request)
+    deleted_user = await user_service.delete_user_login(
+        user_id,
+        admin_user_id=current_user.id,
+        ip_address=client_info.get("ip_address"),
+        user_agent=client_info.get("user_agent"),
+        cleanup_summary={
+            "delete_subjects": payload.delete_subjects,
+            "delete_questions": payload.delete_questions,
+            "delete_vetting_data": payload.delete_vetting_data,
+            **cleanup_counts,
+        },
+    )
+
+    if not any((payload.delete_subjects, payload.delete_questions, payload.delete_vetting_data)):
+        message = f"Deleted {deleted_user['username']}'s login. Their subjects, questions, and vetting data were preserved."
+    else:
+        cleanup_parts: list[str] = []
+        if payload.delete_subjects:
+            cleanup_parts.append(f"{cleanup_counts['deleted_subjects']} subject(s)")
+        if payload.delete_questions:
+            cleanup_parts.append(f"{cleanup_counts['deleted_questions']} question(s)")
+        if payload.delete_vetting_data:
+            cleanup_parts.append(
+                f"{cleanup_counts['deleted_vetting_logs']} vetting log(s) and {cleanup_counts['deleted_vetting_progress']} saved progress record(s)"
+            )
+        message = f"Deleted {deleted_user['username']}'s login and removed " + ", ".join(cleanup_parts) + "."
+
+    return AdminUserDeleteResponse(
+        message=message,
+        deleted_subjects=cleanup_counts["deleted_subjects"],
+        deleted_questions=cleanup_counts["deleted_questions"],
+        deleted_vetting_logs=cleanup_counts["deleted_vetting_logs"],
+        deleted_vetting_progress=cleanup_counts["deleted_vetting_progress"],
+    )

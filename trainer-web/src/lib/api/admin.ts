@@ -70,6 +70,20 @@ export interface AdminUserPasswordResetRequest {
 	new_password: string;
 }
 
+export interface AdminUserDeleteRequest {
+	delete_subjects: boolean;
+	delete_questions: boolean;
+	delete_vetting_data: boolean;
+}
+
+export interface AdminUserDeleteResponse {
+	message: string;
+	deleted_subjects: number;
+	deleted_questions: number;
+	deleted_vetting_logs: number;
+	deleted_vetting_progress: number;
+}
+
 export interface AdminBulkApproveUsersResponse {
 	approved_users: AdminUserSummary[];
 	approved_count: number;
@@ -183,6 +197,16 @@ export async function resetAdminUserPassword(
 ): Promise<{ message: string }> {
 	return apiFetch<{ message: string }>(`/admin/users/${userId}/reset-password`, {
 		method: 'POST',
+		body: JSON.stringify(payload)
+	});
+}
+
+export async function deleteAdminUser(
+	userId: string,
+	payload: AdminUserDeleteRequest
+): Promise<AdminUserDeleteResponse> {
+	return apiFetch<AdminUserDeleteResponse>(`/admin/users/${userId}`, {
+		method: 'DELETE',
 		body: JSON.stringify(payload)
 	});
 }
