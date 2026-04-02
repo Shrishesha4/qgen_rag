@@ -53,7 +53,7 @@
 		'/teacher/stats',
 		'/teacher/profile', '/teacher/ops', '/teacher/verify', '/teacher/ab-test',
 		'/vetter', '/vetter/dashboard', '/vetter/subjects', '/vetter/profile',
-		'/student/train', '/student', '/student/assignments', '/student/history', '/student/progress', '/student/profile',
+		'/student/train', '/student', '/student/assignments', '/student/history', '/student/progress', '/student/settings', '/student/profile',
 		'/admin/dashboard', '/admin/subjects', '/admin/teachers', '/admin/vetters',
 	]);
 

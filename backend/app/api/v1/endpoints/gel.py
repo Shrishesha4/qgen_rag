@@ -6,14 +6,20 @@ Endpoints for:
 - Assignment management (teacher/admin)
 - Student attempt lifecycle
 - Dashboard and statistics
+- Inquiry session persistence (student)
+- Student tutor preferences (student)
 """
 
-from typing import Optional, List
+from datetime import datetime, timezone
+from typing import Optional, List, Any
 from fastapi import APIRouter, Depends, HTTPException, status, Query
+from pydantic import BaseModel
+from sqlalchemy import select, and_
 from sqlalchemy.ext.asyncio import AsyncSession
 import uuid
 
 from app.core.database import get_db
+from app.core.auth_database import get_auth_db
 from app.api.v1.deps import (
     get_current_user,
     get_current_student,
@@ -22,8 +28,10 @@ from app.api.v1.deps import (
     get_current_student_or_teacher,
 )
 from app.models.user import User
+from app.models.inquiry_session import InquirySession
 from app.services.gel_service import GELService
 from app.services.gel_scoring_service import GELScoringService
+from app.services.provider_service import get_provider_service
 from app.schemas.gel import (
     EvaluationItemCreate,
     EvaluationItemUpdate,
@@ -52,6 +60,49 @@ from app.schemas.gel import (
 from app.schemas.user import UserResponse
 
 router = APIRouter(prefix="/gel", tags=["GEL"])
+
+
+# ==================== Inquiry Session Schemas ====================
+
+class InquirySessionCreate(BaseModel):
+    subject_id: str
+    topic_id: Optional[str] = None
+
+
+class InquirySessionUpdate(BaseModel):
+    current_level: Optional[str] = None
+    completed_turns_by_level: Optional[dict] = None
+    messages: Optional[List[dict]] = None
+    current_phase: Optional[str] = None
+    current_question_attempt: Optional[int] = None
+    is_complete: Optional[bool] = None
+
+
+class InquirySessionResponse(BaseModel):
+    id: str
+    user_id: str
+    subject_id: str
+    topic_id: Optional[str]
+    current_level: str
+    completed_turns_by_level: Optional[dict]
+    messages: Optional[List[Any]]
+    current_phase: str
+    current_question_attempt: int
+    is_active: bool
+    is_complete: bool
+    created_at: datetime
+    updated_at: datetime
+
+    model_config = {"from_attributes": True}
+
+
+class TutorPreferencesUpdate(BaseModel):
+    preferred_tutor_provider: Optional[str] = None
+
+
+class TutorPreferencesResponse(BaseModel):
+    preferred_tutor_provider: Optional[str]
+    available_providers: List[dict]
 
 
 # ==================== Evaluation Items ====================
@@ -608,3 +659,163 @@ async def get_gel_statistics(
     service = GELService(db)
     stats = await service.get_statistics(subject_id=subject_id, cohort=cohort)
     return stats
+
+
+# ==================== Student Tutor Preferences ====================
+
+@router.get("/student/preferences", response_model=TutorPreferencesResponse)
+async def get_student_tutor_preferences(
+    auth_db: AsyncSession = Depends(get_auth_db),
+    current_user: User = Depends(get_current_student),
+):
+    """Return student's tutor preferences and list of available providers."""
+    provider_service = get_provider_service()
+    enabled = await provider_service.get_enabled_providers()
+    available = [{"key": p.key, "name": p.name, "model": p.model} for p in enabled]
+
+    preferred = None
+    if isinstance(getattr(current_user, "preferences", None), dict):
+        preferred = current_user.preferences.get("preferred_tutor_provider")
+
+    return TutorPreferencesResponse(
+        preferred_tutor_provider=preferred,
+        available_providers=available,
+    )
+
+
+@router.patch("/student/preferences", response_model=TutorPreferencesResponse)
+async def update_student_tutor_preferences(
+    data: TutorPreferencesUpdate,
+    auth_db: AsyncSession = Depends(get_auth_db),
+    current_user: User = Depends(get_current_student),
+):
+    """Update the student's preferred tutor provider."""
+    provider_service = get_provider_service()
+    enabled = await provider_service.get_enabled_providers()
+    available_keys = {p.key for p in enabled}
+    available = [{"key": p.key, "name": p.name, "model": p.model} for p in enabled]
+
+    new_key = data.preferred_tutor_provider
+    if new_key is not None and new_key not in available_keys:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail=f"Provider '{new_key}' is not enabled. Available: {', '.join(sorted(available_keys))}",
+        )
+
+    # Merge into preferences JSON and persist in auth DB
+    from sqlalchemy import select as sa_select
+    from app.models.user import User as UserModel
+    result = await auth_db.execute(sa_select(UserModel).where(UserModel.id == current_user.id))
+    db_user = result.scalar_one_or_none()
+    if not db_user:
+        raise HTTPException(status_code=404, detail="User not found")
+
+    prefs = dict(db_user.preferences or {})
+    if new_key is None:
+        prefs.pop("preferred_tutor_provider", None)
+    else:
+        prefs["preferred_tutor_provider"] = new_key
+    db_user.preferences = prefs
+    db_user.updated_at = datetime.now(timezone.utc)
+    await auth_db.commit()
+
+    return TutorPreferencesResponse(
+        preferred_tutor_provider=new_key,
+        available_providers=available,
+    )
+
+
+# ==================== Inquiry Session Persistence ====================
+
+@router.post("/inquiry-sessions", response_model=InquirySessionResponse, status_code=201)
+async def create_inquiry_session(
+    data: InquirySessionCreate,
+    db: AsyncSession = Depends(get_db),
+    current_user: User = Depends(get_current_student),
+):
+    """Create a new inquiry session for this student/subject/topic."""
+    # Deactivate any previous active sessions for the same subject+topic
+    prev_result = await db.execute(
+        select(InquirySession).where(
+            and_(
+                InquirySession.user_id == str(current_user.id),
+                InquirySession.subject_id == data.subject_id,
+                InquirySession.topic_id == data.topic_id,
+                InquirySession.is_active == True,
+                InquirySession.is_complete == False,
+            )
+        )
+    )
+    for old in prev_result.scalars().all():
+        old.is_active = False
+
+    session = InquirySession(
+        user_id=str(current_user.id),
+        subject_id=data.subject_id,
+        topic_id=data.topic_id,
+        current_level="beginner",
+        completed_turns_by_level={"beginner": 0, "advanced": 0, "pro": 0},
+        messages=[],
+        current_phase="awaiting-answer",
+        current_question_attempt=0,
+        is_active=True,
+        is_complete=False,
+    )
+    db.add(session)
+    await db.commit()
+    await db.refresh(session)
+    return session
+
+
+@router.get("/inquiry-sessions/active", response_model=Optional[InquirySessionResponse])
+async def get_active_inquiry_session(
+    subject_id: str = Query(...),
+    topic_id: Optional[str] = Query(None),
+    db: AsyncSession = Depends(get_db),
+    current_user: User = Depends(get_current_student),
+):
+    """Return the most recent active (resumable) session for a subject/topic, or null."""
+    result = await db.execute(
+        select(InquirySession).where(
+            and_(
+                InquirySession.user_id == str(current_user.id),
+                InquirySession.subject_id == subject_id,
+                InquirySession.topic_id == topic_id,
+                InquirySession.is_active == True,
+                InquirySession.is_complete == False,
+            )
+        ).order_by(InquirySession.updated_at.desc()).limit(1)
+    )
+    session = result.scalar_one_or_none()
+    return session
+
+
+@router.patch("/inquiry-sessions/{session_id}", response_model=InquirySessionResponse)
+async def update_inquiry_session(
+    session_id: str,
+    data: InquirySessionUpdate,
+    db: AsyncSession = Depends(get_db),
+    current_user: User = Depends(get_current_student),
+):
+    """Update the state of an active inquiry session."""
+    result = await db.execute(
+        select(InquirySession).where(
+            and_(
+                InquirySession.id == session_id,
+                InquirySession.user_id == str(current_user.id),
+            )
+        )
+    )
+    session = result.scalar_one_or_none()
+    if not session:
+        raise HTTPException(status_code=404, detail="Session not found")
+
+    update_data = data.model_dump(exclude_unset=True)
+    for key, value in update_data.items():
+        setattr(session, key, value)
+    session.updated_at = datetime.now(timezone.utc)
+
+    await db.commit()
+    await db.refresh(session)
+    return session
+

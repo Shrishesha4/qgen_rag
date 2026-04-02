@@ -96,6 +96,7 @@
 				{ href: '/student/assignments', label: 'Assignments', icon: '🧾' },
 				{ href: '/student/history', label: 'History', icon: '🕒' },
 				{ href: '/student/progress', label: 'Progress', icon: '📈' },
+				{ href: '/student/settings', label: 'Settings', icon: '⚙️' },
 				{ href: '/student/profile', label: 'Profile', icon: '👤' },
 			];
 		}

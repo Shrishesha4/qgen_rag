@@ -115,7 +115,13 @@
 				<p class="summary-value">{formatScore(data?.average_score ?? null)}</p>
 				<p class="summary-label">Average score</p>
 			</div>
-			<button class="logout-btn" on:click={handleLogout}>Sign out</button>
+			<div class="flex gap-3 items-center">
+				<a href="/student/settings" class="pill ghost" style="text-decoration: none; align-items: center; display: inline-flex; gap: 0.5rem;">
+					<Sparkles class="h-4 w-4" />
+					Settings
+				</a>
+				<button class="logout-btn" on:click={handleLogout}>Sign out</button>
+			</div>
 		</div>
 	</section>
 

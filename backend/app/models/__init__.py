@@ -38,6 +38,7 @@ from app.models.gel import (
 )
 from app.models.topic_audit import TopicAuditLog
 from app.models.provider_usage import ProviderUsageLog
+from app.models.inquiry_session import InquirySession
 
 __all__ = [
     "User",

@@ -21,6 +21,12 @@
 		type InquiryLevel,
 		type InquiryMessage,
 	} from '$lib/api/inquiry';
+	import {
+		createInquirySession,
+		getActiveInquirySession,
+		updateInquirySession,
+		type InquirySessionState,
+	} from '$lib/api/sessions';
 	import MarkdownContent from '$lib/components/MarkdownContent.svelte';
 
 	type SubjectCard = SubjectResponse & { groupLabel: string | null };
@@ -109,7 +115,9 @@
 	): string {
 		if (mode === 'question') {
 			const questionStartIndex = content.search(QUESTION_START_TRANSITION);
-			if (questionStartIndex > 0) {
+			// Only strip preamble when it's a long paragraph (> 120 chars).
+			// Short warm transitions like "Next up:" or "Alright—" are intentional.
+			if (questionStartIndex > 120) {
 				return content.slice(questionStartIndex).trim();
 			}
 			return content.trim();
@@ -162,8 +170,33 @@
 	let subjectSearch = $state('');
 	let selectedGroupFilter = $state('__all__');
 
+	// Session persistence
+	let currentSessionId = $state<string | null>(null);
+	let pendingResumeSession = $state<InquirySessionState | null>(null);
+	let isSavingSession = $state(false);
+
 	let messageViewport = $state<HTMLDivElement | null>(null);
 	let streamAbortController: AbortController | null = null;
+	let isWaitingForFirstToken = $state(false);
+	let transitionMessage = $state<string | null>(null);
+
+	const TRANSITION_PHRASES = [
+		'Moving on',
+		'Next up',
+		'On to the next one',
+		'Onwards!',
+		"Let's keep going",
+		'Nice — next question',
+		'One down!',
+		'Building momentum',
+		'Solid — keep it up',
+		'Challenge accepted',
+		'Step by step',
+	];
+
+	function pickTransitionPhrase(): string {
+		return TRANSITION_PHRASES[Math.floor(Math.random() * TRANSITION_PHRASES.length)];
+	}
 
 	const activeLevel = $derived(LEVELS.find((level) => level.key === currentLevel) ?? LEVELS[0]);
 	const currentTurns = $derived(completedTurnsByLevel[currentLevel] ?? 0);
@@ -247,6 +280,7 @@
 
 	$effect(() => {
 		messages.length;
+		isWaitingForFirstToken;
 		void tick().then(() => {
 			messageViewport?.scrollTo({ top: messageViewport.scrollHeight, behavior: 'smooth' });
 		});
@@ -339,6 +373,43 @@
 		currentQuestionAttempt = 0;
 		currentPhase = 'awaiting-answer';
 		completedTurnsByLevel = emptyProgress();
+		currentSessionId = null;
+		pendingResumeSession = null;
+	}
+
+	function restoreSessionState(saved: InquirySessionState) {
+		currentLevel = (saved.current_level as InquiryLevel) ?? 'beginner';
+		completedTurnsByLevel = {
+			beginner: saved.completed_turns_by_level?.beginner ?? 0,
+			advanced: saved.completed_turns_by_level?.advanced ?? 0,
+			pro: saved.completed_turns_by_level?.pro ?? 0,
+		};
+		messages = (saved.messages ?? []) as InquiryMessage[];
+		currentPhase = (saved.current_phase as SessionPhase) ?? 'awaiting-answer';
+		currentQuestionAttempt = saved.current_question_attempt ?? 0;
+		currentSessionId = saved.id;
+		draft = '';
+		error = null;
+		sessionHint = null;
+	}
+
+	async function saveSessionState(isComplete = false) {
+		if (!currentSessionId || isSavingSession) return;
+		isSavingSession = true;
+		try {
+			await updateInquirySession(currentSessionId, {
+				current_level: currentLevel,
+				completed_turns_by_level: completedTurnsByLevel,
+				messages: messages as Array<{ role: string; content: string }>,
+				current_phase: currentPhase,
+				current_question_attempt: currentQuestionAttempt,
+				...(isComplete ? { is_complete: true } : {}),
+			});
+		} catch {
+			// Best-effort — don't block UX on save failure
+		} finally {
+			isSavingSession = false;
+		}
 	}
 
 	async function selectSubject(subject: SubjectCard) {
@@ -353,7 +424,55 @@
 		abortActiveStream();
 		selectedTopic = topic;
 		resetSessionState();
+
+		// Check for an existing resumable session
+		if (selectedSubject) {
+			try {
+				const existing = await getActiveInquirySession(
+					selectedSubject.id,
+					topic.scope === 'topic' ? topic.id : null
+				);
+				if (existing && existing.messages && existing.messages.length > 0) {
+					pendingResumeSession = existing;
+					return; // Wait for user to choose resume or start fresh
+				}
+			} catch {
+				// No active session or network error — start fresh
+			}
+		}
+		await beginFreshSession(topic);
+	}
+
+	async function beginFreshSession(topic: TopicChoice) {
+		if (!selectedSubject) return;
+		try {
+			const session = await createInquirySession(
+				selectedSubject.id,
+				topic.scope === 'topic' ? topic.id : null
+			);
+			currentSessionId = session.id;
+		} catch {
+			// Best-effort — tutor still works without persistence
+		}
 		await openLevel();
+	}
+
+	async function resumeExistingSession(saved: InquirySessionState) {
+		pendingResumeSession = null;
+		restoreSessionState(saved);
+		// If the saved session has messages already in progress but no pending question,
+		// ask a fresh question at the restored level
+		if (messages.length === 0 || currentPhase === 'awaiting-answer' && messages.length > 0) {
+			// messages already restored — tutor shows existing conversation
+		}
+		// The conversation history is already restored; the student can continue typing
+	}
+
+	async function dismissResumeAndStartFresh() {
+		const topic = selectedTopic;
+		if (!topic) return;
+		pendingResumeSession = null;
+		await beginFreshSession(topic);
 	}
 
 	function backToSubjects() {
@@ -392,6 +511,7 @@
 
 		abortActiveStream();
 		isStreaming = true;
+		isWaitingForFirstToken = true;
 		error = null;
 
 		const controller = new AbortController();
@@ -419,6 +539,10 @@
 				}
 
 				if (event.type === 'delta') {
+					if (isWaitingForFirstToken) {
+						isWaitingForFirstToken = false;
+						transitionMessage = null;
+					}
 					assistantBuffer += event.delta ?? '';
 					const assistantMessage: InquiryMessage = {
 						role: 'assistant',
@@ -481,10 +605,12 @@
 				streamAbortController = null;
 			}
 			isStreaming = false;
+			isWaitingForFirstToken = false;
 		}
 	}
 
 	async function requestNextQuestion(history: InquiryMessage[] = messages) {
+		transitionMessage = null;
 		currentPhase = 'awaiting-answer';
 		currentQuestionAttempt = 0;
 		sessionHint = null;
@@ -510,10 +636,22 @@
 		currentPhase = 'awaiting-answer';
 		sessionHint = null;
 
-		if (nextCompletedTurnCount >= activeLevel.targetTurns) {
+		// Session fully complete — all 3 levels done
+		const sessionJustCompleted =
+			currentLevel === 'pro' && nextCompletedTurnCount >= activeLevel.targetTurns;
+		if (sessionJustCompleted) {
+			void saveSessionState(true);
 			return;
 		}
 
+		// Level complete — wait for student to press Continue
+		if (nextCompletedTurnCount >= activeLevel.targetTurns) {
+			void saveSessionState();
+			return;
+		}
+
+		transitionMessage = pickTransitionPhrase();
+		void saveSessionState();
 		await requestNextQuestion(result.history);
 	}
 
@@ -546,6 +684,7 @@
 			currentPhase = 'awaiting-reasoning';
 			currentQuestionAttempt = 0;
 			sessionHint = null;
+			void saveSessionState();
 			return;
 		}
 
@@ -558,10 +697,12 @@
 		});
 		if (!reasoningResult.succeeded) return;
 
+		void saveSessionState();
 		const advanced = reasoningResult.directive === 'advance' || nextAttempt >= MAX_EXPLANATION_ATTEMPTS;
 		if (!advanced) {
 			currentQuestionAttempt = nextAttempt;
 			sessionHint = null;
+			void saveSessionState();
 			return;
 		}
 
@@ -602,6 +743,7 @@
 		sessionHint = null;
 		currentQuestionAttempt = 0;
 		currentPhase = 'awaiting-answer';
+		void saveSessionState();
 		await requestNextQuestion([]);
 	}
 </script>
@@ -611,31 +753,35 @@
 </svelte:head>
 
 <div class="page-container student-shell train-shell" class:in-session={!!selectedTopic}>
-	<!-- {#if !selectedTopic}
-		<section class="glass-panel gradient-card hero-card">
-			<div>
-				<p class="eyebrow">GEL Train</p>
-				<h1 class="hero">Guided practice from your configured AI providers</h1>
-				<p class="muted hero-copy">
-					Move from subject to topic into a live tutoring session while staying inside the current VQuest shell and using only the Admin-configured provider stack.
+	{#if pendingResumeSession}
+		<div class="fixed inset-0 z-50 flex items-center justify-center bg-black/60 backdrop-blur-sm p-4">
+			<div class="glass-panel max-w-md w-full p-8 shadow-2xl border border-white/10 animate-in fade-in zoom-in duration-300">
+				<div class="mb-6 flex items-center gap-4">
+					<div class="w-12 h-12 rounded-full bg-primary/20 flex items-center justify-center text-primary">
+						<svg xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" class="lucide lucide-history"><path d="M3 12a9 9 0 1 0 9-9 9.75 9.75 0 0 0-6.74 2.74L3 8"/><path d="M3 3v5h5"/><path d="M12 7v5l4 2"/></svg>
+					</div>
+					<h2 class="text-2xl font-bold tracking-tight">Resume Session?</h2>
+				</div>
+				<p class="text-muted mb-8 leading-relaxed">
+					We found an unfinished practice session. Would you like to pick up where you left off, or start a completely new training session?
 				</p>
+				<div class="flex flex-col gap-3">
+					<button 
+						class="btn-primary py-3 font-semibold shadow-lg shadow-primary/20"
+						onclick={() => pendingResumeSession && void resumeExistingSession(pendingResumeSession)}
+					>
+						Resume Session
+					</button>
+					<button 
+						class="btn-secondary py-3 font-medium border-white/5 hover:bg-white/5"
+						onclick={() => void dismissResumeAndStartFresh()}
+					>
+						Start Fresh
+					</button>
+				</div>
 			</div>
-			<div class="hero-metrics">
-				<div>
-					<p class="summary-value">{subjects.length}</p>
-					<p class="summary-label">Subjects ready</p>
-				</div>
-				<div>
-					<p class="summary-value provider-label">{providerMeta ? providerMeta.name : 'Admin'}</p>
-					<p class="summary-label">{providerMeta ? providerMeta.model || 'Configured connector' : 'Provider source'}</p>
-				</div>
-				<div>
-					<p class="summary-value">{completedLevelCount}/3</p>
-					<p class="summary-label">Stages cleared</p>
-				</div>
-			</div>
-		</section>
-	{/if} -->
+		</div>
+	{/if}
 
 	{#if !selectedSubject}
 		<section class="glass-panel chooser-panel space-y-5">
@@ -841,12 +987,7 @@
 			{/if}
 
 			<div class="message-viewport" bind:this={messageViewport}>
-				{#if messages.length === 0 && isStreaming}
-					<div class="center-state large-state inline-state">
-						<div class="spinner"></div>
-						<p class="muted">Generating your first question...</p>
-					</div>
-				{:else if messages.length === 0}
+				{#if messages.length === 0 && !isWaitingForFirstToken}
 					<div class="center-state large-state inline-state">
 						<Trophy class="h-10 w-10 icon-muted" />
 						<h3 class="empty-title">Session ready</h3>
@@ -861,6 +1002,23 @@
 							</div>
 						</article>
 					{/each}
+
+					{#if transitionMessage}
+						<div class="session-divider">
+							<span class="session-divider-pill">{transitionMessage}</span>
+						</div>
+					{/if}
+
+					{#if isWaitingForFirstToken}
+						<article class="message-row">
+							<div class="message-meta">Tutor</div>
+							<div class="message-bubble typing-bubble">
+								<span class="typing-dot"></span>
+								<span class="typing-dot"></span>
+								<span class="typing-dot"></span>
+							</div>
+						</article>
+					{/if}
 				{/if}
 			</div>
 
@@ -1599,6 +1757,62 @@
 		border: 3px solid rgba(var(--theme-primary-rgb), 0.14);
 		border-top-color: rgba(var(--theme-primary-rgb), 0.84);
 		animation: spin 0.8s linear infinite;
+	}
+
+	/* ── Typing indicator (iMessage-style bouncing dots) ── */
+	.typing-bubble {
+		display: flex;
+		align-items: center;
+		gap: 5px;
+		min-width: 58px;
+	}
+
+	.typing-dot {
+		width: 8px;
+		height: 8px;
+		border-radius: 50%;
+		background: var(--theme-text-secondary);
+		opacity: 0.55;
+		animation: typing-bounce 1.3s ease-in-out infinite;
+		flex-shrink: 0;
+	}
+
+	.typing-dot:nth-child(2) { animation-delay: 0.18s; }
+	.typing-dot:nth-child(3) { animation-delay: 0.36s; }
+
+	@keyframes typing-bounce {
+		0%, 55%, 100% { transform: translateY(0); opacity: 0.55; }
+		28% { transform: translateY(-7px); opacity: 1; }
+	}
+
+	/* ── Session progress divider ("Moving on", "Next up", …) ── */
+	.session-divider {
+		display: flex;
+		align-items: center;
+		gap: 0.75rem;
+		align-self: stretch;
+		margin: 0.35rem 0;
+	}
+
+	.session-divider::before,
+	.session-divider::after {
+		content: '';
+		flex: 1;
+		height: 1px;
+		background: color-mix(in srgb, var(--theme-glass-border) 80%, transparent);
+	}
+
+	.session-divider-pill {
+		font-size: 0.74rem;
+		font-weight: 700;
+		text-transform: uppercase;
+		letter-spacing: 0.1em;
+		white-space: nowrap;
+		color: var(--theme-text-secondary);
+		padding: 0.28rem 0.82rem;
+		border-radius: 999px;
+		border: 1px solid var(--theme-glass-border);
+		background: color-mix(in srgb, var(--theme-input-bg) 78%, var(--theme-surface) 22%);
 	}
 
 	@keyframes spin {
