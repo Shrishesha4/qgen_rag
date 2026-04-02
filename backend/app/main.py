@@ -1,6 +1,6 @@
 """
-QuestionGeneration AI - FastAPI Backend
-A stateful RAG-based question generation system for educators
+GELTrain - FastAPI Backend
+AI-powered question evaluation and learning platform with RAG-based question generation
 """
 
 import uuid
@@ -18,6 +18,7 @@ from app.core.logging import setup_logging, logger, request_id_ctx
 from app.api.v1 import api_router
 from app.services.embedding_service import warmup_embedding_service
 from app.services.reranker_service import warmup_reranker_service
+from app.services.provider_service import ProviderService
 
 
 @asynccontextmanager
@@ -26,7 +27,7 @@ async def lifespan(app: FastAPI):
     # Configure logging here (worker process only) to avoid duplicate startup logs when using --reload
     setup_logging(log_level=settings.LOG_LEVEL, json_logs=settings.LOG_JSON)
     # Startup
-    logger.info("🚀 Starting QuestionGeneration AI...")
+    logger.info("🚀 Starting GELTrain...")
 
     # Log effective model configuration (from .env / settings)
     logger.info(f"🔧 Ollama: base_url={settings.OLLAMA_BASE_URL} model={settings.OLLAMA_MODEL}")
@@ -36,6 +37,22 @@ async def lifespan(app: FastAPI):
     # Initialize database and create tables/indexes
     await init_db()
     logger.info("✅ Database initialized")
+
+    # Load provider config to hydrate LLM credentials (e.g., DeepSeek) from DB settings
+    try:
+        provider_service = ProviderService()
+        provider_config = await provider_service.get_config(force_refresh=True)
+        for provider in provider_config.providers:
+            if provider.key == "deepseek" and provider.api_key:
+                settings.DEEPSEEK_API_KEY = provider.api_key
+                if provider.base_url:
+                    settings.DEEPSEEK_BASE_URL = provider.base_url
+                if provider.model:
+                    settings.DEEPSEEK_MODEL = provider.model
+                logger.info("🔧 DeepSeek credentials loaded from provider settings")
+                break
+    except Exception as e:
+        logger.warning(f"⚠️ Could not load provider credentials from settings: {e}")
     
     # Warmup ML models to avoid cold start latency on first request
     try:
@@ -80,8 +97,8 @@ async def lifespan(app: FastAPI):
 
 
 app = FastAPI(
-    title="QuestionGeneration AI",
-    description="A stateful RAG-based question generation system for educators",
+    title="GELTrain",
+    description="AI-powered question evaluation and learning platform with RAG-based question generation",
     version="1.0.0",
     lifespan=lifespan,
     docs_url="/docs",
@@ -172,7 +189,7 @@ app.include_router(api_router, prefix=settings.API_PREFIX)
 @app.get("/", tags=["Health"])
 async def root():
     """Root endpoint - health check."""
-    return {"status": "healthy", "service": "QuestionGeneration AI", "version": "1.0.0"}
+    return {"status": "healthy", "service": "GELTrain", "version": "1.0.0"}
 
 
 @app.get("/health", tags=["Health"])

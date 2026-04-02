@@ -2,7 +2,10 @@
 Database connection and session management.
 """
 
+import os
+import time
 from typing import AsyncGenerator
+from sqlalchemy import event
 from sqlalchemy.ext.asyncio import create_async_engine, AsyncSession, async_sessionmaker
 from sqlalchemy.orm import declarative_base
 from sqlalchemy import text
@@ -12,22 +15,63 @@ from app.core.config import settings
 
 logger = logging.getLogger(__name__)
 
+
+def calculate_pool_settings() -> dict:
+    """Calculate DB pool settings based on configured worker count."""
+    worker_count = max(1, int(os.getenv("API_WORKERS", settings.API_WORKERS)))
+
+    # Each process has its own pool; keep a safe minimum for bursty workloads.
+    pool_size = max(20, settings.DB_POOL_SIZE_BASE * worker_count)
+    max_overflow = max(10, settings.DB_POOL_MAX_OVERFLOW * worker_count)
+
+    return {
+        "pool_size": pool_size,
+        "max_overflow": max_overflow,
+        "pool_timeout": settings.DB_POOL_TIMEOUT,
+        "pool_recycle": settings.DB_POOL_RECYCLE,
+    }
+
+
+_pool_settings = calculate_pool_settings()
+
 # Create async engine
 engine = create_async_engine(
     settings.DATABASE_URL,
     echo=False,
     future=True,
-    pool_size=20,
-    max_overflow=10,
-    # Wait up to 120s for a connection from the pool (default is 30s)
-    pool_timeout=120,
-    # Recycle connections after 30 minutes to avoid stale connections during long operations
-    pool_recycle=1800,
+    **_pool_settings,
     # Verify connections before checkout to avoid using stale/broken connections
     pool_pre_ping=True,
     # Always rollback on return so interrupted transactions don't poison the pool
     pool_reset_on_return="rollback",
 )
+
+logger.info(
+    "Database pool configured",
+    extra={
+        "pool_size": _pool_settings["pool_size"],
+        "max_overflow": _pool_settings["max_overflow"],
+        "pool_timeout": _pool_settings["pool_timeout"],
+        "pool_recycle": _pool_settings["pool_recycle"],
+    },
+)
+
+
+if settings.DB_ENABLE_POOL_MONITORING:
+    @event.listens_for(engine.sync_engine.pool, "checkout")
+    def _on_pool_checkout(dbapi_conn, connection_record, connection_proxy):
+        connection_record.info["checked_out_at"] = time.monotonic()
+        logger.debug("DB pool checkout: %s", engine.sync_engine.pool.status())
+
+
+    @event.listens_for(engine.sync_engine.pool, "checkin")
+    def _on_pool_checkin(dbapi_conn, connection_record):
+        checked_out_at = connection_record.info.pop("checked_out_at", None)
+        if checked_out_at is not None:
+            held_seconds = time.monotonic() - checked_out_at
+            logger.debug("DB pool checkin after %.3fs: %s", held_seconds, engine.sync_engine.pool.status())
+        else:
+            logger.debug("DB pool checkin: %s", engine.sync_engine.pool.status())
 
 # Create async session factory
 AsyncSessionLocal = async_sessionmaker(

@@ -39,6 +39,7 @@ from app.schemas.subject import (
 )
 from app.api.v1.deps import get_current_user, ensure_user_can_generate, ensure_user_can_manage_groups
 from app.services.llm_service import LLMService
+from app.services.provider_service import ProviderService
 
 logger = logging.getLogger(__name__)
 router = APIRouter()
@@ -1185,7 +1186,7 @@ _GENERIC_COS = [
 
 async def _generate_cos_with_llm(subject_name: str, subject_code: str, syllabus_text: str) -> list:
     """Use LLM to derive 4-6 Course Outcomes from aggregated syllabus content; falls back to generic COs."""
-    llm_service = LLMService()
+    llm_service = await _get_enabled_llm_service()
     truncated = syllabus_text[:12000]
 
     system_prompt = (
@@ -1296,7 +1297,7 @@ async def _extract_chapters_with_llm(text_content: str, subject_name: str, subje
     Use LLM to intelligently extract chapters/topics from syllabus text.
     Returns a list of dicts with 'name', 'description', and optionally 'syllabus_content'.
     """
-    llm_service = LLMService()
+    llm_service = await _get_enabled_llm_service()
     
     # Truncate text if too long (LLMs have context limits)
     max_chars = 15000
@@ -1583,9 +1584,23 @@ _GENERIC_LOS = [
 ]
 
 
+async def _get_enabled_llm_service():
+    """Get an LLM service from the first enabled provider, or fallback to default LLMService."""
+    try:
+        provider_service = ProviderService()
+        enabled_providers = await provider_service.get_enabled_providers()
+        if enabled_providers:
+            # Use the first enabled provider
+            llm_service, _ = provider_service.create_llm_service(enabled_providers[0])
+            return llm_service
+    except Exception as e:
+        logger.warning(f"Failed to get enabled provider, falling back to default: {e}")
+    return LLMService()
+
+
 async def _generate_los_with_llm(subject_name: str, subject_code: str, syllabus_text: str) -> list:
     """Use LLM to derive 5-7 LOs from aggregated syllabus content; falls back to generic LOs."""
-    llm_service = LLMService()
+    llm_service = await _get_enabled_llm_service()
     truncated = syllabus_text[:12000]
 
     system_prompt = (

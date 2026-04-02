@@ -14,6 +14,7 @@ import asyncio
 import logging
 from typing import Optional, AsyncGenerator, Any, Dict, Protocol, runtime_checkable
 import httpx
+from pybreaker import CircuitBreaker, CircuitBreakerError
 
 from app.core.config import settings
 
@@ -39,6 +40,112 @@ class LLMTimeoutError(LLMError):
 class LLMResponseError(LLMError):
     """Raised when LLM returns invalid response."""
     pass
+
+
+class LLMServiceUnavailable(LLMError):
+    """Raised when provider is temporarily unavailable due to open circuit."""
+    pass
+
+
+_ollama_breaker = CircuitBreaker(
+    fail_max=settings.LLM_CIRCUIT_FAILURE_THRESHOLD,
+    reset_timeout=settings.LLM_CIRCUIT_RECOVERY_TIMEOUT,
+    exclude=[LLMResponseError],
+)
+
+_gemini_breaker = CircuitBreaker(
+    fail_max=settings.LLM_CIRCUIT_FAILURE_THRESHOLD,
+    reset_timeout=settings.LLM_CIRCUIT_RECOVERY_TIMEOUT,
+    exclude=[LLMResponseError],
+)
+
+_deepseek_breaker = CircuitBreaker(
+    fail_max=settings.LLM_CIRCUIT_FAILURE_THRESHOLD,
+    reset_timeout=settings.LLM_CIRCUIT_RECOVERY_TIMEOUT,
+    exclude=[LLMResponseError],
+)
+
+
+def get_circuit_breaker(provider: str) -> CircuitBreaker:
+    provider_name = (provider or "").lower()
+    breakers = {
+        "ollama": _ollama_breaker,
+        "gemini": _gemini_breaker,
+        "deepseek": _deepseek_breaker,
+    }
+    return breakers.get(provider_name, _ollama_breaker)
+
+
+def get_circuit_breaker_states() -> Dict[str, str]:
+    """Expose circuit state for diagnostics/health checks."""
+    return {
+        "ollama": str(_ollama_breaker.current_state),
+        "gemini": str(_gemini_breaker.current_state),
+        "deepseek": str(_deepseek_breaker.current_state),
+    }
+
+
+async def _call_with_breaker(provider: str, operation_name: str, operation):
+    """Run an async operation through the provider circuit breaker."""
+    if not settings.LLM_CIRCUIT_BREAKER_ENABLED:
+        return await operation()
+
+    try:
+        await _ensure_circuit_closed(provider, operation_name)
+        result = await operation()
+        _record_circuit_success(provider)
+        return result
+    except CircuitBreakerError as exc:
+        logger.error("Circuit breaker OPEN for provider=%s during %s", provider, operation_name)
+        raise LLMServiceUnavailable(
+            f"{provider} temporarily unavailable due to repeated failures"
+        ) from exc
+    except Exception as exc:
+        _record_circuit_failure(provider, operation_name, exc)
+        raise
+
+
+async def _ensure_circuit_closed(provider: str, operation_name: str) -> None:
+    """Fail fast if the provider circuit is open before a streaming call."""
+    if not settings.LLM_CIRCUIT_BREAKER_ENABLED:
+        return
+
+    breaker = get_circuit_breaker(provider)
+    try:
+        breaker.call(lambda: True)
+    except CircuitBreakerError as exc:
+        logger.error("Circuit breaker OPEN for provider=%s during %s", provider, operation_name)
+        raise LLMServiceUnavailable(
+            f"{provider} temporarily unavailable due to repeated failures"
+        ) from exc
+
+
+def _raise_for_breaker(exc: Exception):
+    raise exc
+
+
+def _record_circuit_failure(provider: str, operation_name: str, exc: Exception) -> None:
+    """Record a failed provider call against its breaker for stream-style paths."""
+    if not settings.LLM_CIRCUIT_BREAKER_ENABLED:
+        return
+def _record_circuit_success(provider: str) -> None:
+    """Record a successful async provider call against its breaker."""
+    if not settings.LLM_CIRCUIT_BREAKER_ENABLED:
+        return
+
+    breaker = get_circuit_breaker(provider)
+    with breaker._lock:
+        breaker.close()
+        breaker._state_storage.reset_counter()
+
+    breaker = get_circuit_breaker(provider)
+    try:
+        breaker.call(lambda: _raise_for_breaker(exc))
+    except CircuitBreakerError:
+        logger.error("Circuit breaker transitioned OPEN for provider=%s during %s", provider, operation_name)
+    except Exception:
+        # Expected: helper re-raises the original exception to count a failure.
+        pass
 
 
 @runtime_checkable
@@ -165,6 +272,7 @@ class OllamaLLMService:
     def __init__(self, model: Optional[str] = None):
         self.base_url = settings.OLLAMA_BASE_URL
         self.model = model or settings.OLLAMA_MODEL
+        self.breaker = get_circuit_breaker("ollama")
         logger.info(f"OllamaLLMService initialized - base_url={self.base_url}, model={self.model}")
         self._timeout = httpx.Timeout(
             connect=10.0,   # Connection timeout
@@ -182,32 +290,35 @@ class OllamaLLMService:
         max_tokens: int = 2000,
     ) -> str:
         """Generate a response from the LLM with retry logic."""
-        messages = []
-        if system_prompt:
-            messages.append({"role": "system", "content": system_prompt})
-        messages.append({"role": "user", "content": prompt})
+        async def _operation() -> str:
+            messages = []
+            if system_prompt:
+                messages.append({"role": "system", "content": system_prompt})
+            messages.append({"role": "user", "content": prompt})
 
-        async with httpx.AsyncClient(timeout=self._timeout) as client:
-            response = await client.post(
-                f"{self.base_url}/api/chat",
-                json={
-                    "model": self.model,
-                    "messages": messages,
-                    "stream": False,
-                    "options": {
-                        "temperature": temperature,
-                        "num_predict": max_tokens,
+            async with httpx.AsyncClient(timeout=self._timeout) as client:
+                response = await client.post(
+                    f"{self.base_url}/api/chat",
+                    json={
+                        "model": self.model,
+                        "messages": messages,
+                        "stream": False,
+                        "options": {
+                            "temperature": temperature,
+                            "num_predict": max_tokens,
+                        },
                     },
-                },
-            )
-            response.raise_for_status()
-            result = response.json()
-            content = result.get("message", {}).get("content", "")
-            
-            if not content:
-                logger.warning(f"Ollama returned empty content. Full response: {result}")
-            
-            return content
+                )
+                response.raise_for_status()
+                result = response.json()
+                content = result.get("message", {}).get("content", "")
+
+                if not content:
+                    logger.warning(f"Ollama returned empty content. Full response: {result}")
+
+                return content
+
+        return await _call_with_breaker("ollama", "generate", _operation)
 
     async def generate_with_fallback(
         self,

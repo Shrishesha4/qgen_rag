@@ -310,3 +310,33 @@ class QuickGenerateProgress(BaseModel):
     processing_detail: Optional[str] = None
     processing_document: Optional[str] = None
     processing_documents_total: Optional[int] = None
+
+
+class ConversationalInquiryMessage(BaseModel):
+    """Single message in a GEL Train inquiry session."""
+
+    role: Literal["user", "assistant"]
+    content: str = Field(..., min_length=1, max_length=4000)
+
+
+class ConversationalInquiryRequest(BaseModel):
+    """Request payload for provider-backed conversational inquiry."""
+
+    subject_id: Optional[uuid.UUID] = None
+    topic_id: Optional[uuid.UUID] = None
+    level: Literal["beginner", "advanced", "pro"] = "beginner"
+    mode: Literal["question", "answer_feedback", "reasoning_feedback"] = "question"
+    question_cycle_index: int = Field(default=0, ge=0, le=1000)
+    explanation_attempt: int = Field(default=0, ge=0, le=3)
+    messages: List[ConversationalInquiryMessage] = Field(default_factory=list)
+
+
+class ConversationalInquiryEvent(BaseModel):
+    """SSE event payload for conversational inquiry responses."""
+
+    type: Literal["meta", "delta", "complete", "error"]
+    delta: Optional[str] = None
+    message: Optional[str] = None
+    provider_key: Optional[str] = None
+    provider_name: Optional[str] = None
+    provider_model: Optional[str] = None

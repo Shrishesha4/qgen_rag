@@ -23,7 +23,11 @@ export interface RegisterRequest {
 	password: string;
 	security_question: string;
 	security_answer: string;
-	role: 'teacher' | 'vetter' | 'admin';
+	role: 'teacher' | 'vetter' | 'admin' | 'student';
+}
+
+export interface BootstrapStatus {
+	admin_exists: boolean;
 }
 
 export interface AuthenticatedUser {
@@ -103,7 +107,7 @@ export async function login(credentials: LoginRequest): Promise<TokenResponse> {
 		throw new Error(body?.detail || `Login failed (${res.status})`);
 	}
 	const data: TokenResponse = await res.json();
-	storeSession({
+	const sessionData: StoredSession = {
 		access_token: data.access_token,
 		refresh_token: data.refresh_token,
 		user: {
@@ -118,7 +122,8 @@ export async function login(credentials: LoginRequest): Promise<TokenResponse> {
 			can_generate: data.user.can_generate,
 			can_vet: data.user.can_vet
 		}
-	});
+	};
+	storeSession(sessionData);
 	return data;
 }
 
@@ -167,10 +172,10 @@ export async function updateProfile(payload: UpdateProfileRequest): Promise<Auth
 
 	const existing = getStoredSession();
 	if (existing) {
-		storeSession({
+		const updatedSession: StoredSession = {
 			...existing,
 			user: {
-				...existing.user,
+				id: existing.user.id,
 				email: updatedUser.email,
 				username: updatedUser.username,
 				full_name: updatedUser.full_name,
@@ -181,7 +186,8 @@ export async function updateProfile(payload: UpdateProfileRequest): Promise<Auth
 				can_generate: updatedUser.can_generate,
 				can_vet: updatedUser.can_vet
 			}
-		});
+		};
+		storeSession(updatedSession);
 	}
 
 	return updatedUser;
@@ -191,6 +197,12 @@ export async function changePassword(payload: ChangePasswordRequest): Promise<{ 
 	return apiFetch<{ message: string }>('/auth/change-password', {
 		method: 'POST',
 		body: JSON.stringify(payload)
+	});
+}
+
+export async function getBootstrapStatus(): Promise<BootstrapStatus> {
+	return apiFetch<BootstrapStatus>('/auth/bootstrap-status', {
+		method: 'GET'
 	});
 }
 

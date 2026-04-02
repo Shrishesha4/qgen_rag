@@ -4,25 +4,98 @@
 	import {
 		DEFAULT_SECURITY_QUESTION,
 		login,
-		register
+		register,
+		getBootstrapStatus
 	} from '$lib/api/auth';
 	import { apiUrl, getStoredSession } from '$lib/api/client';
 	import { session } from '$lib/session';
 
+	type AuthMode = 'login' | 'register' | 'bootstrap';
+
 	let introReady = $state(false);
-	let mode = $state<'login' | 'register'>('login');
+	let mode = $state<AuthMode>('login');
 	let email = $state('');
 	let password = $state('');
 	let username = $state('');
 	let fullName = $state('');
 	let securityQuestion = $state(DEFAULT_SECURITY_QUESTION);
 	let securityAnswer = $state('');
-	let selectedRole = $state<'teacher' | 'vetter'>('teacher');
+	let selectedRole: 'teacher' | 'vetter' | 'student' | 'admin' = $state('teacher');
 	let authLoading = $state(false);
 	let authError = $state('');
 	let authSuccess = $state('');
 	let signupEnabled = $state(true);
+	let studentSignupEnabled = $state(false);
 	let checkingSignup = $state(true);
+	let adminExists = $state(true);
+	let checkingAdmin = $state(true);
+	const SIGNUP_SETTINGS_TIMEOUT_MS = 5000;
+
+	const selectableRoles = $derived(
+		mode === 'bootstrap'
+			? ['admin']
+			: [
+				...(signupEnabled ? ['teacher', 'vetter'] : []),
+				...(studentSignupEnabled ? ['student'] : [])
+			]
+	);
+
+	$effect(() => {
+		if (!selectableRoles.includes(selectedRole)) {
+			selectedRole = (selectableRoles[0] as typeof selectedRole | undefined) ?? 'teacher';
+		}
+	});
+
+	const canShowSignupSwitch = $derived(mode !== 'bootstrap' && (signupEnabled || studentSignupEnabled || checkingSignup));
+
+	async function fetchSignupSettings(): Promise<{ signupEnabled: boolean; studentSignupEnabled: boolean }> {
+		const controller = new AbortController();
+		const timeoutId = window.setTimeout(() => controller.abort(), SIGNUP_SETTINGS_TIMEOUT_MS);
+
+		try {
+			const res = await fetch(apiUrl('/settings/signup'), {
+				signal: controller.signal,
+				cache: 'no-store'
+			});
+			if (!res.ok) {
+				return { signupEnabled: true, studentSignupEnabled: true };
+			}
+			const data = await res.json();
+			return {
+				signupEnabled: data.signup_enabled ?? true,
+				studentSignupEnabled: data.student_signup_enabled ?? false
+			};
+		} catch {
+			return { signupEnabled: true, studentSignupEnabled: true };
+		} finally {
+			window.clearTimeout(timeoutId);
+		}
+	}
+
+	async function initAuthState() {
+		// Check if admin exists first
+		try {
+			const bootstrap = await getBootstrapStatus();
+			adminExists = bootstrap?.admin_exists ?? true;
+		} catch (err) {
+			// If we cannot determine, assume admins exist so we don't block access
+			adminExists = true;
+		}
+		checkingAdmin = false;
+
+		// If no admin exists, show bootstrap mode
+		if (!adminExists) {
+			mode = 'bootstrap';
+			selectedRole = 'admin';
+			return;
+		}
+
+		// Otherwise, check signup settings
+		const settings = await fetchSignupSettings();
+		signupEnabled = settings.signupEnabled;
+		studentSignupEnabled = settings.studentSignupEnabled;
+		checkingSignup = false;
+	}
 
 	function selectedRoleCanSignUp(): boolean {
 		return signupEnabled || selectedRole === 'vetter';
@@ -36,6 +109,9 @@
 			case 'vetter':
 				goto('/vetter/dashboard');
 				break;
+			case 'student':
+				goto('/student');
+				break;
 			case 'teacher':
 			default:
 				goto('/teacher/subjects');
@@ -47,7 +123,17 @@
 		authError = '';
 		authSuccess = '';
 
-		if (mode === 'register') {
+		if (mode === 'register' || mode === 'bootstrap') {
+			if (mode === 'bootstrap') {
+				if (!username.trim()) {
+					authError = 'Username is required for admin account';
+					return;
+				}
+				if (!fullName.trim()) {
+					authError = 'Full name is required for admin account';
+					return;
+				}
+			} else {
 			if (!selectedRoleCanSignUp()) {
 				authError = 'Teacher sign up is currently disabled. Vetter sign up remains available.';
 				return;
@@ -56,13 +142,16 @@
 				authError = 'Username is required';
 				return;
 			}
+			}
 			if (password.length < 8) {
 				authError = 'Password must be at least 8 characters';
 				return;
 			}
-			if (!securityQuestion.trim() || !securityAnswer.trim()) {
-				authError = 'Security question and answer are required';
-				return;
+			if (mode !== 'bootstrap') {
+				if (!securityQuestion.trim() || !securityAnswer.trim()) {
+					authError = 'Security question and answer are required';
+					return;
+				}
 			}
 		}
 
@@ -78,9 +167,9 @@
 					username: username.trim().toLowerCase(),
 					full_name: fullName.trim() || undefined,
 					password,
-					security_question: securityQuestion.trim(),
-					security_answer: securityAnswer.trim(),
-					role: selectedRole
+					security_question: mode === 'bootstrap' ? DEFAULT_SECURITY_QUESTION : securityQuestion.trim(),
+					security_answer: mode === 'bootstrap' ? 'admin' : securityAnswer.trim(),
+					role: mode === 'bootstrap' ? 'admin' : selectedRole
 				});
 				authSuccess = response.message;
 				mode = 'login';
@@ -106,28 +195,7 @@
 			introReady = true;
 		});
 
-		void (async () => {
-			try {
-				const res = await fetch(apiUrl('/settings/signup'));
-				if (res.ok) {
-					const data = await res.json();
-					if (!cancelled) {
-						signupEnabled = data.signup_enabled ?? true;
-						if (!signupEnabled && selectedRole === 'teacher') {
-							selectedRole = 'vetter';
-						}
-					}
-				}
-			} catch {
-				if (!cancelled) {
-					signupEnabled = true;
-				}
-			} finally {
-				if (!cancelled) {
-					checkingSignup = false;
-				}
-			}
-		})();
+		void initAuthState();
 
 		return () => {
 			cancelled = true;
@@ -158,7 +226,34 @@
 						<p class="signin-success" role="status">{authSuccess}</p>
 					{/if}
 
-					{#if mode === 'register'}
+					{#if mode === 'bootstrap'}
+						<div class="bootstrap-notice">
+							<h3>Welcome to VQuest!</h3>
+							<p>This appears to be your first setup. Create the administrator account to continue.</p>
+						</div>
+						<label class="signin-field">
+							<span class="signin-label">Username</span>
+							<input
+								type="text"
+								class="signin-input"
+								bind:value={username}
+								placeholder="e.g. admin"
+								autocomplete="username"
+								required
+							/>
+						</label>
+						<label class="signin-field">
+							<span class="signin-label">Full Name</span>
+							<input
+								type="text"
+								class="signin-input"
+								bind:value={fullName}
+								placeholder="System Administrator"
+								autocomplete="name"
+								required
+							/>
+						</label>
+					{:else if mode === 'register'}
 						<label class="signin-field">
 							<span class="signin-label">Username</span>
 							<input
@@ -271,17 +366,15 @@
 					{/if}
 
 					<button type="submit" class="signin-submit" disabled={authLoading}>
-						{authLoading
-							? mode === 'login'
-								? 'Signing In...'
-								: 'Submitting Registration...'
-							: mode === 'login'
-								? 'Sign In'
-								: 'Submit Registration'}
+						{#if authLoading}
+							{mode === 'login' ? 'Signing In...' : mode === 'bootstrap' ? 'Creating Admin Account...' : 'Submitting Registration...'}
+						{:else}
+							{mode === 'login' ? 'Sign In' : mode === 'bootstrap' ? 'Create Admin Account' : 'Submit Registration'}
+						{/if}
 					</button>
 				</form>
 
-				{#if !checkingSignup}
+				{#if mode !== 'bootstrap' && !checkingSignup}
 					<div class="mode-switch">
 						{#if mode === 'login'}
 							{#if !signupEnabled}
@@ -550,12 +643,12 @@
 		letter-spacing: -0.02em;
 		margin: 0;
 		/* color: var(--theme-text-primary); */
-		color: black;
+		color: #373737;
 	}
 
 	.hero-sub {
 		font-size: 1.2rem;
-		color: black;
+		color: #4a4a4a;
 		/* color: var(--theme-text-secondary); */
 		margin: 0;
 		line-height: 1.55;
@@ -566,23 +659,6 @@
 		display: flex;
 		justify-content: center;
 		margin-top: 0.55rem;
-	}
-
-	.signin-panel {
-		width: min(420px, 94vw);
-		padding: 1rem;
-		border-radius: 1.2rem;
-		background: linear-gradient(
-			160deg,
-			rgba(255, 255, 255, 0.3) 0%,
-			rgba(255, 255, 255, 0.18) 100%
-		);
-		border: 1px solid rgba(255, 255, 255, 0.46);
-		backdrop-filter: blur(14px) saturate(135%);
-		-webkit-backdrop-filter: blur(14px) saturate(135%);
-		box-shadow:
-			0 18px 40px rgba(15, 23, 42, 0.16),
-			inset 0 1px 0 rgba(255, 255, 255, 0.58);
 	}
 
 
@@ -677,31 +753,61 @@
 		cursor: wait;
 	}
 
-	.aux-link-row {
+	.role-selector {
 		display: flex;
-		justify-content: flex-end;
-		margin-top: 0.05rem;
+		gap: 0.4rem;
 	}
 
-	.inline-link,
-	.text-link {
-		font-size: 0.84rem;
-		font-weight: 700;
-		color: var(--theme-primary);
-		text-decoration: none;
-	}
-
-	.text-link {
-		background: none;
-		border: none;
-		padding: 0;
+	.role-option {
+		flex: 1;
+		padding: 0.5rem 0.7rem;
+		border-radius: 0.6rem;
+		border: 1px solid rgba(255, 255, 255, 0.55);
+		background: rgba(255, 255, 255, 0.28);
+		color: rgba(17, 24, 39, 0.9);
+		font-size: 0.85rem;
+		font-weight: 600;
 		cursor: pointer;
-		font: inherit;
+		transition: background 0.18s ease, border-color 0.18s ease;
 	}
 
-	.inline-link:hover,
-	.text-link:hover {
-		text-decoration: underline;
+	.role-option.selected {
+		background: rgba(var(--theme-primary-rgb), 0.16);
+		border-color: rgba(var(--theme-primary-rgb), 0.35);
+	}
+
+	.mode-switch {
+		text-align: center;
+		margin-top: 0.5rem;
+		font-size: 0.82rem;
+		color: rgba(31, 41, 55, 0.75);
+		display: flex;
+		justify-content: center;
+		align-items: center;
+		gap: 0.35rem;
+	}
+
+	.bootstrap-notice {
+		margin: 0 0 1rem 0;
+		padding: 1rem;
+		background: rgba(55, 146, 53, 0.1);
+		border: 1px solid rgba(99, 102, 241, 0.3);
+		border-radius: 0.62rem;
+		text-align: center;
+	}
+
+	.bootstrap-notice h3 {
+		margin: 0 0 0.5rem 0;
+		font-size: 1.1rem;
+		font-weight: 700;
+		color: #004a02d0;
+	}
+
+	.bootstrap-notice p {
+		margin: 0;
+		font-size: 0.85rem;
+		color: #0b3018;
+		line-height: 1.4;
 	}
 
 	.signin-error {
@@ -812,10 +918,6 @@
 			max-width: 100%;
 		}
 
-		.signin-panel {
-			width: min(390px, 94vw);
-			padding: 0.95rem;
-		}
 
 		.role-selector,
 		.mode-switch {
@@ -858,14 +960,7 @@
 			font-size: 0.92rem;
 		}
 
-		.signin-panel {
-			width: min(330px, 95vw);
-			padding: 0.88rem;
-		}
-
-		.mode-switch,
-		.inline-link,
-		.text-link {
+		.mode-switch {
 			font-size: 0.8rem;
 		}
 

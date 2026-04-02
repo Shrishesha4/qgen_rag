@@ -32,6 +32,9 @@ class SystemSettings(AuthBase):
 
 # Default settings keys
 SETTING_SIGNUP_ENABLED = "signup_enabled"
+SETTING_PROVIDER_GENERATION_CONFIG = "provider_generation_config"
+SETTING_GEL_CONFIG = "gel_config"
+SETTING_STUDENT_SIGNUP_ENABLED = "student_signup_enabled"
 SETTING_PASSWORD_RESET = "password_reset"
 
 PASSWORD_RESET_METHOD_SMTP = "smtp"
@@ -65,5 +68,52 @@ def _default_password_reset_settings() -> dict:
 # Default values
 DEFAULT_SETTINGS = {
     SETTING_SIGNUP_ENABLED: {"enabled": True},
+    SETTING_PROVIDER_GENERATION_CONFIG: {
+        "providers": [
+            {
+                "key": "deepseek",
+                "name": "DeepSeek",
+                "base_url": "https://api.deepseek.com/v1",
+                "enabled": True,
+                "questions_per_batch": 10,
+                "model": "deepseek-chat",
+                "api_key": "",
+            },
+            {
+                "key": "gemini",
+                "name": "Gemini",
+                "base_url": "https://generativelanguage.googleapis.com",
+                "enabled": False,
+                "questions_per_batch": 10,
+                "model": "gemini-2.0-flash",
+                "api_key": "",
+            },
+            {
+                "key": "ollama",
+                "name": "Ollama (Local)",
+                "base_url": "http://localhost:11434",
+                "enabled": False,
+                "questions_per_batch": 10,
+                "model": "llama3.1:8b",
+                "api_key": "",
+            },
+        ],
+    },
+    SETTING_STUDENT_SIGNUP_ENABLED: {"enabled": False},  # Student self-signup disabled by default
+    SETTING_GEL_CONFIG: {
+        "enabled": True,
+        "default_rubric_weights": {
+            "detection": 0.35,
+            "reasoning": 0.25,
+            "correction": 0.20,
+            "confidence_calibration": 0.20,
+        },
+        "default_max_attempts": 1,
+        "default_time_limit_minutes": None,
+        "show_feedback_immediately": False,
+        "require_consent": True,
+        "overconfidence_penalty_factor": 1.5,
+        "passing_score": 60,
+    },
     SETTING_PASSWORD_RESET: _default_password_reset_settings(),
 }

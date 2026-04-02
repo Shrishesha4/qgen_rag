@@ -52,12 +52,19 @@
 	const hideGlobalBackPrefixes = ['/teacher/train/loop', '/privacy-policy', '/disclaimer'];
 	let showDesktopChrome = $derived.by(() => {
 		if (pathname.includes('/login')) return false;
-		return pathname.startsWith('/teacher') || pathname.startsWith('/vetter') || pathname.startsWith('/admin');
+		return (
+			pathname.startsWith('/teacher') ||
+			pathname.startsWith('/vetter') ||
+			pathname.startsWith('/admin') ||
+			pathname.startsWith('/student') ||
+			pathname.startsWith('/courses')
+		);
 	});
 	let navItems = $derived.by(() => {
 		if (pathname.startsWith('/teacher')) {
 			return [
 				{ href: '/teacher/subjects', label: 'Subjects', icon: '🧾' },
+				{ href: '/teacher/courses', label: 'Courses', icon: '📦' },
 				{ href: '/teacher/stats', label: 'Stats', icon: '📈' },
 				// { href: '/teacher/train', label: 'Train Topic', icon: '📚' },
 				{ href: '/teacher/train', label: 'Vetting', icon: '🪟' },
@@ -83,6 +90,18 @@
 				{ href: '/admin/vetters', label: 'Vetters', icon: '✅' },
 				{ href: '/admin/settings', label: 'Settings', icon: '⚙️' },
 				{ href: '/admin/profile', label: 'Profile', icon: '👤' },
+			];
+		}
+		if (pathname.startsWith('/student')) {
+			return [
+				{ href: '/student', label: 'Dashboard', icon: '🏠' },
+				{ href: '/student/train', label: 'GEL Train', icon: '🧠' },
+				{ href: '/student/courses', label: 'Courses', icon: '📦' },
+				{ href: '/student/assignments', label: 'Assignments', icon: '🧾' },
+				{ href: '/student/history', label: 'History', icon: '🕒' },
+				{ href: '/student/progress', label: 'Progress', icon: '📈' },
+				// { href: '/student/settings', label: 'Settings', icon: '⚙️' },
+				{ href: '/student/profile', label: 'Profile', icon: '👤' },
 			];
 		}
 		return [];
@@ -117,6 +136,18 @@
 		pathname.startsWith('/vetter/loop')
 	);
 	let enableAdminWindowScroll = $derived(pathname.startsWith('/admin') && !pathname.includes('/login'));
+	let enableTeacherGelWindowScroll = $derived(
+		pathname === '/teacher/gel' || pathname.startsWith('/teacher/gel/')
+	);
+	let enableStudentTrainWindowScroll = $derived(
+		pathname === '/student/train' || pathname.startsWith('/student/train/')
+	);
+	let enableStandardWindowScroll = $derived(
+		pathname.startsWith('/student/courses') ||
+		pathname.startsWith('/teacher/courses') ||
+		pathname.startsWith('/student/settings') ||
+		pathname.startsWith('/courses')
+	);
 
 	// Role-based routing: redirect to dashboard on root path
 	$effect(() => {
@@ -128,6 +159,8 @@
 				goto('/vetter/dashboard');
 			} else if (role === 'admin') {
 				goto('/admin/dashboard');
+			} else if (role === 'student') {
+				goto('/student');
 			}
 		}
 	});
@@ -221,7 +254,7 @@
 	</button>
 {/if}
 
-<div class="app-shell" class:with-desktop-chrome={showDesktopChrome} class:profile-window-scroll={pathname.endsWith('/profile')} class:vetting-loop-scroll={enableVettingLoopScroll} class:admin-window-scroll={enableAdminWindowScroll} class:admin-ui={pathname.startsWith('/admin')}>
+<div class="app-shell" class:with-desktop-chrome={showDesktopChrome} class:profile-window-scroll={pathname.endsWith('/profile')} class:vetting-loop-scroll={enableVettingLoopScroll} class:admin-window-scroll={enableAdminWindowScroll} class:teacher-gel-window-scroll={enableTeacherGelWindowScroll} class:train-window-scroll={enableStudentTrainWindowScroll} class:standard-window-scroll={enableStandardWindowScroll} class:admin-ui={pathname.startsWith('/admin')}>
 	{#if showDesktopChrome}
 		<aside class="desktop-sidebar glass-panel">
 			<div class="sidebar-brand">
@@ -666,6 +699,25 @@
 		}
 
 		.app-shell.admin-window-scroll .desktop-window-content {
+			overflow-y: auto;
+			overflow-x: hidden;
+			-webkit-overflow-scrolling: touch;
+		}
+
+		.app-shell.teacher-gel-window-scroll .desktop-window-content {
+			overflow-y: auto;
+			overflow-x: hidden;
+			overscroll-behavior-y: contain;
+			-webkit-overflow-scrolling: touch;
+		}
+
+		.app-shell.train-window-scroll .desktop-window-content {
+			overflow-y: auto;
+			overflow-x: hidden;
+			-webkit-overflow-scrolling: touch;
+		}
+
+		.app-shell.standard-window-scroll .desktop-window-content {
 			overflow-y: auto;
 			overflow-x: hidden;
 			-webkit-overflow-scrolling: touch;

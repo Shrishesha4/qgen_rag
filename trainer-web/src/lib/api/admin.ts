@@ -26,12 +26,14 @@ export interface UserStats {
 	topics_count: number;
 }
 
+export type AdminRole = 'teacher' | 'vetter' | 'admin' | 'student';
+
 export interface AdminUserSummary {
 	id: string;
 	email: string;
 	username: string;
 	full_name: string | null;
-	role: 'teacher' | 'vetter' | 'admin';
+	role: AdminRole;
 	is_active: boolean;
 	is_approved: boolean;
 	is_superuser: boolean;
@@ -50,7 +52,7 @@ export interface AdminUserCreateRequest {
 	full_name?: string;
 	security_question: string;
 	security_answer: string;
-	role: 'teacher' | 'vetter' | 'admin';
+	role: AdminRole;
 	is_active?: boolean;
 	can_manage_groups?: boolean;
 	can_generate?: boolean;
@@ -59,7 +61,7 @@ export interface AdminUserCreateRequest {
 
 export interface AdminUserUpdateRequest {
 	full_name?: string;
-	role?: 'teacher' | 'vetter' | 'admin';
+	role?: AdminRole;
 	is_active?: boolean;
 	can_manage_groups?: boolean;
 	can_generate?: boolean;

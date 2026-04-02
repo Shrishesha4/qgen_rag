@@ -1,7 +1,7 @@
 {
-  "name": "VQuest Trainer",
-  "short_name": "VQuest",
-  "description": "AI-powered training and vetting dashboard",
+  "name": "GELTrain",
+  "short_name": "GELTrain",
+  "description": "AI-powered question evaluation and learning platform",
   "start_url": "/",
   "scope": "/",
   "display": "standalone",

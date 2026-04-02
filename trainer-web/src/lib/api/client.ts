@@ -17,6 +17,16 @@ export function apiUrl(path: string): string {
 	return `${API_BASE}${path.startsWith('/') ? path : '/' + path}`;
 }
 
+/** Resolve backend asset paths so relative API URLs work in the frontend origin. */
+export function resolveApiAssetUrl(path: string | null | undefined): string | null {
+	if (!path) return null;
+	if (/^(https?:|data:|blob:)/i.test(path)) return path;
+	if (path.startsWith('/')) {
+		return `${new URL(API_BASE).origin}${path}`;
+	}
+	return `${new URL(API_BASE).origin}/${path.replace(/^\/+/, '')}`;
+}
+
 /** Safely parse JSON, returning undefined for empty bodies (e.g. 204 No Content). */
 async function safeJson<T>(res: Response): Promise<T> {
 	const contentLength = res.headers.get('content-length');

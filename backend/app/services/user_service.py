@@ -97,6 +97,13 @@ class UserService:
         await self.db.refresh(user)
         return user
 
+    async def admin_exists(self) -> bool:
+        """Check if at least one admin user exists."""
+        result = await self.db.execute(
+            select(User.id).where(User.role == ROLE_ADMIN)
+        )
+        return result.scalar_one_or_none() is not None
+
     async def authenticate_user(
         self,
         email: str,

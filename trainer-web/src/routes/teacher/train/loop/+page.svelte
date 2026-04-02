@@ -18,6 +18,7 @@
 		cancelGeneration,
 		listReferenceDocuments,
 		scheduleBackgroundGeneration,
+		getGenerationLimits,
 		type GenerationEvent,
 	} from '$lib/api/documents';
 	import { deleteSubject, getSubject, type SubjectDetailResponse } from '$lib/api/subjects';
@@ -35,21 +36,23 @@
 	const FAILED_DOC_STATUSES = new Set(['failed', 'error']);
 	const WAIT_POLL_MS = 1500;
 	const WAIT_DOCS_TIMEOUT_MS = 3 * 60 * 1000;
-	const BATCH_SIZE_UNIT = 30;
+	const BATCH_SIZE_UNIT = 1;
 	const DEFAULT_BATCH_SIZE = 30;
-	const MIN_BATCH_SIZE = 30;
-	const MAX_BATCH_SIZE = 300;
+	const MIN_BATCH_SIZE = 1;
+	const MAX_BATCH_SIZE = 1000;
+	let providerBatchSize = $state<number | null>(null);
+	let providerBatchSizeFetched = $state(false);
 	const GENERATION_INTERPOLATION_TICK_MS = 300;
 	const GENERATION_INTERPOLATION_MIN_DURATION_MS = 12000;
 	const GENERATION_INTERPOLATION_PER_QUESTION_MS = 1600;
 	const GENERATION_INTERPOLATION_MAX_PROGRESS = 97;
 
-	function parseBatchSizeParam(raw: string | null) {
-		if (raw == null || raw.trim() === '') return DEFAULT_BATCH_SIZE;
+	function parseBatchSizeParam(raw: string | null, fallback: number) {
+		if (raw == null || raw.trim() === '') return fallback;
 		const parsed = Number(raw);
-		if (!Number.isFinite(parsed) || parsed <= 0) return DEFAULT_BATCH_SIZE;
+		if (!Number.isFinite(parsed) || parsed <= 0) return fallback;
 		const normalized = Math.trunc(parsed / BATCH_SIZE_UNIT) * BATCH_SIZE_UNIT;
-		return Math.max(MIN_BATCH_SIZE, Math.min(MAX_BATCH_SIZE, normalized || DEFAULT_BATCH_SIZE));
+		return Math.max(MIN_BATCH_SIZE, Math.min(MAX_BATCH_SIZE, normalized || fallback));
 	}
 
 	let subjectId = $state('');
@@ -76,6 +79,8 @@
 	let navigationConfirmMessage = $state('');
 	let navigationConfirmAction = $state<null | (() => void | Promise<void>)>(null);
 	let skipNextLeaveConfirm = false;
+	let progressSavedNotice = $state(false);
+	let userCompletedFullBatch = $state(false);
 
 	// Confirm + cleanup before any SvelteKit navigation
 	beforeNavigate(({ cancel, to }) => {
@@ -110,6 +115,15 @@
 		const unsub = session.subscribe((s) => {
 			if (!s) goto('/teacher/login');
 		});
+		
+		// Block direct access without required params
+		const initialParams = new URL(window.location.href).searchParams;
+		const hasSubject = initialParams.get('subject');
+		if (!hasSubject) {
+			goto('/teacher/train');
+			return () => {};
+		}
+		
 		const unsubPage = page.subscribe((p) => {
 			const nextSubjectId = p.url.searchParams.get('subject') ?? '';
 			const nextTopicId = p.url.searchParams.get('topic') ?? '';
@@ -120,7 +134,7 @@
 				.filter(Boolean);
 			const nextProvisionalSubject = p.url.searchParams.get('provisional') === '1';
 			const nextAllowNoPdfGeneration = p.url.searchParams.get('noPdf') === '1';
-			const nextGenerationBatchSize = parseBatchSizeParam(p.url.searchParams.get('count'));
+			const nextGenerationBatchSize = parseBatchSizeParam(p.url.searchParams.get('count'), providerBatchSize ?? DEFAULT_BATCH_SIZE);
 			const nextTargetQuestionId = p.url.searchParams.get('question_id') ?? '';
 			const nextTargetStartIndex = parseInt(p.url.searchParams.get('start_index') ?? '0', 10);
 			const resumeParam = p.url.searchParams.get('resume');
@@ -295,14 +309,16 @@
 		}
 	});
 
-	// When the current batch is fully vetted, automatically roll into the next batch.
+	// When the current batch is fully vetted, show "All caught up" and trigger regeneration
 	$effect(() => {
 		if (!allowAutoGeneration || !subjectId) return;
 		if (loading || generating || submitting || regenerating || completingBatch) return;
 		if (batchComplete) return;
 		if (questions.length === 0) return;
 		if (totalReviewed < questions.length) return;
-		void completeBatch(true);
+		// User completed the full batch - mark it and trigger regeneration
+		userCompletedFullBatch = true;
+		void completeBatchAndRegenerate();
 	});
 
 	// Edit mode
@@ -337,7 +353,7 @@
 	let isReviewed = $derived(
 		currentQuestion ? approved.has(currentQuestion.id) || rejected.has(currentQuestion.id) : false
 	);
-	let showAllCaughtUp = $derived(questions.length > 0 && batchComplete && totalReviewed >= questions.length);
+	let showAllCaughtUp = $derived(questions.length > 0 && userCompletedFullBatch && totalReviewed >= questions.length);
 	let showBatchCompletePanel = $derived(showBatchCompleteNotice || showAllCaughtUp);
 	let postTriggerGeneratedCount = $derived(
 		postTriggerGenerationActive ? Math.max(0, questions.length - postTriggerBaseQuestionCount) : 0
@@ -498,11 +514,39 @@
 		queueProgressSave();
 	});
 
+	// Fetch provider batch size from backend (called once)
+	async function fetchProviderBatchSize(): Promise<number> {
+		if (providerBatchSizeFetched && providerBatchSize !== null) {
+			return providerBatchSize;
+		}
+		try {
+			const limits = await getGenerationLimits();
+			providerBatchSizeFetched = true;
+			if (limits.max_batch_size > 0) {
+				providerBatchSize = limits.max_batch_size;
+				return limits.max_batch_size;
+			}
+		} catch (e) {
+			console.warn('Failed to fetch generation limits, using default:', e);
+		}
+		providerBatchSizeFetched = true;
+		providerBatchSize = DEFAULT_BATCH_SIZE;
+		return DEFAULT_BATCH_SIZE;
+	}
+
 	// Load existing pending questions, then start background generation
 	async function loadAndStream() {
 		loading = true;
 		error = '';
 		showBatchCompleteNotice = false;
+
+		// Fetch provider-configured batch size from backend FIRST
+		const fetchedBatchSize = await fetchProviderBatchSize();
+		// Update generationBatchSize if no explicit count was provided in URL
+		const urlCount = new URL(window.location.href).searchParams.get('count');
+		if (!urlCount) {
+			generationBatchSize = fetchedBatchSize;
+		}
 
 		if (await restoreSavedProgress()) {
 			loading = false;
@@ -569,8 +613,19 @@
 		generating = true;
 		beginGenerationProgress(generationBatchSize);
 		genCount = 0;
-		genMessage = 'Checking document readiness...';
+		genMessage = 'Fetching generation settings...';
 		resetDocumentProcessingState();
+
+		// Ensure we have the correct batch size from provider settings
+		const batchSize = await fetchProviderBatchSize();
+		// Update generationBatchSize if no explicit count was provided in URL
+		const urlCount = new URL(window.location.href).searchParams.get('count');
+		if (!urlCount) {
+			generationBatchSize = batchSize;
+		}
+
+		beginGenerationProgress(generationBatchSize);
+		genMessage = 'Checking document readiness...';
 
 		try {
 			await ensureDocumentsReadyForGeneration();
@@ -908,10 +963,44 @@
 		throw new Error('Documents are still processing. Please wait a moment and retry generation.');
 	}
 
+	async function completeBatchAndRegenerate() {
+		if (completingBatch || !subjectId || !allowAutoGeneration) return;
+		completingBatch = true;
+		
+		// Clear progress when completing batch
+		const key = currentProgressKey();
+		if (key) {
+			removeTeacherVettingProgress(key);
+			void removeTeacherVettingProgressRemoteSnapshot(key);
+		}
+		
+		// Reset local state but keep user on page
+		questions = [];
+		currentIndex = 0;
+		approved.clear();
+		rejected.clear();
+		batchComplete = false;
+		showBatchCompleteNotice = false;
+		postTriggerGenerationActive = false;
+		postTriggerBaseQuestionCount = 0;
+		completingBatch = false;
+		
+		// Start regeneration - user stays on page to vet streaming questions
+		await startBackgroundGeneration();
+	}
+
+	async function saveProgressAndNotify() {
+		await persistProgressNow(true);
+		progressSavedNotice = true;
+		skipNextLeaveConfirm = true;
+		setTimeout(() => {
+			progressSavedNotice = false;
+		}, 2000);
+	}
+
 	async function completeBatch(autoAdvance = false) {
 		if (completingBatch) return;
 		completingBatch = true;
-		// stopBackgroundGen();
 		generating = false;
 		genMessage = '';
 		resetGenerationProgress();
@@ -1703,9 +1792,15 @@
 		{/if}
 
 		{#if !editing && !generating && !regenerating && !batchComplete && subjectId}
-			<button class="complete-batch-fab" onclick={() => { void completeBatch(); }}>
-				✓ Complete Batch
-			</button>
+			{#if totalReviewed >= questions.length && questions.length > 0}
+				<button class="complete-batch-fab" onclick={() => { userCompletedFullBatch = true; void completeBatchAndRegenerate(); }}>
+					✓ Complete Batch
+				</button>
+			{:else}
+				<button class="save-progress-fab" onclick={() => { void saveProgressAndNotify(); }}>
+					💾 Save Progress
+				</button>
+			{/if}
 		{/if}
 	</div>
 {/if}
@@ -1720,6 +1815,12 @@
 		onSubmit={handleVoiceRecorderSubmit}
 		onCancel={closeVoiceRecorder}
 	/>
+{/if}
+
+{#if progressSavedNotice}
+	<div class="progress-saved-toast animate-fade-in">
+		<span>✓ Progress saved</span>
+	</div>
 {/if}
 
 <ConfirmDialog
@@ -2020,6 +2121,46 @@
 		color: #2f8f3f;
 	}
 
+	.save-progress-fab {
+		pointer-events: auto;
+		padding: 0.85rem 1.5rem;
+		border: 1px solid rgba(59, 130, 246, 0.4);
+		border-radius: 999px;
+		background: rgba(59, 130, 246, 0.25);
+		color: #60a5fa;
+		font-size: 0.95rem;
+		font-weight: 700;
+		cursor: pointer;
+		backdrop-filter: blur(12px);
+		-webkit-backdrop-filter: blur(12px);
+		transition: all 0.2s ease;
+		font-family: inherit;
+	}
+
+	.save-progress-fab:hover {
+		background: rgba(59, 130, 246, 0.4);
+		transform: translateY(-2px);
+		box-shadow: 0 4px 16px rgba(59, 130, 246, 0.2);
+	}
+
+	:global([data-color-mode='light']) .save-progress-fab {
+		color: #2563eb;
+	}
+
+	.progress-saved-toast {
+		position: fixed;
+		bottom: 6rem;
+		left: 50%;
+		transform: translateX(-50%);
+		padding: 0.75rem 1.25rem;
+		border-radius: 999px;
+		background: rgba(72, 192, 80, 0.9);
+		color: white;
+		font-size: 0.9rem;
+		font-weight: 600;
+		z-index: 1100;
+		box-shadow: 0 4px 16px rgba(72, 192, 80, 0.3);
+	}
 
 	.finish-btn {
 		padding: 0.85rem 2.5rem;

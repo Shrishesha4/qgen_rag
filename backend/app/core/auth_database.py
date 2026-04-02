@@ -84,6 +84,18 @@ async def init_auth_db():
             await conn.execute(text("ALTER TABLE users ADD COLUMN can_generate BOOLEAN"))
         if "can_vet" not in existing_columns:
             await conn.execute(text("ALTER TABLE users ADD COLUMN can_vet BOOLEAN"))
+        
+        # Student-specific profile fields (GEL/GELTrain)
+        if "grade" not in existing_columns:
+            await conn.execute(text("ALTER TABLE users ADD COLUMN grade VARCHAR(20)"))
+        if "cohort" not in existing_columns:
+            await conn.execute(text("ALTER TABLE users ADD COLUMN cohort VARCHAR(100)"))
+        if "consent_given" not in existing_columns:
+            await conn.execute(text("ALTER TABLE users ADD COLUMN consent_given BOOLEAN DEFAULT 0"))
+        if "consent_given_at" not in existing_columns:
+            await conn.execute(text("ALTER TABLE users ADD COLUMN consent_given_at DATETIME"))
+        
+        # Security fields
         if "security_question" not in existing_columns:
             await conn.execute(text("ALTER TABLE users ADD COLUMN security_question VARCHAR(255)"))
         if "security_answer_hash" not in existing_columns:

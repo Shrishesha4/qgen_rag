@@ -5,9 +5,13 @@ Redis service for caching, sessions, and rate limiting.
 from typing import Optional, Any, List, Set
 import json
 import redis.asyncio as redis
+from redis.exceptions import ConnectionError, TimeoutError
 from datetime import timedelta
+import logging
 
 from app.core.config import settings
+
+logger = logging.getLogger(__name__)
 
 
 class RedisService:
@@ -67,7 +71,11 @@ class RedisService:
     async def is_token_blacklisted(self, jti: str) -> bool:
         """Check if a token JTI is blacklisted."""
         key = f"token:blacklist:{jti}"
-        return await self.exists(key)
+        try:
+            return await self.exists(key)
+        except (ConnectionError, TimeoutError, OSError) as e:
+            logger.warning(f"Redis unavailable for blacklist check: {e}. Allowing token.")
+            return False
 
     # Rate limiting operations
     async def check_rate_limit(
@@ -81,20 +89,24 @@ class RedisService:
         Check rate limit for identifier + endpoint.
         Returns (is_allowed, remaining_requests).
         """
-        await self.connect()
-        key = f"ratelimit:{identifier}:{endpoint}"
-        
-        current = await self._client.get(key)
-        if current is None:
-            await self._client.setex(key, window_seconds, 1)
-            return True, limit - 1
-        
-        count = int(current)
-        if count >= limit:
-            return False, 0
-        
-        await self._client.incr(key)
-        return True, limit - count - 1
+        try:
+            await self.connect()
+            key = f"ratelimit:{identifier}:{endpoint}"
+            
+            current = await self._client.get(key)
+            if current is None:
+                await self._client.setex(key, window_seconds, 1)
+                return True, limit - 1
+            
+            count = int(current)
+            if count >= limit:
+                return False, 0
+            
+            await self._client.incr(key)
+            return True, limit - count - 1
+        except (ConnectionError, TimeoutError, OSError) as e:
+            logger.warning(f"Redis unavailable for rate limiting: {e}. Allowing request.")
+            return True, limit
 
     async def increment_rate_limit(
         self,

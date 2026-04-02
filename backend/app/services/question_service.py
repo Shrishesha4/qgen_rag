@@ -33,6 +33,7 @@ from app.services.redis_service import RedisService
 from app.services.document_service import DocumentService
 from app.services.reranker_service import RerankerService
 from app.services.novelty_service import NoveltyService, NoveltyResult
+from app.services.provider_service import ProviderService, ProviderConfig
 from app.core.config import settings
 
 
@@ -178,6 +179,7 @@ class QuestionGenerationService:
         document_service: Optional[DocumentService] = None,
         reranker_service: Optional[RerankerService] = None,
         novelty_service: Optional[NoveltyService] = None,
+        provider_metadata: Optional[Dict[str, Any]] = None,
     ):
         self.db = db
         self.embedding_service = embedding_service or EmbeddingService()
@@ -185,6 +187,8 @@ class QuestionGenerationService:
         self.redis_service = redis_service or RedisService()
         self.document_service = document_service or DocumentService(db, self.embedding_service)
         self.novelty_service = novelty_service or NoveltyService(db, self.embedding_service)
+        # Provider metadata for tracking which provider generated questions
+        self._provider_metadata = provider_metadata
         # Only initialize reranker if enabled
         if settings.RERANKER_ENABLED:
             self.reranker_service = reranker_service or RerankerService()
@@ -196,6 +200,47 @@ class QuestionGenerationService:
         self.question_option_similarity_threshold = float(
             settings.QUESTION_OPTION_SIMILARITY_THRESHOLD
         )
+
+    def _build_provider_metadata(self, override: Optional[Dict[str, Any]] = None) -> Dict[str, Any]:
+        """Capture active LLM identity for analytics and post-hoc attribution.
+        
+        Args:
+            override: Optional metadata dict from ProviderService to use instead of
+                      reading from environment settings. Used for dynamic multi-provider
+                      generation.
+        """
+        if override:
+            # Use provided metadata from ProviderService
+            return {
+                "provider_key": override.get("provider_key", "unknown"),
+                "provider": override.get("provider", "unknown"),
+                "llm_provider": override.get("llm_provider", "unknown"),
+                "llm_model": override.get("llm_model", ""),
+                "base_url": (override.get("base_url", "") or "").rstrip("/"),
+            }
+
+        # Fallback to environment-based provider (legacy behavior)
+        provider = (getattr(settings, "LLM_PROVIDER", "") or "").strip().lower() or "unknown"
+        model = ""
+        base_url = ""
+
+        if provider == "deepseek":
+            model = (getattr(settings, "DEEPSEEK_MODEL", "") or "").strip()
+            base_url = (getattr(settings, "DEEPSEEK_BASE_URL", "") or "").strip()
+        elif provider == "gemini":
+            model = (getattr(settings, "GEMINI_MODEL", "") or "").strip()
+            base_url = "https://generativelanguage.googleapis.com"
+        elif provider == "ollama":
+            model = (getattr(settings, "OLLAMA_MODEL", "") or "").strip()
+            base_url = (getattr(settings, "OLLAMA_BASE_URL", "") or "").strip()
+
+        return {
+            "provider_key": provider,
+            "provider": provider,
+            "llm_provider": provider,
+            "llm_model": model,
+            "base_url": base_url.rstrip("/"),
+        }
 
     async def generate_questions(
         self,
@@ -1299,6 +1344,7 @@ Return JSON only:
         novelty_result: Optional[NoveltyResult] = None,
         generation_attempt_count: int = 1,
         used_reference_materials: Optional[bool] = None,
+        provider_metadata_override: Optional[Dict[str, Any]] = None,
     ) -> tuple[Question, QuestionResponse]:
         """
         Save generated question to database after validation.
@@ -1404,6 +1450,10 @@ Return JSON only:
         # Store generation_confidence as the overall quality score from LLM
         generation_confidence = llm_scores["quality"]
 
+        # Extract provider_key for direct column storage
+        provider_meta = self._build_provider_metadata(provider_metadata_override or self._provider_metadata)
+        provider_key = provider_meta.get("provider_key") or None
+
         question = Question(
             document_id=document_id,
             session_id=session_id,
@@ -1429,7 +1479,9 @@ Return JSON only:
             generation_attempt_count=generation_attempt_count,
             used_reference_materials=used_reference_materials,
             novelty_metadata=novelty_result.similarity_breakdown if novelty_result else None,
+            provider_key=provider_key,
             generation_metadata={
+                **provider_meta,
                 "raw_response": question_data,
                 "source_info": source_info,
             },
@@ -2209,6 +2261,10 @@ Output valid JSON only."""
         # Store generation_confidence as the overall quality score from LLM
         generation_confidence = llm_scores["quality"]
 
+        # Extract provider_key for direct column storage
+        provider_meta = self._build_provider_metadata(self._provider_metadata)
+        provider_key = provider_meta.get("provider_key") or None
+
         question = Question(
             document_id=document_id,
             session_id=session_id,
@@ -2235,7 +2291,9 @@ Output valid JSON only."""
             used_reference_materials=used_reference or bool(chunk_ids),
             novelty_metadata=novelty_result.similarity_breakdown,
             generation_status="accepted",
+            provider_key=provider_key,
             generation_metadata={
+                **provider_meta,
                 "raw_response": question_data,
             },
         )
@@ -3559,6 +3617,25 @@ Output valid JSON only."""
             type_distribution = self._distribute_types(count, types)
             logger.info(f"quick_generate_from_subject: type distribution={type_distribution}")
 
+            # ── Multi-provider allocation ──────────────────────────────────
+            # Get provider allocations to distribute questions across enabled providers
+            provider_service = ProviderService()
+            provider_allocations = []
+            provider_llm_services: Dict[str, Tuple[LLMProvider, Dict[str, Any]]] = {}
+            try:
+                provider_allocations = await provider_service.allocate_batch(count)
+                for alloc in provider_allocations:
+                    llm_svc, metadata = provider_service.create_llm_service(alloc.provider)
+                    provider_llm_services[alloc.provider.key] = (llm_svc, metadata)
+                logger.info(
+                    f"quick_generate_from_subject: multi-provider allocation: "
+                    f"{[(a.provider.key, a.question_count) for a in provider_allocations]}"
+                )
+            except Exception as alloc_err:
+                logger.warning(f"quick_generate_from_subject: Provider allocation failed, using default: {alloc_err}")
+                # Fallback to single provider (self.llm_service)
+                provider_allocations = []
+
             # Prepare rejection guidance once so parallel workers don't hit DB concurrently.
             rejection_guidance_cache = ""
             if subject_id or topic_id:
@@ -3582,12 +3659,52 @@ Output valid JSON only."""
                     parallel_workers = 1
             worker_timeout_seconds = 180 if (llm_provider == "ollama" and "qwen" in ollama_model) else 90
             max_attempts_per_slot = 4
+
+            # Build slot queue with provider assignments
             slot_queue = []
             slot_id_seq = 0
-            for q_type, type_count in type_distribution.items():
-                for _ in range(type_count):
-                    slot_queue.append({"id": slot_id_seq, "q_type": q_type, "attempts": 0})
-                    slot_id_seq += 1
+            
+            if provider_allocations:
+                # Distribute slots across providers based on allocation
+                provider_slot_counts: Dict[str, int] = {}
+                for alloc in provider_allocations:
+                    provider_slot_counts[alloc.provider.key] = alloc.question_count
+                
+                # Assign providers to slots in round-robin within type distribution
+                for q_type, type_count in type_distribution.items():
+                    # Calculate how many of this type each provider should generate
+                    type_ratio = type_count / count if count > 0 else 0
+                    provider_type_counts: List[Tuple[str, int]] = []
+                    remaining_type = type_count
+                    
+                    for i, alloc in enumerate(provider_allocations):
+                        if i == len(provider_allocations) - 1:
+                            # Last provider gets remainder
+                            prov_type_count = remaining_type
+                        else:
+                            prov_type_count = int(alloc.question_count * type_ratio)
+                            prov_type_count = min(prov_type_count, remaining_type)
+                        
+                        if prov_type_count > 0:
+                            provider_type_counts.append((alloc.provider.key, prov_type_count))
+                            remaining_type -= prov_type_count
+                    
+                    # Create slots with provider assignments
+                    for provider_key, prov_count in provider_type_counts:
+                        for _ in range(prov_count):
+                            slot_queue.append({
+                                "id": slot_id_seq,
+                                "q_type": q_type,
+                                "attempts": 0,
+                                "provider_key": provider_key,
+                            })
+                            slot_id_seq += 1
+            else:
+                # Fallback: no provider allocation, use default
+                for q_type, type_count in type_distribution.items():
+                    for _ in range(type_count):
+                        slot_queue.append({"id": slot_id_seq, "q_type": q_type, "attempts": 0, "provider_key": None})
+                        slot_id_seq += 1
 
             if parallel_workers > 1:
                 yield QuickGenerateProgress(
@@ -3601,7 +3718,16 @@ Output valid JSON only."""
 
             async def _build_candidate(slot: dict, attempt_index: int, exclusion_snapshot: List[str]) -> dict:
                 q_type = slot["q_type"]
+                slot_provider_key = slot.get("provider_key")
+                llm_svc = self.llm_service
+                provider_metadata = self._build_provider_metadata(self._provider_metadata)
+                
                 try:
+                    if slot_provider_key and slot_provider_key in provider_llm_services:
+                        llm_svc, metadata = provider_llm_services[slot_provider_key]
+                        provider_metadata = metadata
+                        logger.debug(f"Using provider {slot_provider_key} for slot {slot.get('id')}")
+                    
                     pool_size = len(subj_chunk_pool)
                     pool_offset = (attempt_index * 3) % max(1, pool_size - 2)
                     selected_chunks = subj_chunk_pool[pool_offset:pool_offset + 3]
@@ -3622,6 +3748,7 @@ Output valid JSON only."""
                         subject_id=subject_id,
                         topic_id=topic_id,
                         rejection_guidance_override=rejection_guidance_cache,
+                        llm_service_override=llm_svc,
                     )
 
                     if not question_data:
@@ -3650,11 +3777,13 @@ Output valid JSON only."""
                         "question_data": question_data,
                         "selected_chunks": selected_chunks,
                         "confidence_score": confidence_score,
+                        "provider_key": slot_provider_key,
+                        "provider_metadata": provider_metadata,
                     }
                 except Exception as gen_err:
                     logger.warning(
                         f"quick_generate_from_subject: worker failed for slot={slot.get('id')} "
-                        f"type={q_type}: {gen_err}"
+                        f"type={q_type} provider={slot_provider_key}: {gen_err}"
                     )
                     return {
                         "ok": False,
@@ -3727,6 +3856,7 @@ Output valid JSON only."""
                     question_data = result["question_data"]
                     selected_chunks = result["selected_chunks"]
                     confidence_score = float(result.get("confidence_score", 0.8) or 0.8)
+                    provider_metadata = result.get("provider_metadata")
                     q_text = question_data.get("question_text", "")
 
                     if generated_embeddings or existing_embeddings:
@@ -3745,6 +3875,8 @@ Output valid JSON only."""
                             )
                             # Save discarded question to DB for traceability
                             try:
+                                discarded_provider_meta = self._build_provider_metadata(provider_metadata or self._provider_metadata)
+                                discarded_provider_key = discarded_provider_meta.get("provider_key") or None
                                 discarded_q = Question(
                                     document_id=(
                                         getattr(selected_chunks[0], 'document_id', None)
@@ -3764,6 +3896,7 @@ Output valid JSON only."""
                                     discard_reason=f"duplicate (sim={max_sim:.4f}, source={match_source})",
                                     is_archived=True,
                                     is_latest=False,
+                                    provider_key=discarded_provider_key,
                                 )
                                 self.db.add(discarded_q)
                             except Exception:
@@ -3809,6 +3942,7 @@ Output valid JSON only."""
                             prevalidated_confidence=confidence_score,
                             user_id=user_id,
                             used_reference_materials=bool(selected_chunks),
+                            provider_metadata_override=provider_metadata,
                         )
                         questions_generated += 1
                         final_embedding = question.question_embedding if question.question_embedding is not None else new_embedding
@@ -3954,6 +4088,7 @@ Output valid JSON only."""
         subject_id: Optional[str] = None,
         topic_id: Optional[str] = None,
         rejection_guidance_override: Optional[str] = None,
+        llm_service_override: Optional[LLMProvider] = None,
     ) -> Optional[Dict[str, Any]]:
         """Generate a single question for quick generation with context awareness.
         
@@ -4085,6 +4220,7 @@ Output valid JSON only."""
                 prompt=prompt,
                 system_prompt=system_prompt,
                 question_type=question_type,
+                llm_service_override=llm_service_override,
             )
             
             if not response:
@@ -4116,12 +4252,14 @@ Output valid JSON only."""
         system_prompt: str,
         question_type: str,
         max_retries: int = 3,
+        llm_service_override: Optional[LLMProvider] = None,
     ) -> Optional[Dict[str, Any]]:
         """Generate JSON with retry on parse errors."""
         import logging
         logger = logging.getLogger(__name__)
         
         last_error = None
+        llm_service = llm_service_override or self.llm_service
         for attempt in range(max_retries):
             try:
                 if attempt > 0:
@@ -4132,7 +4270,7 @@ Output valid JSON only."""
                     # Higher base temperature for diversity with smaller models
                     temperature = 0.85
                 
-                response = await self.llm_service.generate_json(
+                response = await llm_service.generate_json(
                     prompt=prompt,
                     system_prompt=system_prompt,
                     temperature=temperature,
@@ -4143,6 +4281,7 @@ Output valid JSON only."""
                         response=response,
                         prompt=prompt,
                         question_type=question_type,
+                        llm_service_override=llm_service,
                     )
 
                 if settings.GENERATION_SCHEMA_ENFORCEMENT and not self._validate_generation_schema(response, question_type):
@@ -4191,6 +4330,7 @@ Output valid JSON only."""
         response: Dict[str, Any],
         prompt: str,
         question_type: str,
+        llm_service_override: Optional[LLMProvider] = None,
     ) -> Dict[str, Any]:
         """Second-pass self-critique and repair to improve schema and quality compliance."""
         critique_prompt = f"""You are validating a generated {question_type} question.
@@ -4207,7 +4347,8 @@ Tasks:
 2. Remove ambiguity and fix factual or formatting issues
 3. Keep question intent intact
 """
-        repaired = await self.llm_service.generate_json(
+        llm_service = llm_service_override or self.llm_service
+        repaired = await llm_service.generate_json(
             prompt=critique_prompt,
             system_prompt="You are a strict JSON repair assistant for exam question generation.",
             temperature=0.2,

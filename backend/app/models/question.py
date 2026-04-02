@@ -114,10 +114,14 @@ class Question(Base):
     # Metadata
     generation_metadata: Mapped[Optional[dict]] = mapped_column(JSONB)
     
+    # Provider tracking - which LLM provider generated this question
+    provider_key: Mapped[Optional[str]] = mapped_column(String(60), index=True)
+    
     # Relationships
     document = relationship("Document", back_populates="questions")
     subject = relationship("Subject", back_populates="questions")
     topic = relationship("Topic", back_populates="questions")
+    evaluation_items = relationship("EvaluationItem", back_populates="question", cascade="all, delete-orphan")
     
     __table_args__ = (
         CheckConstraint("user_rating BETWEEN 1 AND 5", name="check_user_rating"),

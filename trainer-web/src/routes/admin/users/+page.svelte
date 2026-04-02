@@ -14,7 +14,8 @@
 		type AdminUserUpdateRequest
 	} from '$lib/api/admin';
 
-	type UserRole = 'teacher' | 'vetter' | 'admin';
+	type UserRole = 'teacher' | 'vetter' | 'admin' | 'student';
+	type UserTab = 'staff' | 'students';
 
 	type DraftPermissions = {
 		role: UserRole;
@@ -29,6 +30,7 @@
 	let error = $state('');
 	let success = $state('');
 	let query = $state('');
+	let activeTab = $state<UserTab>('staff');
 	let currentAdminUserId = $state('');
 	let users = $state<AdminUserSummary[]>([]);
 	let drafts = $state<Record<string, DraftPermissions>>({});
@@ -81,6 +83,19 @@
 		return unsub;
 	});
 
+	// Update default role in create form based on active tab
+	$effect(() => {
+		if (activeTab === 'students' && createPayload.role !== 'student') {
+			createPayload.role = 'student';
+			const defaults = defaultPermissionsForRole('student');
+			Object.assign(createPayload, defaults);
+		} else if (activeTab === 'staff' && createPayload.role === 'student') {
+			createPayload.role = 'teacher';
+			const defaults = defaultPermissionsForRole('teacher');
+			Object.assign(createPayload, defaults);
+		}
+	});
+
 	function isCurrentAdminUser(userId: string): boolean {
 		return userId === currentAdminUserId;
 	}
@@ -95,6 +110,9 @@
 		}
 		if (role === 'vetter') {
 			return { can_manage_groups: false, can_generate: false, can_vet: true };
+		}
+		if (role === 'student') {
+			return { can_manage_groups: false, can_generate: false, can_vet: false };
 		}
 		return { can_manage_groups: true, can_generate: true, can_vet: true };
 	}
@@ -334,9 +352,15 @@
 	}
 
 	const filteredUsers = $derived.by(() => {
+		// First filter by tab
+		const tabFiltered = activeTab === 'staff' 
+			? users.filter(u => u.role !== 'student')
+			: users.filter(u => u.role === 'student');
+		
+		// Then filter by search query
 		const needle = query.trim().toLowerCase();
-		if (!needle) return users;
-		return users.filter((user) =>
+		if (!needle) return tabFiltered;
+		return tabFiltered.filter((user) =>
 			[user.username, user.email, user.full_name || '', user.role].some((value) =>
 				value.toLowerCase().includes(needle)
 			)
@@ -383,6 +407,23 @@
 			<p class="subtitle">Create users, assign roles, and control permissions for generation, vetting, and group management actions.</p>
 		</div>
 	</div> -->
+
+	<div class="tabs user-tabs" role="tablist" aria-label="User type">
+		<button 
+			class="tab-btn" 
+			class:active={activeTab === 'staff'} 
+			onclick={() => activeTab = 'staff'}
+		>
+			Staff
+		</button>
+		<button 
+			class="tab-btn" 
+			class:active={activeTab === 'students'} 
+			onclick={() => activeTab = 'students'}
+		>
+			Students
+		</button>
+	</div>
 
 	<div class="toolbar glass-panel animate-slide-up">
 		<input class="search-input" bind:value={query} placeholder="Search by username, email, name, or role" />
@@ -441,6 +482,7 @@
 						<option value="teacher">Teacher</option>
 						<option value="vetter">Vetter</option>
 						<option value="admin">Admin</option>
+						<option value="student">Student</option>
 					</select>
 				</label>
 				<label class="field checkbox-inline">
@@ -584,6 +626,7 @@
 										<option value="teacher">Teacher</option>
 										<option value="vetter">Vetter</option>
 										<option value="admin">Admin</option>
+										<option value="student">Student</option>
 									</select>
 								{/if}
 							</td>
@@ -670,6 +713,7 @@
 									<option value="teacher">Teacher</option>
 									<option value="vetter">Vetter</option>
 									<option value="admin">Admin</option>
+									<option value="student">Student</option>
 								</select>
 							</label>
 						{/if}
@@ -701,6 +745,41 @@
 		display: flex;
 		flex-direction: column;
 		gap: 1rem;
+	}
+
+	.tabs {
+		display: inline-flex;
+		gap: 0.35rem;
+		padding: 0.35rem;
+		border: 1px solid var(--theme-glass-border);
+		border-radius: 0.75rem;
+		background: color-mix(in srgb, var(--theme-surface) 86%, transparent);
+		width: fit-content;
+	}
+
+	.user-tabs {
+		margin-bottom: 0.5rem;
+	}
+
+	.tab-btn {
+		border: 1px solid transparent;
+		border-radius: 0.55rem;
+		padding: 0.5rem 0.9rem;
+		background: transparent;
+		font-weight: 700;
+		color: var(--theme-text-muted);
+		cursor: pointer;
+		transition: all 0.2s ease;
+	}
+
+	.tab-btn.active {
+		background: color-mix(in srgb, var(--theme-primary) 18%, transparent);
+		border-color: color-mix(in srgb, var(--theme-primary) 35%, var(--theme-glass-border));
+		color: var(--theme-text);
+	}
+
+	.tab-btn:hover:not(.active) {
+		background: color-mix(in srgb, var(--theme-glass-border) 20%, transparent);
 	}
 
 	.toolbar {

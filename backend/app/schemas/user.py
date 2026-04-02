@@ -10,7 +10,7 @@ import re
 
 
 # User role types
-RoleType = Literal["teacher", "vetter", "admin"]
+RoleType = Literal["teacher", "vetter", "admin", "student"]
 
 
 class UserBase(BaseModel):
@@ -30,7 +30,7 @@ class UserBase(BaseModel):
 class UserCreate(UserBase):
     """Schema for user registration."""
     password: str = Field(..., min_length=8, max_length=128)
-    role: RoleType = Field(default="teacher", description="User role: teacher, vetter, or admin")
+    role: RoleType = Field(default="teacher", description="User role: teacher, vetter, admin, or student")
     security_question: str = Field(..., min_length=3, max_length=255)
     security_answer: str = Field(..., min_length=1, max_length=128)
 
@@ -103,6 +103,12 @@ class UserResponse(BaseModel):
     preferences: Optional[dict]
 
     subject_reference_materials: Optional[dict]
+    
+    # Student-specific fields (GEL/GELTrain)
+    grade: Optional[str] = None
+    cohort: Optional[str] = None
+    consent_given: bool = False
+    consent_given_at: Optional[datetime] = None
 
     model_config = {"from_attributes": True}
 

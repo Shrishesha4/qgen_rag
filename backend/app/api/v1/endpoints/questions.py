@@ -23,6 +23,8 @@ from app.core.database import get_db
 from app.core.database import AsyncSessionLocal
 from app.core.config import settings
 from app.schemas.question import (
+    ConversationalInquiryEvent,
+    ConversationalInquiryRequest,
     QuestionGenerationRequest,
     QuestionResponse,
     QuestionListResponse,
@@ -39,7 +41,10 @@ from app.models.question import Question, GenerationSession
 from app.models.document import Document
 from app.models.subject import Subject, Topic
 from app.models.generation_run import GenerationRun
+from app.models.provider_usage import ProviderUsageLog
 from app.services.generation_status_service import GenerationStatusService, broadcast_generation_update
+from app.services.redis_queue_service import RedisQueueService
+from app.services.provider_service import get_provider_service, create_question_service_for_provider
 
 
 # MIME type mapping for allowed extensions
@@ -65,22 +70,81 @@ _GENERATION_REFILL_ATTEMPT_MULTIPLIER = 4  # Attempts per missing question in ea
 # Configure logging
 logger = logging.getLogger(__name__)
 
+_REDIS_QUEUE_SERVICE = RedisQueueService()
+_REDIS_CONSUMER_ID = f"api-{os.getenv('HOSTNAME') or uuid.uuid4()}"
+
+
+def _redis_queue_enabled() -> bool:
+    return bool(settings.REDIS_QUEUE_ENABLED)
+
+
+async def _set_background_status(task_key: str, status_payload: dict) -> None:
+    _BACKGROUND_GENERATION_STATUS[task_key] = status_payload
+    if not _redis_queue_enabled():
+        return
+    try:
+        await _REDIS_QUEUE_SERVICE.update_status(task_key, status_payload)
+        if status_payload.get("in_progress") is True:
+            await _REDIS_QUEUE_SERVICE.refresh_running(task_key)
+    except Exception as exc:
+        logger.warning("Failed to persist status to Redis for task_key=%s: %s", task_key, exc)
+
+
+async def _get_background_status(task_key: str) -> Optional[dict]:
+    if _redis_queue_enabled():
+        try:
+            status_payload = await _REDIS_QUEUE_SERVICE.get_status(task_key)
+            if status_payload is not None:
+                _BACKGROUND_GENERATION_STATUS[task_key] = status_payload
+                return status_payload
+        except Exception as exc:
+            logger.warning("Failed to fetch status from Redis for task_key=%s: %s", task_key, exc)
+    return _BACKGROUND_GENERATION_STATUS.get(task_key)
+
+
+async def _delete_background_status(task_key: str) -> None:
+    _BACKGROUND_GENERATION_STATUS.pop(task_key, None)
+    if not _redis_queue_enabled():
+        return
+    try:
+        await _REDIS_QUEUE_SERVICE.delete_status(task_key)
+    except Exception as exc:
+        logger.warning("Failed to delete status from Redis for task_key=%s: %s", task_key, exc)
+
 
 def _bg_gen_task_key(user_id: str, subject_id: str) -> str:
     return f"{user_id}:{subject_id}"
 
 
-def _get_queue_position(user_id: str, subject_id: str) -> int:
+async def _get_queue_position(user_id: str, subject_id: str) -> int:
     """Get position in queue for this user/subject combination.
     Returns 0 if not found, 1-based position if found."""
+    if _redis_queue_enabled():
+        try:
+            return await _REDIS_QUEUE_SERVICE.get_queue_position(user_id, subject_id)
+        except Exception as exc:
+            logger.warning("Redis queue position lookup failed, falling back to memory: %s", exc)
+
     for i, item in enumerate(_BACKGROUND_GENERATION_QUEUE):
         if item["user_id"] == user_id and item["subject_id"] == subject_id:
             return i + 1
     return 0
 
 
-def _add_to_queue(user_id: str, subject_id: str, count: int, request_data: dict) -> int:
+async def _add_to_queue(user_id: str, subject_id: str, count: int, request_data: dict) -> int:
     """Add to queue and return position (1-based)"""
+    if _redis_queue_enabled():
+        try:
+            await _REDIS_QUEUE_SERVICE.add_to_queue(
+                user_id=user_id,
+                subject_id=subject_id,
+                count=count,
+                request_data=request_data,
+            )
+            return await _REDIS_QUEUE_SERVICE.get_queue_position(user_id, subject_id)
+        except Exception as exc:
+            logger.warning("Redis queue enqueue failed, falling back to memory: %s", exc)
+
     queue_item = {
         "user_id": user_id,
         "subject_id": subject_id,
@@ -95,15 +159,27 @@ def _add_to_queue(user_id: str, subject_id: str, count: int, request_data: dict)
     return len(_BACKGROUND_GENERATION_QUEUE)
 
 
-def _get_next_from_queue() -> dict | None:
+async def _get_next_from_queue() -> dict | None:
     """Get next item from queue"""
+    if _redis_queue_enabled():
+        try:
+            return await _REDIS_QUEUE_SERVICE.claim_next_item(_REDIS_CONSUMER_ID)
+        except Exception as exc:
+            logger.warning("Redis queue claim failed, falling back to memory: %s", exc)
+
     if not _BACKGROUND_GENERATION_QUEUE:
         return None
     return _BACKGROUND_GENERATION_QUEUE.pop(0)
 
 
-def _get_current_running_count() -> int:
+async def _get_current_running_count() -> int:
     """Get count of currently running generations and clean up completed tasks"""
+    if _redis_queue_enabled():
+        try:
+            return await _REDIS_QUEUE_SERVICE.get_running_count()
+        except Exception as exc:
+            logger.warning("Redis running count failed, falling back to memory: %s", exc)
+
     count = 0
     completed_tasks = []
     
@@ -140,12 +216,12 @@ async def _process_queue():
     """Process queue when there's capacity with proper locking to prevent race conditions"""
     async with _QUEUE_PROCESSING_LOCK:
         # Double-check capacity with lock held
-        current_running = _get_current_running_count()
+        current_running = await _get_current_running_count()
         if current_running >= _MAX_CONCURRENT_GENERATIONS:
             logger.debug(f"Queue processing skipped: {current_running}/{_MAX_CONCURRENT_GENERATIONS} tasks running")
             return
         
-        next_item = _get_next_from_queue()
+        next_item = await _get_next_from_queue()
         if not next_item:
             logger.debug("Queue processing skipped: no items in queue")
             return
@@ -165,6 +241,8 @@ async def _process_queue():
                 topic_ids=next_item["request_data"].get("topic_ids"),
                 allow_without_reference=next_item["request_data"].get("allow_without_reference", False),
             )
+            if _redis_queue_enabled() and next_item.get("message_id"):
+                await _REDIS_QUEUE_SERVICE.ack_item(next_item["message_id"])
             logger.info(f"Successfully started queued generation for user_id={next_item['user_id']}, subject_id={next_item['subject_id']}")
         except Exception as e:
             logger.error(f"Error processing queued generation for user_id={next_item['user_id']}, subject_id={next_item['subject_id']}: {e}")
@@ -173,13 +251,27 @@ async def _process_queue():
             retry_count = next_item.get("retry_count", 0)
             if retry_count < _MAX_RETRY_ATTEMPTS:
                 next_item["retry_count"] = retry_count + 1
-                _BACKGROUND_GENERATION_QUEUE.insert(0, next_item)  # Put back at front of queue
+                if _redis_queue_enabled():
+                    retry_request_data = dict(next_item["request_data"])
+                    retry_request_data["run_id"] = next_item.get("run_id")
+                    retry_request_data["retry_count"] = next_item["retry_count"]
+                    retry_request_data["task_key"] = _bg_gen_task_key(next_item["user_id"], next_item["subject_id"])
+                    await _REDIS_QUEUE_SERVICE.add_to_queue(
+                        user_id=next_item["user_id"],
+                        subject_id=next_item["subject_id"],
+                        count=next_item["count"],
+                        request_data=retry_request_data,
+                    )
+                    if next_item.get("message_id"):
+                        await _REDIS_QUEUE_SERVICE.ack_item(next_item["message_id"])
+                else:
+                    _BACKGROUND_GENERATION_QUEUE.insert(0, next_item)  # Put back at front of queue
                 logger.warning(f"Retrying queue item (attempt {retry_count + 1}/{_MAX_RETRY_ATTEMPTS}): user_id={next_item['user_id']}, subject_id={next_item['subject_id']}")
             else:
                 logger.error(f"Queue item failed after {_MAX_RETRY_ATTEMPTS} attempts: user_id={next_item['user_id']}, subject_id={next_item['subject_id']}")
                 # Update status to show failure
                 task_key = _bg_gen_task_key(next_item["user_id"], next_item["subject_id"])
-                _BACKGROUND_GENERATION_STATUS[task_key] = {
+                await _set_background_status(task_key, {
                     "in_progress": False,
                     "run_id": next_item["run_id"],
                     "status": "failed",
@@ -188,7 +280,9 @@ async def _process_queue():
                     "total_questions": next_item["count"],
                     "message": f"Failed after {_MAX_RETRY_ATTEMPTS} retry attempts: {str(e)}",
                     "updated_at": datetime.now(timezone.utc).isoformat(),
-                }
+                })
+                if _redis_queue_enabled() and next_item.get("message_id"):
+                    await _REDIS_QUEUE_SERVICE.ack_item(next_item["message_id"])
             
             # Continue processing queue if there are more items
             asyncio.create_task(_process_queue())
@@ -236,7 +330,7 @@ async def _wait_for_subject_docs_ready(
 async def _delayed_status_cleanup(task_key: str, delay_seconds: float = 60.0) -> None:
     """Remove a terminal status entry after a delay so the frontend has time to poll it."""
     await asyncio.sleep(delay_seconds)
-    _BACKGROUND_GENERATION_STATUS.pop(task_key, None)
+    await _delete_background_status(task_key)
 
 
 async def _get_generated_count_since_start(
@@ -290,7 +384,7 @@ async def _refill_missing_questions_to_target(
             break
 
         max_attempts_this_round = max(remaining * _GENERATION_REFILL_ATTEMPT_MULTIPLIER, remaining)
-        _BACKGROUND_GENERATION_STATUS[task_key] = {
+        await _set_background_status(task_key, {
             "in_progress": True,
             "run_id": run_id,
             "status": "refilling",
@@ -301,7 +395,7 @@ async def _refill_missing_questions_to_target(
             "target_total_questions": target_total_questions,
             "message": f"Auto-refill round {refill_round}: generating {remaining} missing questions",
             "updated_at": datetime.now(timezone.utc).isoformat(),
-        }
+        })
 
         round_success = 0
         for attempt_idx in range(max_attempts_this_round):
@@ -375,6 +469,16 @@ async def _run_background_subject_generation(
     run_id_value = run_id or str(uuid.uuid4())
     db_run_created = False
     effective_topic_id = topic_id  # Track the actual topic being generated
+    if _redis_queue_enabled():
+        await _REDIS_QUEUE_SERVICE.register_running(
+            task_key,
+            {
+                "user_id": str(user_id),
+                "subject_id": str(subject_id),
+                "run_id": run_id_value,
+                "started_at": datetime.now(timezone.utc).isoformat(),
+            },
+        )
     try:
         async with AsyncSessionLocal() as task_db:
             subject_res = await task_db.execute(
@@ -388,7 +492,7 @@ async def _run_background_subject_generation(
 
             docs_ready = True
             if not allow_without_reference:
-                _BACKGROUND_GENERATION_STATUS[task_key] = {
+                await _set_background_status(task_key, {
                     "in_progress": True,
                     "run_id": run_id_value,
                     "status": "waiting_for_documents",
@@ -399,7 +503,7 @@ async def _run_background_subject_generation(
                     "target_total_questions": target_total_questions,
                     "message": "Waiting for reference documents to finish processing",
                     "updated_at": datetime.now(timezone.utc).isoformat(),
-                }
+                })
                 docs_ready = await _wait_for_subject_docs_ready(task_db, user_id, subject_id)
                 if not docs_ready:
                     return
@@ -442,7 +546,21 @@ async def _run_background_subject_generation(
                     logger.warning(f"Failed to create generation run in DB: {db_err}")
 
             marks_by_type = {"mcq": 1, "short_answer": 2, "long_answer": 5}
-            question_service = QuestionGenerationService(task_db)
+
+            async def _build_provider_aware_question_service(db_session: AsyncSession) -> QuestionGenerationService:
+                try:
+                    provider_service = get_provider_service()
+                    enabled = await provider_service.get_enabled_providers()
+                    if enabled:
+                        preferred = (getattr(settings, "LLM_PROVIDER", "") or "").strip().lower()
+                        selected = next((p for p in enabled if p.key == preferred), enabled[0])
+                        return await create_question_service_for_provider(db_session, selected)
+                except Exception as provider_exc:
+                    logger.warning("Provider-aware generation setup failed, using default provider: %s", provider_exc)
+
+                return QuestionGenerationService(db_session)
+
+            question_service = await _build_provider_aware_question_service(task_db)
 
             if len(selected_topic_ids) > 1:
                 topic_rows_res = await task_db.execute(
@@ -495,7 +613,7 @@ async def _run_background_subject_generation(
 
                     try:
                         async with AsyncSessionLocal() as worker_db:
-                            worker_question_service = QuestionGenerationService(worker_db)
+                            worker_question_service = await _build_provider_aware_question_service(worker_db)
                             generator = worker_question_service.quick_generate_from_subject(
                                 user_id=user_id,
                                 subject_id=subject_id,
@@ -544,7 +662,7 @@ async def _run_background_subject_generation(
                     batch_slots = [multi_slot_queue.pop(0) for _ in range(batch_size)]
                     total_multi_attempts += len(batch_slots)
 
-                    _BACKGROUND_GENERATION_STATUS[task_key] = {
+                    await _set_background_status(task_key, {
                         "in_progress": True,
                         "run_id": run_id_value,
                         "status": "generating",
@@ -558,7 +676,7 @@ async def _run_background_subject_generation(
                             f"of {count} using {batch_size} workers"
                         ),
                         "updated_at": datetime.now(timezone.utc).isoformat(),
-                    }
+                    })
 
                     batch_results = await asyncio.gather(*[_run_single_topic_slot(slot) for slot in batch_slots])
 
@@ -589,7 +707,7 @@ async def _run_background_subject_generation(
                     db_generated = max(0, current_subject_total - started_total_questions)
                     current_generated = min(count, max(completed_slots, db_generated))
 
-                    _BACKGROUND_GENERATION_STATUS[task_key] = {
+                    await _set_background_status(task_key, {
                         "in_progress": True,
                         "run_id": run_id_value,
                         "status": "generating",
@@ -600,7 +718,7 @@ async def _run_background_subject_generation(
                         "target_total_questions": target_total_questions,
                         "message": f"Generated {current_generated}/{count} questions",
                         "updated_at": datetime.now(timezone.utc).isoformat(),
-                    }
+                    })
                     
                     # Broadcast progress via WebSocket for cross-device visibility
                     if db_run_created and effective_topic_id:
@@ -653,7 +771,7 @@ async def _run_background_subject_generation(
                     # For non-generating statuses (processing, complete, error), use the event's own progress
                     if progress_event.status not in ("generating",):
                         saved_progress = progress_event.progress or 0
-                    _BACKGROUND_GENERATION_STATUS[task_key] = {
+                    await _set_background_status(task_key, {
                         "in_progress": True,
                         "run_id": run_id_value,
                         "status": progress_event.status,
@@ -664,7 +782,7 @@ async def _run_background_subject_generation(
                         "target_total_questions": target_total_questions,
                         "message": f"Generated {saved_count}/{total} questions" if saved_count > 0 and progress_event.status == "generating" else (progress_event.message or "Generating questions"),
                         "updated_at": datetime.now(timezone.utc).isoformat(),
-                    }
+                    })
                     
                     # Broadcast progress via WebSocket for cross-device visibility
                     if db_run_created and effective_topic_id:
@@ -685,7 +803,8 @@ async def _run_background_subject_generation(
                             )
                         except Exception:
                             pass  # Don't fail generation due to WebSocket issues
-                final_current_question = _BACKGROUND_GENERATION_STATUS.get(task_key, {}).get("current_question", count)
+                latest_status = await _get_background_status(task_key) or {}
+                final_current_question = latest_status.get("current_question", count)
 
             final_current_question = await _refill_missing_questions_to_target(
                 task_db,
@@ -706,7 +825,7 @@ async def _run_background_subject_generation(
                 target_total_questions=target_total_questions,
             )
 
-            _BACKGROUND_GENERATION_STATUS[task_key] = {
+            await _set_background_status(task_key, {
                 "in_progress": True,
                 "run_id": run_id_value,
                 "status": "generating",
@@ -717,7 +836,7 @@ async def _run_background_subject_generation(
                 "target_total_questions": target_total_questions,
                 "message": f"Generated {final_current_question}/{count} questions",
                 "updated_at": datetime.now(timezone.utc).isoformat(),
-            }
+            })
             await task_db.commit()
     except Exception as exc:
         error_occurred = True
@@ -725,9 +844,11 @@ async def _run_background_subject_generation(
     finally:
         # Remove the task reference immediately
         _BACKGROUND_GENERATION_TASKS.pop(task_key, None)
+        if _redis_queue_enabled():
+            await _REDIS_QUEUE_SERVICE.unregister_running(task_key)
         # Set a terminal status so the frontend can see completion/error
         if error_occurred:
-            _BACKGROUND_GENERATION_STATUS[task_key] = {
+            await _set_background_status(task_key, {
                 "run_id": run_id_value,
                 "status": "error",
                 "progress": 0,
@@ -738,7 +859,7 @@ async def _run_background_subject_generation(
                 "message": f"Generation failed: {error_message}",
                 "updated_at": datetime.now(timezone.utc).isoformat(),
                 "in_progress": False,
-            }
+            })
             logger.error(f"Background generation failed for task_key={task_key}: {error_message}")
             
             # Update database and broadcast failure via WebSocket
@@ -752,7 +873,7 @@ async def _run_background_subject_generation(
         else:
             final_current_question = max(0, min(count, int(final_current_question or 0)))
             terminal_progress = 100 if final_current_question >= count else int((final_current_question / max(1, count)) * 100)
-            _BACKGROUND_GENERATION_STATUS[task_key] = {
+            await _set_background_status(task_key, {
                 "run_id": run_id_value,
                 "status": "completed",
                 "progress": terminal_progress,
@@ -767,7 +888,7 @@ async def _run_background_subject_generation(
                 ),
                 "updated_at": datetime.now(timezone.utc).isoformat(),
                 "in_progress": False,
-            }
+            })
             logger.info(f"Background generation completed for task_key={task_key}: {final_current_question}/{count} questions")
             
             # Update database and broadcast completion via WebSocket
@@ -1327,6 +1448,350 @@ async def _enhance_focus_prompt(context: str, llm_service) -> str:
         return context
 
 
+def _ensure_inquiry_access(current_user: User) -> None:
+    if current_user.is_superuser:
+        return
+    if current_user.role not in {"student", "teacher", "admin"}:
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="Student or teacher access required",
+        )
+
+
+def _truncate_prompt_text(value: Optional[str], limit: int = 1200) -> str:
+    if not value:
+        return ""
+    compact = re.sub(r"\s+", " ", value).strip()
+    if len(compact) <= limit:
+        return compact
+    return compact[: limit - 1].rstrip() + "…"
+
+
+def _format_learning_outcomes(learning_outcomes: Optional[dict]) -> str:
+    if not learning_outcomes:
+        return ""
+
+    items = learning_outcomes.get("outcomes") if isinstance(learning_outcomes, dict) else None
+    if not isinstance(items, list):
+        return ""
+
+    formatted: List[str] = []
+    for item in items[:4]:
+        if not isinstance(item, dict):
+            continue
+        label = _truncate_prompt_text(str(item.get("name") or item.get("id") or "Outcome"), 120)
+        description = _truncate_prompt_text(str(item.get("description") or ""), 240)
+        if description:
+            formatted.append(f"- {label}: {description}")
+        elif label:
+            formatted.append(f"- {label}")
+    return "\n".join(formatted)
+
+
+def _build_inquiry_system_prompt(
+    subject: Optional[Subject],
+    topic: Optional[Topic],
+    level: str,
+    mode: str,
+    explanation_attempt: int,
+) -> str:
+    level_guidance = {
+        "beginner": (
+            "Keep it accessible — test core recall and basic understanding. "
+            "Use plain language and avoid edge cases. Meet the learner where they are."
+        ),
+        "advanced": (
+            "Push them to think, not just remember. Ask them to apply concepts, explain mechanisms, "
+            "or distinguish between close alternatives."
+        ),
+        "pro": (
+            "This is mastery territory — trade-offs, nuance, and judgment calls. "
+            "Ask questions where the right answer depends on context, not just memorization."
+        ),
+    }
+
+    subject_context = _truncate_prompt_text(subject.description if subject else None, 400)
+    topic_context = _truncate_prompt_text(topic.description if topic else None, 320)
+    syllabus_context = _truncate_prompt_text(topic.syllabus_content if topic else None, 2200)
+    learning_outcomes = _format_learning_outcomes(subject.learning_outcomes if subject else None)
+
+    context_lines = [
+        f"Selected level: {level}",
+    ]
+    if subject:
+        context_lines.insert(0, f"Subject: {subject.name} ({subject.code})")
+    if topic:
+        context_lines.append(f"Topic: {topic.name}")
+    if subject_context:
+        context_lines.append(f"Subject description: {subject_context}")
+    if topic_context:
+        context_lines.append(f"Topic description: {topic_context}")
+    if learning_outcomes:
+        context_lines.append("Relevant learning outcomes:\n" + learning_outcomes)
+    if syllabus_context:
+        context_lines.append("Topic syllabus excerpt:\n" + syllabus_context)
+
+    if mode == "reasoning_feedback":
+        if explanation_attempt >= 3:
+            mode_instructions = (
+                "CURRENT TASK: Final attempt — be generous.\n"
+                "Acknowledge their effort warmly. Give the correct reasoning yourself in plain terms "
+                "(2-3 sentences, analogy if helpful). Wrap up this question naturally. "
+                "End with [[PROGRESS:ADVANCE]] on its own line."
+            )
+        else:
+            mode_instructions = (
+                "CURRENT TASK: Respond to the learner's latest message about the current question.\n\n"
+                "CHECK FOR THESE FIRST — handle before anything else:\n"
+                "• If the learner says 'idk', 'I don't know', 'not sure', 'no idea', or similar: "
+                "DO NOT re-ask the question. Just explain the concept clearly in 2-3 friendly sentences "
+                "using a concrete example or analogy. Then end with [[PROGRESS:ADVANCE]].\n"
+                "• If the learner asks 'can you explain', 'explain this', 'what does X mean', or asks for help: "
+                "Give a clear, friendly explanation (2-3 sentences). Ask one simple check-in question. "
+                "End with [[PROGRESS:HOLD]] or [[PROGRESS:ADVANCE]] based on whether they seem to get it.\n\n"
+                "For genuine reasoning attempts:\n"
+                "• If their reasoning is basically right (even different wording, paraphrase, or example): "
+                "affirm it warmly and end with [[PROGRESS:ADVANCE]].\n"
+                "• If they're missing something specific: name exactly what's missing (not 'explain more') "
+                "and ask ONE targeted follow-up. End with [[PROGRESS:HOLD]].\n"
+                "Never demand a more formal restatement — accept conceptually equivalent answers.\n"
+                "End with [[PROGRESS:ADVANCE]] if done, [[PROGRESS:HOLD]] if asking a follow-up."
+            )
+    elif mode == "answer_feedback":
+        mode_instructions = (
+            "CURRENT TASK: React to the learner's answer right now.\n\n"
+            "RULE: NEVER open with just 'Correct.' or 'Incorrect.' alone — that sounds robotic.\n"
+            "Always add context to your opening reaction.\n\n"
+            "For CORRECT answers — vary your opener every time, examples:\n"
+            "  'Yes, exactly!' / 'Spot on—' / 'That's the one.' / 'Nice — you got it.' / "
+            "'Right, and here's what makes that work:' / 'Yep, that's it!'\n"
+            "Then in 1-2 sentences say WHY that answer is correct.\n\n"
+            "For INCORRECT answers — vary your opener and stay friendly, examples:\n"
+            "  'Ah, not quite—' / 'Hmm, actually...' / 'Close, but not exactly—' / "
+            "'That one trips a lot of people up—' / 'Almost — but here's the distinction:'\n"
+            "Then briefly say what the correct answer is and why.\n\n"
+            "After reacting:\n"
+            "• If the learner already explained their reasoning well → accept it, end with [[PROGRESS:ADVANCE]].\n"
+            "• If they haven't explained → ask ONE specific why/how question about THIS concept.\n"
+            "• Semantically correct explanations count even if worded differently.\n"
+            "End with [[PROGRESS:ADVANCE]] if reasoning is covered, [[PROGRESS:HOLD]] if asking follow-up."
+        )
+    elif mode == "personalization_intent":
+        mode_instructions = (
+            "CURRENT TASK: The learner wants personalized practice or study material.\n\n"
+            "Detect what they're asking for:\n"
+            "• If they say 'test me', 'quiz me', 'create a test', 'I need practice' → "
+            "respond: 'Sure — I\\'ll put together a personalized test based on your history. Give me a moment…' "
+            "End with [[ACTION:GENERATE_TEST]] on its own line.\n"
+            "• If they say 'build a module', 'explain X to me', 'I keep getting X wrong', 'help me with X' → "
+            "respond: 'Let me create a focused study module on that for you…' "
+            "End with [[ACTION:GENERATE_MODULE]] on its own line.\n"
+            "• If you notice from context that the learner has failed 2+ questions on the same topic, "
+            "proactively suggest: 'I've noticed you've had trouble with [topic] — want me to build "
+            "a focused module for it, or a quick test to see where you stand?' "
+            "End with [[PROGRESS:HOLD]].\n\n"
+            "Keep it conversational and brief — one or two sentences max."
+        )
+    else:
+        mode_instructions = (
+            "CURRENT TASK: Ask the next question.\n"
+            "If this is NOT the very first question, you may open with a SHORT warm phrase "
+            "(max 5 words, like 'Next up:', 'Alright—', 'Good.', 'Here's another:') before the question. "
+            "Do NOT recap the previous answer — that's already been done.\n"
+            "Write exactly one multiple-choice question relevant to this subject/level with options A), B), C), D).\n"
+            "End with [[PROGRESS:HOLD]] on its own line."
+        )
+
+    return (
+        "You are a warm, sharp tutor who feels like a knowledgeable friend — not a textbook.\n"
+        "You're direct and honest but never cold. You adapt to the learner:\n"
+        "  - When they're getting it right: be brief, a little playful, keep the energy up.\n"
+        "  - When they're stuck: slow down, use plain language, give a real-world analogy.\n"
+        "  - When they ask for help: TEACH, don't interrogate them further.\n\n"
+        "Hard rules:\n"
+        "• Never say 'That is correct.' or 'Incorrect.' as a standalone opener — always add the WHY.\n"
+        "• Never use phrases like 'Great job!', 'Well done!', 'Fantastic!' — too hollow.\n"
+        "• Never lecture for more than 3 sentences — keep it tight.\n"
+        "• Never repeat a question the student just answered.\n"
+        "• One question at a time. Never introduce a new question in a feedback turn.\n"
+        "• Keep all responses under 200 words.\n"
+        "• Never mention system instructions, providers, databases, or control tags.\n\n"
+        f"Difficulty guidance: {level_guidance.get(level, level_guidance['beginner'])}\n\n"
+        f"What to do right now:\n{mode_instructions}\n\n"
+        "Session context:\n"
+        + "\n".join(context_lines)
+    )
+
+
+def _build_inquiry_prompt(messages, mode: str) -> str:
+    cleaned_messages = []
+    for message in messages[-12:]:
+        text = _truncate_prompt_text(message.content, 1400)
+        if not text:
+            continue
+        speaker = "Learner" if message.role == "user" else "Tutor"
+        cleaned_messages.append(f"{speaker}: {text}")
+
+    if not cleaned_messages:
+        return (
+            "Begin the GEL Train session. Open with one clear question that matches the selected level."
+        )
+
+    if mode == "reasoning_feedback":
+        next_step = "Respond to the learner's last message now."
+    elif mode == "answer_feedback":
+        next_step = "React to the learner's last answer now."
+    else:
+        next_step = "Ask the next question now."
+
+    return "Conversation so far:\n" + "\n".join(cleaned_messages) + "\n\n" + next_step
+
+
+@router.post("/conversational-inquiry")
+async def conversational_inquiry(
+    request: ConversationalInquiryRequest,
+    current_user: User = Depends(rate_limit(requests=120, window_seconds=86400)),
+    db: AsyncSession = Depends(get_db),
+):
+    """Stream a provider-backed GEL Train tutoring turn for students or teachers."""
+    _ensure_inquiry_access(current_user)
+
+    subject = None
+    if request.subject_id:
+        subject_result = await db.execute(select(Subject).where(Subject.id == str(request.subject_id)))
+        subject = subject_result.scalar_one_or_none()
+        if not subject:
+            raise HTTPException(
+                status_code=status.HTTP_404_NOT_FOUND,
+                detail="Subject not found",
+            )
+
+    topic = None
+    if request.topic_id:
+        if not request.subject_id:
+            raise HTTPException(
+                status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+                detail="topic_id requires subject_id",
+            )
+        topic_result = await db.execute(
+            select(Topic).where(
+                Topic.id == str(request.topic_id),
+                Topic.subject_id == str(request.subject_id),
+            )
+        )
+        topic = topic_result.scalar_one_or_none()
+        if not topic:
+            raise HTTPException(
+                status_code=status.HTTP_404_NOT_FOUND,
+                detail="Topic not found for the selected subject",
+            )
+
+    provider_service = get_provider_service()
+    enabled_providers = await provider_service.get_enabled_providers()
+    if not enabled_providers:
+        raise HTTPException(
+            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+            detail="No enabled API providers are configured in Admin Settings.",
+        )
+
+    # Honour the student's preferred tutor provider if they've set one
+    preferred_key: Optional[str] = None
+    if isinstance(getattr(current_user, "preferences", None), dict):
+        preferred_key = current_user.preferences.get("preferred_tutor_provider")
+
+    if preferred_key:
+        preferred_matches = [p for p in enabled_providers if p.key == preferred_key]
+        provider = preferred_matches[0] if preferred_matches else enabled_providers[request.question_cycle_index % len(enabled_providers)]
+    else:
+        provider = enabled_providers[request.question_cycle_index % len(enabled_providers)]
+    llm_service, metadata = provider_service.create_llm_service(provider)
+    system_prompt = _build_inquiry_system_prompt(
+        subject,
+        topic,
+        request.level,
+        request.mode,
+        request.explanation_attempt,
+    )
+    prompt = _build_inquiry_prompt(request.messages, request.mode)
+
+    async def event_generator() -> AsyncGenerator[str, None]:
+        assistant_buffer = ""
+        try:
+            yield (
+                "data: "
+                + ConversationalInquiryEvent(
+                    type="meta",
+                    provider_key=provider.key,
+                    provider_name=provider.name,
+                    provider_model=str(metadata.get("llm_model") or provider.model or ""),
+                ).model_dump_json()
+                + "\n\n"
+            )
+
+            async for chunk in llm_service.generate_stream(
+                prompt=prompt,
+                system_prompt=system_prompt,
+                temperature=0.7,
+                max_tokens=1400,
+            ):
+                if not chunk:
+                    continue
+                assistant_buffer += chunk
+                yield (
+                    "data: "
+                    + ConversationalInquiryEvent(type="delta", delta=chunk).model_dump_json()
+                    + "\n\n"
+                )
+
+            yield (
+                "data: "
+                + ConversationalInquiryEvent(
+                    type="complete",
+                    message=assistant_buffer.strip(),
+                    provider_key=provider.key,
+                    provider_name=provider.name,
+                    provider_model=str(metadata.get("llm_model") or provider.model or ""),
+                ).model_dump_json()
+                + "\n\n"
+            )
+            
+            # Log provider usage for statistics
+            try:
+                usage_log = ProviderUsageLog(
+                    provider_key=provider.key,
+                    provider_name=provider.name,
+                    provider_model=str(metadata.get("llm_model") or provider.model or ""),
+                    user_id=str(current_user.id),
+                    subject_id=str(request.subject_id),
+                    topic_id=str(request.topic_id) if request.topic_id else None,
+                    usage_type="conversational_inquiry",
+                    session_id=None,  # Could generate a session ID if tracking multi-turn conversations
+                )
+                db.add(usage_log)
+                await db.commit()
+            except Exception as log_exc:
+                logger.warning("Failed to log provider usage for user=%s: %s", current_user.id, log_exc)
+                # Don't fail the request if logging fails
+        except Exception as exc:
+            logger.exception("Conversational inquiry failed for user=%s subject=%s topic=%s", current_user.id, request.subject_id, request.topic_id)
+            message = str(exc).strip() or "The tutoring provider could not complete this request."
+            yield (
+                "data: "
+                + ConversationalInquiryEvent(type="error", message=message).model_dump_json()
+                + "\n\n"
+            )
+
+    return StreamingResponse(
+        sse_with_heartbeat(event_generator()),
+        media_type="text/event-stream",
+        headers={
+            "Cache-Control": "no-cache",
+            "Connection": "keep-alive",
+            "X-Accel-Buffering": "no",
+        },
+    )
+
+
 @router.post("/quick-generate-from-subject")
 async def quick_generate_from_subject(
     subject_id: str = Form(..., description="Subject ID to generate questions from"),
@@ -1618,7 +2083,7 @@ async def schedule_background_generation(
     task_key = _bg_gen_task_key(current_user.id, parsed_subject_id)
     existing_task = _BACKGROUND_GENERATION_TASKS.get(task_key)
     if existing_task and not existing_task.done():
-        existing_status = _BACKGROUND_GENERATION_STATUS.get(task_key, {})
+        existing_status = await _get_background_status(task_key) or {}
         return {
             "status": "already_running",
             "message": "Background generation is already running for this subject",
@@ -1630,8 +2095,21 @@ async def schedule_background_generation(
             "total_questions": existing_status.get("total_questions", count),
         }
 
+    distributed_status = await _get_background_status(task_key)
+    if distributed_status and distributed_status.get("in_progress") is True:
+        return {
+            "status": "already_running",
+            "message": "Background generation is already running for this subject",
+            "subject_id": str(parsed_subject_id),
+            "run_id": distributed_status.get("run_id"),
+            "count": count,
+            "progress": distributed_status.get("progress", 0),
+            "current_question": distributed_status.get("current_question", 0),
+            "total_questions": distributed_status.get("total_questions", count),
+        }
+
     # Check if already queued
-    queue_position = _get_queue_position(current_user.id, parsed_subject_id)
+    queue_position = await _get_queue_position(current_user.id, parsed_subject_id)
     if queue_position > 0:
         return {
             "status": "queued",
@@ -1642,7 +2120,7 @@ async def schedule_background_generation(
         }
 
     # Check if we have capacity to run immediately or need to queue
-    current_running = _get_current_running_count()
+    current_running = await _get_current_running_count()
     request_data = {
         "types": type_list,
         "difficulty": difficulty,
@@ -1653,11 +2131,11 @@ async def schedule_background_generation(
 
     if current_running >= _MAX_CONCURRENT_GENERATIONS:
         # Queue the request
-        queue_position = _add_to_queue(current_user.id, parsed_subject_id, count, request_data)
+        queue_position = await _add_to_queue(current_user.id, parsed_subject_id, count, request_data)
         run_id = str(uuid.uuid4())
         
         # Set queued status
-        _BACKGROUND_GENERATION_STATUS[task_key] = {
+        await _set_background_status(task_key, {
             "in_progress": True,
             "run_id": run_id,
             "status": "queued",
@@ -1668,7 +2146,7 @@ async def schedule_background_generation(
             "target_total_questions": int(subject.total_questions or 0) + count,
             "message": f"Queued for background generation (position {queue_position})",
             "updated_at": datetime.now(timezone.utc).isoformat(),
-        }
+        })
         
         return {
             "status": "queued",
@@ -1684,7 +2162,7 @@ async def schedule_background_generation(
     # Run immediately
     run_id = str(uuid.uuid4())
 
-    _BACKGROUND_GENERATION_STATUS[task_key] = {
+    await _set_background_status(task_key, {
         "in_progress": True,
         "run_id": run_id,
         "status": "scheduled",
@@ -1695,7 +2173,7 @@ async def schedule_background_generation(
         "target_total_questions": int(subject.total_questions or 0) + count,
         "message": "Background generation scheduled",
         "updated_at": datetime.now(timezone.utc).isoformat(),
-    }
+    })
 
     task = asyncio.create_task(
         _run_background_subject_generation(
@@ -1749,7 +2227,7 @@ async def get_background_generation_statuses(
             continue
 
         task_key = _bg_gen_task_key(current_user.id, parsed_subject_id)
-        status_payload = _BACKGROUND_GENERATION_STATUS.get(task_key)
+        status_payload = await _get_background_status(task_key)
         task = _BACKGROUND_GENERATION_TASKS.get(task_key)
 
         # Check for terminal status first (task finished, status still cached)

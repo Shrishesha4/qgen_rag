@@ -1,6 +1,20 @@
 /** Documents API — file upload and management. */
 import { apiFetch, apiUrl } from './client';
 
+// ── Generation Limits (from provider settings) ──
+
+export interface GenerationLimitsResponse {
+	max_batch_size: number;
+}
+
+/**
+ * Fetch the generation limits from the backend.
+ * The max_batch_size is the sum of questions_per_batch across all enabled providers.
+ */
+export async function getGenerationLimits(): Promise<GenerationLimitsResponse> {
+	return apiFetch<GenerationLimitsResponse>('/settings/generation-limits');
+}
+
 export interface DocumentResponse {
 	id: string;
 	filename: string;
