@@ -348,11 +348,6 @@
 											<p class="topic-description">{topic.description}</p>
 										{/if}
 									</div>
-									<div class="topic-tags">
-										{#if topic.has_syllabus}
-											<span class="tag blue">Syllabus</span>
-										{/if}
-									</div>
 								</div>
 								<div class="topic-metrics">
 									<div class="metric"><span>Questions</span><strong>{topic.total_questions}</strong></div>
@@ -567,8 +562,8 @@
 	.topic-count {
 		padding: 0.35rem 0.7rem;
 		border-radius: 999px;
-		background: rgba(96, 165, 250, 0.15);
-		color: #93c5fd;
+		background: rgba(69, 153, 255, 0.506);
+		color: #f1f4f8;
 		font-weight: 700;
 		font-size: 0.8rem;
 	}
@@ -702,25 +697,6 @@
 		margin: 0.3rem 0 0;
 		color: var(--theme-text-muted);
 		line-height: 1.55;
-	}
-
-	.topic-tags {
-		display: flex;
-		gap: 0.4rem;
-		flex-wrap: wrap;
-		justify-content: flex-end;
-	}
-
-	.tag {
-		padding: 0.25rem 0.55rem;
-		border-radius: 999px;
-		font-size: 0.72rem;
-		font-weight: 700;
-	}
-
-	.tag.blue {
-		background: rgba(96, 165, 250, 0.15);
-		color: #93c5fd;
 	}
 
 	.topic-metrics {

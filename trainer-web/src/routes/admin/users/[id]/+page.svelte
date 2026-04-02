@@ -679,7 +679,6 @@
 	}
 
 	:global([data-color-mode='light']) .header,
-	:global([data-color-mode='light']) .meta-card,
 	:global([data-color-mode='light']) .stat-card,
 	:global([data-color-mode='light']) .section,
 	:global([data-color-mode='light']) .center-state,
@@ -688,6 +687,16 @@
 		border: 1px solid rgba(148, 163, 184, 0.3);
 		box-shadow: 0 14px 34px rgba(15, 23, 42, 0.08);
 	}
+	/* :global([data-color-mode='light']) .header,
+	:global([data-color-mode='light']) .meta-card,
+	:global([data-color-mode='light']) .stat-card,
+	:global([data-color-mode='light']) .section,
+	:global([data-color-mode='light']) .center-state,
+	:global([data-color-mode='light']) .mobile-card {
+		background: #ffffff;
+		border: 1px solid rgba(148, 163, 184, 0.3);
+		box-shadow: 0 14px 34px rgba(15, 23, 42, 0.08);
+	} */
 
 	:global([data-color-mode='light']) .access-item,
 	:global([data-color-mode='light']) .back-link,

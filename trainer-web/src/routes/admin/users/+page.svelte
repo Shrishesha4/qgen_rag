@@ -78,7 +78,7 @@
 	}
 
 	function userDetailHref(userId: string): string {
-		return `/users/${userId}`;
+		return `/admin/users/${userId}`;
 	}
 
 	function defaultPermissionsForRole(role: UserRole) {
@@ -461,8 +461,6 @@
 				<div class="approval-modal-header">
 					<div>
 						<p class="modal-eyebrow">Registration Queue</p>
-						<h2 id="approval-modal-title">Pending Approvals</h2>
-						<p class="modal-copy">Approve users one by one or select several pending registrations and approve them together.</p>
 					</div>
 					<button class="secondary-btn" type="button" onclick={closeApprovalModal}>Close</button>
 				</div>
