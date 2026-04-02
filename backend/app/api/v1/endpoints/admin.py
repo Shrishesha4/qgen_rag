@@ -229,6 +229,18 @@ def _question_count_columns():
     )
 
 
+def _live_question_filters():
+    return (
+        Question.generation_status == "accepted",
+        Question.is_archived == False,
+        Question.is_latest == True,
+    )
+
+
+def _managed_live_question_filters():
+    return (*_live_question_filters(), Question.subject_id.isnot(None))
+
+
 def _validate_role(role: str) -> str:
     normalized = (role or "").strip().lower()
     if normalized not in VALID_ROLES:
@@ -420,21 +432,24 @@ async def get_admin_dashboard(
     subject_count_q = select(func.count(Subject.id))
     topic_count_q = select(func.count(Topic.id))
 
-    total_questions_q = select(func.count(Question.id)).where(
-        Question.generation_status == "accepted"
-    )
+    live_question_filters = _managed_live_question_filters()
+
+    total_questions_q = select(func.count(Question.id)).where(*live_question_filters)
     vetted_q = select(func.count(Question.id)).where(
+        *live_question_filters,
         Question.vetting_status.in_(["approved", "rejected"])
     )
     approved_q = select(func.count(Question.id)).where(
+        *live_question_filters,
         Question.vetting_status == "approved"
     )
     rejected_q = select(func.count(Question.id)).where(
+        *live_question_filters,
         Question.vetting_status == "rejected"
     )
     pending_q = select(func.count(Question.id)).where(
+        *live_question_filters,
         Question.vetting_status == "pending",
-        Question.generation_status == "accepted",
     )
 
     (
@@ -463,7 +478,7 @@ async def get_admin_dashboard(
             func.count(case((Question.vetting_status == "approved", 1))).label("approved"),
             func.count(case((Question.vetting_status == "rejected", 1))).label("rejected"),
         )
-        .where(Question.vetted_by.isnot(None))
+        .where(*live_question_filters, Question.vetted_by.isnot(None))
         .group_by(Question.vetted_by)
     )
     vetter_rows = (await db.execute(vetter_stats_q)).all()
@@ -510,7 +525,7 @@ async def get_admin_dashboard(
             func.count(case((Question.vetting_status == "approved", 1))).label("approved"),
             func.count(case((Question.vetting_status == "rejected", 1))).label("rejected"),
         )
-        .where(Question.vetted_by.isnot(None))
+        .where(*live_question_filters, Question.vetted_by.isnot(None))
         .group_by(Question.vetted_by)
     )
     user_vet_rows = (await db.execute(user_vet_q)).all()
@@ -532,8 +547,8 @@ async def get_admin_dashboard(
         .select_from(Question)
         .join(GenerationSession, Question.session_id == GenerationSession.id, isouter=True)
         .where(
+            *live_question_filters,
             Question.vetting_status == "pending",
-            Question.generation_status == "accepted",
         )
         .group_by(GenerationSession.user_id)
     )
@@ -629,7 +644,7 @@ async def list_admin_subjects(
             select(Question.subject_id, *_question_count_columns())
             .where(
                 Question.subject_id.in_(subject_ids),
-                Question.generation_status == "accepted",
+                *_live_question_filters(),
             )
             .group_by(Question.subject_id)
         )
@@ -691,7 +706,7 @@ async def get_admin_subject(
         select(*_question_count_columns())
         .where(
             Question.subject_id == subject.id,
-            Question.generation_status == "accepted",
+            *_live_question_filters(),
         )
     )
     subject_stats_row = subject_stats_result.one()
@@ -702,7 +717,7 @@ async def get_admin_subject(
             select(Question.topic_id, *_question_count_columns())
             .where(
                 Question.topic_id.in_(topic_ids),
-                Question.generation_status == "accepted",
+                *_live_question_filters(),
             )
             .group_by(Question.topic_id)
         )

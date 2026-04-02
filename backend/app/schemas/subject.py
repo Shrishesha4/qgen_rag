@@ -97,6 +97,7 @@ class SubjectBase(BaseModel):
 
 class SubjectCreate(SubjectBase):
     """Schema for creating a Subject."""
+    group_id: Optional[str] = None
     learning_outcomes: Optional[List[LearningOutcomeCreate]] = None
     course_outcomes: Optional[List[CourseOutcomeCreate]] = None
 
