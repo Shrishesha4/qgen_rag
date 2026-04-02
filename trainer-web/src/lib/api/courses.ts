@@ -1,4 +1,4 @@
-import { apiFetch } from './client';
+import { apiFetch, apiUrl, getStoredSession } from './client';
 
 // ── Types ────────────────────────────────────────────────────────────────────
 
@@ -26,7 +26,7 @@ export interface CourseResponse {
 	preview_video_url: string | null;
 	price_cents: number;
 	currency: string;
-	status: 'draft' | 'published' | 'archived';
+	status: 'draft' | 'pending_approval' | 'published' | 'archived';
 	is_featured: boolean;
 	learning_outcomes: Record<string, unknown> | null;
 	created_at: string;
@@ -50,6 +50,8 @@ export interface CourseSummary {
 	enrolled_count: number;
 	created_at: string;
 }
+
+export type CourseStatus = CourseResponse['status'];
 
 export interface CourseListResponse {
 	items: CourseSummary[];
@@ -104,12 +106,47 @@ export interface ModuleContentGenerateInput {
 	focus?: string;
 }
 
+export type ModuleContentStreamField =
+	| 'summary'
+	| 'learning_objectives'
+	| 'body_markdown'
+	| 'assignment_prompt'
+	| 'video_url'
+	| 'suggested_duration_minutes';
+
+export interface ModuleContentStreamEvent {
+	type: 'meta' | 'field_start' | 'field_delta' | 'field_complete' | 'complete' | 'error';
+	field?: ModuleContentStreamField | null;
+	delta?: string | null;
+	message?: string | null;
+	module?: CourseModuleResponse | null;
+	provider_key?: string | null;
+	provider_name?: string | null;
+	provider_model?: string | null;
+}
+
 export interface ModuleQuestionResponse {
 	id: string;
 	module_id: string;
 	question_id: string;
 	sequence: number;
 	weight: number;
+}
+
+async function parseStreamError(res: Response): Promise<Error> {
+	const fallback = `Request failed (${res.status})`;
+	try {
+		const body = await res.json();
+		const detail =
+			typeof body?.detail === 'string'
+				? body.detail
+				: typeof body?.message === 'string'
+					? body.message
+					: fallback;
+		return new Error(detail || fallback);
+	} catch {
+		return new Error(fallback);
+	}
 }
 
 // ── Course API ───────────────────────────────────────────────────────────────
@@ -148,6 +185,18 @@ export async function listMyCourses(
 	return apiFetch<CourseListResponse>(`/courses/my?${qs}`);
 }
 
+export async function listAdminCourses(
+	status: string = 'pending_approval',
+	page = 1,
+	page_size = 20
+): Promise<CourseListResponse> {
+	const qs = new URLSearchParams();
+	if (status) qs.set('status', status);
+	qs.set('page', String(page));
+	qs.set('page_size', String(page_size));
+	return apiFetch<CourseListResponse>(`/courses/admin/review-queue?${qs}`);
+}
+
 export async function getCourseBySlug(slug: string): Promise<CourseResponse> {
 	return apiFetch<CourseResponse>(`/courses/${encodeURIComponent(slug)}`);
 }
@@ -180,8 +229,20 @@ export async function uploadCourseThumbnail(courseId: string, file: File): Promi
 	});
 }
 
-export async function publishCourse(courseId: string): Promise<CourseResponse> {
+export async function requestCourseApproval(courseId: string): Promise<CourseResponse> {
 	return apiFetch<CourseResponse>(`/courses/${courseId}/publish`, {
+		method: 'POST',
+	});
+}
+
+export async function approveCourse(courseId: string): Promise<CourseResponse> {
+	return apiFetch<CourseResponse>(`/courses/admin/${courseId}/approve`, {
+		method: 'POST',
+	});
+}
+
+export async function rejectCourse(courseId: string): Promise<CourseResponse> {
+	return apiFetch<CourseResponse>(`/courses/admin/${courseId}/reject`, {
 		method: 'POST',
 	});
 }
@@ -221,6 +282,66 @@ export async function generateModuleContent(
 		method: 'POST',
 		body: JSON.stringify(data),
 	});
+}
+
+export async function* streamGenerateModuleContent(
+	courseId: string,
+	moduleId: string,
+	data: ModuleContentGenerateInput,
+	signal?: AbortSignal
+): AsyncGenerator<ModuleContentStreamEvent> {
+	const session = getStoredSession();
+	const res = await fetch(apiUrl(`/courses/${courseId}/modules/${moduleId}/generate-content/stream`), {
+		method: 'POST',
+		headers: {
+			'Content-Type': 'application/json',
+			...(session?.access_token ? { Authorization: `Bearer ${session.access_token}` } : {}),
+		},
+		body: JSON.stringify(data),
+		signal,
+	});
+
+	if (!res.ok) {
+		throw await parseStreamError(res);
+	}
+
+	const reader = res.body?.getReader();
+	if (!reader) {
+		throw new Error('No response body');
+	}
+
+	const decoder = new TextDecoder();
+	let buffer = '';
+
+	while (true) {
+		const { done, value } = await reader.read();
+		if (done) break;
+		buffer += decoder.decode(value, { stream: true });
+
+		const lines = buffer.split('\n');
+		buffer = lines.pop() ?? '';
+
+		for (const line of lines) {
+			const trimmed = line.trim();
+			if (!trimmed || trimmed.startsWith(':')) continue;
+			if (!trimmed.startsWith('data: ')) continue;
+
+			try {
+				yield JSON.parse(trimmed.slice(6)) as ModuleContentStreamEvent;
+			} catch {
+				// Ignore trailing partial lines.
+			}
+		}
+	}
+
+	const remaining = buffer.trim();
+	if (remaining.startsWith('data: ')) {
+		try {
+			yield JSON.parse(remaining.slice(6)) as ModuleContentStreamEvent;
+		} catch {
+			// Ignore trailing partial data.
+		}
+	}
 }
 
 export async function deleteModule(courseId: string, moduleId: string): Promise<void> {

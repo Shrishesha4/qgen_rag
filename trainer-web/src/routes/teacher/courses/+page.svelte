@@ -1,7 +1,7 @@
 <script lang="ts">
 	import { onMount } from 'svelte';
 	import { goto } from '$app/navigation';
-	import { Plus, BookOpen, Archive, Globe, Pencil } from 'lucide-svelte';
+	import { Plus, BookOpen, Archive, Globe, Pencil, Clock3 } from 'lucide-svelte';
 	import { listMyCourses, type CourseSummary } from '$lib/api/courses';
 	import { createCourse } from '$lib/api/courses';
 
@@ -42,6 +42,7 @@
 
 	function statusIcon(status: string) {
 		if (status === 'published') return Globe;
+		if (status === 'pending_approval') return Clock3;
 		if (status === 'archived') return Archive;
 		return Pencil;
 	}
@@ -63,6 +64,7 @@
 		<select bind:value={statusFilter} onchange={() => fetchCourses()}>
 			<option value="">All statuses</option>
 			<option value="draft">Draft</option>
+			<option value="pending_approval">Pending Approval</option>
 			<option value="published">Published</option>
 			<option value="archived">Archived</option>
 		</select>
@@ -90,9 +92,11 @@
 						{/if}
 					</div>
 					<div class="row-meta">
-						<span class="row-status" class:published={course.status === 'published'} class:draft={course.status === 'draft'}>
+						<span class="row-status" class:published={course.status === 'published'} class:draft={course.status === 'draft'} class:pending={course.status === 'pending_approval'}>
 							{#if course.status === 'published'}
 								<Globe class="h-3.5 w-3.5" />
+							{:else if course.status === 'pending_approval'}
+								<Clock3 class="h-3.5 w-3.5" />
 							{:else if course.status === 'archived'}
 								<Archive class="h-3.5 w-3.5" />
 							{:else}
@@ -245,6 +249,11 @@
 	.row-status.draft {
 		color: rgba(var(--theme-primary-rgb), 0.7);
 		border-color: rgba(var(--theme-primary-rgb), 0.2);
+	}
+
+	.row-status.pending {
+		color: rgb(245, 158, 11);
+		border-color: rgba(245, 158, 11, 0.28);
 	}
 
 	.row-stat {

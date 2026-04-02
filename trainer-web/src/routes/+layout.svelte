@@ -83,6 +83,7 @@
 		if (pathname.startsWith('/admin')) {
 			return [
 				{ href: '/admin/dashboard', label: 'Dashboard', icon: '📊' },
+				{ href: '/admin/courses', label: 'Courses', icon: '📦' },
 				{ href: '/admin/users', label: 'User Management', icon: '👥' },
 				{ href: '/admin/subjects', label: 'Subjects', icon: '🧾' },
 				{ href: '/admin/teachers', label: 'Teachers', icon: '🧑‍🏫' },

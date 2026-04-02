@@ -1,5 +1,5 @@
 <script lang="ts">
-	import { onMount } from 'svelte';
+	import { onDestroy, onMount, tick } from 'svelte';
 	import { page } from '$app/stores';
 	import { goto } from '$app/navigation';
 	import {
@@ -11,12 +11,15 @@
 		Eye,
 		FileQuestion,
 		Globe,
+		Clock3,
 		Link2,
 		Plus,
 		Save,
 		Sparkles,
 		Trash2,
 		Upload,
+		CheckSquare,
+		SendIcon,
 	} from 'lucide-svelte';
 	import {
 		addQuestionsToModule,
@@ -25,15 +28,18 @@
 		generateModuleContent,
 		getCourseById,
 		listModuleQuestions,
-		publishCourse,
+		requestCourseApproval,
 		removeQuestionFromModule,
 		reorderModules,
+		streamGenerateModuleContent,
+		type ModuleContentStreamEvent,
 		type CourseModuleResponse,
 		type CourseResponse,
 		updateCourse,
 		updateModule,
 		uploadCourseThumbnail,
 	} from '$lib/api/courses';
+	import { resolveApiAssetUrl } from '$lib/api/client';
 	import { generateChapter } from '$lib/api/documents';
 	import { getQuestion, listQuestions, type QuestionRecord } from '$lib/api/questions';
 	import { getSubject, listSubjects, type SubjectDetailResponse, type SubjectResponse } from '$lib/api/subjects';
@@ -85,6 +91,7 @@
 	let priceCents = $state(0);
 	let currency = $state('INR');
 	let selectedSubjectId = $state('');
+	let activeEditorTab = $state<'details' | 'modules'>('details');
 
 	let activeModuleId = $state<string | null>(null);
 	let moduleDraft = $state<ModuleDraft>(emptyDraft());
@@ -95,6 +102,11 @@
 	let isGeneratingContent = $state(false);
 	let isGeneratingQuestions = $state(false);
 	let isRefreshingQuestions = $state(false);
+	let contentStreamAbortController: AbortController | null = null;
+	let summaryTextarea = $state<HTMLTextAreaElement | null>(null);
+	let objectivesTextarea = $state<HTMLTextAreaElement | null>(null);
+	let bodyMarkdownTextarea = $state<HTMLTextAreaElement | null>(null);
+	let assignmentTextarea = $state<HTMLTextAreaElement | null>(null);
 
 	let newModuleTitle = $state('');
 	let newModuleType = $state<ModuleType>('content');
@@ -109,6 +121,7 @@
 	const activeModule = $derived(
 		course?.modules.find((module) => module.id === activeModuleId) ?? null
 	);
+	const coverImageUrl = $derived(resolveApiAssetUrl(course?.cover_image_url));
 	const currentTopics = $derived(subjectDetail?.topics ?? []);
 	const moduleCanManageQuestions = $derived(
 		activeModule?.module_type === 'quiz' || activeModule?.module_type === 'assignment'
@@ -154,6 +167,81 @@
 			videoUrl: typeof contentData.video_url === 'string' ? contentData.video_url : '',
 		};
 	}
+
+	function resetGeneratedModuleFields() {
+		moduleDraft.summary = '';
+		moduleDraft.learningObjectives = '';
+		moduleDraft.bodyMarkdown = '';
+		moduleDraft.assignmentPrompt = '';
+		moduleDraft.videoUrl = '';
+		moduleDraft.durationMinutes = '';
+	}
+
+	async function scrollGeneratedField(field: 'summary' | 'learning_objectives' | 'body_markdown' | 'assignment_prompt') {
+		await tick();
+		const target =
+			field === 'summary'
+				? summaryTextarea
+				: field === 'learning_objectives'
+					? objectivesTextarea
+					: field === 'body_markdown'
+						? bodyMarkdownTextarea
+						: assignmentTextarea;
+
+		if (target) {
+			target.scrollTop = target.scrollHeight;
+		}
+	}
+
+	function applyStreamDelta(event: ModuleContentStreamEvent) {
+		if (event.type === 'field_start' && event.field) {
+			const labelMap: Record<string, string> = {
+				summary: 'summary',
+				learning_objectives: 'learning objectives',
+				body_markdown: 'lesson markdown',
+				assignment_prompt: 'assignment brief',
+				video_url: 'video URL',
+				suggested_duration_minutes: 'duration',
+			};
+			workStatus = `Generating ${labelMap[event.field] ?? event.field}…`;
+			return;
+		}
+
+		if (event.type !== 'field_delta' || !event.field || !event.delta) {
+			return;
+		}
+
+		switch (event.field) {
+			case 'summary':
+				moduleDraft.summary += event.delta;
+				void scrollGeneratedField('summary');
+				break;
+			case 'learning_objectives':
+				moduleDraft.learningObjectives += event.delta;
+				void scrollGeneratedField('learning_objectives');
+				break;
+			case 'body_markdown':
+				moduleDraft.bodyMarkdown += event.delta;
+				void scrollGeneratedField('body_markdown');
+				break;
+			case 'assignment_prompt':
+				moduleDraft.assignmentPrompt += event.delta;
+				void scrollGeneratedField('assignment_prompt');
+				break;
+			case 'video_url':
+				moduleDraft.videoUrl += event.delta;
+				break;
+			case 'suggested_duration_minutes': {
+				const nextValue = `${moduleDraft.durationMinutes}${event.delta}`.replace(/[^\d]/g, '');
+				moduleDraft.durationMinutes = nextValue;
+				break;
+			}
+		}
+	}
+
+	onDestroy(() => {
+		contentStreamAbortController?.abort();
+	});
 
 	function replaceModule(updatedModule: CourseModuleResponse) {
 		if (!course) return;
@@ -418,6 +506,7 @@
 		if (!course) return;
 		const module = course.modules.find((item) => item.id === moduleId);
 		if (!module) return;
+		activeEditorTab = 'modules';
 		activeModuleId = moduleId;
 		hydrateModuleDraft(module);
 		void refreshQuestionCollections();
@@ -438,6 +527,7 @@
 				modules: [...course.modules, module].sort((left, right) => left.order_index - right.order_index),
 			};
 			newModuleTitle = '';
+			activeEditorTab = 'modules';
 			activeModuleId = module.id;
 			hydrateModuleDraft(module);
 			attachedQuestions = [];
@@ -541,17 +631,37 @@
 
 		isGeneratingContent = true;
 		workStatus = 'Generating module draft…';
+		resetGeneratedModuleFields();
+		contentStreamAbortController?.abort();
+		const abortCtrl = new AbortController();
+		contentStreamAbortController = abortCtrl;
 		try {
-			const updatedModule = await generateModuleContent(course.id, savedModule.id, {
-				topic_id: moduleDraft.topicId,
-				focus: moduleDraft.focus.trim() || undefined,
-			});
-			replaceModule(updatedModule);
-			hydrateModuleDraft(updatedModule);
-			setNotice('Draft content generated.');
+			for await (const event of streamGenerateModuleContent(
+				course.id,
+				savedModule.id,
+				{
+					topic_id: moduleDraft.topicId,
+					focus: moduleDraft.focus.trim() || undefined,
+				},
+				abortCtrl.signal,
+			)) {
+				if (event.type === 'error') {
+					throw new Error(event.message ?? 'Failed to generate module content.');
+				}
+				if (event.type === 'complete' && event.module) {
+					replaceModule(event.module);
+					hydrateModuleDraft(event.module);
+					setNotice(event.message ?? 'Draft content generated.');
+					continue;
+				}
+				applyStreamDelta(event);
+			}
 		} catch (caughtError: unknown) {
-			error = caughtError instanceof Error ? caughtError.message : 'Failed to generate module content.';
+			if (!(caughtError instanceof Error && caughtError.name === 'AbortError')) {
+				error = caughtError instanceof Error ? caughtError.message : 'Failed to generate module content.';
+			}
 		} finally {
+			contentStreamAbortController = null;
 			isGeneratingContent = false;
 			workStatus = null;
 		}
@@ -647,9 +757,8 @@
 				<button class="back-btn" onclick={() => goto('/teacher/courses')}>
 					<ArrowLeft class="h-4 w-4" /> Back to courses
 				</button>
-				<p class="eyebrow">Teacher Studio</p>
+				<p class="eyebrow"></p>
 				<h1 class="page-title">{course.title}</h1>
-				<p class="page-subtitle">Build the course shell, upload a local cover image, author module content, and attach or generate question sets.</p>
 			</div>
 
 			<div class="header-actions">
@@ -665,18 +774,18 @@
 						const savedCourse = await persistCourse(false);
 						if (!savedCourse) return;
 						try {
-							course = await publishCourse(savedCourse.id);
-							setNotice('Course published.');
+							course = await requestCourseApproval(savedCourse.id);
+							setNotice('Approval request sent to admin.');
 						} catch (caughtError: unknown) {
-							error = caughtError instanceof Error ? caughtError.message : 'Failed to publish course.';
+							error = caughtError instanceof Error ? caughtError.message : 'Failed to request approval.';
 						}
 					}}>
-						<Globe class="h-4 w-4" /> Publish
+						<SendIcon class="h-4 w-4" /> Submit
 					</button>
-				{:else}
-					<a class="secondary-link" href="/courses/{course.slug}" target="_blank">
-						<Eye class="h-4 w-4" /> View live page
-					</a>
+				{:else if course.status === 'pending_approval'}
+					<span class="pending-pill">
+						<Clock3 class="h-4 w-4" /> Awaiting admin approval
+					</span>
 				{/if}
 			</div>
 		</header>
@@ -692,11 +801,21 @@
 			<div class="status-banner">{workStatus}</div>
 		{/if}
 
+		<div class="editor-tabs">
+			<button class:active={activeEditorTab === 'details'} onclick={() => (activeEditorTab = 'details')}>
+				Course Details
+			</button>
+			<button class:active={activeEditorTab === 'modules'} onclick={() => (activeEditorTab = 'modules')}>
+				Modules
+			</button>
+		</div>
+
 		<div class="editor-grid">
+			{#if activeEditorTab === 'details'}
 			<section class="course-panel glass-panel">
 				<div class="panel-head">
 					<h2>Course details</h2>
-					<span class="status-chip" class:published={course.status === 'published'}>{course.status}</span>
+					<span class="status-chip" class:published={course.status === 'published'} class:pending={course.status === 'pending_approval'}>{course.status}</span>
 				</div>
 
 				<label class="field">
@@ -735,8 +854,8 @@
 						<p class="field-label">Thumbnail</p>
 						<p class="field-help">Upload a local image file. It will be stored on the backend server.</p>
 					</div>
-					{#if course.cover_image_url}
-						<img src={course.cover_image_url} alt={course.title} class="thumbnail-preview" />
+					{#if coverImageUrl}
+						<img src={coverImageUrl} alt={course.title} class="thumbnail-preview" />
 					{:else}
 						<div class="thumbnail-placeholder">No thumbnail uploaded</div>
 					{/if}
@@ -747,6 +866,7 @@
 					</label>
 				</div>
 			</section>
+			{:else}
 
 			<section class="modules-panel glass-panel">
 				<div class="panel-head">
@@ -862,23 +982,23 @@
 								<div class="field-row two-up">
 									<label class="field">
 										<span class="field-label">Summary</span>
-										<textarea bind:value={moduleDraft.summary} rows="3"></textarea>
+										<textarea bind:this={summaryTextarea} bind:value={moduleDraft.summary} rows="3"></textarea>
 									</label>
 									<label class="field">
 										<span class="field-label">Learning objectives</span>
-										<textarea bind:value={moduleDraft.learningObjectives} rows="3" placeholder="One objective per line"></textarea>
+										<textarea bind:this={objectivesTextarea} bind:value={moduleDraft.learningObjectives} rows="3" placeholder="One objective per line"></textarea>
 									</label>
 								</div>
 
 								<label class="field">
 									<span class="field-label">Lesson markdown</span>
-									<textarea bind:value={moduleDraft.bodyMarkdown} rows="12" placeholder="Write or generate the lesson content in Markdown."></textarea>
+									<textarea bind:this={bodyMarkdownTextarea} bind:value={moduleDraft.bodyMarkdown} rows="12" placeholder="Write or generate the lesson content in Markdown."></textarea>
 								</label>
 
 								{#if activeModule.module_type === 'assignment'}
 									<label class="field">
 										<span class="field-label">Assignment brief</span>
-										<textarea bind:value={moduleDraft.assignmentPrompt} rows="6" placeholder="Describe the assignment task, deliverables, and grading expectations."></textarea>
+										<textarea bind:this={assignmentTextarea} bind:value={moduleDraft.assignmentPrompt} rows="6" placeholder="Describe the assignment task, deliverables, and grading expectations."></textarea>
 									</label>
 								{/if}
 
@@ -968,6 +1088,7 @@
 					</div>
 				</div>
 			</section>
+			{/if}
 		</div>
 	{/if}
 </div>
@@ -991,7 +1112,6 @@
 	.back-btn,
 	.secondary-btn,
 	.primary-btn,
-	.secondary-link,
 	.upload-btn {
 		display: inline-flex;
 		align-items: center;
@@ -1007,7 +1127,6 @@
 
 	.back-btn,
 	.secondary-btn,
-	.secondary-link,
 	.upload-btn {
 		border: 1px solid var(--theme-glass-border);
 		background: var(--theme-input-bg);
@@ -1041,14 +1160,14 @@
 		font-size: clamp(1.8rem, 3vw, 2.25rem);
 		font-weight: 800;
 	}
-
+/* 
 	.page-subtitle {
 		margin: 0.4rem 0 0;
 		max-width: 780px;
 		font-size: 0.92rem;
 		line-height: 1.6;
 		color: var(--theme-text-secondary);
-	}
+	} */
 
 	.header-actions {
 		display: flex;
@@ -1066,6 +1185,19 @@
 		background: rgba(34, 197, 94, 0.12);
 		border: 1px solid rgba(34, 197, 94, 0.24);
 		color: rgb(134, 239, 172);
+		font-size: 0.78rem;
+		font-weight: 700;
+	}
+
+	.pending-pill {
+		display: inline-flex;
+		align-items: center;
+		gap: 0.4rem;
+		padding: 0.45rem 0.8rem;
+		border-radius: 999px;
+		background: rgba(245, 158, 11, 0.12);
+		border: 1px solid rgba(245, 158, 11, 0.26);
+		color: rgb(253, 224, 71);
 		font-size: 0.78rem;
 		font-weight: 700;
 	}
@@ -1101,10 +1233,34 @@
 		color: var(--theme-text-primary);
 	}
 
+	.editor-tabs {
+		display: inline-flex;
+		gap: 0.4rem;
+		padding: 0.35rem;
+		margin-bottom: 1rem;
+		border-radius: 999px;
+		background: color-mix(in srgb, var(--theme-nav-glass) 88%, transparent);
+		border: 1px solid var(--theme-glass-border);
+	}
+
+	.editor-tabs button {
+		border: none;
+		background: transparent;
+		color: var(--theme-text-secondary);
+		padding: 0.55rem 1rem;
+		border-radius: 999px;
+		font-size: 0.84rem;
+		font-weight: 700;
+		cursor: pointer;
+	}
+
+	.editor-tabs button.active {
+		background: rgba(var(--theme-primary-rgb), 0.14);
+		color: var(--theme-text-primary);
+	}
+
 	.editor-grid {
-		display: grid;
-		grid-template-columns: minmax(320px, 380px) minmax(0, 1fr);
-		gap: 1rem;
+		display: block;
 	}
 
 	.glass-panel {
@@ -1154,6 +1310,12 @@
 		color: rgb(134, 239, 172);
 		border-color: rgba(34, 197, 94, 0.28);
 		background: rgba(34, 197, 94, 0.12);
+	}
+
+	.status-chip.pending {
+		color: rgb(253, 224, 71);
+		border-color: rgba(245, 158, 11, 0.26);
+		background: rgba(245, 158, 11, 0.12);
 	}
 
 	.field,
@@ -1471,7 +1633,6 @@
 
 	@media (max-width: 1180px) {
 		.editor-grid,
-		.module-layout,
 		.question-grid {
 			grid-template-columns: 1fr;
 		}
@@ -1499,7 +1660,6 @@
 		.generation-controls button,
 		.secondary-btn,
 		.primary-btn,
-		.secondary-link,
 		.upload-btn {
 			width: 100%;
 		}

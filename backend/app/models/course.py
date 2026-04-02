@@ -29,6 +29,7 @@ from app.core.types import UUIDString
 
 class CourseStatus(str, enum.Enum):
     DRAFT = "draft"
+    PENDING_APPROVAL = "pending_approval"
     PUBLISHED = "published"
     ARCHIVED = "archived"
 

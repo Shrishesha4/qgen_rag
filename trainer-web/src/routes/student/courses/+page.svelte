@@ -4,6 +4,7 @@
 	import CourseCard from '$lib/components/CourseCard.svelte';
 	import { listCourses, type CourseSummary } from '$lib/api/courses';
 	import { listEnrollments, type EnrollmentResponse } from '$lib/api/enrollments';
+	import { resolveApiAssetUrl } from '$lib/api/client';
 	import { getStoredSession } from '$lib/api/client';
 
 	type EnrollmentWithCourse = EnrollmentResponse & {
@@ -16,7 +17,7 @@
 	let page = $state(1);
 	let pageSize = 12;
 	let search = $state('');
-	let activeTab = $state<'catalog' | 'my-courses'>('catalog');
+	let activeTab = $state<'catalog' | 'my-courses'>('my-courses');
 	let isLoading = $state(true);
 	let isLoadingMyCourses = $state(true);
 	let error = $state<string | null>(null);
@@ -64,6 +65,10 @@
 		}
 
 		return `${Math.round((completedCount / totalModules) * 100)}% complete`;
+	}
+
+	function coverImageUrl(path: string | null | undefined) {
+		return resolveApiAssetUrl(path);
 	}
 
 	async function fetchCourses() {
@@ -126,24 +131,16 @@
 </script>
 
 <div class="catalog-page">
-	<div class="catalog-header">
-		<p class="catalog-eyebrow">Student Courses</p>
-		<h1 class="catalog-title">Browse new courses or continue where you left off</h1>
-		<p class="catalog-subtitle">
-			The catalog shows everything available. My Courses keeps your purchased courses in one place.
-		</p>
-	</div>
-
 	<div class="catalog-toolbar glass-panel">
 		<div class="tab-row">
-			<button class="tab-chip" class:active={activeTab === 'catalog'} onclick={() => (activeTab = 'catalog')}>
-				<Compass class="h-4 w-4" />
-				Catalog
-			</button>
 			<button class="tab-chip" class:active={activeTab === 'my-courses'} onclick={() => (activeTab = 'my-courses')}>
 				<LibraryBig class="h-4 w-4" />
 				My Courses
 				<span class="tab-count">{ownedCourseCount}</span>
+			</button>
+			<button class="tab-chip" class:active={activeTab === 'catalog'} onclick={() => (activeTab = 'catalog')}>
+				<Compass class="h-4 w-4" />
+				Catalog
 			</button>
 		</div>
 
@@ -212,8 +209,8 @@
 			<div class="owned-course-grid">
 				{#each myCourses as enrollment (enrollment.id)}
 					<a href="/student/learn/{enrollment.course.slug}" class="owned-course-card glass-panel">
-						{#if enrollment.course.cover_image_url}
-							<img src={enrollment.course.cover_image_url} alt={enrollment.course.title} class="owned-course-cover" />
+						{#if coverImageUrl(enrollment.course.cover_image_url)}
+							<img src={coverImageUrl(enrollment.course.cover_image_url) ?? ''} alt={enrollment.course.title} class="owned-course-cover" />
 						{:else}
 							<div class="owned-course-cover placeholder-cover">
 								<LibraryBig class="h-8 w-8" />
@@ -250,32 +247,7 @@
 		padding: clamp(1rem, 2vw, 1.5rem) clamp(1.25rem, 3vw, 2.25rem) clamp(2rem, 3vw, 2.75rem);
 		color: var(--theme-text-primary);
 	}
-
-	.catalog-header {
-		margin-bottom: 1.25rem;
-	}
-
-	.catalog-eyebrow {
-		margin: 0 0 0.35rem;
-		font-size: 0.75rem;
-		font-weight: 700;
-		letter-spacing: 0.12em;
-		text-transform: uppercase;
-		color: rgba(var(--theme-primary-rgb), 0.82);
-	}
-
-	.catalog-title {
-		font-size: 1.75rem;
-		font-weight: 800;
-		margin: 0 0 0.35rem;
-	}
-
-	.catalog-subtitle {
-		font-size: 0.92rem;
-		color: var(--theme-text-secondary);
-		margin: 0;
-	}
-
+	
 	.catalog-toolbar {
 		display: flex;
 		align-items: center;

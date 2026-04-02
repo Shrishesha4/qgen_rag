@@ -5,6 +5,7 @@
 	import { apiFetch } from '$lib/api/client';
 	import { logout } from '$lib/api/auth';
 	import { listEnrollments, type EnrollmentResponse } from '$lib/api/enrollments';
+	import { resolveApiAssetUrl } from '$lib/api/client';
 	import { session } from '$lib/session';
 	import {
 		AlertCircle,
@@ -136,6 +137,10 @@
 		return `${completedCount}/${totalModules} modules completed`;
 	}
 
+	function coverImageUrl(path: string | null | undefined) {
+		return resolveApiAssetUrl(path);
+	}
+
 	async function handleLogout() {
 		await logout();
 		session.clear();
@@ -246,9 +251,9 @@
 				<div class="purchase-list">
 					{#each purchaseHistory as enrollment (enrollment.id)}
 						<div class="purchase-item">
-							{#if enrollment.course.cover_image_url}
+							{#if coverImageUrl(enrollment.course.cover_image_url)}
 								<img
-									src={enrollment.course.cover_image_url}
+									src={coverImageUrl(enrollment.course.cover_image_url) ?? ''}
 									alt={enrollment.course.title}
 									class="purchase-cover"
 								/>

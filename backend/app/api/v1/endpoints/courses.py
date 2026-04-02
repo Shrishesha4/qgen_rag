@@ -8,13 +8,15 @@ Endpoints for:
 - Module question attachment (teacher/admin)
 """
 
+import asyncio
+import logging
 import os
 import re
 import uuid
-from typing import Optional, List
+from typing import Optional, List, AsyncGenerator
 
 from fastapi import APIRouter, Depends, HTTPException, status, Query, UploadFile, File
-from fastapi.responses import FileResponse
+from fastapi.responses import FileResponse, StreamingResponse
 from sqlalchemy import select, func, and_, or_
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import selectinload
@@ -23,6 +25,7 @@ from app.core.config import settings
 from app.core.database import get_db
 from app.api.v1.deps import (
     get_current_user,
+    get_current_admin,
     get_current_teacher_or_admin,
 )
 from app.models.user import User
@@ -37,10 +40,21 @@ from app.schemas.course import (
     CourseCreate, CourseUpdate, CourseResponse, CourseSummary, CourseListResponse,
     ModuleCreate, ModuleUpdate, ModuleReorder, ModuleQuestionAdd,
     CourseModuleResponse, ModuleQuestionResponse, ModuleContentGenerateRequest,
+    ModuleContentStreamEvent,
 )
 from app.services.provider_service import get_provider_service
 
 router = APIRouter()
+logger = logging.getLogger(__name__)
+
+_MODULE_GENERATION_STREAM_FIELDS = (
+    "summary",
+    "learning_objectives",
+    "body_markdown",
+    "assignment_prompt",
+    "video_url",
+    "suggested_duration_minutes",
+)
 
 
 def _slugify(text: str) -> str:
@@ -92,6 +106,19 @@ def _assert_course_owner(course: Course, user: User) -> None:
         raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Not your course")
 
 
+def _validate_course_ready_for_review(course: Course) -> None:
+    if not course.title or not course.description:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="Course needs a title and description",
+        )
+    if not course.modules:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="Course needs at least one module",
+        )
+
+
 def _build_module_question_snapshot(question: Question) -> dict:
     options = [str(option) for option in (question.options or [])]
     correct_answer = str(question.correct_answer or "").strip()
@@ -126,6 +153,165 @@ def _build_module_question_snapshot(question: Question) -> dict:
     }
 
 
+async def _sse_with_heartbeat(
+    generator: AsyncGenerator[str, None],
+    interval: float = 15.0,
+) -> AsyncGenerator[str, None]:
+    """Keep SSE connections alive while waiting for the next real event."""
+    gen = generator.__aiter__()
+    next_item: asyncio.Future = asyncio.ensure_future(gen.__anext__())
+
+    while True:
+        done, _ = await asyncio.wait({next_item}, timeout=interval)
+        if next_item in done:
+            try:
+                yield next_item.result()
+                next_item = asyncio.ensure_future(gen.__anext__())
+            except StopAsyncIteration:
+                break
+        else:
+            yield ": heartbeat\n\n"
+
+
+async def _prepare_module_generation_context(
+    course_id: str,
+    module_id: str,
+    data: ModuleContentGenerateRequest,
+    db: AsyncSession,
+    current_user: User,
+):
+    course = await _get_course_or_404(db, course_id)
+    _assert_course_owner(course, current_user)
+
+    result = await db.execute(
+        select(CourseModule).where(
+            CourseModule.id == module_id,
+            CourseModule.course_id == course_id,
+        )
+    )
+    module = result.scalar_one_or_none()
+    if not module:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Module not found")
+
+    if not course.subject_id:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="Assign a subject to this course before generating module content",
+        )
+
+    content_data = dict(module.content_data or {})
+    topic_id = data.topic_id or content_data.get("topic_id")
+    if not topic_id:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="Select a topic before generating module content",
+        )
+
+    topic_result = await db.execute(
+        select(Topic).where(
+            Topic.id == topic_id,
+            Topic.subject_id == course.subject_id,
+        )
+    )
+    topic = topic_result.scalar_one_or_none()
+    if not topic:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Topic not found for this course subject")
+
+    subject_result = await db.execute(select(Subject).where(Subject.id == course.subject_id))
+    subject = subject_result.scalar_one_or_none()
+    if not subject:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Subject not found")
+
+    provider_service = get_provider_service()
+    enabled_providers = await provider_service.get_enabled_providers()
+    if not enabled_providers:
+        raise HTTPException(
+            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+            detail="No enabled API providers are configured in Admin Settings.",
+        )
+
+    llm_service, metadata = provider_service.create_llm_service(enabled_providers[0])
+    return course, module, topic, subject, llm_service, metadata
+
+
+def _build_module_generation_source_parts(
+    course: Course,
+    module: CourseModule,
+    subject: Subject,
+    topic: Topic,
+    focus: Optional[str],
+) -> list[str]:
+    source_parts = [
+        f"Course: {course.title}",
+        f"Subject: {subject.name} ({subject.code})",
+        f"Topic: {topic.name}",
+        f"Module title: {module.title}",
+        f"Module type: {module.module_type}",
+    ]
+    if topic.description:
+        source_parts.append(f"Topic description:\n{topic.description}")
+    if topic.syllabus_content:
+        source_parts.append(f"Topic syllabus:\n{topic.syllabus_content[:6000]}")
+    if module.description:
+        source_parts.append(f"Existing module brief:\n{module.description}")
+    if focus:
+        source_parts.append(f"Teacher focus:\n{focus}")
+    return source_parts
+
+
+def _apply_generated_module_content(module: CourseModule, topic: Topic, generated: dict) -> None:
+    content_data = dict(module.content_data or {})
+    learning_objectives = generated.get("learning_objectives") or []
+    if not isinstance(learning_objectives, list):
+        learning_objectives = [str(learning_objectives)]
+
+    content_data.update(
+        {
+            "topic_id": topic.id,
+            "topic_name": topic.name,
+            "summary": str(generated.get("summary") or "").strip(),
+            "learning_objectives": [str(item).strip() for item in learning_objectives if str(item).strip()],
+            "body_markdown": str(generated.get("body_markdown") or "").strip(),
+            "markdown": str(generated.get("body_markdown") or "").strip(),
+            "assignment_prompt": str(generated.get("assignment_prompt") or "").strip(),
+            "video_url": str(generated.get("video_url") or "").strip(),
+        }
+    )
+    module.content_data = content_data
+
+    if not module.description and content_data.get("summary"):
+        module.description = str(content_data["summary"])[:500]
+
+    suggested_duration = generated.get("suggested_duration_minutes")
+    if isinstance(suggested_duration, str):
+        match = re.search(r"\d+", suggested_duration)
+        suggested_duration = int(match.group(0)) if match else None
+    if isinstance(suggested_duration, int) and suggested_duration >= 0:
+        module.duration_minutes = suggested_duration
+
+
+def _parse_streamed_module_content(field_values: dict[str, str]) -> dict:
+    objective_lines = [
+        line.strip().lstrip("-*• ").strip()
+        for line in field_values.get("learning_objectives", "").splitlines()
+        if line.strip()
+    ]
+
+    duration_value: Optional[int] = None
+    duration_match = re.search(r"\d+", field_values.get("suggested_duration_minutes", ""))
+    if duration_match:
+        duration_value = int(duration_match.group(0))
+
+    return {
+        "summary": field_values.get("summary", "").strip(),
+        "learning_objectives": objective_lines,
+        "body_markdown": field_values.get("body_markdown", "").strip(),
+        "assignment_prompt": field_values.get("assignment_prompt", "").strip(),
+        "video_url": field_values.get("video_url", "").strip(),
+        "suggested_duration_minutes": duration_value,
+    }
+
+
 # ==================== Course CRUD ====================
 
 
@@ -152,8 +338,7 @@ async def create_course(
     )
     db.add(course)
     await db.commit()
-    await db.refresh(course, attribute_names=["modules"])
-    return course
+    return await _get_course_or_404(db, course.id, load_modules=True)
 
 
 @router.get("", response_model=CourseListResponse)
@@ -289,6 +474,60 @@ async def list_my_courses(
     return CourseListResponse(items=items, total=total, page=page, page_size=page_size)
 
 
+@router.get("/admin/review-queue", response_model=CourseListResponse)
+async def list_admin_courses(
+    status_filter: Optional[str] = Query(CourseStatus.PENDING_APPROVAL.value, alias="status"),
+    page: int = Query(1, ge=1),
+    page_size: int = Query(20, ge=1, le=100),
+    db: AsyncSession = Depends(get_db),
+    current_user: User = Depends(get_current_admin),
+):
+    """Admin: list courses awaiting review or inspect all course statuses."""
+    filters = []
+    if status_filter:
+        filters.append(Course.status == status_filter)
+
+    where = and_(*filters) if filters else None
+    count_q = select(func.count()).select_from(Course)
+    if where is not None:
+        count_q = count_q.where(where)
+    total = (await db.execute(count_q)).scalar() or 0
+
+    offset = (page - 1) * page_size
+    query = (
+        select(Course)
+        .order_by(Course.updated_at.desc(), Course.created_at.desc())
+        .offset(offset)
+        .limit(page_size)
+        .options(selectinload(Course.modules), selectinload(Course.enrollments))
+    )
+    if where is not None:
+        query = query.where(where)
+
+    rows = (await db.execute(query)).scalars().all()
+
+    items = [
+        CourseSummary(
+            id=c.id,
+            teacher_id=c.teacher_id,
+            title=c.title,
+            slug=c.slug,
+            description=c.description,
+            cover_image_url=c.cover_image_url,
+            price_cents=c.price_cents,
+            currency=c.currency,
+            status=c.status,
+            is_featured=c.is_featured,
+            module_count=len(c.modules),
+            enrolled_count=len(c.enrollments),
+            created_at=c.created_at,
+        )
+        for c in rows
+    ]
+
+    return CourseListResponse(items=items, total=total, page=page, page_size=page_size)
+
+
 @router.get("/{slug}", response_model=CourseResponse)
 async def get_course_by_slug(
     slug: str,
@@ -345,8 +584,7 @@ async def update_course(
         setattr(course, field, value)
 
     await db.commit()
-    await db.refresh(course, attribute_names=["modules"])
-    return course
+    return await _get_course_or_404(db, course.id, load_modules=True)
 
 
 @router.post("/{course_id}/thumbnail", response_model=CourseResponse)
@@ -397,35 +635,69 @@ async def upload_course_thumbnail(
 
     course.cover_image_url = f"{local_prefix}{filename}"
     await db.commit()
-    await db.refresh(course, attribute_names=["modules"])
-    return course
+    return await _get_course_or_404(db, course.id, load_modules=True)
 
 
 @router.post("/{course_id}/publish", response_model=CourseResponse)
-async def publish_course(
+async def request_course_approval(
     course_id: str,
     db: AsyncSession = Depends(get_db),
     current_user: User = Depends(get_current_teacher_or_admin),
 ):
-    """Transition course from draft to published (validates completeness)."""
+    """Submit a course for admin approval before it can be published."""
     course = await _get_course_or_404(db, course_id, load_modules=True)
     _assert_course_owner(course, current_user)
 
     if course.status == CourseStatus.PUBLISHED.value:
-        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Course already published")
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Course is already published")
+    if course.status == CourseStatus.PENDING_APPROVAL.value:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Course is already awaiting admin approval")
     if course.status == CourseStatus.ARCHIVED.value:
-        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Cannot publish an archived course")
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Cannot request approval for an archived course")
 
-    # Basic completeness check
-    if not course.title or not course.description:
-        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Course needs a title and description")
-    if not course.modules:
-        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Course needs at least one module")
+    _validate_course_ready_for_review(course)
+
+    course.status = CourseStatus.PENDING_APPROVAL.value
+    await db.commit()
+    return await _get_course_or_404(db, course.id, load_modules=True)
+
+
+@router.post("/admin/{course_id}/approve", response_model=CourseResponse)
+async def approve_course(
+    course_id: str,
+    db: AsyncSession = Depends(get_db),
+    current_user: User = Depends(get_current_admin),
+):
+    """Admin: approve a submitted course and make it purchasable."""
+    course = await _get_course_or_404(db, course_id, load_modules=True)
+
+    if course.status == CourseStatus.PUBLISHED.value:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Course is already published")
+    if course.status == CourseStatus.ARCHIVED.value:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Cannot approve an archived course")
+
+    _validate_course_ready_for_review(course)
 
     course.status = CourseStatus.PUBLISHED.value
     await db.commit()
-    await db.refresh(course, attribute_names=["modules"])
-    return course
+    return await _get_course_or_404(db, course.id, load_modules=True)
+
+
+@router.post("/admin/{course_id}/reject", response_model=CourseResponse)
+async def reject_course(
+    course_id: str,
+    db: AsyncSession = Depends(get_db),
+    current_user: User = Depends(get_current_admin),
+):
+    """Admin: send a course back to draft for teacher revisions."""
+    course = await _get_course_or_404(db, course_id, load_modules=True)
+
+    if course.status == CourseStatus.ARCHIVED.value:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Cannot review an archived course")
+
+    course.status = CourseStatus.DRAFT.value
+    await db.commit()
+    return await _get_course_or_404(db, course.id, load_modules=True)
 
 
 @router.delete("/{course_id}", status_code=status.HTTP_204_NO_CONTENT)
@@ -483,72 +755,12 @@ async def generate_module_content(
     current_user: User = Depends(get_current_teacher_or_admin),
 ):
     """Generate a lesson or assignment draft for a module using the linked subject topic."""
-    course = await _get_course_or_404(db, course_id)
-    _assert_course_owner(course, current_user)
-
-    result = await db.execute(
-        select(CourseModule).where(
-            CourseModule.id == module_id,
-            CourseModule.course_id == course_id,
-        )
+    course, module, topic, subject, llm_service, _ = await _prepare_module_generation_context(
+        course_id, module_id, data, db, current_user
     )
-    module = result.scalar_one_or_none()
-    if not module:
-        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Module not found")
-
-    if not course.subject_id:
-        raise HTTPException(
-            status_code=status.HTTP_400_BAD_REQUEST,
-            detail="Assign a subject to this course before generating module content",
-        )
-
-    content_data = dict(module.content_data or {})
-    topic_id = data.topic_id or content_data.get("topic_id")
-    if not topic_id:
-        raise HTTPException(
-            status_code=status.HTTP_400_BAD_REQUEST,
-            detail="Select a topic before generating module content",
-        )
-
-    topic_result = await db.execute(
-        select(Topic).where(
-            Topic.id == topic_id,
-            Topic.subject_id == course.subject_id,
-        )
+    source_parts = _build_module_generation_source_parts(
+        course, module, subject, topic, data.focus
     )
-    topic = topic_result.scalar_one_or_none()
-    if not topic:
-        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Topic not found for this course subject")
-
-    subject_result = await db.execute(select(Subject).where(Subject.id == course.subject_id))
-    subject = subject_result.scalar_one_or_none()
-    if not subject:
-        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Subject not found")
-
-    provider_service = get_provider_service()
-    enabled_providers = await provider_service.get_enabled_providers()
-    if not enabled_providers:
-        raise HTTPException(
-            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
-            detail="No enabled API providers are configured in Admin Settings.",
-        )
-
-    llm_service, _ = provider_service.create_llm_service(enabled_providers[0])
-    source_parts = [
-        f"Course: {course.title}",
-        f"Subject: {subject.name} ({subject.code})",
-        f"Topic: {topic.name}",
-        f"Module title: {module.title}",
-        f"Module type: {module.module_type}",
-    ]
-    if topic.description:
-        source_parts.append(f"Topic description:\n{topic.description}")
-    if topic.syllabus_content:
-        source_parts.append(f"Topic syllabus:\n{topic.syllabus_content[:6000]}")
-    if module.description:
-        source_parts.append(f"Existing module brief:\n{module.description}")
-    if data.focus:
-        source_parts.append(f"Teacher focus:\n{data.focus}")
 
     system_prompt = (
         "You are an expert instructional designer helping a teacher build course modules. "
@@ -576,34 +788,177 @@ async def generate_module_content(
             detail="Provider returned invalid content payload",
         )
 
-    learning_objectives = generated.get("learning_objectives") or []
-    if not isinstance(learning_objectives, list):
-        learning_objectives = [str(learning_objectives)]
-
-    content_data.update(
-        {
-            "topic_id": topic.id,
-            "topic_name": topic.name,
-            "summary": str(generated.get("summary") or "").strip(),
-            "learning_objectives": [str(item).strip() for item in learning_objectives if str(item).strip()],
-            "body_markdown": str(generated.get("body_markdown") or "").strip(),
-            "markdown": str(generated.get("body_markdown") or "").strip(),
-            "assignment_prompt": str(generated.get("assignment_prompt") or "").strip(),
-            "video_url": str(generated.get("video_url") or "").strip(),
-        }
-    )
-    module.content_data = content_data
-
-    if not module.description and content_data.get("summary"):
-        module.description = str(content_data["summary"])[:500]
-
-    suggested_duration = generated.get("suggested_duration_minutes")
-    if isinstance(suggested_duration, int) and suggested_duration >= 0:
-        module.duration_minutes = suggested_duration
+    _apply_generated_module_content(module, topic, generated)
 
     await db.commit()
     await db.refresh(module)
     return module
+
+
+@router.post("/{course_id}/modules/{module_id}/generate-content/stream")
+async def stream_generate_module_content(
+    course_id: str,
+    module_id: str,
+    data: ModuleContentGenerateRequest,
+    db: AsyncSession = Depends(get_db),
+    current_user: User = Depends(get_current_teacher_or_admin),
+):
+    """Stream draft generation into structured module fields as content is produced."""
+    course, module, topic, subject, llm_service, metadata = await _prepare_module_generation_context(
+        course_id, module_id, data, db, current_user
+    )
+    provider_service = get_provider_service()
+    enabled_providers = await provider_service.get_enabled_providers()
+    provider = enabled_providers[0]
+    source_parts = _build_module_generation_source_parts(course, module, subject, topic, data.focus)
+
+    system_prompt = (
+        "You are an expert instructional designer helping a teacher build course modules. "
+        "You must stream the draft using EXACT field tags and nothing else. "
+        "Output the following sections in this exact order and keep all content inside the tags only:\n"
+        "[[FIELD:summary]]...[[/FIELD]]\n"
+        "[[FIELD:learning_objectives]]...[[/FIELD]]\n"
+        "[[FIELD:body_markdown]]...[[/FIELD]]\n"
+        "[[FIELD:assignment_prompt]]...[[/FIELD]]\n"
+        "[[FIELD:video_url]]...[[/FIELD]]\n"
+        "[[FIELD:suggested_duration_minutes]]...[[/FIELD]]\n"
+        "For learning_objectives, write one objective per line with no bullets. "
+        "For video_url, emit a plain URL or leave the section empty. "
+        "For suggested_duration_minutes, emit digits only. "
+        "Start immediately with [[FIELD:summary]] and do not add prose before, between, or after sections."
+    )
+    prompt = (
+        "Create a teaching draft for this module based on the source material below. "
+        "Use the topic syllabus when available, keep the lesson structured, and avoid inventing facts not supported by the source. "
+        "The body_markdown section should be detailed and classroom-ready. "
+        "If the module type is assignment, make assignment_prompt specific and actionable; otherwise leave assignment_prompt empty.\n\n"
+        + "\n\n".join(source_parts)
+    )
+
+    async def event_generator() -> AsyncGenerator[str, None]:
+        open_tag_prefix = "[[FIELD:"
+        close_tag = "[[/FIELD]]"
+        buffer = ""
+        current_field: Optional[str] = None
+        field_values = {field: "" for field in _MODULE_GENERATION_STREAM_FIELDS}
+
+        def emit(event: ModuleContentStreamEvent) -> str:
+            return "data: " + event.model_dump_json() + "\n\n"
+
+        def flush_delta(field: str, chunk: str) -> Optional[str]:
+            if not chunk:
+                return None
+            field_values[field] += chunk
+            return emit(ModuleContentStreamEvent(type="field_delta", field=field, delta=chunk))
+
+        try:
+            yield emit(
+                ModuleContentStreamEvent(
+                    type="meta",
+                    provider_key=provider.key,
+                    provider_name=provider.name,
+                    provider_model=str(metadata.get("llm_model") or provider.model or ""),
+                )
+            )
+
+            async for chunk in llm_service.generate_stream(
+                prompt=prompt,
+                system_prompt=system_prompt,
+                temperature=0.4,
+                max_tokens=2600,
+            ):
+                if not chunk:
+                    continue
+                buffer += chunk
+
+                while True:
+                    if current_field is None:
+                        start_index = buffer.find(open_tag_prefix)
+                        if start_index == -1:
+                            if len(buffer) > len(open_tag_prefix):
+                                buffer = buffer[-len(open_tag_prefix):]
+                            break
+
+                        end_index = buffer.find("]]", start_index)
+                        if end_index == -1:
+                            if start_index > 0:
+                                buffer = buffer[start_index:]
+                            break
+
+                        field_name = buffer[start_index + len(open_tag_prefix):end_index].strip()
+                        buffer = buffer[end_index + 2:]
+                        if field_name not in _MODULE_GENERATION_STREAM_FIELDS:
+                            continue
+                        current_field = field_name
+                        yield emit(ModuleContentStreamEvent(type="field_start", field=current_field))
+                        continue
+
+                    close_index = buffer.find(close_tag)
+                    if close_index == -1:
+                        safe_flush_upto = len(buffer) - len(close_tag)
+                        if safe_flush_upto > 0:
+                            delta = buffer[:safe_flush_upto]
+                            buffer = buffer[safe_flush_upto:]
+                            payload = flush_delta(current_field, delta)
+                            if payload:
+                                yield payload
+                        break
+
+                    delta = buffer[:close_index]
+                    buffer = buffer[close_index + len(close_tag):]
+                    payload = flush_delta(current_field, delta)
+                    if payload:
+                        yield payload
+                    yield emit(ModuleContentStreamEvent(type="field_complete", field=current_field))
+                    current_field = None
+
+            if current_field and buffer:
+                payload = flush_delta(current_field, buffer)
+                if payload:
+                    yield payload
+                yield emit(ModuleContentStreamEvent(type="field_complete", field=current_field))
+
+            generated = _parse_streamed_module_content(field_values)
+            _apply_generated_module_content(module, topic, generated)
+            await db.commit()
+            refreshed_result = await db.execute(
+                select(CourseModule).where(CourseModule.id == module_id)
+            )
+            refreshed_module = refreshed_result.scalar_one_or_none()
+            if not refreshed_module:
+                raise HTTPException(
+                    status_code=status.HTTP_404_NOT_FOUND,
+                    detail="Module not found after generation",
+                )
+
+            yield emit(
+                ModuleContentStreamEvent(
+                    type="complete",
+                    message="Draft content generated.",
+                    module=CourseModuleResponse.model_validate(refreshed_module),
+                    provider_key=provider.key,
+                    provider_name=provider.name,
+                    provider_model=str(metadata.get("llm_model") or provider.model or ""),
+                )
+            )
+        except Exception as exc:
+            logger.exception("Module draft streaming failed for course=%s module=%s", course_id, module_id)
+            yield emit(
+                ModuleContentStreamEvent(
+                    type="error",
+                    message=str(exc).strip() or "Failed to stream module content.",
+                )
+            )
+
+    return StreamingResponse(
+        _sse_with_heartbeat(event_generator()),
+        media_type="text/event-stream",
+        headers={
+            "Cache-Control": "no-cache",
+            "Connection": "keep-alive",
+            "X-Accel-Buffering": "no",
+        },
+    )
 
 
 @router.patch("/{course_id}/modules/{module_id}", response_model=CourseModuleResponse)

@@ -1,8 +1,10 @@
 <script lang="ts">
 	import { BookOpen, Users } from 'lucide-svelte';
 	import type { CourseSummary } from '$lib/api/courses';
+	import { resolveApiAssetUrl } from '$lib/api/client';
 
 	let { course }: { course: CourseSummary } = $props();
+	const coverImageUrl = $derived(resolveApiAssetUrl(course.cover_image_url));
 
 	const priceLabel = $derived(
 		course.price_cents === 0
@@ -12,9 +14,9 @@
 </script>
 
 <a href="/student/courses/{course.slug}" class="course-card" class:featured={course.is_featured}>
-	{#if course.cover_image_url}
+	{#if coverImageUrl}
 		<div class="card-cover">
-			<img src={course.cover_image_url} alt={course.title} />
+			<img src={coverImageUrl} alt={course.title} />
 		</div>
 	{:else}
 		<div class="card-cover placeholder-cover">

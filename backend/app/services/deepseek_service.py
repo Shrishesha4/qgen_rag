@@ -106,6 +106,63 @@ class DeepSeekService:
             self._total_calls += 1
             logger.debug(f"DeepSeek usage: +{total} tokens (cumulative: {self._total_tokens_used})")
 
+    def _get_first_choice(self, result: dict) -> dict:
+        """Safely return the first choice from an OpenAI-compatible response."""
+        choices = result.get("choices")
+        if isinstance(choices, list) and choices:
+            first_choice = choices[0]
+            if isinstance(first_choice, dict):
+                return first_choice
+        return {}
+
+    def _extract_text_content(self, value: Any) -> str:
+        """Normalize provider content payloads into plain text."""
+        if isinstance(value, str):
+            return value
+        if isinstance(value, list):
+            text_parts: list[str] = []
+            for item in value:
+                if isinstance(item, str):
+                    text_parts.append(item)
+                    continue
+                if not isinstance(item, dict):
+                    continue
+                text = item.get("text")
+                if isinstance(text, str):
+                    text_parts.append(text)
+                    continue
+                nested_text = item.get("content")
+                if isinstance(nested_text, str):
+                    text_parts.append(nested_text)
+            return "".join(text_parts)
+        return ""
+
+    def _extract_message_content(self, result: dict) -> str:
+        """Extract content from the first non-streaming message choice."""
+        message = self._get_first_choice(result).get("message", {})
+        if not isinstance(message, dict):
+            return ""
+        return self._extract_text_content(message.get("content", ""))
+
+    def _extract_delta_content(self, result: dict) -> str:
+        """Extract content from the first streaming delta choice."""
+        delta = self._get_first_choice(result).get("delta", {})
+        if not isinstance(delta, dict):
+            return ""
+        return self._extract_text_content(delta.get("content", ""))
+
+    def _extract_error_message(self, result: dict) -> Optional[str]:
+        """Extract a provider error message when present."""
+        error = result.get("error")
+        if isinstance(error, str) and error.strip():
+            return error.strip()
+        if isinstance(error, dict):
+            for key in ("message", "detail", "code", "type"):
+                value = error.get(key)
+                if isinstance(value, str) and value.strip():
+                    return value.strip()
+        return None
+
     def _headers(self) -> Dict[str, str]:
         return {
             "Authorization": f"Bearer {self.api_key}",
@@ -167,13 +224,12 @@ class DeepSeekService:
 
                 self._track_usage(result)
 
-                content = (
-                    result.get("choices", [{}])[0]
-                    .get("message", {})
-                    .get("content", "")
-                )
+                content = self._extract_message_content(result)
+                provider_error = self._extract_error_message(result)
 
                 if not content:
+                    if provider_error:
+                        raise DeepSeekResponseError(provider_error)
                     logger.warning(
                         f"DeepSeek returned empty content. Full response: {result}"
                     )
@@ -316,11 +372,10 @@ class DeepSeekService:
                             break
                         try:
                             data = json.loads(data_str)
-                            delta = (
-                                data.get("choices", [{}])[0]
-                                .get("delta", {})
-                                .get("content", "")
-                            )
+                            delta = self._extract_delta_content(data)
+                            provider_error = self._extract_error_message(data)
+                            if provider_error:
+                                raise DeepSeekResponseError(provider_error)
                             if delta:
                                 yield delta
                         except json.JSONDecodeError:
@@ -392,13 +447,12 @@ class DeepSeekService:
 
                     self._track_usage(result)
 
-                    content = (
-                        result.get("choices", [{}])[0]
-                        .get("message", {})
-                        .get("content", "")
-                    )
+                    content = self._extract_message_content(result)
+                    provider_error = self._extract_error_message(result)
 
                     if not content:
+                        if provider_error:
+                            raise DeepSeekResponseError(provider_error)
                         raise DeepSeekResponseError("Empty response from DeepSeek")
 
                     # Log raw response for debugging

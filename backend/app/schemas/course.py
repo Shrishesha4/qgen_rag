@@ -3,7 +3,7 @@ Pydantic schemas for the course marketplace.
 """
 
 from datetime import datetime
-from typing import Optional, List
+from typing import Optional, List, Literal
 from pydantic import BaseModel, Field
 
 
@@ -118,6 +118,26 @@ class ModuleUpdate(BaseModel):
 class ModuleContentGenerateRequest(BaseModel):
     topic_id: Optional[str] = None
     focus: Optional[str] = None
+
+
+class ModuleContentStreamEvent(BaseModel):
+    """SSE event payload for streamed module draft generation."""
+
+    type: Literal["meta", "field_start", "field_delta", "field_complete", "complete", "error"]
+    field: Optional[Literal[
+        "summary",
+        "learning_objectives",
+        "body_markdown",
+        "assignment_prompt",
+        "video_url",
+        "suggested_duration_minutes",
+    ]] = None
+    delta: Optional[str] = None
+    message: Optional[str] = None
+    module: Optional[CourseModuleResponse] = None
+    provider_key: Optional[str] = None
+    provider_name: Optional[str] = None
+    provider_model: Optional[str] = None
 
 
 class ModuleReorder(BaseModel):

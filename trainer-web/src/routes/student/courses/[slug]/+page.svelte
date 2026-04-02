@@ -6,7 +6,7 @@
 	import PaymentAnimation from '$lib/components/PaymentAnimation.svelte';
 	import { getCourseBySlug, type CourseResponse } from '$lib/api/courses';
 	import { enrollInCourse, listEnrollments, type EnrollmentResponse } from '$lib/api/enrollments';
-	import { getStoredSession } from '$lib/api/client';
+	import { getStoredSession, resolveApiAssetUrl } from '$lib/api/client';
 
 	let course = $state<CourseResponse | null>(null);
 	let isLoading = $state(true);
@@ -18,6 +18,7 @@
 
 	const slug = $derived($page.params.slug ?? '');
 	const session = $derived(getStoredSession());
+	const coverImageUrl = $derived(resolveApiAssetUrl(course?.cover_image_url));
 	const isLoggedIn = $derived(!!session?.access_token);
 	const isEnrolled = $derived(!!existingEnrollment);
 	const priceLabel = $derived(
@@ -114,8 +115,8 @@
 		<div class="error-state">{error}</div>
 	{:else if course}
 		<header class="course-hero">
-			{#if course.cover_image_url}
-				<img src={course.cover_image_url} alt={course.title} class="hero-cover" />
+			{#if coverImageUrl}
+				<img src={coverImageUrl} alt={course.title} class="hero-cover" />
 			{/if}
 			<div class="hero-content">
 				<h1 class="hero-title">{course.title}</h1>
