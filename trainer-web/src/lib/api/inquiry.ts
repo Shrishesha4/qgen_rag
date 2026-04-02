@@ -33,7 +33,7 @@ async function parseStreamError(res: Response): Promise<Error> {
 }
 
 export async function* streamConversationalInquiry(opts: {
-	subjectId: string;
+	subjectId?: string | null;
 	topicId?: string | null;
 	level: InquiryLevel;
 	mode: 'question' | 'answer_feedback' | 'reasoning_feedback';
@@ -50,7 +50,7 @@ export async function* streamConversationalInquiry(opts: {
 			...(session?.access_token ? { Authorization: `Bearer ${session.access_token}` } : {}),
 		},
 		body: JSON.stringify({
-			subject_id: opts.subjectId,
+			subject_id: opts.subjectId ?? null,
 			topic_id: opts.topicId ?? null,
 			level: opts.level,
 			mode: opts.mode,

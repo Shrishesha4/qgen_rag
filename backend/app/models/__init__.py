@@ -39,6 +39,20 @@ from app.models.gel import (
 from app.models.topic_audit import TopicAuditLog
 from app.models.provider_usage import ProviderUsageLog
 from app.models.inquiry_session import InquirySession
+from app.models.course import (
+    Course,
+    CourseModule,
+    ModuleQuestion,
+    Enrollment,
+    Payment,
+    PersonalizedItem,
+    CourseStatus,
+    ModuleType,
+    EnrollmentStatus,
+    PaymentStatus,
+    PersonalizedItemType,
+    PersonalizedItemStatus,
+)
 
 __all__ = [
     "User",
@@ -79,4 +93,17 @@ __all__ = [
     "AttemptStatus",
     "IssueSeverity",
     "IssueCategory",
+    # Course marketplace
+    "Course",
+    "CourseModule",
+    "ModuleQuestion",
+    "Enrollment",
+    "Payment",
+    "PersonalizedItem",
+    "CourseStatus",
+    "ModuleType",
+    "EnrollmentStatus",
+    "PaymentStatus",
+    "PersonalizedItemType",
+    "PersonalizedItemStatus",
 ]

@@ -4,12 +4,15 @@
 	import { onMount } from 'svelte';
 	import { apiFetch } from '$lib/api/client';
 	import { logout } from '$lib/api/auth';
+	import { listEnrollments, type EnrollmentResponse } from '$lib/api/enrollments';
 	import { session } from '$lib/session';
 	import {
 		AlertCircle,
+		ArrowRight,
 		User2,
 		Mail,
 		Globe,
+		BookOpen,
 		CalendarDays,
 		ShieldCheck,
 		BookmarkCheck,
@@ -18,8 +21,13 @@
 		Activity,
 		CheckCircle,
 		MapPin,
+		ShoppingBag,
 		Users
 	} from 'lucide-svelte';
+
+	type EnrollmentWithCourse = EnrollmentResponse & {
+		course: NonNullable<EnrollmentResponse['course']>;
+	};
 
 	type UserResponse = {
 		id: string;
@@ -51,9 +59,14 @@
 		streak_days: number;
 	};
 
-	let data: StudentProfileResponse | null = null;
-	let isLoading = true;
-	let error: string | null = null;
+	let data = $state<StudentProfileResponse | null>(null);
+	let purchaseHistory = $state<EnrollmentWithCourse[]>([]);
+	let isLoading = $state(true);
+	let error = $state<string | null>(null);
+
+	const totalSpentCents = $derived(
+		purchaseHistory.reduce((total, enrollment) => total + enrollment.course.price_cents, 0),
+	);
 
 	onMount(async () => {
 		await loadProfile();
@@ -64,6 +77,15 @@
 		error = null;
 		try {
 			data = await apiFetch<StudentProfileResponse>('/gel/student/profile');
+
+			try {
+				const enrollmentResponse = await listEnrollments();
+				purchaseHistory = enrollmentResponse.items
+					.filter((item): item is EnrollmentWithCourse => !!item.course)
+					.sort((left, right) => Date.parse(right.enrolled_at) - Date.parse(left.enrolled_at));
+			} catch {
+				purchaseHistory = [];
+			}
 		} catch (e: unknown) {
 			error = e instanceof Error ? e.message : 'Failed to load profile';
 		} finally {
@@ -85,6 +107,33 @@
 	function formatScore(value: number | null): string {
 		if (value === null || Number.isNaN(value)) return '—';
 		return `${value.toFixed(0)}%`;
+	}
+
+	function formatCurrency(cents: number, currency: string): string {
+		if (cents === 0) return 'Free';
+
+		try {
+			return new Intl.NumberFormat(undefined, {
+				style: 'currency',
+				currency,
+				maximumFractionDigits: 0,
+			}).format(cents / 100);
+		} catch {
+			return `${(cents / 100).toFixed(0)} ${currency}`;
+		}
+	}
+
+	function formatModuleProgress(enrollment: EnrollmentWithCourse): string {
+		const completedCount = enrollment.progress_data?.completed_module_ids?.length ?? 0;
+		const totalModules = enrollment.course.modules.length;
+
+		if (totalModules === 0) return 'Ready to start';
+
+		if (enrollment.completed_at) {
+			return `Completed ${totalModules}/${totalModules} modules`;
+		}
+
+		return `${completedCount}/${totalModules} modules completed`;
 	}
 
 	async function handleLogout() {
@@ -120,7 +169,7 @@
 					<Sparkles class="h-4 w-4" />
 					Settings
 				</a>
-				<button class="logout-btn" on:click={handleLogout}>Sign out</button>
+				<button class="logout-btn" onclick={handleLogout}>Sign out</button>
 			</div>
 		</div>
 	</section>
@@ -136,7 +185,7 @@
 				<AlertCircle class="h-5 w-5" />
 				<span>{error}</span>
 			</div>
-			<button class="pill ghost" on:click={loadProfile}>Try again</button>
+			<button class="pill ghost" onclick={loadProfile}>Try again</button>
 		</div>
 	{:else if data}
 		<div class="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-4 gap-4">
@@ -169,6 +218,64 @@
 				</div>
 			</div>
 		</div>
+
+		<section class="glass-panel detail-card purchase-card">
+			<header class="section-head purchase-head">
+				<div>
+					<p class="text-white font-semibold">Purchase History</p>
+					<p class="muted">Every course you have unlocked, with quick links back into learning.</p>
+				</div>
+				<div class="purchase-summary-row">
+					<span class="purchase-summary-chip">
+						<ShoppingBag class="h-4 w-4" />
+						{purchaseHistory.length} purchases
+					</span>
+					<span class="purchase-summary-chip">
+						<BookOpen class="h-4 w-4" />
+						{formatCurrency(totalSpentCents, purchaseHistory[0]?.course.currency ?? 'INR')} total
+					</span>
+				</div>
+			</header>
+
+			{#if purchaseHistory.length === 0}
+				<div class="purchase-empty">
+					<p class="detail-value">No course purchases yet.</p>
+					<p class="muted">When you enroll in a course, it will show up here.</p>
+				</div>
+			{:else}
+				<div class="purchase-list">
+					{#each purchaseHistory as enrollment (enrollment.id)}
+						<div class="purchase-item">
+							{#if enrollment.course.cover_image_url}
+								<img
+									src={enrollment.course.cover_image_url}
+									alt={enrollment.course.title}
+									class="purchase-cover"
+								/>
+							{:else}
+								<div class="purchase-cover purchase-cover-placeholder">
+									<BookOpen class="h-5 w-5" />
+								</div>
+							{/if}
+
+							<div class="purchase-copy">
+								<p class="purchase-title">{enrollment.course.title}</p>
+								<p class="purchase-meta">
+									Purchased {formatDate(enrollment.enrolled_at)}
+									• {formatCurrency(enrollment.course.price_cents, enrollment.course.currency)}
+								</p>
+								<p class="purchase-status">{formatModuleProgress(enrollment)}</p>
+							</div>
+
+							<a href="/student/learn/{enrollment.course.slug}" class="pill ghost purchase-link">
+								Continue
+								<ArrowRight class="h-4 w-4" />
+							</a>
+						</div>
+					{/each}
+				</div>
+			{/if}
+		</section>
 
 		<div class="grid grid-cols-1 lg:grid-cols-3 gap-4">
 			<section class="glass-panel detail-card lg:col-span-2">
@@ -499,6 +606,103 @@
 		gap: 10px;
 	}
 
+	.purchase-card {
+		display: flex;
+		flex-direction: column;
+		gap: 1rem;
+	}
+
+	.purchase-head {
+		align-items: flex-start;
+	}
+
+	.purchase-summary-row {
+		display: flex;
+		flex-wrap: wrap;
+		gap: 0.65rem;
+	}
+
+	.purchase-summary-chip {
+		display: inline-flex;
+		align-items: center;
+		gap: 0.45rem;
+		padding: 0.45rem 0.7rem;
+		border-radius: 999px;
+		border: 1px solid rgba(255, 255, 255, 0.12);
+		background: rgba(255, 255, 255, 0.04);
+		color: rgba(255, 255, 255, 0.86);
+		font-size: 0.82rem;
+		font-weight: 600;
+	}
+
+	.purchase-empty {
+		display: flex;
+		flex-direction: column;
+		gap: 0.35rem;
+		padding: 1rem 0;
+	}
+
+	.purchase-list {
+		display: flex;
+		flex-direction: column;
+		gap: 0.85rem;
+	}
+
+	.purchase-item {
+		display: flex;
+		align-items: center;
+		gap: 0.9rem;
+		padding: 0.9rem 1rem;
+		border-radius: 16px;
+		border: 1px solid rgba(255, 255, 255, 0.08);
+		background: rgba(255, 255, 255, 0.03);
+	}
+
+	.purchase-cover {
+		width: 88px;
+		height: 58px;
+		border-radius: 12px;
+		object-fit: cover;
+		flex-shrink: 0;
+		border: 1px solid rgba(255, 255, 255, 0.08);
+	}
+
+	.purchase-cover-placeholder {
+		display: grid;
+		place-items: center;
+		color: rgba(255, 255, 255, 0.56);
+		background: rgba(255, 255, 255, 0.04);
+	}
+
+	.purchase-copy {
+		flex: 1;
+		min-width: 0;
+	}
+
+	.purchase-title,
+	.purchase-meta,
+	.purchase-status {
+		margin: 0;
+	}
+
+	.purchase-title {
+		font-size: 0.98rem;
+		font-weight: 700;
+		color: #fff;
+	}
+
+	.purchase-meta,
+	.purchase-status {
+		margin-top: 0.18rem;
+		font-size: 0.84rem;
+		color: rgba(255, 255, 255, 0.68);
+	}
+
+	.purchase-link {
+		text-decoration: none;
+		white-space: nowrap;
+	}
+
 	.pill {
 		display: inline-flex;
 		align-items: center;
@@ -538,6 +742,16 @@
 	@media (max-width: 900px) {
 		.hero-metrics { flex-wrap: wrap; }
 		.detail-grid { grid-template-columns: 1fr; }
+		.purchase-head,
+		.purchase-item {
+			flex-direction: column;
+			align-items: flex-start;
+		}
+
+		.purchase-link {
+			width: 100%;
+			justify-content: center;
+		}
 	}
 
 	:global([data-color-mode='light']) .student-shell {

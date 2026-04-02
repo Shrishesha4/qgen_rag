@@ -1489,7 +1489,7 @@ def _format_learning_outcomes(learning_outcomes: Optional[dict]) -> str:
 
 
 def _build_inquiry_system_prompt(
-    subject: Subject,
+    subject: Optional[Subject],
     topic: Optional[Topic],
     level: str,
     mode: str,
@@ -1510,15 +1510,16 @@ def _build_inquiry_system_prompt(
         ),
     }
 
-    subject_context = _truncate_prompt_text(subject.description, 400)
+    subject_context = _truncate_prompt_text(subject.description if subject else None, 400)
     topic_context = _truncate_prompt_text(topic.description if topic else None, 320)
     syllabus_context = _truncate_prompt_text(topic.syllabus_content if topic else None, 2200)
-    learning_outcomes = _format_learning_outcomes(subject.learning_outcomes)
+    learning_outcomes = _format_learning_outcomes(subject.learning_outcomes if subject else None)
 
     context_lines = [
-        f"Subject: {subject.name} ({subject.code})",
         f"Selected level: {level}",
     ]
+    if subject:
+        context_lines.insert(0, f"Subject: {subject.name} ({subject.code})")
     if topic:
         context_lines.append(f"Topic: {topic.name}")
     if subject_context:
@@ -1574,6 +1575,22 @@ def _build_inquiry_system_prompt(
             "• If they haven't explained → ask ONE specific why/how question about THIS concept.\n"
             "• Semantically correct explanations count even if worded differently.\n"
             "End with [[PROGRESS:ADVANCE]] if reasoning is covered, [[PROGRESS:HOLD]] if asking follow-up."
+        )
+    elif mode == "personalization_intent":
+        mode_instructions = (
+            "CURRENT TASK: The learner wants personalized practice or study material.\n\n"
+            "Detect what they're asking for:\n"
+            "• If they say 'test me', 'quiz me', 'create a test', 'I need practice' → "
+            "respond: 'Sure — I\\'ll put together a personalized test based on your history. Give me a moment…' "
+            "End with [[ACTION:GENERATE_TEST]] on its own line.\n"
+            "• If they say 'build a module', 'explain X to me', 'I keep getting X wrong', 'help me with X' → "
+            "respond: 'Let me create a focused study module on that for you…' "
+            "End with [[ACTION:GENERATE_MODULE]] on its own line.\n"
+            "• If you notice from context that the learner has failed 2+ questions on the same topic, "
+            "proactively suggest: 'I've noticed you've had trouble with [topic] — want me to build "
+            "a focused module for it, or a quick test to see where you stand?' "
+            "End with [[PROGRESS:HOLD]].\n\n"
+            "Keep it conversational and brief — one or two sentences max."
         )
     else:
         mode_instructions = (
@@ -1639,16 +1656,23 @@ async def conversational_inquiry(
     """Stream a provider-backed GEL Train tutoring turn for students or teachers."""
     _ensure_inquiry_access(current_user)
 
-    subject_result = await db.execute(select(Subject).where(Subject.id == str(request.subject_id)))
-    subject = subject_result.scalar_one_or_none()
-    if not subject:
-        raise HTTPException(
-            status_code=status.HTTP_404_NOT_FOUND,
-            detail="Subject not found",
-        )
+    subject = None
+    if request.subject_id:
+        subject_result = await db.execute(select(Subject).where(Subject.id == str(request.subject_id)))
+        subject = subject_result.scalar_one_or_none()
+        if not subject:
+            raise HTTPException(
+                status_code=status.HTTP_404_NOT_FOUND,
+                detail="Subject not found",
+            )
 
     topic = None
     if request.topic_id:
+        if not request.subject_id:
+            raise HTTPException(
+                status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+                detail="topic_id requires subject_id",
+            )
         topic_result = await db.execute(
             select(Topic).where(
                 Topic.id == str(request.topic_id),

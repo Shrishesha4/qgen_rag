@@ -42,8 +42,6 @@
 	const MAX_BATCH_SIZE = 1000;
 	let providerBatchSize = $state<number | null>(null);
 	let providerBatchSizeFetched = $state(false);
-	const MAX_BATCH_SIZE = 300;
->>>>>>> origin/trainer-web
 	const GENERATION_INTERPOLATION_TICK_MS = 300;
 	const GENERATION_INTERPOLATION_MIN_DURATION_MS = 12000;
 	const GENERATION_INTERPOLATION_PER_QUESTION_MS = 1600;

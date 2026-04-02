@@ -21,6 +21,9 @@
 	let isSaving = $state(false);
 	let error = $state<string | null>(null);
 	let successMessage = $state<string | null>(null);
+	const selectedProviderName = $derived(
+		providers.find((provider) => provider.key === selectedProviderId)?.name ?? 'Choose a tutor',
+	);
 
 	onMount(async () => {
 		await loadSettings();
@@ -68,15 +71,24 @@
 	<title>Tutor Settings | GEL Train</title>
 </svelte:head>
 
-<div class="page-container student-shell space-y-8">
-	<!-- Page header -->
-	<header class="settings-header">
-		<a href="/student/train" class="back-chip" aria-label="Back to GEL Train">
-			<ArrowLeft class="h-4 w-4" />
-		</a>
-		<div>
-			<h1 class="settings-title">Tutor Settings</h1>
-			<p class="muted">Choose which AI model powers your tutoring sessions.</p>
+
+<div class="page-container student-shell settings-page space-y-8">
+	<header class="settings-header glass-panel">
+		<div class="settings-header-main">
+			<a href="/student/train" class="back-chip" aria-label="Back to GEL Train">
+				<ArrowLeft class="h-4 w-4" />
+			</a>
+			<div>
+				<p class="settings-eyebrow">Student Preferences</p>
+				<h1 class="settings-title">Tutor Settings</h1>
+				<p class="muted">Choose which AI model powers your tutoring sessions.</p>
+			</div>
+		</div>
+
+		<div class="settings-focus-card">
+			<span class="focus-label">Selected Tutor</span>
+			<strong>{selectedProviderName}</strong>
+			<p class="focus-note">Applies to new sessions only.</p>
 		</div>
 	</header>
 
@@ -94,7 +106,7 @@
 			<button class="pill ghost" onclick={() => void loadSettings()}>Try Again</button>
 		</div>
 	{:else}
-		<section class="glass-panel space-y-6">
+		<section class="glass-panel settings-panel space-y-6">
 			<div class="section-head">
 				<Bot class="h-5 w-5" />
 				<h2 class="section-title">Choose Your AI Tutor</h2>
@@ -172,10 +184,37 @@
 </div>
 
 <style>
+	.page-container {
+		max-width: 1120px;
+		margin: 0 auto;
+		padding: clamp(1rem, 2vw, 1.5rem) clamp(1.25rem, 3vw, 2.25rem) clamp(2rem, 3vw, 2.75rem);
+	}
+
+	.settings-page {
+		color: var(--theme-text-primary);
+	}
+
 	.settings-header {
+		display: flex;
+		align-items: stretch;
+		justify-content: space-between;
+		gap: 1rem;
+		padding: clamp(1rem, 2vw, 1.5rem);
+	}
+
+	.settings-header-main {
 		display: flex;
 		align-items: flex-start;
 		gap: 1rem;
+	}
+
+	.settings-eyebrow {
+		margin: 0 0 0.35rem;
+		font-size: 0.75rem;
+		font-weight: 700;
+		letter-spacing: 0.14em;
+		text-transform: uppercase;
+		color: rgba(var(--theme-primary-rgb), 0.82);
 	}
 
 	.settings-title {
@@ -183,6 +222,36 @@
 		font-weight: 700;
 		margin: 0 0 0.15rem;
 		color: var(--theme-text-primary);
+	}
+
+	.settings-focus-card {
+		min-width: 230px;
+		padding: 1rem 1.1rem;
+		border-radius: 16px;
+		border: 1px solid rgba(var(--theme-primary-rgb), 0.16);
+		background: linear-gradient(135deg, rgba(var(--theme-primary-rgb), 0.12), rgba(255, 255, 255, 0.04));
+		display: flex;
+		flex-direction: column;
+		justify-content: center;
+		gap: 0.3rem;
+	}
+
+	.focus-label {
+		font-size: 0.74rem;
+		font-weight: 700;
+		letter-spacing: 0.12em;
+		text-transform: uppercase;
+		color: var(--theme-text-secondary);
+	}
+
+	.focus-note {
+		margin: 0;
+		font-size: 0.82rem;
+		color: var(--theme-text-secondary);
+	}
+
+	.settings-panel {
+		padding: clamp(1.25rem, 2vw, 1.6rem);
 	}
 
 	.section-head {
@@ -210,6 +279,7 @@
 		display: flex;
 		flex-direction: column;
 		gap: 0.75rem;
+		min-height: 180px;
 		padding: 1.25rem;
 		border-radius: 14px;
 		border: 2px solid rgba(255, 255, 255, 0.07);
@@ -424,6 +494,24 @@
 
 	.space-y-6 > * + * { margin-top: 1.5rem; }
 	.space-y-8 > * + * { margin-top: 2rem; }
+
+	@media (max-width: 760px) {
+		.settings-header,
+		.save-row,
+		.error-panel {
+			flex-direction: column;
+			align-items: stretch;
+		}
+
+		.settings-focus-card {
+			min-width: 0;
+			width: 100%;
+		}
+
+		.save-btn {
+			justify-content: center;
+		}
+	}
 
 
 </style>

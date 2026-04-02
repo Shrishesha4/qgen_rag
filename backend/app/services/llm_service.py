@@ -90,14 +90,19 @@ async def _call_with_breaker(provider: str, operation_name: str, operation):
     if not settings.LLM_CIRCUIT_BREAKER_ENABLED:
         return await operation()
 
-    breaker = get_circuit_breaker(provider)
     try:
-        return await breaker.call_async(operation)
+        await _ensure_circuit_closed(provider, operation_name)
+        result = await operation()
+        _record_circuit_success(provider)
+        return result
     except CircuitBreakerError as exc:
         logger.error("Circuit breaker OPEN for provider=%s during %s", provider, operation_name)
         raise LLMServiceUnavailable(
             f"{provider} temporarily unavailable due to repeated failures"
         ) from exc
+    except Exception as exc:
+        _record_circuit_failure(provider, operation_name, exc)
+        raise
 
 
 async def _ensure_circuit_closed(provider: str, operation_name: str) -> None:
@@ -123,6 +128,15 @@ def _record_circuit_failure(provider: str, operation_name: str, exc: Exception) 
     """Record a failed provider call against its breaker for stream-style paths."""
     if not settings.LLM_CIRCUIT_BREAKER_ENABLED:
         return
+def _record_circuit_success(provider: str) -> None:
+    """Record a successful async provider call against its breaker."""
+    if not settings.LLM_CIRCUIT_BREAKER_ENABLED:
+        return
+
+    breaker = get_circuit_breaker(provider)
+    with breaker._lock:
+        breaker.close()
+        breaker._state_storage.reset_counter()
 
     breaker = get_circuit_breaker(provider)
     try:

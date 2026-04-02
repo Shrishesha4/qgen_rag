@@ -322,7 +322,7 @@ class ConversationalInquiryMessage(BaseModel):
 class ConversationalInquiryRequest(BaseModel):
     """Request payload for provider-backed conversational inquiry."""
 
-    subject_id: uuid.UUID
+    subject_id: Optional[uuid.UUID] = None
     topic_id: Optional[uuid.UUID] = None
     level: Literal["beginner", "advanced", "pro"] = "beginner"
     mode: Literal["question", "answer_feedback", "reasoning_feedback"] = "question"
