@@ -2,18 +2,18 @@
 	import { onMount } from 'svelte';
 	import { goto } from '$app/navigation';
 	import { session } from '$lib/session';
+	import { DEFAULT_SECURITY_QUESTION } from '$lib/api/auth';
 	import {
 		listAdminUsers,
 		createAdminUser,
 		updateAdminUser,
 		type AdminUserSummary,
 		type AdminUserCreateRequest,
-		type AdminUserUpdateRequest,
-		type AdminRole
+		type AdminUserUpdateRequest
 	} from '$lib/api/admin';
 
-	type UserRole = AdminRole;
-	type TabId = 'staff' | 'students';
+	type UserRole = 'teacher' | 'vetter' | 'admin' | 'student';
+	type UserTab = 'staff' | 'students';
 
 	type DraftPermissions = {
 		role: UserRole;
@@ -28,11 +28,11 @@
 	let error = $state('');
 	let success = $state('');
 	let query = $state('');
+	let activeTab = $state<UserTab>('staff');
 	let currentAdminUserId = $state('');
 	let users = $state<AdminUserSummary[]>([]);
 	let drafts = $state<Record<string, DraftPermissions>>({});
 	let saveBusyByUser = $state<Record<string, boolean>>({});
-	let selectedTab = $state<TabId>('staff');
 
 	let showCreateForm = $state(false);
 	let createPayload = $state<AdminUserCreateRequest>({
@@ -40,17 +40,14 @@
 		username: '',
 		password: '',
 		full_name: '',
+		security_question: DEFAULT_SECURITY_QUESTION,
+		security_answer: '',
 		role: 'teacher',
 		is_active: true,
 		can_manage_groups: true,
 		can_generate: true,
 		can_vet: true
 	});
-
-	const tabs: { id: TabId; label: string }[] = [
-		{ id: 'staff', label: 'Users' },
-		{ id: 'students', label: 'Students' }
-	];
 
 	onMount(() => {
 		const unsub = session.subscribe((s) => {
@@ -62,6 +59,19 @@
 		});
 		void loadUsers();
 		return unsub;
+	});
+
+	// Update default role in create form based on active tab
+	$effect(() => {
+		if (activeTab === 'students' && createPayload.role !== 'student') {
+			createPayload.role = 'student';
+			const defaults = defaultPermissionsForRole('student');
+			Object.assign(createPayload, defaults);
+		} else if (activeTab === 'staff' && createPayload.role === 'student') {
+			createPayload.role = 'teacher';
+			const defaults = defaultPermissionsForRole('teacher');
+			Object.assign(createPayload, defaults);
+		}
 	});
 
 	function isCurrentAdminUser(userId: string): boolean {
@@ -126,11 +136,17 @@
 		success = '';
 		saving = true;
 		try {
+			if (!createPayload.security_question.trim() || !createPayload.security_answer.trim()) {
+				throw new Error('Security question and answer are required');
+			}
+
 			const payload: AdminUserCreateRequest = {
 				email: createPayload.email.trim(),
 				username: createPayload.username.trim().toLowerCase(),
 				password: createPayload.password,
 				full_name: createPayload.full_name?.trim() || undefined,
+				security_question: createPayload.security_question.trim(),
+				security_answer: createPayload.security_answer.trim(),
 				role: createPayload.role,
 				is_active: createPayload.is_active,
 				can_manage_groups: createPayload.can_manage_groups,
@@ -145,6 +161,8 @@
 				username: '',
 				password: '',
 				full_name: '',
+				security_question: DEFAULT_SECURITY_QUESTION,
+				security_answer: '',
 				role: 'teacher',
 				is_active: true,
 				...defaultPermissionsForRole('teacher')
@@ -218,30 +236,35 @@
 		}
 	}
 
-
-	const staffUsers = $derived.by(() => users.filter((user) => user.role !== 'student'));
-	const studentUsers = $derived.by(() => users.filter((user) => user.role === 'student'));
-
 	const filteredUsers = $derived.by(() => {
+		// First filter by tab
+		const tabFiltered = activeTab === 'staff' 
+			? users.filter(u => u.role !== 'student')
+			: users.filter(u => u.role === 'student');
+		
+		// Then filter by search query
 		const needle = query.trim().toLowerCase();
-		const base = selectedTab === 'students' ? studentUsers : staffUsers;
-		if (!needle) return base;
-		return base.filter((user) =>
+		if (!needle) return tabFiltered;
+		return tabFiltered.filter((user) =>
 			[user.username, user.email, user.full_name || '', user.role].some((value) =>
 				value.toLowerCase().includes(needle)
 			)
 		);
 	});
 
-	function setTab(tab: TabId) {
-		selectedTab = tab;
-		if (tab === 'students') {
-			showCreateForm = false;
-		}
-	}
 	function formatDate(value: string | null): string {
 		if (!value) return '—';
-		return new Date(value).toLocaleString();
+		const normalizedValue = /(?:Z|[+-]\d{2}:?\d{2})$/.test(value) ? value : `${value}Z`;
+		return new Date(normalizedValue).toLocaleString('en-IN', {
+			timeZone: 'Asia/Kolkata',
+			year: 'numeric',
+			month: '2-digit',
+			day: '2-digit',
+			hour: '2-digit',
+			minute: '2-digit',
+			second: '2-digit',
+			hour12: true
+		});
 	}
 </script>
 
@@ -250,20 +273,6 @@
 </svelte:head>
 
 <div class="page">
-	<div class="tab-bar glass-panel animate-slide-up">
-		{#each tabs as tab}
-			<button
-				type="button"
-				class="tab-btn"
-				class:tab-btn--active={selectedTab === tab.id}
-				onclick={() => setTab(tab.id)}
-			>
-				<span>{tab.label}</span>
-				<span class="tab-count">{tab.id === 'students' ? studentUsers.length : staffUsers.length}</span>
-			</button>
-		{/each}
-	</div>
-
 	<!-- <div class="hero animate-fade-in">
 		<div>
 			<p class="eyebrow">Admin Console</p>
@@ -272,13 +281,28 @@
 		</div>
 	</div> -->
 
+	<div class="tabs user-tabs" role="tablist" aria-label="User type">
+		<button 
+			class="tab-btn" 
+			class:active={activeTab === 'staff'} 
+			onclick={() => activeTab = 'staff'}
+		>
+			Staff
+		</button>
+		<button 
+			class="tab-btn" 
+			class:active={activeTab === 'students'} 
+			onclick={() => activeTab = 'students'}
+		>
+			Students
+		</button>
+	</div>
+
 	<div class="toolbar glass-panel animate-slide-up">
 		<input class="search-input" bind:value={query} placeholder="Search by username, email, name, or role" />
-		{#if selectedTab === 'staff'}
-			<button class="primary-btn" onclick={() => (showCreateForm = !showCreateForm)}>
-				{showCreateForm ? 'Close' : 'Add User'}
-			</button>
-		{/if}
+		<button class="primary-btn" onclick={() => (showCreateForm = !showCreateForm)}>
+			{showCreateForm ? 'Close' : 'Add User'}
+		</button>
 	</div>
 
 	{#if error}
@@ -289,7 +313,7 @@
 		<div class="success-banner" role="status">{success}</div>
 	{/if}
 
-	{#if showCreateForm && selectedTab === 'staff'}
+	{#if showCreateForm}
 		<section class="create-panel glass-panel animate-fade-in" aria-label="Create user form">
 			<h2>Create User</h2>
 			<div class="create-grid">
@@ -309,12 +333,21 @@
 					<span>Password</span>
 					<input bind:value={createPayload.password} type="password" placeholder="At least 8 characters" />
 				</label>
+				<label class="field field-span-2">
+					<span>Security Question</span>
+					<input bind:value={createPayload.security_question} type="text" placeholder="Set a password reset question" />
+				</label>
+				<label class="field">
+					<span>Security Answer</span>
+					<input bind:value={createPayload.security_answer} type="text" placeholder="Answer used for password reset" />
+				</label>
 				<label class="field">
 					<span>Role</span>
 					<select bind:value={createPayload.role} onchange={applyCreateRoleDefaults}>
 						<option value="teacher">Teacher</option>
 						<option value="vetter">Vetter</option>
 						<option value="admin">Admin</option>
+						<option value="student">Student</option>
 					</select>
 				</label>
 				<label class="field checkbox-inline">
@@ -340,7 +373,7 @@
 		</div>
 	{:else if filteredUsers.length === 0}
 		<div class="center-state glass-panel">
-			<p>No {selectedTab === 'students' ? 'students' : 'users'} found.</p>
+			<p>No users found.</p>
 		</div>
 	{:else}
 		<div class="table-wrap glass-panel animate-fade-in desktop-only">
@@ -506,47 +539,39 @@
 		gap: 1rem;
 	}
 
-	.tab-bar {
+	.tabs {
 		display: inline-flex;
-		align-items: center;
-		gap: 0.5rem;
-		padding: 0.45rem;
-		border-radius: 0.85rem;
+		gap: 0.35rem;
+		padding: 0.35rem;
 		border: 1px solid var(--theme-glass-border);
-		backdrop-filter: blur(18px);
+		border-radius: 0.75rem;
+		background: color-mix(in srgb, var(--theme-surface) 86%, transparent);
+		width: fit-content;
+	}
+
+	.user-tabs {
+		margin-bottom: 0.5rem;
 	}
 
 	.tab-btn {
 		border: 1px solid transparent;
+		border-radius: 0.55rem;
+		padding: 0.5rem 0.9rem;
 		background: transparent;
-		color: var(--theme-text);
-		padding: 0.55rem 0.9rem;
-		border-radius: 0.75rem;
-		display: inline-flex;
-		align-items: center;
-		gap: 0.5rem;
-		cursor: pointer;
-		transition: border-color 0.15s ease, background 0.15s ease, color 0.15s ease;
 		font-weight: 700;
+		color: var(--theme-text-muted);
+		cursor: pointer;
+		transition: all 0.2s ease;
 	}
 
-	.tab-btn--active {
-		background: color-mix(in srgb, var(--theme-primary) 18%, var(--theme-input-bg));
+	.tab-btn.active {
+		background: color-mix(in srgb, var(--theme-primary) 18%, transparent);
 		border-color: color-mix(in srgb, var(--theme-primary) 35%, var(--theme-glass-border));
-		color: #fff;
+		color: var(--theme-text);
 	}
 
-	.tab-count {
-		display: inline-flex;
-		align-items: center;
-		justify-content: center;
-		min-width: 2.2rem;
-		padding: 0.2rem 0.55rem;
-		border-radius: 999px;
-		background: rgba(255, 255, 255, 0.08);
-		border: 1px solid rgba(255, 255, 255, 0.12);
-		font-size: 0.85rem;
-		color: #e2e8f0;
+	.tab-btn:hover:not(.active) {
+		background: color-mix(in srgb, var(--theme-glass-border) 20%, transparent);
 	}
 
 	.toolbar {
@@ -697,6 +722,10 @@
 		display: flex;
 		flex-direction: column;
 		gap: 0.35rem;
+	}
+
+	.field-span-2 {
+		grid-column: span 2;
 	}
 
 	.field span {
@@ -946,6 +975,10 @@
 
 		.create-grid {
 			grid-template-columns: 1fr;
+		}
+
+		.field-span-2 {
+			grid-column: span 1;
 		}
 	}
 </style>

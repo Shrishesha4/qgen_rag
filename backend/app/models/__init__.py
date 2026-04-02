@@ -36,6 +36,8 @@ from app.models.gel import (
     IssueSeverity,
     IssueCategory,
 )
+from app.models.topic_audit import TopicAuditLog
+from app.models.provider_usage import ProviderUsageLog
 
 __all__ = [
     "User",
@@ -61,6 +63,8 @@ __all__ = [
     "SETTING_SIGNUP_ENABLED",
     "SETTING_GEL_CONFIG",
     "SETTING_STUDENT_SIGNUP_ENABLED",
+    "TopicAuditLog",
+    "ProviderUsageLog",
     # GEL models
     "EvaluationItem",
     "Assignment",

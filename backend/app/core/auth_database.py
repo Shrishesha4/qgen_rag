@@ -67,6 +67,9 @@ async def init_auth_db():
     async with auth_engine.begin() as conn:
         await conn.run_sync(AuthBase.metadata.create_all)
 
+        from app.core.security import hash_security_answer
+        from app.models.user import DEFAULT_SECURITY_QUESTION
+
         # Lightweight schema evolution for existing SQLite deployments.
         table_info = await conn.execute(text("PRAGMA table_info(users)"))
         existing_columns = {row[1] for row in table_info.fetchall()}
@@ -87,6 +90,12 @@ async def init_auth_db():
             await conn.execute(text("ALTER TABLE users ADD COLUMN consent_given BOOLEAN DEFAULT 0"))
         if "consent_given_at" not in existing_columns:
             await conn.execute(text("ALTER TABLE users ADD COLUMN consent_given_at DATETIME"))
+        
+        # Security fields
+        if "security_question" not in existing_columns:
+            await conn.execute(text("ALTER TABLE users ADD COLUMN security_question VARCHAR(255)"))
+        if "security_answer_hash" not in existing_columns:
+            await conn.execute(text("ALTER TABLE users ADD COLUMN security_answer_hash VARCHAR(255)"))
 
         # Backfill defaults for legacy rows where new columns are null.
         await conn.execute(
@@ -124,6 +133,26 @@ async def init_auth_db():
                 WHERE can_vet IS NULL
                 """
             )
+        )
+        await conn.execute(
+            text(
+                """
+                UPDATE users
+                SET security_question = :security_question
+                WHERE security_question IS NULL OR TRIM(security_question) = ''
+                """
+            ),
+            {"security_question": DEFAULT_SECURITY_QUESTION},
+        )
+        await conn.execute(
+            text(
+                """
+                UPDATE users
+                SET security_answer_hash = :security_answer_hash
+                WHERE security_answer_hash IS NULL OR TRIM(security_answer_hash) = ''
+                """
+            ),
+            {"security_answer_hash": hash_security_answer("reset")},
         )
     
     # Ensure database file has correct permissions after creation

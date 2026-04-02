@@ -141,6 +141,8 @@
 				goto('/vetter/dashboard');
 			} else if (role === 'admin') {
 				goto('/admin/dashboard');
+			} else if (role === 'student') {
+				goto('/student');
 			}
 		}
 	});

@@ -6,10 +6,11 @@ Stored in SQLite (auth.db) alongside user data.
 
 from datetime import datetime
 from typing import Optional
-from sqlalchemy import String, Boolean, DateTime, Text, JSON
+from sqlalchemy import String, DateTime, Text, JSON
 from sqlalchemy.orm import Mapped, mapped_column
 
 from app.core.auth_database import AuthBase
+from app.core.config import settings
 
 
 class SystemSettings(AuthBase):
@@ -34,6 +35,34 @@ SETTING_SIGNUP_ENABLED = "signup_enabled"
 SETTING_PROVIDER_GENERATION_CONFIG = "provider_generation_config"
 SETTING_GEL_CONFIG = "gel_config"
 SETTING_STUDENT_SIGNUP_ENABLED = "student_signup_enabled"
+SETTING_PASSWORD_RESET = "password_reset"
+
+PASSWORD_RESET_METHOD_SMTP = "smtp"
+PASSWORD_RESET_METHOD_SECURITY_QUESTION = "security_question"
+
+
+def _default_password_reset_settings() -> dict:
+    smtp_config = {
+        "host": settings.SMTP_HOST,
+        "port": settings.SMTP_PORT,
+        "username": settings.SMTP_USERNAME,
+        "password": settings.SMTP_PASSWORD,
+        "from_email": settings.SMTP_FROM_EMAIL,
+        "from_name": settings.SMTP_FROM_NAME,
+        "use_tls": settings.SMTP_USE_TLS,
+        "use_ssl": settings.SMTP_USE_SSL,
+        "timeout_seconds": settings.SMTP_TIMEOUT_SECONDS,
+        "password_reset_url_template": settings.PASSWORD_RESET_URL_TEMPLATE,
+    }
+    smtp_ready = bool(
+        str(settings.SMTP_HOST or "").strip()
+        and str(settings.SMTP_FROM_EMAIL or "").strip()
+        and str(settings.PASSWORD_RESET_URL_TEMPLATE or "").strip()
+    )
+    return {
+        "method": PASSWORD_RESET_METHOD_SMTP if smtp_ready else PASSWORD_RESET_METHOD_SECURITY_QUESTION,
+        "smtp": smtp_config,
+    }
 
 # Default values
 DEFAULT_SETTINGS = {
@@ -85,4 +114,5 @@ DEFAULT_SETTINGS = {
         "overconfidence_penalty_factor": 1.5,
         "passing_score": 60,
     },
+    SETTING_PASSWORD_RESET: _default_password_reset_settings(),
 }

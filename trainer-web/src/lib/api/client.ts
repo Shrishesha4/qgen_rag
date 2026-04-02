@@ -67,6 +67,7 @@ export interface StoredSession {
 		email: string;
 		username: string;
 		full_name: string | null;
+		security_question?: string | null;
 		role: string;
 		avatar_url: string | null;
 		can_manage_groups?: boolean;

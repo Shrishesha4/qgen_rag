@@ -2,8 +2,10 @@
 Authentication API endpoints.
 """
 
+import logging
 import os
 import uuid as uuid_lib
+from datetime import timedelta
 from fastapi import APIRouter, Depends, HTTPException, status, Request, UploadFile, File
 from fastapi.responses import FileResponse
 from typing import Dict
@@ -19,18 +21,35 @@ from app.schemas.auth import (
     TokenResponse,
     TokenRefresh,
     PasswordChange,
+    PasswordResetRequest,
+    PasswordResetConfirm,
+    SecurityQuestionRequest,
+    SecurityQuestionResponse,
+    SecurityQuestionPasswordReset,
+    MessageResponse,
     SessionResponse,
     SessionInfo,
     LogoutRequest,
     LogoutAllResponse,
 )
+from app.core.security import create_password_reset_token, decode_token, password_token_version
 from app.services.user_service import UserService
+from app.services.email_service import EmailService
+from app.services.system_settings_service import get_password_reset_settings
 from app.api.v1.deps import get_current_user, get_client_info
 from app.models.user import User, ROLE_STUDENT, ROLE_ADMIN
-from app.models.system_settings import SystemSettings, SETTING_SIGNUP_ENABLED, SETTING_STUDENT_SIGNUP_ENABLED, DEFAULT_SETTINGS
+from app.models.system_settings import (
+    DEFAULT_SETTINGS,
+    PASSWORD_RESET_METHOD_SECURITY_QUESTION,
+    PASSWORD_RESET_METHOD_SMTP,
+    SETTING_SIGNUP_ENABLED,
+    SETTING_STUDENT_SIGNUP_ENABLED,
+    SystemSettings,
+)
 
 
 router = APIRouter()
+logger = logging.getLogger(__name__)
 
 
 class BootstrapStatus(BaseModel):
@@ -174,6 +193,160 @@ async def login(
             status_code=status.HTTP_403_FORBIDDEN,
             detail=str(e),
         )
+
+
+@router.post("/forgot-password", response_model=MessageResponse)
+async def forgot_password(
+    request: Request,
+    payload: PasswordResetRequest,
+    db: AsyncSession = Depends(get_auth_db),
+):
+    """Request a password reset email without revealing whether the account exists."""
+    password_reset_settings = await get_password_reset_settings(db, include_secret=True)
+    if password_reset_settings["method"] != PASSWORD_RESET_METHOD_SMTP:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="Password reset via email is currently disabled",
+        )
+
+    email_service = EmailService(config=password_reset_settings["smtp"])
+    if not email_service.is_configured:
+        raise HTTPException(
+            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+            detail="Password reset email is not configured",
+        )
+
+    user_service = UserService(db)
+    client_info = get_client_info(request)
+    user = await user_service.get_user_by_email(payload.email)
+
+    if user and user.is_active:
+        token = create_password_reset_token(
+            data={
+                "sub": str(user.id),
+                "email": user.email,
+                "pwd": password_token_version(user.password_changed_at),
+            },
+            expires_delta=timedelta(minutes=settings.PASSWORD_RESET_TOKEN_EXPIRE_MINUTES),
+        )
+        try:
+            await email_service.send_password_reset_email(
+                to_email=user.email,
+                token=token,
+                recipient_name=user.full_name,
+            )
+            await user_service.record_password_reset_request(
+                user,
+                ip_address=client_info.get("ip_address"),
+                user_agent=client_info.get("user_agent"),
+            )
+        except Exception as exc:
+            # Keep the response generic to avoid account enumeration.
+            logger.warning("Password reset email send failed for %s: %s", user.email, exc)
+
+    return MessageResponse(
+        message="If an account exists for that email, a password reset link has been sent."
+    )
+
+
+@router.post("/security-question", response_model=SecurityQuestionResponse)
+async def get_security_question(
+    payload: SecurityQuestionRequest,
+    db: AsyncSession = Depends(get_auth_db),
+):
+    """Return the stored security question for password-reset flows."""
+    password_reset_settings = await get_password_reset_settings(db, include_secret=False)
+    if password_reset_settings["method"] != PASSWORD_RESET_METHOD_SECURITY_QUESTION:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="Security-question reset is currently disabled",
+        )
+
+    user_service = UserService(db)
+    question = await user_service.get_security_question_for_email(payload.email)
+    if not question:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="Security question is not available for this account",
+        )
+
+    return SecurityQuestionResponse(security_question=question)
+
+
+@router.post("/security-question/reset-password", response_model=MessageResponse)
+async def reset_password_with_security_question(
+    request: Request,
+    payload: SecurityQuestionPasswordReset,
+    db: AsyncSession = Depends(get_auth_db),
+):
+    """Reset a password using the user's configured security answer."""
+    password_reset_settings = await get_password_reset_settings(db, include_secret=False)
+    if password_reset_settings["method"] != PASSWORD_RESET_METHOD_SECURITY_QUESTION:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="Security-question reset is currently disabled",
+        )
+
+    user_service = UserService(db)
+    client_info = get_client_info(request)
+    try:
+        await user_service.reset_password_with_security_question(
+            email=payload.email,
+            security_answer=payload.security_answer,
+            new_password=payload.new_password,
+            ip_address=client_info.get("ip_address"),
+            user_agent=client_info.get("user_agent"),
+        )
+    except ValueError as exc:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail=str(exc),
+        )
+
+    return MessageResponse(message="Password reset successful")
+
+
+@router.post("/reset-password", response_model=MessageResponse)
+async def reset_password(
+    request: Request,
+    payload: PasswordResetConfirm,
+    db: AsyncSession = Depends(get_auth_db),
+):
+    """Reset a password using a signed password-reset token."""
+    token_payload = decode_token(payload.token)
+    if not token_payload or token_payload.get("type") != "password_reset":
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="Invalid or expired password reset token",
+        )
+
+    user_id = str(token_payload.get("sub") or "").strip()
+    token_email = str(token_payload.get("email") or "").strip().lower()
+
+    user_service = UserService(db)
+    user = await user_service.get_user_by_id(user_id) if user_id else None
+    if not user or not user.is_active or user.email.strip().lower() != token_email:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="Invalid or expired password reset token",
+        )
+
+    token_version = int(token_payload.get("pwd") or 0)
+    if token_version != password_token_version(user.password_changed_at):
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="This password reset link has already been used or has expired",
+        )
+
+    client_info = get_client_info(request)
+    await user_service.reset_password(
+        user_id=user.id,
+        new_password=payload.new_password,
+        ip_address=client_info.get("ip_address"),
+        user_agent=client_info.get("user_agent"),
+    )
+
+    return MessageResponse(message="Password reset successful")
 
 
 @router.post("/refresh", response_model=Token)
@@ -365,7 +538,7 @@ async def delete_avatar(
     return UserResponse.model_validate(updated_user)
 
 
-@router.post("/change-password")
+@router.post("/change-password", response_model=MessageResponse)
 async def change_password(
     password_data: PasswordChange,
     current_user: User = Depends(get_current_user),
@@ -382,7 +555,7 @@ async def change_password(
             current_password=password_data.current_password,
             new_password=password_data.new_password,
         )
-        return {"message": "Password changed successfully"}
+        return MessageResponse(message="Password changed successfully")
     
     except ValueError as e:
         raise HTTPException(

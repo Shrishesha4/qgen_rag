@@ -497,23 +497,40 @@
 				feedback: transcript,
 			});
 
+			// Mark the original question as rejected
+			rejected = new Set([...rejected, questionToReplace.id]);
+
 			if (res.improved) {
-				replaceCurrentQuestion({
+				const improvedQuestion: QuestionForVetting = {
 					...questionToReplace,
 					question_text: res.improved_text ?? questionToReplace.question_text,
 					options: res.improved_options ?? questionToReplace.options,
 					correct_answer: res.improved_answer ?? questionToReplace.correct_answer,
 					explanation: res.improved_explanation ?? questionToReplace.explanation,
-				});
+				};
+				// Append as n+1 question and navigate to it
+				questions = [...questions, improvedQuestion];
+				currentIndex = questions.length - 1;
+				showSources = false;
+				editing = false;
+				selectedOptionIndex = null;
+				showAnswerModal = false;
+				activeOptionEditIndex = null;
 				return;
 			}
 
 			if (res.regenerated && res.new_question) {
-				replaceCurrentQuestion(res.new_question);
+				// Append as n+1 question and navigate to it
+				questions = [...questions, res.new_question];
+				currentIndex = questions.length - 1;
+				showSources = false;
+				editing = false;
+				selectedOptionIndex = null;
+				showAnswerModal = false;
+				activeOptionEditIndex = null;
 				return;
 			}
 
-			rejected = new Set([...rejected, questionToReplace.id]);
 			advance();
 		} catch (e: unknown) {
 			error = e instanceof Error ? e.message : 'Failed to regenerate question';

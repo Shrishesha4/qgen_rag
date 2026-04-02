@@ -12,7 +12,7 @@ class Settings(BaseSettings):
     """Application settings loaded from environment variables."""
 
     # API routing prefix
-    API_PREFIX: str = Field(default="/api/v1")
+    API_PREFIX: str = Field(default="")
 
     # Database (PostgreSQL + pgvector for vector data)
     # Individual database connection parameters for Docker Compose
@@ -49,18 +49,41 @@ class Settings(BaseSettings):
             return f"redis://:{self.REDIS_PASSWORD}@{self.REDIS_HOST}:{self.REDIS_PORT}/{self.REDIS_DB}"
         return f"redis://{self.REDIS_HOST}:{self.REDIS_PORT}/{self.REDIS_DB}"
 
-    # Auto training schedule (daily)
+    # Auto training orchestration (policy-driven)
     AUTO_TRAINING_ENABLED: bool = Field(default=True)
     AUTO_TRAINING_TIMEZONE: str = Field(default="Asia/Kolkata")
     AUTO_TRAINING_HOUR: int = Field(default=11)
     AUTO_TRAINING_MINUTE: int = Field(default=30)
+    AUTO_TRAINING_POLL_MINUTES: int = Field(default=60)
+    AUTO_TRAINING_MIN_INTERVAL_HOURS: int = Field(default=48)
     AUTO_TRAINING_METHOD: str = Field(default="sft+dpo")
+    AUTO_TRAINING_SFT_BASE_THRESHOLD: int = Field(default=200)
+    AUTO_TRAINING_SFT_MIN_THRESHOLD: int = Field(default=150)
+    AUTO_TRAINING_SFT_MAX_THRESHOLD: int = Field(default=300)
+    AUTO_TRAINING_HIGH_QUALITY_THRESHOLD: float = Field(default=0.9)
+    AUTO_TRAINING_LOW_QUALITY_THRESHOLD: float = Field(default=0.7)
+    AUTO_TRAINING_MIN_NOVELTY_SCORE: float = Field(default=0.3)
+    AUTO_TRAINING_DPO_MIN_PAIRS: int = Field(default=200)
+    AUTO_TRAINING_DPO_MIN_DIVERSITY_SCORE: float = Field(default=0.4)
 
     # JWT Authentication
     SECRET_KEY: str = Field(default="your-super-secret-key-change-in-production")
     ALGORITHM: str = Field(default="HS256")
     ACCESS_TOKEN_EXPIRE_MINUTES: int = Field(default=60)
     REFRESH_TOKEN_EXPIRE_DAYS: int = Field(default=30)
+    PASSWORD_RESET_TOKEN_EXPIRE_MINUTES: int = Field(default=30)
+    PASSWORD_RESET_URL_TEMPLATE: str = Field(default="")
+
+    # SMTP Email Delivery
+    SMTP_HOST: str = Field(default="")
+    SMTP_PORT: int = Field(default=587)
+    SMTP_USERNAME: str = Field(default="")
+    SMTP_PASSWORD: str = Field(default="")
+    SMTP_FROM_EMAIL: str = Field(default="")
+    SMTP_FROM_NAME: str = Field(default="VQuest")
+    SMTP_USE_TLS: bool = Field(default=True)
+    SMTP_USE_SSL: bool = Field(default=False)
+    SMTP_TIMEOUT_SECONDS: int = Field(default=20)
 
     # LLM Provider Configuration
     # Options: "ollama", "gemini", "deepseek"
@@ -177,6 +200,25 @@ class Settings(BaseSettings):
     TRAINING_DATA_DIR: str = Field(default="./.data/training_data")
     LORA_ADAPTERS_DIR: str = Field(default="./.data/lora_adapters")
     TRAINING_BASE_MODEL: str = Field(default="deepseek-ai/DeepSeek-R1-Distill-Llama-1.7B")
+    TRAINING_PRIMARY_BASE_MODEL: Optional[str] = Field(default=None)
+    TRAINING_BENCHMARK_BASE_MODEL: str = Field(default="meta-llama/Llama-3-8B-Instruct")
+    TRAINING_JUDGE_MODEL: Optional[str] = Field(default=None)
+    TRAINING_PREFERRED_PEFT_METHOD: str = Field(default="qlora")
+    TRAINING_MIN_LEARNING_RATE: float = Field(default=1e-5)
+    TRAINING_MAX_LEARNING_RATE: float = Field(default=5e-5)
+    TRAINING_MAX_WARMUP_RATIO: float = Field(default=0.05)
+    TRAINING_EARLY_STOPPING_PATIENCE: int = Field(default=2)
+    TRAINING_ENABLE_TOKENIZER_DRIFT_CHECK: bool = Field(default=True)
+    TRAINING_REFERENCE_DATASETS_REQUIRED: bool = Field(default=True)
+    TRAINING_REFERENCE_EVAL_SIZE: int = Field(default=36)
+    TRAINING_REFERENCE_HOLDOUT_SIZE: int = Field(default=18)
+    TRAINING_REFERENCE_ANCHOR_SIZE: int = Field(default=120)
+    TRAINING_RECENT_DATA_FRACTION: float = Field(default=0.75)
+    TRAINING_ACCEPTANCE_IMPROVEMENT_GATE: float = Field(default=0.03)
+    TRAINING_MAX_METRIC_REGRESSION: float = Field(default=0.01)
+    TRAINING_METRIC_DROP_ROLLBACK_THRESHOLD: float = Field(default=0.05)
+    TRAINING_AB_TEST_MIN_DAYS: int = Field(default=7)
+    TRAINING_CHALLENGER_TRAFFIC_SHARE: float = Field(default=0.2)
 
 
     class Config:

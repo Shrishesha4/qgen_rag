@@ -3,7 +3,7 @@
 	 * Unified auth form for both Teacher and Vetter login/register.
 	 */
 	import { goto } from '$app/navigation';
-	import { login, register } from '$lib/api/auth';
+	import { DEFAULT_SECURITY_QUESTION, login, register } from '$lib/api/auth';
 	import { session } from '$lib/session';
 
 	interface Props {
@@ -17,6 +17,8 @@
 	let password = $state('');
 	let username = $state('');
 	let fullName = $state('');
+	let securityQuestion = $state(DEFAULT_SECURITY_QUESTION);
+	let securityAnswer = $state('');
 	let error = $state('');
 	let loading = $state(false);
 
@@ -40,11 +42,18 @@
 					loading = false;
 					return;
 				}
+				if (!securityQuestion.trim() || !securityAnswer.trim()) {
+					error = 'Security question and answer are required';
+					loading = false;
+					return;
+				}
 				await register({
 					email,
 					username: username.trim().toLowerCase(),
 					full_name: fullName.trim() || undefined,
 					password,
+					security_question: securityQuestion.trim(),
+					security_answer: securityAnswer.trim(),
 					role
 				});
 			}
@@ -125,6 +134,31 @@
 						placeholder="Jane Doe"
 						maxlength={255}
 						autocomplete="name"
+						class="field-input"
+					/>
+				</label>
+
+				<label class="field">
+					<span class="field-label">Security Question</span>
+					<input
+						type="text"
+						bind:value={securityQuestion}
+						placeholder="Set your password reset question"
+						required
+						maxlength={255}
+						class="field-input"
+					/>
+				</label>
+
+				<label class="field">
+					<span class="field-label">Security Answer</span>
+					<input
+						type="password"
+						bind:value={securityAnswer}
+						placeholder="Answer used for password reset"
+						required
+						maxlength={128}
+						autocomplete="off"
 						class="field-input"
 					/>
 				</label>

@@ -1,8 +1,14 @@
 <script lang="ts">
 	import { goto } from '$app/navigation';
 	import { onMount } from 'svelte';
-	import { login, register, type TokenResponse, getBootstrapStatus } from '$lib/api/auth';
-	import { apiUrl } from '$lib/api/client';
+	import {
+		DEFAULT_SECURITY_QUESTION,
+		login,
+		register,
+		type TokenResponse,
+		getBootstrapStatus
+	} from '$lib/api/auth';
+	import { apiUrl, getStoredSession } from '$lib/api/client';
 	import { session } from '$lib/session';
 
 	type AuthMode = 'login' | 'register' | 'bootstrap';
@@ -13,9 +19,11 @@
 	let password = $state('');
 	let username = $state('');
 	let fullName = $state('');
+	let securityQuestion = $state(DEFAULT_SECURITY_QUESTION);
+	let securityAnswer = $state('');
 	let selectedRole: 'teacher' | 'vetter' | 'student' | 'admin' = $state('teacher');
-	let signingIn = $state(false);
-	let signInError = $state('');
+	let authLoading = $state(false);
+	let authError = $state('');
 	let signupEnabled = $state(true);
 	let studentSignupEnabled = $state(false);
 	let checkingSignup = $state(true);
@@ -23,22 +31,22 @@
 	let checkingAdmin = $state(true);
 	const SIGNUP_SETTINGS_TIMEOUT_MS = 5000;
 
-		const selectableRoles = $derived(
-			mode === 'bootstrap'
-				? ['admin']
-				: [
-					...(signupEnabled ? ['teacher', 'vetter'] : []),
-					...(studentSignupEnabled ? ['student'] : [])
-				]
-		);
+	const selectableRoles = $derived(
+		mode === 'bootstrap'
+			? ['admin']
+			: [
+				...(signupEnabled ? ['teacher', 'vetter'] : []),
+				...(studentSignupEnabled ? ['student'] : [])
+			]
+	);
 
-		$effect(() => {
-			if (!selectableRoles.includes(selectedRole)) {
-				selectedRole = (selectableRoles[0] as typeof selectedRole | undefined) ?? 'teacher';
-			}
-		});
+	$effect(() => {
+		if (!selectableRoles.includes(selectedRole)) {
+			selectedRole = (selectableRoles[0] as typeof selectedRole | undefined) ?? 'teacher';
+		}
+	});
 
-		const canShowSignupSwitch = $derived(mode !== 'bootstrap' && (signupEnabled || studentSignupEnabled || checkingSignup));
+	const canShowSignupSwitch = $derived(mode !== 'bootstrap' && (signupEnabled || studentSignupEnabled || checkingSignup));
 
 	async function fetchSignupSettings(): Promise<{ signupEnabled: boolean; studentSignupEnabled: boolean }> {
 		const controller = new AbortController();
@@ -108,78 +116,78 @@
 	}
 
 	async function handleLandingAuth() {
-		signInError = '';
-		signingIn = true;
+		authError = '';
+
+		if (mode === 'register' || mode === 'bootstrap') {
+			if (mode === 'bootstrap') {
+				if (!username.trim()) {
+					authError = 'Username is required for admin account';
+					return;
+				}
+				if (!fullName.trim()) {
+					authError = 'Full name is required for admin account';
+					return;
+				}
+			} else {
+				if (!signupEnabled && selectedRole !== 'student') {
+					authError = 'Sign up is currently disabled';
+					return;
+				}
+				if (selectedRole === 'student' && !studentSignupEnabled && !checkingSignup) {
+					authError = 'Student self-signup is currently disabled. Please contact your teacher.';
+					return;
+				}
+				if (!username.trim()) {
+					authError = 'Username is required';
+					return;
+				}
+			}
+			if (password.length < 8) {
+				authError = 'Password must be at least 8 characters';
+				return;
+			}
+			if (mode !== 'bootstrap') {
+				if (!securityQuestion.trim() || !securityAnswer.trim()) {
+					authError = 'Security question and answer are required';
+					return;
+				}
+			}
+		}
+
+		authLoading = true;
 		try {
 			let response: TokenResponse;
 			if (mode === 'login') {
 				response = await login({ email, password });
 			} else {
-				// Bootstrap mode - always create admin
-				if (mode === 'bootstrap') {
-					if (!username.trim()) {
-						signInError = 'Username is required for admin account';
-						signingIn = false;
-						return;
-					}
-					if (!fullName.trim()) {
-						signInError = 'Full name is required for admin account';
-						signingIn = false;
-						return;
-					}
-					if (password.length < 8) {
-						signInError = 'Password must be at least 8 characters';
-						signingIn = false;
-						return;
-					}
-					response = await register({
-						email,
-						username: username.trim().toLowerCase(),
-						full_name: fullName.trim(),
-						password,
-						role: 'admin'
-					});
-				} else {
-					// Normal registration
-					if (selectedRole === 'student' && !studentSignupEnabled && !checkingSignup) {
-						signInError = 'Student self-signup is currently disabled. Please contact your teacher.';
-						signingIn = false;
-						return;
-					}
-					if (selectedRole !== 'student' && !signupEnabled && !checkingSignup) {
-						signInError = 'Signup is currently disabled. Please contact an administrator.';
-						signingIn = false;
-						return;
-					}
-					if (!username.trim()) {
-						signInError = 'Username is required';
-						signingIn = false;
-						return;
-					}
-					if (password.length < 8) {
-						signInError = 'Password must be at least 8 characters';
-						signingIn = false;
-						return;
-					}
-					response = await register({
-						email,
-						username: username.trim().toLowerCase(),
-						full_name: fullName.trim() || undefined,
-						password,
-						role: selectedRole
-					});
-				}
+				// Register or bootstrap
+				response = await register({
+					email,
+					username: username.trim().toLowerCase(),
+					full_name: fullName.trim() || undefined,
+					password,
+					security_question: mode === 'bootstrap' ? DEFAULT_SECURITY_QUESTION : securityQuestion.trim(),
+					security_answer: mode === 'bootstrap' ? 'admin' : securityAnswer.trim(),
+					role: mode === 'bootstrap' ? 'admin' : selectedRole
+				});
 			}
 			session.refresh();
 			redirectByRole(response.user.role);
 		} catch (e: unknown) {
-			signInError = e instanceof Error ? e.message : 'Sign in failed';
+			authError = e instanceof Error ? e.message : 'Sign in failed';
 		} finally {
-			signingIn = false;
+			authLoading = false;
 		}
 	}
 
 	onMount(() => {
+		const existingSession = getStoredSession();
+		if (existingSession?.user?.role) {
+			redirectByRole(existingSession.user.role);
+			return;
+		}
+
+		let cancelled = false;
 		const rafId = requestAnimationFrame(() => {
 			introReady = true;
 		});
@@ -187,6 +195,7 @@
 		void initAuthState();
 
 		return () => {
+			cancelled = true;
 			cancelAnimationFrame(rafId);
 		};
 	});
@@ -206,8 +215,8 @@
 
 		<div class="signin-wrap">
 			<form class="signin-form" onsubmit={(e) => { e.preventDefault(); handleLandingAuth(); }}>
-				{#if signInError}
-					<p class="signin-error" role="alert">{signInError}</p>
+				{#if authError}
+					<p class="signin-error" role="alert">{authError}</p>
 				{/if}
 				{#if mode === 'bootstrap'}
 					<div class="bootstrap-notice">
@@ -321,13 +330,13 @@
 						required
 					/>
 				</label>
-				<button type="submit" class="signin-submit" disabled={signingIn}>
+				<button type="submit" class="signin-submit" disabled={authLoading}>
 					{#if mode === 'bootstrap'}
-						{signingIn ? 'Creating Admin Account...' : 'Create Admin Account'}
+						{authLoading ? 'Creating Admin Account...' : 'Create Admin Account'}
 					{:else if mode === 'login'}
-						{signingIn ? 'Signing In...' : 'Sign In'}
+						{authLoading ? 'Signing In...' : 'Sign In'}
 					{:else}
-						{signingIn ? 'Creating Account...' : 'Create Account'}
+						{authLoading ? 'Creating Account...' : 'Create Account'}
 					{/if}
 				</button>
 				{#if canShowSignupSwitch}
@@ -335,7 +344,7 @@
 						{#if mode === 'login'}
 							{#if signupEnabled || studentSignupEnabled || checkingSignup}
 								<span>Don't have an account?</span>
-								<button class="switch-btn" type="button" onclick={() => { mode = 'register'; signInError = ''; }}>
+							<button class="switch-btn" type="button" onclick={() => { mode = 'register'; authError = ''; }}>
 									Sign Up
 								</button>
 							{:else}
@@ -343,7 +352,7 @@
 							{/if}
 						{:else}
 							<span>Already have an account?</span>
-							<button class="switch-btn" type="button" onclick={() => { mode = 'login'; signInError = ''; }}>
+						<button class="switch-btn" type="button" onclick={() => { mode = 'login'; authError = ''; }}>
 								Sign In
 							</button>
 						{/if}
@@ -602,8 +611,9 @@
 		margin-top: 0.55rem;
 	}
 
+
 	.signin-form {
-		width: min(360px, 94vw);
+		width: 100%;
 		display: flex;
 		flex-direction: column;
 		gap: 0.56rem;
@@ -779,6 +789,50 @@
 		border-radius: 0.62rem;
 	}
 
+	.role-selector {
+		display: flex;
+		gap: 0.5rem;
+	}
+
+	.role-option {
+		flex: 1;
+		display: inline-flex;
+		align-items: center;
+		justify-content: center;
+		gap: 0.45rem;
+		padding: 0.72rem 0.78rem;
+		border-radius: 0.8rem;
+		border: 1px solid rgba(255, 255, 255, 0.45);
+		background: rgba(255, 255, 255, 0.24);
+		color: #0f172a;
+		font: inherit;
+		font-size: 0.88rem;
+		font-weight: 700;
+		cursor: pointer;
+		transition: transform 0.18s ease, background 0.18s ease, border-color 0.18s ease;
+	}
+
+	.role-option:hover {
+		transform: translateY(-1px);
+		background: rgba(255, 255, 255, 0.34);
+	}
+
+	.role-option.selected {
+		border-color: rgba(var(--theme-primary-rgb), 0.38);
+		background: rgba(var(--theme-primary-rgb), 0.14);
+		color: var(--theme-primary);
+	}
+
+	.mode-switch {
+		display: flex;
+		justify-content: center;
+		align-items: center;
+		gap: 0.35rem;
+		margin-top: 0.9rem;
+		font-size: 0.84rem;
+		color: rgba(15, 23, 42, 0.72);
+	}
+
 	@media (max-width: 768px) {
 		.landing {
 			padding: 1rem 0.85rem;
@@ -808,8 +862,10 @@
 			max-width: 100%;
 		}
 
-		.signin-form {
-			width: min(350px, 94vw);
+
+		.role-selector,
+		.mode-switch {
+			flex-direction: column;
 		}
 
 		.signin-submit {
@@ -848,8 +904,13 @@
 			font-size: 0.92rem;
 		}
 
-		.signin-form {
-			width: min(320px, 95vw);
+		.mode-switch {
+			font-size: 0.8rem;
+		}
+
+		.role-option {
+			padding: 0.62rem 0.7rem;
+			font-size: 0.82rem;
 		}
 
 		.signin-submit {

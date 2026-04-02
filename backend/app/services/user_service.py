@@ -16,6 +16,8 @@ from app.schemas.user import UserCreate, UserUpdate
 from app.core.security import (
     hash_password,
     verify_password,
+    hash_security_answer,
+    verify_security_answer,
     create_access_token,
     create_refresh_token,
     decode_token,
@@ -28,6 +30,18 @@ class UserService:
 
     def __init__(self, db: AsyncSession):
         self.db = db
+
+    @staticmethod
+    def _as_utc(dt: datetime) -> datetime:
+        """Normalize datetime to UTC-aware for safe comparisons."""
+        if dt.tzinfo is None:
+            return dt.replace(tzinfo=timezone.utc)
+        return dt.astimezone(timezone.utc)
+
+    @staticmethod
+    def _normalize_security_question(question: str) -> str:
+        """Normalize security-question text for storage."""
+        return " ".join((question or "").strip().split())
 
     async def create_user(self, user_data: UserCreate) -> User:
         """Create a new user."""
@@ -47,6 +61,10 @@ class UserService:
 
         role = getattr(user_data, 'role', 'teacher')
         role_defaults = default_permissions_for_role(role)
+        security_question = self._normalize_security_question(user_data.security_question)
+        security_answer = str(user_data.security_answer or "").strip()
+        if not security_question or not security_answer:
+            raise ValueError("Security question and answer are required")
 
         # Create user with role and action permissions
         user = User(
@@ -54,6 +72,8 @@ class UserService:
             username=user_data.username.lower(),
             password_hash=hash_password(user_data.password),
             full_name=user_data.full_name,
+            security_question=security_question,
+            security_answer_hash=hash_security_answer(security_answer),
             role=role,
             can_manage_groups=role_defaults["can_manage_groups"],
             can_generate=role_defaults["can_generate"],
@@ -96,16 +116,18 @@ class UserService:
             return None
 
         # Check if account is locked
-        if user.locked_until and user.locked_until > datetime.now(timezone.utc):
-            await self._log_auth_event(
-                user_id=user.id,
-                event_type="login_blocked",
-                ip_address=ip_address,
-                user_agent=user_agent,
-                success=False,
-                error_message="Account locked",
-            )
-            raise ValueError("Account is locked. Please try again later.")
+        if user.locked_until:
+            locked_until = self._as_utc(user.locked_until)
+            if locked_until > datetime.now(timezone.utc):
+                await self._log_auth_event(
+                    user_id=user.id,
+                    event_type="login_blocked",
+                    ip_address=ip_address,
+                    user_agent=user_agent,
+                    success=False,
+                    error_message="Account locked",
+                )
+                raise ValueError("Account is locked. Please try again later.")
 
         # Verify password
         if not verify_password(password, user.password_hash):
@@ -174,6 +196,14 @@ class UserService:
             raise ValueError("User not found")
 
         update_dict = update_data.model_dump(exclude_unset=True)
+        security_question_provided = "security_question" in update_dict
+        security_answer_provided = "security_answer" in update_dict
+
+        if security_question_provided != security_answer_provided:
+            raise ValueError("Security question and answer must be updated together")
+
+        security_question = update_dict.pop("security_question", None)
+        security_answer = update_dict.pop("security_answer", None)
 
         new_username = update_dict.get("username")
         if new_username and new_username != user.username:
@@ -185,6 +215,14 @@ class UserService:
 
         for key, value in update_dict.items():
             setattr(user, key, value)
+
+        if security_question_provided and security_answer_provided:
+            normalized_question = self._normalize_security_question(str(security_question or ""))
+            normalized_answer = str(security_answer or "").strip()
+            if not normalized_question or not normalized_answer:
+                raise ValueError("Security question and answer cannot be empty")
+            user.security_question = normalized_question
+            user.security_answer_hash = hash_security_answer(normalized_answer)
 
         user.updated_at = datetime.now(timezone.utc)
         await self.db.commit()
@@ -205,10 +243,115 @@ class UserService:
         if not verify_password(current_password, user.password_hash):
             raise ValueError("Current password is incorrect")
 
-        user.password_hash = hash_password(new_password)
-        user.password_changed_at = datetime.now(timezone.utc)
-        await self.db.commit()
+        await self._update_password(user, new_password, revoke_sessions=False)
         return True
+
+    async def reset_password(
+        self,
+        user_id: str,
+        new_password: str,
+        *,
+        ip_address: Optional[str] = None,
+        user_agent: Optional[str] = None,
+    ) -> bool:
+        """Reset a user's password and revoke all active refresh tokens."""
+        user = await self.get_user_by_id(user_id)
+        if not user:
+            raise ValueError("User not found")
+
+        await self._update_password(user, new_password, revoke_sessions=True)
+        await self._log_auth_event(
+            user_id=user.id,
+            event_type="password_reset_success",
+            ip_address=ip_address,
+            user_agent=user_agent,
+            success=True,
+        )
+        return True
+
+    async def get_security_question_for_email(self, email: str) -> Optional[str]:
+        """Return the stored security question for an active user."""
+        user = await self.get_user_by_email(email)
+        if not user or not user.is_active or not user.security_question or not user.security_answer_hash:
+            return None
+        return user.security_question
+
+    async def reset_password_with_security_question(
+        self,
+        email: str,
+        security_answer: str,
+        new_password: str,
+        *,
+        ip_address: Optional[str] = None,
+        user_agent: Optional[str] = None,
+    ) -> bool:
+        """Reset a user's password after verifying their security answer."""
+        user = await self.get_user_by_email(email)
+        if not user or not user.is_active or not user.security_answer_hash:
+            raise ValueError("Security question is not available for this account")
+
+        if not verify_security_answer(security_answer, user.security_answer_hash):
+            await self._log_auth_event(
+                user_id=user.id,
+                event_type="password_reset_security_question_failed",
+                ip_address=ip_address,
+                user_agent=user_agent,
+                success=False,
+                error_message="Incorrect security answer",
+            )
+            raise ValueError("Security question answer is incorrect")
+
+        await self._update_password(user, new_password, revoke_sessions=True)
+        await self._log_auth_event(
+            user_id=user.id,
+            event_type="password_reset_security_question_success",
+            ip_address=ip_address,
+            user_agent=user_agent,
+            success=True,
+        )
+        return True
+
+    async def record_password_reset_request(
+        self,
+        user: User,
+        *,
+        ip_address: Optional[str] = None,
+        user_agent: Optional[str] = None,
+    ) -> None:
+        """Record that a password reset email was requested."""
+        await self._log_auth_event(
+            user_id=user.id,
+            event_type="password_reset_requested",
+            ip_address=ip_address,
+            user_agent=user_agent,
+            success=True,
+        )
+
+    async def _update_password(
+        self,
+        user: User,
+        new_password: str,
+        *,
+        revoke_sessions: bool,
+    ) -> None:
+        """Persist password changes and optionally invalidate active refresh tokens."""
+        now = datetime.now(timezone.utc)
+        user.password_hash = hash_password(new_password)
+        user.password_changed_at = now
+        user.failed_login_attempts = 0
+        user.locked_until = None
+
+        if revoke_sessions:
+            await self.db.execute(
+                update(RefreshToken)
+                .where(
+                    RefreshToken.user_id == user.id,
+                    RefreshToken.is_revoked == False,
+                )
+                .values(is_revoked=True, revoked_at=now)
+            )
+
+        await self.db.commit()
 
     async def create_refresh_token(
         self,

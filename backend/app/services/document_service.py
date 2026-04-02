@@ -11,7 +11,7 @@ from pathlib import Path
 import uuid
 import aiofiles
 
-from sqlalchemy import select, func
+from sqlalchemy import select, func, update
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import selectinload
 
@@ -1184,14 +1184,12 @@ class DocumentService:
         else:
             return "low"
 
-    async def get_document(self, document_id: str, user_id: str) -> Optional[Document]:
-        """Get document by ID (user-scoped)."""
-        result = await self.db.execute(
-            select(Document).where(
-                Document.id == document_id,
-                Document.user_id == user_id,
-            )
-        )
+    async def get_document(self, document_id: str, user_id: str, all_users: bool = False) -> Optional[Document]:
+        """Get document by ID. If all_users=True, ignores user scoping."""
+        stmt = select(Document).where(Document.id == document_id)
+        if not all_users:
+            stmt = stmt.where(Document.user_id == user_id)
+        result = await self.db.execute(stmt)
         return result.scalar_one_or_none()
 
     async def get_documents(
@@ -1235,7 +1233,7 @@ class DocumentService:
         return documents, pagination
 
     async def delete_document(self, document_id: str, user_id: str) -> bool:
-        """Delete a document and all related data."""
+        """Delete a document while preserving generated questions."""
         document = await self.get_document(document_id, user_id)
         if not document:
             return False
@@ -1251,7 +1249,15 @@ class DocumentService:
         if other_ref_count == 0 and os.path.exists(document.storage_path):
             os.remove(document.storage_path)
 
-        # Delete from database (cascades to chunks and questions)
+        # Explicitly detach generated questions so they are retained even on legacy schemas.
+        await self.db.execute(
+            update(Question)
+            .where(Question.document_id == document.id)
+            .values(document_id=None)
+        )
+
+        # Delete from database.
+        # Chunks/sessions are removed; questions are preserved and detached.
         await self.db.delete(document)
         await self.db.commit()
         return True
@@ -1565,15 +1571,19 @@ class DocumentService:
         subject_id: Optional[str] = None,
         index_type: Optional[str] = None,
         topic_id: Optional[str] = None,
+        all_users: bool = False,
     ) -> List[Document]:
         """
         Get reference documents (books, template papers, and reference questions) for a user.
         Includes all processing statuses so users can see pending/processing uploads.
+        When all_users=True, returns documents from all users (for collaborative views).
         """
         query = select(Document).where(
-            Document.user_id == user_id,
             Document.index_type.in_(["reference_book", "template_paper", "reference_questions"]),
         )
+        
+        if not all_users:
+            query = query.where(Document.user_id == user_id)
         
         if subject_id:
             query = query.where(Document.subject_id == subject_id)

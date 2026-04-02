@@ -25,6 +25,27 @@ def hash_password(password: str) -> str:
     return bcrypt.hashpw(password_bytes, salt).decode('utf-8')
 
 
+def normalize_security_answer(answer: str) -> str:
+    """Normalize security answers so resets are case-insensitive and whitespace-stable."""
+    return " ".join((answer or "").strip().lower().split())
+
+
+def hash_security_answer(answer: str) -> str:
+    """Hash a normalized security answer."""
+    normalized = normalize_security_answer(answer)
+    if not normalized:
+        raise ValueError("Security answer cannot be empty")
+    return hash_password(normalized)
+
+
+def verify_security_answer(answer: str, hashed_answer: str) -> bool:
+    """Verify a normalized security answer against its hash."""
+    normalized = normalize_security_answer(answer)
+    if not normalized or not hashed_answer:
+        return False
+    return verify_password(normalized, hashed_answer)
+
+
 def create_access_token(
     data: dict,
     expires_delta: Optional[timedelta] = None,
@@ -59,6 +80,38 @@ def create_refresh_token(
         "type": "refresh",
         "jti": str(uuid.uuid4()),
         "device_id": device_id or str(uuid.uuid4()),
+    })
+    return jwt.encode(to_encode, settings.SECRET_KEY, algorithm=settings.ALGORITHM)
+
+
+def _as_utc(dt: datetime) -> datetime:
+    """Normalize datetimes for stable token timestamps."""
+    if dt.tzinfo is None:
+        return dt.replace(tzinfo=timezone.utc)
+    return dt.astimezone(timezone.utc)
+
+
+def password_token_version(password_changed_at: Optional[datetime]) -> int:
+    """Encode password-change time into reset tokens so old links expire on password change."""
+    if not password_changed_at:
+        return 0
+    return int(_as_utc(password_changed_at).timestamp())
+
+
+def create_password_reset_token(
+    data: dict,
+    expires_delta: Optional[timedelta] = None,
+) -> str:
+    """Create a short-lived JWT password reset token."""
+    to_encode = data.copy()
+    expire = datetime.now(timezone.utc) + (
+        expires_delta or timedelta(minutes=settings.PASSWORD_RESET_TOKEN_EXPIRE_MINUTES)
+    )
+    to_encode.update({
+        "exp": expire,
+        "iat": datetime.now(timezone.utc),
+        "type": "password_reset",
+        "jti": str(uuid.uuid4()),
     })
     return jwt.encode(to_encode, settings.SECRET_KEY, algorithm=settings.ALGORITHM)
 
