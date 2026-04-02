@@ -18,11 +18,9 @@
 		api_key: string;
 	}
 
-	interface PasswordResetSettingsResponse {
-		method: PasswordResetMethod;
-		self_service_enabled: boolean;
-		smtp: SMTPSettingsPayload;
-		smtp_password_set: boolean;
+	interface ProviderSettingsResponse {
+		generation_batch_size: number;
+		providers: ProviderConfig[];
 	}
 
 	interface ProviderMetric {
@@ -58,16 +56,21 @@
 	let signupEnabled = $state(true);
 	let studentSignupEnabled = $state(false);
 
-	let passwordResetMethod = $state<PasswordResetMethod>('security_question');
-	let passwordResetSelfServiceEnabled = $state(true);
-	let smtpSettings = $state<SMTPSettingsPayload>({ ...DEFAULT_SMTP_SETTINGS });
-	let smtpPasswordSet = $state(false);
-	let passwordResetLoading = $state(false);
-	let passwordResetError = $state('');
-	let passwordResetMessage = $state('');
-	let passwordResetSaved = $state(false);
-	let testEmail = $state('');
-	let testEmailLoading = $state(false);
+	let providers = $state<ProviderConfig[]>([]);
+	let providerMetrics = $state<ProviderMetricsResponse | null>(null);
+	let visibleKeys = $state<Record<string, boolean>>({});
+
+	function normalizeProvider(provider: Partial<ProviderConfig> | null | undefined): ProviderConfig {
+		return {
+			key: String(provider?.key ?? ''),
+			name: String(provider?.name ?? provider?.key ?? 'Provider'),
+			base_url: String(provider?.base_url ?? ''),
+			enabled: provider?.enabled !== false,
+			questions_per_batch: Number(provider?.questions_per_batch ?? 10),
+			model: String(provider?.model ?? ''),
+			api_key: String(provider?.api_key ?? '')
+		};
+	}
 
 	onMount(() => {
 		const unsub = session.subscribe((s) => {
@@ -98,35 +101,8 @@
 		}
 	}
 
-	function applyPasswordResetSettings(value: PasswordResetSettingsResponse) {
-		passwordResetMethod = value.method;
-		passwordResetSelfServiceEnabled = value.self_service_enabled;
-		smtpSettings = {
-			...DEFAULT_SMTP_SETTINGS,
-			...value.smtp,
-			password: ''
-		};
-		smtpPasswordSet = value.smtp_password_set;
-	}
-
-	function pulseSignupSaved() {
-		signupSaved = true;
-		setTimeout(() => {
-			signupSaved = false;
-		}, 1800);
-	}
-
-	function pulsePasswordResetSaved() {
-		passwordResetSaved = true;
-		setTimeout(() => {
-			passwordResetSaved = false;
-		}, 1800);
-	}
-
-	async function toggleSignup() {
-		signupLoading = true;
-		signupError = '';
-		signupSaved = false;
+	async function loadMetrics() {
+		metricsLoading = true;
 		try {
 			const usageType = activeStatisticsTab === 'gel' ? 'gel' : 'vquest';
 			providerMetrics = await apiFetch<ProviderMetricsResponse>(`/admin/provider-metrics?days=${metricsWindowDays}&usage_type=${usageType}`);
@@ -189,19 +165,15 @@
 
 		try {
 			const payload = {
-				method: passwordResetMethod,
-				self_service_enabled: passwordResetSelfServiceEnabled,
-				smtp: {
-					...smtpSettings,
-					host: smtpSettings.host.trim(),
-					port: Number(smtpSettings.port) || 587,
-					username: smtpSettings.username.trim(),
-					password: smtpSettings.password,
-					from_email: smtpSettings.from_email.trim(),
-					from_name: smtpSettings.from_name.trim() || 'VQuest',
-					timeout_seconds: Number(smtpSettings.timeout_seconds) || 20,
-					password_reset_url_template: smtpSettings.password_reset_url_template.trim()
-				}
+				providers: providers.map((provider) => ({
+					...provider,
+					key: String(provider.key ?? '').trim().toLowerCase(),
+					name: String(provider.name ?? '').trim(),
+					base_url: String(provider.base_url ?? '').trim(),
+					model: String(provider.model ?? '').trim(),
+					api_key: String(provider.api_key ?? '').trim(),
+					questions_per_batch: Number(provider.questions_per_batch || 1)
+				}))
 			};
 
 			const res = await apiFetch<ProviderSettingsResponse>('/settings/providers-generation', {
@@ -275,44 +247,9 @@
 			<div class="spinner"></div>
 			<p>Loading settings...</p>
 		</div>
-	{:else}
-		<div class="section glass-panel">
-			<h2 class="section-title">Access Control</h2>
-			{#if signupError}
-				<div class="settings-error" role="alert">{signupError}</div>
-			{/if}
-			<div class="settings-list">
-				<div class="setting-item">
-					<div class="setting-info">
-						<span class="setting-label">User Registration</span>
-						<span class="setting-desc">Allow public teacher signup. Vetter signup remains available even when this is off, and vetter accounts are approved automatically.</span>
-					</div>
-					<div class="setting-control">
-						<button
-							class="toggle-btn"
-							class:enabled={signupEnabled}
-							onclick={toggleSignup}
-							disabled={signupLoading}
-						>
-							{#if signupLoading}
-								<span class="toggle-spinner"></span>
-							{:else}
-								<span class="toggle-track">
-									<span class="toggle-thumb"></span>
-								</span>
-								<span class="toggle-label">{signupEnabled ? 'Enabled' : 'Disabled'}</span>
-							{/if}
-						</button>
-						{#if signupSaved}
-							<span class="saved-indicator">Saved</span>
-						{/if}
-					</div>
-				</div>
-			</div>
-		</div>
-
-		<div class="section glass-panel">
-			<div class="section-heading">
+	{:else if activeSettingsTab === 'general'}
+		<section class="glass-panel section access-section">
+			<!-- <div class="section-head">
 				<div>
 					<h2>General</h2>
 					<p>Platform-level access controls.</p>
@@ -462,106 +399,15 @@
 					{#if settingsSaved}
 						<span class="saved-indicator">Saved</span>
 					{/if}
-				</div>
-			</div>
-
-			{#if passwordResetError}
-				<div class="settings-error" role="alert">{passwordResetError}</div>
-			{/if}
-			{#if passwordResetMessage}
-				<div class="settings-success" role="status">{passwordResetMessage}</div>
-			{/if}
-
-			<div class="policy-block">
-				<div class="method-tabs" role="tablist" aria-label="Password reset access mode">
-					<button
-						type="button"
-						class="method-tab"
-						class:selected={passwordResetSelfServiceEnabled}
-						role="tab"
-						aria-selected={passwordResetSelfServiceEnabled}
-						onclick={() => {
-							passwordResetSelfServiceEnabled = true;
-						}}
-					>
-						<span class="method-tab-label">Self-Service</span>
-						<span class="method-tab-copy">Users finish the reset flow themselves using the method below.</span>
+					<button class="primary-btn" onclick={saveProviderSettings} disabled={settingsLoading}>
+						{settingsLoading ? 'Saving...' : 'Save Connectors'}
 					</button>
-					<button
-						type="button"
-						class="method-tab"
-						class:selected={!passwordResetSelfServiceEnabled}
-						role="tab"
-						aria-selected={!passwordResetSelfServiceEnabled}
-						onclick={() => {
-							passwordResetSelfServiceEnabled = false;
-						}}
-					>
-						<span class="method-tab-label">Admin Approval</span>
-						<span class="method-tab-copy">Users only send a reset alert. Admins set the new password.</span>
-					</button>
-				</div>
-			</div>
-
-			{#if !passwordResetSelfServiceEnabled}
-				<div class="settings-note" role="status">
-					Public forgot-password requests will only create admin notifications. Users will not receive reset links or security-question access.
-				</div>
-			{/if}
-
-			{#if passwordResetSelfServiceEnabled}
-
-			<div class="method-tabs" role="tablist" aria-label="Password reset method">
-				<button
-					type="button"
-					id="password-reset-security-tab"
-					class="method-tab"
-					class:selected={passwordResetMethod === 'security_question'}
-					role="tab"
-					aria-selected={passwordResetMethod === 'security_question'}
-					aria-controls="password-reset-security-panel"
-					onclick={() => {
-						passwordResetMethod = 'security_question';
-					}}
-				>
-					<span class="method-tab-label">Security Question</span>
-					<span class="method-tab-copy">Profile-based recovery</span>
-				</button>
-				<button
-					type="button"
-					id="password-reset-smtp-tab"
-					class="method-tab"
-					class:selected={passwordResetMethod === 'smtp'}
-					role="tab"
-					aria-selected={passwordResetMethod === 'smtp'}
-					aria-controls="password-reset-smtp-panel"
-					onclick={() => {
-						passwordResetMethod = 'smtp';
-					}}
-				>
-					<span class="method-tab-label">SMTP Email</span>
-					<span class="method-tab-copy">Signed email reset links</span>
-				</button>
-			</div>
-			{/if}
-
-			{#if passwordResetMethod === 'security_question'}
-				<div>
-
 				</div>
 			{:else}
-				<div class="method-panel" id="password-reset-smtp-panel" role="tabpanel" aria-labelledby="password-reset-smtp-tab">
-					<div class="method-summary">
-						<div>
-							<span class="method-summary-label">SMTP Email</span>
-							<h3>Email-based password recovery</h3>
-							<p>
-								{passwordResetSelfServiceEnabled
-									? 'Users receive a signed reset link by email. SMTP configuration is only shown while this method is selected.'
-									: 'This self-service method is configured but currently on standby because admin approval is required.'}
-							</p>
-						</div>
-						<span class="method-badge">{passwordResetSelfServiceEnabled ? 'Active' : 'Standby'}</span>
+				<div class="section-head ai-subhead">
+					<div>
+						<h3>Usage Statistics</h3>
+						<p>Overview of AI generation performance and vetting outcomes</p>
 					</div>
 					<div class="metric-controls">
 						<select bind:value={metricsWindowDays} class="cell-input window-select" onchange={loadMetrics}>
@@ -671,23 +517,54 @@
 		width: fit-content;
 	}
 
-	.policy-block {
+	.ai-tabs {
+		margin-bottom: 0.9rem;
+	}
+
+	.tab-btn {
+		border: 1px solid transparent;
+		border-radius: 0.55rem;
+		padding: 0.5rem 0.9rem;
+		background: transparent;
+		font-weight: 700;
+		color: var(--theme-text-muted);
+		cursor: pointer;
+	}
+
+	.tab-btn.active {
+		background: color-mix(in srgb, var(--theme-primary) 18%, transparent);
+		border-color: color-mix(in srgb, var(--theme-primary) 35%, var(--theme-glass-border));
+		color: var(--theme-text);
+	}
+
+	.section {
+		padding: 1rem;
+		border-radius: 0.95rem;
+	}
+
+	.section-head {
 		display: flex;
-		flex-direction: column;
-		gap: 0.75rem;
+		justify-content: space-between;
+		gap: 1rem;
+		align-items: center;
+		margin-bottom: 0.8rem;
 	}
 
-	.settings-note {
-		padding: 0.8rem 0.9rem;
-		border-radius: 0.8rem;
-		background: rgba(58, 170, 255, 0.428);
-		border: 1px solid rgba(99, 79, 0, 0.28);
-		color: #333333;
-		font-size: 0.83rem;
-		line-height: 1.45;
+	.ai-subhead {
+		margin-bottom: 0.6rem;
 	}
 
-	.save-group {
+	/* .section-head h2 {
+		margin: 0;
+		font-size: 1.5rem;
+	} */
+
+	.section-head p {
+		margin: 0.15rem 0 0;
+		color: var(--theme-text-muted);
+	}
+
+	.batch-summary {
 		display: flex;
 		align-items: center;
 		gap: 0.5rem;
@@ -719,10 +596,13 @@
 		min-width: 980px;
 	}
 
-	.settings-success {
-		background: rgba(15, 118, 110, 0.16);
-		border: 0.5px solid rgba(0, 133, 33, 0.528);
-		color: #006015;
+	th,
+	td {
+		text-align: left;
+		padding: 0.65rem;
+		border-bottom: 1px solid var(--theme-glass-border);
+		vertical-align: middle;
+		color: var(--theme-text);
 	}
 
 	th {

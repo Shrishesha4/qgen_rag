@@ -44,7 +44,7 @@ export async function apiFetch<T>(
 	const session = getStoredSession();
 	const headers = new Headers(options.headers);
 
-	if (options.body != null && !headers.has('Content-Type') && !(options.body instanceof FormData)) {
+	if (!headers.has('Content-Type') && !(options.body instanceof FormData)) {
 		headers.set('Content-Type', 'application/json');
 	}
 	if (session?.access_token) {

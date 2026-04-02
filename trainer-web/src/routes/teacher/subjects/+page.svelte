@@ -421,7 +421,11 @@
 		savingSubject = true;
 		addSubjectError = '';
 		try {
-			await createSubject({ code, name, group_id: selectedGroupId });
+			const newSubject = await createSubject({ code, name });
+			// If a group is selected, move the subject to that group
+			if (selectedGroupId) {
+				await moveSubject(newSubject.id, selectedGroupId);
+			}
 			addingSubject = false;
 			draftCode = '';
 			draftName = '';
@@ -624,15 +628,14 @@
 	async function handleDrop(event: DragEvent, targetGroupId: string | null) {
 		event.preventDefault();
 		if (!draggedItem) return;
-		const droppedItem = draggedItem;
 		
 		// Prevent dropping group into itself
-		if (droppedItem.type === 'group' && droppedItem.id === targetGroupId) {
+		if (draggedItem.type === 'group' && draggedItem.id === targetGroupId) {
 			handleDragEnd();
 			return;
 		}
 
-		if (droppedItem.type === 'subject') {
+		if (draggedItem.type === 'subject') {
 			if (!canAssignSubjectToGroup(targetGroupId)) {
 				error = 'Subjects can only be moved into top-level departments.';
 				handleDragEnd();
@@ -641,7 +644,7 @@
 			const destination = getGroupLabel(targetGroupId);
 			const ok = await requestConfirmation({
 				title: 'Move Subject',
-				message: `Move subject "${droppedItem.name}" to "${destination}"?`,
+				message: `Move subject "${draggedItem.name}" to "${destination}"?`,
 				confirmLabel: 'Move'
 			});
 			if (!ok) {
@@ -651,10 +654,10 @@
 		}
 
 		try {
-			if (droppedItem.type === 'subject') {
-				await moveSubject(droppedItem.id, targetGroupId);
+			if (draggedItem.type === 'subject') {
+				await moveSubject(draggedItem.id, targetGroupId);
 			} else {
-				await moveGroup(droppedItem.id, targetGroupId);
+				await moveGroup(draggedItem.id, targetGroupId);
 			}
 			await loadTree();
 		} catch (e: unknown) {
@@ -692,10 +695,14 @@
 		return null;
 	}
 
+	function isTopLevelGroup(groupId: string | null): boolean {
+		if (!groupId || !treeData) return false;
+		const group = findGroupById(treeData.groups, groupId);
+		return group?.parent_id === null;
+	}
+
 	function canAssignSubjectToGroup(groupId: string | null): boolean {
-		if (groupId === null) return true;
-		if (!treeData) return false;
-		return findGroupById(treeData.groups, groupId) !== null;
+		return isTopLevelGroup(groupId);
 	}
 
 	// Manage subjects in group modal

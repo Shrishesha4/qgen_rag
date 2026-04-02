@@ -75,7 +75,7 @@
 		if (pathname.startsWith('/vetter')) {
 			return [
 				{ href: '/vetter/dashboard', label: 'Home', icon: '🏠' },
-				// { href: '/vetter/subjects', label: 'Subjects', icon: '📚' },
+				{ href: '/vetter/subjects', label: 'Subjects', icon: '📚' },
 				{ href: '/vetter/profile', label: 'Profile', icon: '👤' },
 				// { href: '/vetter/loop', label: 'Vetting Loop', icon: '🎙️' }
 			];
@@ -83,7 +83,7 @@
 		if (pathname.startsWith('/admin')) {
 			return [
 				{ href: '/admin/dashboard', label: 'Dashboard', icon: '📊' },
-				{ href: '/admin/notifications', label: 'Notifications', icon: '🔔' },
+				{ href: '/admin/courses', label: 'Courses', icon: '📦' },
 				{ href: '/admin/users', label: 'User Management', icon: '👥' },
 				{ href: '/admin/subjects', label: 'Subjects', icon: '🧾' },
 				{ href: '/admin/teachers', label: 'Teachers', icon: '🧑‍🏫' },
@@ -130,11 +130,7 @@
 		return !hideGlobalBackPrefixes.some((prefix) => pathname.startsWith(prefix));
 	});
 
-	let enableVettingLoopScroll = $derived(
-		pathname.startsWith('/teacher/train/loop') ||
-		pathname.startsWith('/vetter/dashboard/loop') ||
-		pathname.startsWith('/vetter/loop')
-	);
+	let enableVettingLoopScroll = $derived(pathname.startsWith('/teacher/train/loop'));
 	let enableAdminWindowScroll = $derived(pathname.startsWith('/admin') && !pathname.includes('/login'));
 	let enableTeacherGelWindowScroll = $derived(
 		pathname === '/teacher/gel' || pathname.startsWith('/teacher/gel/')

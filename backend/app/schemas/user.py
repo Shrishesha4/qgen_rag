@@ -96,8 +96,6 @@ class UserResponse(BaseModel):
     can_generate: bool = True
     can_vet: bool = True
     is_active: bool
-    is_approved: bool
-    approved_at: Optional[datetime]
     created_at: datetime
     last_login_at: Optional[datetime]
     preferences: Optional[dict]

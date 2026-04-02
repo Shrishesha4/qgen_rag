@@ -5,6 +5,7 @@
 		DEFAULT_SECURITY_QUESTION,
 		login,
 		register,
+		type TokenResponse,
 		getBootstrapStatus
 	} from '$lib/api/auth';
 	import { apiUrl, getStoredSession } from '$lib/api/client';
@@ -23,7 +24,6 @@
 	let selectedRole: 'teacher' | 'vetter' | 'student' | 'admin' = $state('teacher');
 	let authLoading = $state(false);
 	let authError = $state('');
-	let authSuccess = $state('');
 	let signupEnabled = $state(true);
 	let studentSignupEnabled = $state(false);
 	let checkingSignup = $state(true);
@@ -97,10 +97,6 @@
 		checkingSignup = false;
 	}
 
-	function selectedRoleCanSignUp(): boolean {
-		return signupEnabled || selectedRole === 'vetter';
-	}
-
 	function redirectByRole(role: string) {
 		switch (role) {
 			case 'admin':
@@ -121,7 +117,6 @@
 
 	async function handleLandingAuth() {
 		authError = '';
-		authSuccess = '';
 
 		if (mode === 'register' || mode === 'bootstrap') {
 			if (mode === 'bootstrap') {
@@ -134,14 +129,18 @@
 					return;
 				}
 			} else {
-			if (!selectedRoleCanSignUp()) {
-				authError = 'Teacher sign up is currently disabled. Vetter sign up remains available.';
-				return;
-			}
-			if (!username.trim()) {
-				authError = 'Username is required';
-				return;
-			}
+				if (!signupEnabled && selectedRole !== 'student') {
+					authError = 'Sign up is currently disabled';
+					return;
+				}
+				if (selectedRole === 'student' && !studentSignupEnabled && !checkingSignup) {
+					authError = 'Student self-signup is currently disabled. Please contact your teacher.';
+					return;
+				}
+				if (!username.trim()) {
+					authError = 'Username is required';
+					return;
+				}
 			}
 			if (password.length < 8) {
 				authError = 'Password must be at least 8 characters';
@@ -157,12 +156,12 @@
 
 		authLoading = true;
 		try {
+			let response: TokenResponse;
 			if (mode === 'login') {
-				const response = await login({ email, password });
-				session.refresh();
-				redirectByRole(response.user.role);
+				response = await login({ email, password });
 			} else {
-				const response = await register({
+				// Register or bootstrap
+				response = await register({
 					email,
 					username: username.trim().toLowerCase(),
 					full_name: fullName.trim() || undefined,
@@ -171,11 +170,9 @@
 					security_answer: mode === 'bootstrap' ? 'admin' : securityAnswer.trim(),
 					role: mode === 'bootstrap' ? 'admin' : selectedRole
 				});
-				authSuccess = response.message;
-				mode = 'login';
-				password = '';
-				securityAnswer = '';
 			}
+			session.refresh();
+			redirectByRole(response.user.role);
 		} catch (e: unknown) {
 			authError = e instanceof Error ? e.message : 'Sign in failed';
 		} finally {
@@ -217,198 +214,151 @@
 		</div>
 
 		<div class="signin-wrap">
-			<div class="signin-panel">
-				<form class="signin-form" onsubmit={(e) => { e.preventDefault(); handleLandingAuth(); }}>
-					{#if authError}
-						<p class="signin-error" role="alert">{authError}</p>
-					{/if}
-					{#if authSuccess}
-						<p class="signin-success" role="status">{authSuccess}</p>
-					{/if}
-
+			<form class="signin-form" onsubmit={(e) => { e.preventDefault(); handleLandingAuth(); }}>
+				{#if authError}
+					<p class="signin-error" role="alert">{authError}</p>
+				{/if}
+				{#if mode === 'bootstrap'}
+					<div class="bootstrap-notice">
+						<h3>Welcome to VQuest!</h3>
+						<p>This appears to be your first time setting up the system. Let's create your administrator account to get started.</p>
+					</div>
+					<label class="signin-field">
+						<span class="signin-label">Username *</span>
+						<input
+							type="text"
+							class="signin-input"
+							bind:value={username}
+							placeholder="e.g. admin"
+							autocomplete="username"
+							required
+							minlength={3}
+							maxlength={50}
+						/>
+					</label>
+					<label class="signin-field">
+						<span class="signin-label">Full Name *</span>
+						<input
+							type="text"
+							class="signin-input"
+							bind:value={fullName}
+							placeholder="System Administrator"
+							autocomplete="name"
+							required
+							maxlength={255}
+						/>
+					</label>
+				{:else if mode === 'register'}
+					<label class="signin-field">
+						<span class="signin-label">Username</span>
+						<input
+							type="text"
+							class="signin-input"
+							bind:value={username}
+							placeholder="e.g. jane_doe"
+							autocomplete="username"
+							required
+							minlength={3}
+							maxlength={50}
+						/>
+					</label>
+					<label class="signin-field">
+						<span class="signin-label">Full Name <span class="optional">(optional)</span></span>
+						<input
+							type="text"
+							class="signin-input"
+							bind:value={fullName}
+							placeholder="Jane Doe"
+							autocomplete="name"
+							maxlength={255}
+						/>
+					</label>
+					<div class="signin-field">
+						<span class="signin-label">Role</span>
+						<div class="role-selector">
+							{#if signupEnabled}
+								<button
+									type="button"
+									class="role-option"
+									class:selected={selectedRole === 'teacher'}
+									onclick={() => selectedRole = 'teacher'}
+								>
+									Teacher
+								</button>
+								<button
+									type="button"
+									class="role-option"
+									class:selected={selectedRole === 'vetter'}
+									onclick={() => selectedRole = 'vetter'}
+								>
+									Vetter
+								</button>
+							{/if}
+							{#if studentSignupEnabled}
+								<button
+									type="button"
+									class="role-option"
+									class:selected={selectedRole === 'student'}
+									onclick={() => selectedRole = 'student'}
+								>
+									Student
+								</button>
+							{/if}
+						</div>
+					</div>
+				{/if}
+				<label class="signin-field">
+					<span class="signin-label">Email</span>
+					<input
+						type="email"
+						class="signin-input"
+						bind:value={email}
+						placeholder="your email address"
+						autocomplete="email"
+						required
+					/>
+				</label>
+				<label class="signin-field">
+					<span class="signin-label">Password</span>
+					<input
+						type="password"
+						class="signin-input"
+						bind:value={password}
+						placeholder={mode === 'register' ? 'Min 8 characters' : '••••••••'}
+						autocomplete={mode === 'login' ? 'current-password' : 'new-password'}
+						minlength={mode === 'register' ? 8 : undefined}
+						required
+					/>
+				</label>
+				<button type="submit" class="signin-submit" disabled={authLoading}>
 					{#if mode === 'bootstrap'}
-						<div class="bootstrap-notice">
-							<h3>Welcome to VQuest!</h3>
-							<p>This appears to be your first setup. Create the administrator account to continue.</p>
-						</div>
-						<label class="signin-field">
-							<span class="signin-label">Username</span>
-							<input
-								type="text"
-								class="signin-input"
-								bind:value={username}
-								placeholder="e.g. admin"
-								autocomplete="username"
-								required
-							/>
-						</label>
-						<label class="signin-field">
-							<span class="signin-label">Full Name</span>
-							<input
-								type="text"
-								class="signin-input"
-								bind:value={fullName}
-								placeholder="System Administrator"
-								autocomplete="name"
-								required
-							/>
-						</label>
-					{:else if mode === 'register'}
-						<label class="signin-field">
-							<span class="signin-label">Username</span>
-							<input
-								type="text"
-								class="signin-input"
-								bind:value={username}
-								placeholder="e.g. jane_doe"
-								autocomplete="username"
-								required
-							/>
-						</label>
-						<label class="signin-field">
-							<span class="signin-label">Full Name</span>
-							<input
-								type="text"
-								class="signin-input"
-								bind:value={fullName}
-								placeholder="Jane Doe"
-								autocomplete="name"
-							/>
-						</label>
-						{#if signupEnabled}
-							<div class="signin-field">
-								<span class="signin-label">Role</span>
-								<div class="role-selector">
-									<button
-										type="button"
-										class="role-option"
-										class:selected={selectedRole === 'teacher'}
-										onclick={() => {
-											selectedRole = 'teacher';
-										}}
-									>
-										<svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
-											<path d="M12 20h9"></path>
-											<path d="M16.5 3.5a 2.12 2.12 0 0 1 3 3L7 19l-4 1 1-4Z"></path>
-										</svg>
-										Teacher
-									</button>
-									<button
-										type="button"
-										class="role-option"
-										class:selected={selectedRole === 'vetter'}
-										onclick={() => {
-											selectedRole = 'vetter';
-										}}
-									>
-										<svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
-											<circle cx="11" cy="11" r="8"></circle>
-											<path d="m21 21-4.3-4.3"></path>
-										</svg>
-										Vetter
-									</button>
-								</div>
-							</div>
-						{:else}
-							<p class="signup-note" role="status">Teacher sign up is currently closed. Vetter sign up stays open and vetter accounts are approved automatically.</p>
-						{/if}
-						<label class="signin-field">
-							<span class="signin-label">Security Question</span>
-							<input
-								type="text"
-								class="signin-input"
-								bind:value={securityQuestion}
-								placeholder="Set your password reset question"
-								required
-							/>
-						</label>
-						<label class="signin-field">
-							<span class="signin-label">Security Answer</span>
-							<input
-								type="password"
-								class="signin-input"
-								bind:value={securityAnswer}
-								placeholder="Answer used for password reset"
-								autocomplete="off"
-								required
-							/>
-						</label>
+						{authLoading ? 'Creating Admin Account...' : 'Create Admin Account'}
+					{:else if mode === 'login'}
+						{authLoading ? 'Signing In...' : 'Sign In'}
+					{:else}
+						{authLoading ? 'Creating Account...' : 'Create Account'}
 					{/if}
-
-					<label class="signin-field">
-						<span class="signin-label">Email</span>
-						<input
-							type="email"
-							class="signin-input"
-							bind:value={email}
-							placeholder="your email address"
-							autocomplete="email"
-							required
-						/>
-					</label>
-					<label class="signin-field">
-						<span class="signin-label">Password</span>
-						<input
-							type="password"
-							class="signin-input"
-							bind:value={password}
-							placeholder={mode === 'register' ? 'Min 8 characters' : '••••••••'}
-							autocomplete={mode === 'login' ? 'current-password' : 'new-password'}
-							minlength={mode === 'register' ? 8 : undefined}
-							required
-						/>
-					</label>
-
-					{#if mode === 'login'}
-						<div class="aux-link-row">
-							<a href="/forgot-password" class="inline-link">Forgot password?</a>
-						</div>
-					{/if}
-
-					<button type="submit" class="signin-submit" disabled={authLoading}>
-						{#if authLoading}
-							{mode === 'login' ? 'Signing In...' : mode === 'bootstrap' ? 'Creating Admin Account...' : 'Submitting Registration...'}
-						{:else}
-							{mode === 'login' ? 'Sign In' : mode === 'bootstrap' ? 'Create Admin Account' : 'Submit Registration'}
-						{/if}
-					</button>
-				</form>
-
-				{#if mode !== 'bootstrap' && !checkingSignup}
+				</button>
+				{#if canShowSignupSwitch}
 					<div class="mode-switch">
 						{#if mode === 'login'}
-							{#if !signupEnabled}
-								<!-- <span class="muted-copy">Teacher sign up is closed.</span> -->
+							{#if signupEnabled || studentSignupEnabled || checkingSignup}
+								<span>Don't have an account?</span>
+							<button class="switch-btn" type="button" onclick={() => { mode = 'register'; authError = ''; }}>
+									Sign Up
+								</button>
+							{:else}
+								<span>Signup is currently disabled.</span>
 							{/if}
-							<button
-								type="button"
-								class="text-link"
-								onclick={() => {
-									mode = 'register';
-									selectedRole = signupEnabled ? selectedRole : 'vetter';
-									authError = '';
-									authSuccess = '';
-								}}
-							>
-								{signupEnabled ? 'Create one' : 'Join as Vetter'}
-							</button>
 						{:else}
 							<span>Already have an account?</span>
-							<button
-								type="button"
-								class="text-link"
-								onclick={() => {
-									mode = 'login';
-									authError = '';
-									authSuccess = '';
-								}}
-							>
+						<button class="switch-btn" type="button" onclick={() => { mode = 'login'; authError = ''; }}>
 								Sign In
 							</button>
 						{/if}
 					</div>
 				{/if}
-			</div>
+			</form>
 		</div>
 	</section>
 </div>
@@ -681,6 +631,11 @@
 		color: rgba(15, 23, 42, 0.78);
 	}
 
+	.optional {
+		font-weight: 500;
+		opacity: 0.8;
+	}
+
 	.signin-input {
 		padding: 0.62rem 0.74rem;
 		border-radius: 0.7rem;
@@ -787,6 +742,20 @@
 		gap: 0.35rem;
 	}
 
+	.switch-btn {
+		border: none;
+		background: transparent;
+		font-size: 0.82rem;
+		font-weight: 700;
+		color: var(--theme-primary);
+		cursor: pointer;
+		padding: 0;
+	}
+
+	.switch-btn:hover {
+		text-decoration: underline;
+	}
+
 	.bootstrap-notice {
 		margin: 0 0 1rem 0;
 		padding: 1rem;
@@ -820,16 +789,6 @@
 		border-radius: 0.62rem;
 	}
 
-	.signin-success {
-		margin: 0;
-		padding: 0.48rem 0.6rem;
-		font-size: 0.78rem;
-		color: #065f46;
-		background: rgba(209, 250, 229, 0.6);
-		border: 1px solid rgba(16, 185, 129, 0.24);
-		border-radius: 0.62rem;
-	}
-
 	.role-selector {
 		display: flex;
 		gap: 0.5rem;
@@ -858,25 +817,10 @@
 		background: rgba(255, 255, 255, 0.34);
 	}
 
-	.role-option:disabled {
-		opacity: 0.55;
-		cursor: not-allowed;
-		transform: none;
-		background: rgba(255, 255, 255, 0.18);
-		color: rgba(15, 23, 42, 0.55);
-	}
-
 	.role-option.selected {
 		border-color: rgba(var(--theme-primary-rgb), 0.38);
 		background: rgba(var(--theme-primary-rgb), 0.14);
 		color: var(--theme-primary);
-	}
-
-	.signup-note {
-		margin: 0;
-		font-size: 0.78rem;
-		line-height: 1.4;
-		color: rgba(15, 23, 42, 0.7);
 	}
 
 	.mode-switch {

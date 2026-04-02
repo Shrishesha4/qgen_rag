@@ -40,7 +40,7 @@
 	}
 
 	function startAllVetting() {
-		goto('/vetter/dashboard/loop');
+		goto('/vetter/loop');
 	}
 
 	const subjectGroupMetaById = $derived.by(() => buildSubjectGroupMetaById(subjectTree?.groups ?? []));

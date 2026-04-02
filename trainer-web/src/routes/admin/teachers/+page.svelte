@@ -125,7 +125,7 @@
 	}
 
 	function userDetailHref(userId: string): string {
-		return `/admin/users/${userId}`;
+		return `/users/${userId}`;
 	}
 
 	function toggleTeacherRow(teacherId: string) {
