@@ -73,6 +73,7 @@ export interface ResetPasswordRequest {
 
 export interface PasswordResetMethodResponse {
 	method: PasswordResetMethod;
+	self_service_enabled: boolean;
 }
 
 export interface SecurityQuestionLookupRequest {

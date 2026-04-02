@@ -48,16 +48,19 @@ class SMTPSettingsPayload(BaseModel):
 
 class PasswordResetPublicSettingsResponse(BaseModel):
     method: str
+    self_service_enabled: bool
 
 
 class PasswordResetSettingsResponse(BaseModel):
     method: str
+    self_service_enabled: bool
     smtp: SMTPSettingsPayload
     smtp_password_set: bool = False
 
 
 class PasswordResetSettingsUpdate(BaseModel):
     method: str
+    self_service_enabled: bool = True
     smtp: SMTPSettingsPayload
 
 
@@ -116,9 +119,12 @@ async def update_signup_settings(
 async def get_password_reset_public_settings(
     db: AsyncSession = Depends(get_auth_db),
 ):
-    """Get the currently active public password-reset method."""
+    """Get the currently active public password-reset policy."""
     value = await get_password_reset_settings(db, include_secret=False)
-    return PasswordResetPublicSettingsResponse(method=value["method"])
+    return PasswordResetPublicSettingsResponse(
+        method=value["method"],
+        self_service_enabled=bool(value.get("self_service_enabled", True)),
+    )
 
 
 @router.get("/password-reset/admin", response_model=PasswordResetSettingsResponse)
@@ -143,7 +149,11 @@ async def update_password_reset_admin_settings(
     method = _validate_password_reset_method(update.method)
     value = await update_password_reset_settings(
         db,
-        {"method": method, "smtp": update.smtp.model_dump()},
+        {
+            "method": method,
+            "self_service_enabled": update.self_service_enabled,
+            "smtp": update.smtp.model_dump(),
+        },
         current_user.id,
     )
     return PasswordResetSettingsResponse(**value)

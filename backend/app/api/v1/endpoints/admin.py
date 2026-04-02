@@ -5,24 +5,27 @@ Provides aggregate statistics across the entire platform:
 subjects, topics, questions generated, vetting stats, per-user breakdowns.
 """
 
-from typing import Optional, List
+from typing import Optional, List, Any, Dict
 from datetime import datetime, timezone
 import re
 import uuid
 
-from fastapi import APIRouter, Depends, HTTPException, status
+from fastapi import APIRouter, Depends, HTTPException, Request, status
 from sqlalchemy import select, func, and_, case, distinct
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import selectinload
-from pydantic import BaseModel
+from pydantic import BaseModel, Field
 
 from app.core.database import get_db
-from app.core.auth_database import AuthSessionLocal
-from app.api.v1.deps import get_current_admin
+from app.core.auth_database import AuthSessionLocal, get_auth_db
+from app.api.v1.deps import get_client_info, get_current_admin
 from app.models.user import User, VALID_ROLES, default_permissions_for_role
 from app.models.question import Question, GenerationSession
 from app.models.subject import Subject, Topic
 from app.core.security import hash_password, hash_security_answer
+from app.schemas.auth import MessageResponse
+from app.services.admin_notification_service import AdminNotificationService
+from app.services.user_service import UserService
 
 
 router = APIRouter()
@@ -146,6 +149,30 @@ class AdminUserUpdateRequest(BaseModel):
     can_vet: Optional[bool] = None
 
 
+class AdminUserPasswordResetRequest(BaseModel):
+    new_password: str = Field(..., min_length=8, max_length=128)
+
+
+class AdminNotificationSummary(BaseModel):
+    id: str
+    notification_type: str
+    title: str
+    message: str
+    target_user_id: Optional[str]
+    target_user_email: Optional[str]
+    target_username: Optional[str]
+    action_url: Optional[str]
+    action_label: Optional[str]
+    payload: Optional[Dict[str, Any]]
+    is_read: bool
+    created_at: Optional[datetime]
+
+
+class AdminNotificationListResponse(BaseModel):
+    notifications: List[AdminNotificationSummary]
+    unread_count: int
+
+
 # ============== Helpers ==============
 
 
@@ -200,6 +227,23 @@ def _resolve_permissions(role: str, payload: dict) -> dict[str, bool]:
         "can_generate": payload.get("can_generate", defaults["can_generate"]),
         "can_vet": payload.get("can_vet", defaults["can_vet"]),
     }
+
+
+def _serialize_admin_notification(notification) -> AdminNotificationSummary:
+    return AdminNotificationSummary(
+        id=notification.id,
+        notification_type=notification.notification_type,
+        title=notification.title,
+        message=notification.message,
+        target_user_id=notification.target_user_id,
+        target_user_email=notification.target_user_email,
+        target_username=notification.target_username,
+        action_url=notification.action_url,
+        action_label=notification.action_label,
+        payload=notification.payload,
+        is_read=bool(notification.is_read),
+        created_at=notification.created_at,
+    )
 
 
 # ============== Endpoints ==============
@@ -574,6 +618,52 @@ async def list_admin_users(
     ]
 
 
+@router.get("/notifications", response_model=AdminNotificationListResponse)
+async def list_admin_notifications(
+    unread_only: bool = False,
+    limit: int = 100,
+    current_user: User = Depends(get_current_admin),
+    auth_db: AsyncSession = Depends(get_auth_db),
+):
+    """List notifications for the current admin user."""
+    notification_service = AdminNotificationService(auth_db)
+    notifications = await notification_service.list_for_admin(
+        current_user.id,
+        unread_only=unread_only,
+        limit=limit,
+    )
+    unread_count = await notification_service.get_unread_count(current_user.id)
+    return AdminNotificationListResponse(
+        notifications=[_serialize_admin_notification(notification) for notification in notifications],
+        unread_count=unread_count,
+    )
+
+
+@router.post("/notifications/{notification_id}/read", response_model=AdminNotificationSummary)
+async def mark_admin_notification_read(
+    notification_id: str,
+    current_user: User = Depends(get_current_admin),
+    auth_db: AsyncSession = Depends(get_auth_db),
+):
+    """Mark a single notification as read for the current admin user."""
+    notification_service = AdminNotificationService(auth_db)
+    notification = await notification_service.mark_read(current_user.id, notification_id)
+    if not notification:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Notification not found")
+    return _serialize_admin_notification(notification)
+
+
+@router.post("/notifications/read-all", response_model=MessageResponse)
+async def mark_all_admin_notifications_read(
+    current_user: User = Depends(get_current_admin),
+    auth_db: AsyncSession = Depends(get_auth_db),
+):
+    """Mark all notifications as read for the current admin user."""
+    notification_service = AdminNotificationService(auth_db)
+    updated = await notification_service.mark_all_read(current_user.id)
+    return MessageResponse(message=f"Marked {updated} notification(s) as read")
+
+
 @router.post("/users", response_model=AdminUserSummary, status_code=status.HTTP_201_CREATED)
 async def create_admin_user(
     payload: AdminUserCreateRequest,
@@ -706,3 +796,29 @@ async def update_admin_user(
         created_at=user.created_at,
         last_login_at=user.last_login_at,
     )
+
+
+@router.post("/users/{user_id}/reset-password", response_model=MessageResponse)
+async def admin_reset_user_password(
+    user_id: str,
+    payload: AdminUserPasswordResetRequest,
+    request: Request,
+    current_user: User = Depends(get_current_admin),
+    auth_db: AsyncSession = Depends(get_auth_db),
+):
+    """Allow admins to reset the password for any user account."""
+    user_service = UserService(auth_db)
+    client_info = get_client_info(request)
+
+    try:
+        await user_service.admin_reset_password(
+            user_id=user_id,
+            new_password=payload.new_password,
+            admin_user_id=current_user.id,
+            ip_address=client_info.get("ip_address"),
+            user_agent=client_info.get("user_agent"),
+        )
+    except ValueError as exc:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=str(exc))
+
+    return MessageResponse(message="Password reset successfully")

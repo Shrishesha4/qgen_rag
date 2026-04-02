@@ -64,6 +64,10 @@ AuthBase = declarative_base()
 
 async def init_auth_db():
     """Initialize SQLite auth database and create tables."""
+    from app.models.user import User  # noqa: F401
+    from app.models.auth import RefreshToken, AuditLog, AdminNotification  # noqa: F401
+    from app.models.system_settings import SystemSettings  # noqa: F401
+
     async with auth_engine.begin() as conn:
         await conn.run_sync(AuthBase.metadata.create_all)
 

@@ -37,11 +37,13 @@ def normalize_password_reset_settings(value: dict[str, Any] | None) -> dict[str,
     method = str(merged.get("method") or "").strip().lower()
     if method not in {PASSWORD_RESET_METHOD_SMTP, PASSWORD_RESET_METHOD_SECURITY_QUESTION}:
         method = _password_reset_defaults().get("method", PASSWORD_RESET_METHOD_SECURITY_QUESTION)
+    self_service_enabled = bool(merged.get("self_service_enabled", True))
 
     smtp = merged.get("smtp") or {}
     use_ssl = bool(smtp.get("use_ssl", False))
     normalized = {
         "method": method,
+        "self_service_enabled": self_service_enabled,
         "smtp": {
             "host": str(smtp.get("host") or "").strip(),
             "port": int(smtp.get("port") or 587),

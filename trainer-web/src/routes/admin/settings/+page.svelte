@@ -20,6 +20,7 @@
 
 	interface PasswordResetSettingsResponse {
 		method: PasswordResetMethod;
+		self_service_enabled: boolean;
 		smtp: SMTPSettingsPayload;
 		smtp_password_set: boolean;
 	}
@@ -46,6 +47,7 @@
 	let signupSaved = $state(false);
 
 	let passwordResetMethod = $state<PasswordResetMethod>('security_question');
+	let passwordResetSelfServiceEnabled = $state(true);
 	let smtpSettings = $state<SMTPSettingsPayload>({ ...DEFAULT_SMTP_SETTINGS });
 	let smtpPasswordSet = $state(false);
 	let passwordResetLoading = $state(false);
@@ -92,6 +94,7 @@
 
 	function applyPasswordResetSettings(value: PasswordResetSettingsResponse) {
 		passwordResetMethod = value.method;
+		passwordResetSelfServiceEnabled = value.self_service_enabled;
 		smtpSettings = {
 			...DEFAULT_SMTP_SETTINGS,
 			...value.smtp,
@@ -154,6 +157,7 @@
 		try {
 			const payload = {
 				method: passwordResetMethod,
+				self_service_enabled: passwordResetSelfServiceEnabled,
 				smtp: {
 					...smtpSettings,
 					host: smtpSettings.host.trim(),
@@ -268,6 +272,45 @@
 				<div class="settings-success" role="status">{passwordResetMessage}</div>
 			{/if}
 
+			<div class="policy-block">
+				<div class="method-tabs" role="tablist" aria-label="Password reset access mode">
+					<button
+						type="button"
+						class="method-tab"
+						class:selected={passwordResetSelfServiceEnabled}
+						role="tab"
+						aria-selected={passwordResetSelfServiceEnabled}
+						onclick={() => {
+							passwordResetSelfServiceEnabled = true;
+						}}
+					>
+						<span class="method-tab-label">Self-Service</span>
+						<span class="method-tab-copy">Users finish the reset flow themselves using the method below.</span>
+					</button>
+					<button
+						type="button"
+						class="method-tab"
+						class:selected={!passwordResetSelfServiceEnabled}
+						role="tab"
+						aria-selected={!passwordResetSelfServiceEnabled}
+						onclick={() => {
+							passwordResetSelfServiceEnabled = false;
+						}}
+					>
+						<span class="method-tab-label">Admin Approval</span>
+						<span class="method-tab-copy">Users only send a reset alert. Admins set the new password.</span>
+					</button>
+				</div>
+			</div>
+
+			{#if !passwordResetSelfServiceEnabled}
+				<div class="settings-note" role="status">
+					Public forgot-password requests will only create admin notifications. Users will not receive reset links or security-question access.
+				</div>
+			{/if}
+
+			{#if passwordResetSelfServiceEnabled}
+
 			<div class="method-tabs" role="tablist" aria-label="Password reset method">
 				<button
 					type="button"
@@ -300,17 +343,11 @@
 					<span class="method-tab-copy">Signed email reset links</span>
 				</button>
 			</div>
+			{/if}
 
 			{#if passwordResetMethod === 'security_question'}
-				<div class="method-panel" id="password-reset-security-panel" role="tabpanel" aria-labelledby="password-reset-security-tab">
-					<div class="method-summary">
-						<div>
-							<span class="method-summary-label">Security Question</span>
-							<h3>Profile-based password recovery</h3>
-							<p>Users reset their password by answering the question saved on their profile. No SMTP fields are needed for this mode.</p>
-						</div>
-						<span class="method-badge">Active</span>
-					</div>
+				<div>
+
 				</div>
 			{:else}
 				<div class="method-panel" id="password-reset-smtp-panel" role="tabpanel" aria-labelledby="password-reset-smtp-tab">
@@ -318,9 +355,13 @@
 						<div>
 							<span class="method-summary-label">SMTP Email</span>
 							<h3>Email-based password recovery</h3>
-							<p>Users receive a signed reset link by email. SMTP configuration is only shown while this method is selected.</p>
+							<p>
+								{passwordResetSelfServiceEnabled
+									? 'Users receive a signed reset link by email. SMTP configuration is only shown while this method is selected.'
+									: 'This self-service method is configured but currently on standby because admin approval is required.'}
+							</p>
 						</div>
-						<span class="method-badge">Active</span>
+						<span class="method-badge">{passwordResetSelfServiceEnabled ? 'Active' : 'Standby'}</span>
 					</div>
 
 					<div class="smtp-panel">
@@ -433,6 +474,22 @@
 		line-height: 1.45;
 	}
 
+	.policy-block {
+		display: flex;
+		flex-direction: column;
+		gap: 0.75rem;
+	}
+
+	.settings-note {
+		padding: 0.8rem 0.9rem;
+		border-radius: 0.8rem;
+		background: rgba(58, 170, 255, 0.428);
+		border: 1px solid rgba(99, 79, 0, 0.28);
+		color: #333333;
+		font-size: 0.83rem;
+		line-height: 1.45;
+	}
+
 	.save-group {
 		display: flex;
 		align-items: center;
@@ -454,8 +511,8 @@
 
 	.settings-success {
 		background: rgba(15, 118, 110, 0.16);
-		border: 0.5px solid rgba(15, 118, 110, 0.35);
-		color: #99f6e4;
+		border: 0.5px solid rgba(0, 133, 33, 0.528);
+		color: #006015;
 	}
 
 	.settings-list {

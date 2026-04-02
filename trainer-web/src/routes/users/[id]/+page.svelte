@@ -1,5 +1,5 @@
 <script lang="ts">
-	import { onMount } from 'svelte';
+	import { onMount, tick } from 'svelte';
 	import { goto } from '$app/navigation';
 	import { page } from '$app/stores';
 	import { session } from '$lib/session';
@@ -7,6 +7,7 @@
 		getAdminDashboard,
 		listAdminSubjects,
 		listAdminUsers,
+		resetAdminUserPassword,
 		type AdminSubjectSummary,
 		type AdminUserSummary,
 		type UserStats
@@ -18,6 +19,13 @@
 	let userStats = $state<UserStats | null>(null);
 	let assignedSubjects = $state<AdminSubjectSummary[]>([]);
 	let routeUserId = $state('');
+	let resetPassword = $state('');
+	let confirmResetPassword = $state('');
+	let resetBusy = $state(false);
+	let resetError = $state('');
+	let resetSuccess = $state('');
+	let shouldFocusReset = $state(false);
+	let resetSectionElement = $state<HTMLElement | null>(null);
 
 	onMount(() => {
 		const unsubSession = session.subscribe((s) => {
@@ -28,6 +36,10 @@
 
 		const unsubPage = page.subscribe(($page) => {
 			const nextId = $page.params.id;
+			shouldFocusReset = $page.url.searchParams.get('intent') === 'reset-password';
+			if (shouldFocusReset && nextId && nextId === routeUserId) {
+				void focusResetSection();
+			}
 			if (!nextId || nextId === routeUserId) return;
 			routeUserId = nextId;
 			void loadUserDetail(nextId);
@@ -45,6 +57,10 @@
 		user = null;
 		userStats = null;
 		assignedSubjects = [];
+		resetPassword = '';
+		confirmResetPassword = '';
+		resetError = '';
+		resetSuccess = '';
 
 		try {
 			const [users, dashboard, subjects] = await Promise.all([
@@ -66,11 +82,47 @@
 			error = e instanceof Error ? e.message : 'Failed to load user details';
 		} finally {
 			loading = false;
+			if (shouldFocusReset) {
+				await focusResetSection();
+			}
 		}
+	}
+
+	async function focusResetSection() {
+		await tick();
+		resetSectionElement?.scrollIntoView({ behavior: 'smooth', block: 'start' });
 	}
 
 	function openSubject(subjectId: string) {
 		goto(`/admin/subjects/${subjectId}`);
+	}
+
+	async function handleAdminResetPassword() {
+		if (!user || resetBusy) return;
+		resetError = '';
+		resetSuccess = '';
+
+		if (resetPassword.trim().length < 8) {
+			resetError = 'Password must be at least 8 characters.';
+			return;
+		}
+
+		if (resetPassword !== confirmResetPassword) {
+			resetError = 'Passwords do not match.';
+			return;
+		}
+
+		resetBusy = true;
+		try {
+			const response = await resetAdminUserPassword(user.id, { new_password: resetPassword });
+			resetSuccess = response.message;
+			resetPassword = '';
+			confirmResetPassword = '';
+		} catch (e: unknown) {
+			resetError = e instanceof Error ? e.message : 'Failed to reset password.';
+		} finally {
+			resetBusy = false;
+		}
 	}
 
 	function formatDate(value: string | null): string {
@@ -174,6 +226,32 @@
 					<span>Vet</span>
 					<strong>{user.can_vet ? 'Allowed' : 'Blocked'}</strong>
 				</div>
+			</div>
+		</section>
+
+		<section class="section glass-panel reset-section" bind:this={resetSectionElement}>
+			<h2>Admin Password Reset</h2>
+			<p class="section-copy">Set a new password directly for this user account. This revokes their active sessions.</p>
+			<div class="reset-grid">
+				<label class="field">
+					<span>New Password</span>
+					<input bind:value={resetPassword} type="password" placeholder="At least 8 characters" minlength="8" />
+				</label>
+				<label class="field">
+					<span>Confirm Password</span>
+					<input bind:value={confirmResetPassword} type="password" placeholder="Repeat the new password" minlength="8" />
+				</label>
+			</div>
+			{#if resetError}
+				<p class="feedback error">{resetError}</p>
+			{/if}
+			{#if resetSuccess}
+				<p class="feedback success">{resetSuccess}</p>
+			{/if}
+			<div class="actions-row">
+				<button class="open-btn" onclick={handleAdminResetPassword} disabled={resetBusy}>
+					{resetBusy ? 'Resetting...' : 'Reset Password'}
+				</button>
 			</div>
 		</section>
 
@@ -343,6 +421,67 @@
 		color: var(--theme-text);
 	}
 
+	.section-copy {
+		margin: -0.2rem 0 0.9rem;
+		color: var(--theme-text-muted);
+		font-size: 0.9rem;
+		line-height: 1.45;
+	}
+
+	.reset-grid {
+		display: grid;
+		grid-template-columns: repeat(2, minmax(0, 1fr));
+		gap: 0.75rem;
+	}
+
+	.field {
+		display: flex;
+		flex-direction: column;
+		gap: 0.4rem;
+	}
+
+	.field span {
+		font-size: 0.76rem;
+		font-weight: 700;
+		text-transform: uppercase;
+		letter-spacing: 0.05em;
+		color: var(--theme-text-muted);
+	}
+
+	.field input {
+		padding: 0.7rem 0.8rem;
+		border-radius: 0.75rem;
+		border: 1px solid var(--theme-glass-border);
+		background: color-mix(in srgb, var(--theme-input-bg) 86%, transparent);
+		color: var(--theme-text);
+		font: inherit;
+	}
+
+	.actions-row {
+		display: flex;
+		justify-content: flex-end;
+		margin-top: 0.85rem;
+	}
+
+	.feedback {
+		margin: 0.85rem 0 0;
+		padding: 0.75rem 0.85rem;
+		border-radius: 0.8rem;
+		font-size: 0.9rem;
+	}
+
+	.feedback.error {
+		background: rgba(239, 68, 68, 0.12);
+		border: 1px solid rgba(239, 68, 68, 0.3);
+		color: #fca5a5;
+	}
+
+	.feedback.success {
+		background: rgba(34, 197, 94, 0.12);
+		border: 1px solid rgba(34, 197, 94, 0.28);
+		color: #86efac;
+	}
+
 	.access-grid {
 		display: grid;
 		grid-template-columns: repeat(3, minmax(0, 1fr));
@@ -504,6 +643,10 @@
 	@media (max-width: 980px) {
 		.stats-grid {
 			grid-template-columns: repeat(3, minmax(0, 1fr));
+		}
+
+		.reset-grid {
+			grid-template-columns: 1fr;
 		}
 
 		.access-grid {

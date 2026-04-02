@@ -40,6 +40,7 @@
 		if (pathname === '/vetter/profile') return 'Profile';
 		// Admin routes
 		if (pathname === '/admin/dashboard') return 'Dashboard';
+		if (String(pathname) === '/admin/notifications') return 'Notifications';
 		if (pathname.startsWith('/admin/subjects/')) return 'Subject';
 		if (pathname === '/admin/subjects') return 'Subjects';
 		if (pathname === '/admin/teachers') return 'Teachers';
@@ -52,7 +53,7 @@
 		'/teacher/stats',
 		'/teacher/profile', '/teacher/ops', '/teacher/verify', '/teacher/ab-test',
 		'/vetter', '/vetter/dashboard', '/vetter/subjects', '/vetter/profile',
-		'/admin/dashboard', '/admin/subjects', '/admin/teachers', '/admin/vetters',
+		'/admin/dashboard', '/admin/notifications', '/admin/subjects', '/admin/teachers', '/admin/vetters',
 	]);
 
 	let showBack = $derived(!rootPages.has(pathname));

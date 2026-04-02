@@ -31,6 +31,7 @@ from app.schemas.auth import (
     LogoutAllResponse,
 )
 from app.core.security import create_password_reset_token, decode_token, password_token_version
+from app.services.admin_notification_service import AdminNotificationService
 from app.services.user_service import UserService
 from app.services.email_service import EmailService
 from app.services.system_settings_service import get_password_reset_settings
@@ -159,6 +160,28 @@ async def forgot_password(
 ):
     """Request a password reset email without revealing whether the account exists."""
     password_reset_settings = await get_password_reset_settings(db, include_secret=True)
+    user_service = UserService(db)
+    client_info = get_client_info(request)
+    user = await user_service.get_user_by_email(payload.email)
+
+    if not password_reset_settings.get("self_service_enabled", True):
+        if user and user.is_active:
+            notification_service = AdminNotificationService(db)
+            try:
+                await notification_service.create_password_reset_notifications(
+                    user,
+                    method=password_reset_settings["method"],
+                    self_service_enabled=False,
+                    ip_address=client_info.get("ip_address"),
+                    user_agent=client_info.get("user_agent"),
+                )
+            except Exception as exc:
+                logger.warning("Admin-assisted reset notification creation failed for %s: %s", user.email, exc)
+
+        return MessageResponse(
+            message="If an account exists for that email, admins have been alerted to reset the password."
+        )
+
     if password_reset_settings["method"] != PASSWORD_RESET_METHOD_SMTP:
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,
@@ -172,11 +195,19 @@ async def forgot_password(
             detail="Password reset email is not configured",
         )
 
-    user_service = UserService(db)
-    client_info = get_client_info(request)
-    user = await user_service.get_user_by_email(payload.email)
-
     if user and user.is_active:
+        notification_service = AdminNotificationService(db)
+        try:
+            await notification_service.create_password_reset_notifications(
+                user,
+                method=PASSWORD_RESET_METHOD_SMTP,
+                self_service_enabled=True,
+                ip_address=client_info.get("ip_address"),
+                user_agent=client_info.get("user_agent"),
+            )
+        except Exception as exc:
+            logger.warning("Password reset notification creation failed for %s: %s", user.email, exc)
+
         token = create_password_reset_token(
             data={
                 "sub": str(user.id),
@@ -207,11 +238,18 @@ async def forgot_password(
 
 @router.post("/security-question", response_model=SecurityQuestionResponse)
 async def get_security_question(
+    request: Request,
     payload: SecurityQuestionRequest,
     db: AsyncSession = Depends(get_auth_db),
 ):
     """Return the stored security question for password-reset flows."""
     password_reset_settings = await get_password_reset_settings(db, include_secret=False)
+    if not password_reset_settings.get("self_service_enabled", True):
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="Self-service password reset is currently disabled",
+        )
+
     if password_reset_settings["method"] != PASSWORD_RESET_METHOD_SECURITY_QUESTION:
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,
@@ -219,14 +257,27 @@ async def get_security_question(
         )
 
     user_service = UserService(db)
-    question = await user_service.get_security_question_for_email(payload.email)
-    if not question:
+    user = await user_service.get_user_by_email(payload.email)
+    if not user or not user.is_active or not user.security_question or not user.security_answer_hash:
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,
             detail="Security question is not available for this account",
         )
 
-    return SecurityQuestionResponse(security_question=question)
+    client_info = get_client_info(request)
+    notification_service = AdminNotificationService(db)
+    try:
+        await notification_service.create_password_reset_notifications(
+            user,
+            method=PASSWORD_RESET_METHOD_SECURITY_QUESTION,
+            self_service_enabled=True,
+            ip_address=client_info.get("ip_address"),
+            user_agent=client_info.get("user_agent"),
+        )
+    except Exception as exc:
+        logger.warning("Security-question reset notification creation failed for %s: %s", user.email, exc)
+
+    return SecurityQuestionResponse(security_question=user.security_question)
 
 
 @router.post("/security-question/reset-password", response_model=MessageResponse)
@@ -237,6 +288,12 @@ async def reset_password_with_security_question(
 ):
     """Reset a password using the user's configured security answer."""
     password_reset_settings = await get_password_reset_settings(db, include_secret=False)
+    if not password_reset_settings.get("self_service_enabled", True):
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="Self-service password reset is currently disabled",
+        )
+
     if password_reset_settings["method"] != PASSWORD_RESET_METHOD_SECURITY_QUESTION:
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,
@@ -285,6 +342,13 @@ async def reset_password(
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,
             detail="Invalid or expired password reset token",
+        )
+
+    password_reset_settings = await get_password_reset_settings(db, include_secret=False)
+    if not password_reset_settings.get("self_service_enabled", True):
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="Self-service password reset is currently disabled",
         )
 
     token_version = int(token_payload.get("pwd") or 0)

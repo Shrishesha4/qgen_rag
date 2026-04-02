@@ -261,6 +261,31 @@ class UserService:
         )
         return True
 
+    async def admin_reset_password(
+        self,
+        user_id: str,
+        new_password: str,
+        *,
+        admin_user_id: str,
+        ip_address: Optional[str] = None,
+        user_agent: Optional[str] = None,
+    ) -> bool:
+        """Reset a user's password from an admin workflow and log the acting admin."""
+        user = await self.get_user_by_id(user_id)
+        if not user:
+            raise ValueError("User not found")
+
+        await self._update_password(user, new_password, revoke_sessions=True)
+        await self._log_auth_event(
+            user_id=user.id,
+            event_type="password_reset_admin_success",
+            ip_address=ip_address,
+            user_agent=user_agent,
+            success=True,
+            event_data={"admin_user_id": admin_user_id},
+        )
+        return True
+
     async def get_security_question_for_email(self, email: str) -> Optional[str]:
         """Return the stored security question for an active user."""
         user = await self.get_user_by_email(email)
@@ -506,6 +531,7 @@ class UserService:
         user_agent: Optional[str] = None,
         success: bool = True,
         error_message: Optional[str] = None,
+        event_data: Optional[dict] = None,
     ):
         """Log authentication event."""
         audit_log = AuditLog(
@@ -515,6 +541,7 @@ class UserService:
             severity="info" if success else "warning",
             ip_address=ip_address,
             user_agent=user_agent,
+            event_data=event_data,
             success=success,
             error_message=error_message,
         )
