@@ -61,7 +61,7 @@ async def is_signup_enabled(db: AsyncSession) -> bool:
     return DEFAULT_SETTINGS.get(SETTING_SIGNUP_ENABLED, {}).get("enabled", True)
 
 
-@router.post("/register", response_model=TokenResponse, status_code=status.HTTP_201_CREATED)
+@router.post("/register", response_model=MessageResponse, status_code=status.HTTP_201_CREATED)
 async def register(
     request: Request,
     user_data: UserCreate,
@@ -76,26 +76,31 @@ async def register(
             status_code=status.HTTP_403_FORBIDDEN,
             detail="User registration is currently disabled. Please contact an administrator.",
         )
+
+    if user_data.role == "admin":
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="Admin accounts must be created by an existing admin.",
+        )
     
     user_service = UserService(db)
     client_info = get_client_info(request)
     
     try:
-        # Create user
-        user = await user_service.create_user(user_data)
-        
-        # Generate tokens
-        access_token, refresh_token = await user_service.create_refresh_token(
-            user_id=user.id,
-            **client_info,
-        )
-        
-        return TokenResponse(
-            access_token=access_token,
-            refresh_token=refresh_token,
-            token_type="bearer",
-            expires_in=settings.ACCESS_TOKEN_EXPIRE_MINUTES * 60,
-            user=UserResponse.model_validate(user),
+        user = await user_service.create_user(user_data, is_approved=False)
+
+        notification_service = AdminNotificationService(db)
+        try:
+            await notification_service.create_user_registration_notifications(
+                user,
+                ip_address=client_info.get("ip_address"),
+                user_agent=client_info.get("user_agent"),
+            )
+        except Exception as exc:
+            logger.warning("Registration notification creation failed for %s: %s", user.email, exc)
+
+        return MessageResponse(
+            message="Registration submitted. An admin must approve your account before you can sign in."
         )
     
     except ValueError as e:
@@ -165,7 +170,7 @@ async def forgot_password(
     user = await user_service.get_user_by_email(payload.email)
 
     if not password_reset_settings.get("self_service_enabled", True):
-        if user and user.is_active:
+        if user and user.is_active and user.is_approved:
             notification_service = AdminNotificationService(db)
             try:
                 await notification_service.create_password_reset_notifications(
@@ -195,7 +200,7 @@ async def forgot_password(
             detail="Password reset email is not configured",
         )
 
-    if user and user.is_active:
+    if user and user.is_active and user.is_approved:
         notification_service = AdminNotificationService(db)
         try:
             await notification_service.create_password_reset_notifications(
@@ -258,7 +263,7 @@ async def get_security_question(
 
     user_service = UserService(db)
     user = await user_service.get_user_by_email(payload.email)
-    if not user or not user.is_active or not user.security_question or not user.security_answer_hash:
+    if not user or not user.is_active or not user.is_approved or not user.security_question or not user.security_answer_hash:
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,
             detail="Security question is not available for this account",
@@ -338,7 +343,7 @@ async def reset_password(
 
     user_service = UserService(db)
     user = await user_service.get_user_by_id(user_id) if user_id else None
-    if not user or not user.is_active or user.email.strip().lower() != token_email:
+    if not user or not user.is_active or not user.is_approved or user.email.strip().lower() != token_email:
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,
             detail="Invalid or expired password reset token",

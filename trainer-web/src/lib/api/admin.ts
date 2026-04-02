@@ -33,10 +33,12 @@ export interface AdminUserSummary {
 	full_name: string | null;
 	role: 'teacher' | 'vetter' | 'admin';
 	is_active: boolean;
+	is_approved: boolean;
 	is_superuser: boolean;
 	can_manage_groups: boolean;
 	can_generate: boolean;
 	can_vet: boolean;
+	approved_at: string | null;
 	created_at: string | null;
 	last_login_at: string | null;
 }
@@ -66,6 +68,11 @@ export interface AdminUserUpdateRequest {
 
 export interface AdminUserPasswordResetRequest {
 	new_password: string;
+}
+
+export interface AdminBulkApproveUsersResponse {
+	approved_users: AdminUserSummary[];
+	approved_count: number;
 }
 
 export interface AdminNotificationSummary {
@@ -177,6 +184,19 @@ export async function resetAdminUserPassword(
 	return apiFetch<{ message: string }>(`/admin/users/${userId}/reset-password`, {
 		method: 'POST',
 		body: JSON.stringify(payload)
+	});
+}
+
+export async function approveAdminUser(userId: string): Promise<AdminUserSummary> {
+	return apiFetch<AdminUserSummary>(`/admin/users/${userId}/approve`, {
+		method: 'POST'
+	});
+}
+
+export async function bulkApproveAdminUsers(userIds: string[]): Promise<AdminBulkApproveUsersResponse> {
+	return apiFetch<AdminBulkApproveUsersResponse>('/admin/users/approve-bulk', {
+		method: 'POST',
+		body: JSON.stringify({ user_ids: userIds })
 	});
 }
 

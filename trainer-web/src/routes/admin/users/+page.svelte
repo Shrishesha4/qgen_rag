@@ -6,6 +6,8 @@
 	import {
 		listAdminUsers,
 		createAdminUser,
+		approveAdminUser,
+		bulkApproveAdminUsers,
 		updateAdminUser,
 		type AdminUserSummary,
 		type AdminUserCreateRequest,
@@ -31,6 +33,12 @@
 	let users = $state<AdminUserSummary[]>([]);
 	let drafts = $state<Record<string, DraftPermissions>>({});
 	let saveBusyByUser = $state<Record<string, boolean>>({});
+	let approveBusyByUser = $state<Record<string, boolean>>({});
+	let showApprovalModal = $state(false);
+	let approvalQuery = $state('');
+	let selectedPendingUserIds = $state<string[]>([]);
+	let bulkApproveBusy = $state(false);
+	let highlightedPendingUserId = $state('');
 
 	let showCreateForm = $state(false);
 	let createPayload = $state<AdminUserCreateRequest>({
@@ -55,6 +63,12 @@
 			}
 			currentAdminUserId = s.user.id;
 		});
+		if (typeof window !== 'undefined') {
+			const params = new URL(window.location.href).searchParams;
+			if (params.get('modal') === 'approvals') {
+				openApprovalModal(params.get('user') || undefined);
+			}
+		}
 		void loadUsers();
 		return unsub;
 	});
@@ -98,11 +112,53 @@
 			const result = await listAdminUsers();
 			users = result;
 			hydrateDrafts(result);
+			selectedPendingUserIds = selectedPendingUserIds.filter((id) => result.some((user) => !user.is_approved && user.id === id));
+			if (highlightedPendingUserId && !result.some((user) => !user.is_approved && user.id === highlightedPendingUserId)) {
+				highlightedPendingUserId = '';
+			}
 		} catch (e: unknown) {
 			error = e instanceof Error ? e.message : 'Failed to load users';
 		} finally {
 			loading = false;
 		}
+	}
+
+	function syncUpdatedUser(updated: AdminUserSummary) {
+		users = users.map((user) => (user.id === updated.id ? updated : user));
+		drafts = {
+			...drafts,
+			[updated.id]: {
+				role: updated.role,
+				is_active: updated.is_active,
+				can_manage_groups: updated.can_manage_groups,
+				can_generate: updated.can_generate,
+				can_vet: updated.can_vet
+			}
+		};
+		if (updated.is_approved) {
+			selectedPendingUserIds = selectedPendingUserIds.filter((id) => id !== updated.id);
+			if (highlightedPendingUserId === updated.id) {
+				highlightedPendingUserId = '';
+			}
+		}
+	}
+
+	function openApprovalModal(targetUserId?: string) {
+		showApprovalModal = true;
+		approvalQuery = '';
+		if (targetUserId) {
+			highlightedPendingUserId = targetUserId;
+			if (!selectedPendingUserIds.includes(targetUserId)) {
+				selectedPendingUserIds = [...selectedPendingUserIds, targetUserId];
+			}
+		}
+	}
+
+	function closeApprovalModal() {
+		showApprovalModal = false;
+		approvalQuery = '';
+		selectedPendingUserIds = [];
+		highlightedPendingUserId = '';
 	}
 
 	function applyCreateRoleDefaults() {
@@ -199,17 +255,7 @@
 				can_vet: draft.can_vet
 			};
 			const updated = await updateAdminUser(user.id, payload);
-			users = users.map((u) => (u.id === updated.id ? updated : u));
-			drafts = {
-				...drafts,
-				[updated.id]: {
-					role: updated.role,
-					is_active: updated.is_active,
-					can_manage_groups: updated.can_manage_groups,
-					can_generate: updated.can_generate,
-					can_vet: updated.can_vet
-				}
-			};
+			syncUpdatedUser(updated);
 			success = `Updated ${updated.username}`;
 		} catch (e: unknown) {
 			error = e instanceof Error ? e.message : 'Failed to update user';
@@ -218,10 +264,83 @@
 		}
 	}
 
+	async function approveUser(user: AdminUserSummary) {
+		if (user.is_approved || approveBusyByUser[user.id]) return;
+
+		error = '';
+		success = '';
+		approveBusyByUser = { ...approveBusyByUser, [user.id]: true };
+		try {
+			const updated = await approveAdminUser(user.id);
+			syncUpdatedUser(updated);
+			success = `Approved ${updated.username}`;
+		} catch (e: unknown) {
+			error = e instanceof Error ? e.message : 'Failed to approve user';
+		} finally {
+			approveBusyByUser = { ...approveBusyByUser, [user.id]: false };
+		}
+	}
+
+	async function bulkApproveSelectedUsers() {
+		const pendingIds = selectedPendingUserIds.filter((id) => users.some((user) => !user.is_approved && user.id === id));
+		if (pendingIds.length === 0 || bulkApproveBusy) return;
+
+		error = '';
+		success = '';
+		bulkApproveBusy = true;
+		try {
+			const response = await bulkApproveAdminUsers(pendingIds);
+			for (const updated of response.approved_users) {
+				syncUpdatedUser(updated);
+			}
+			selectedPendingUserIds = selectedPendingUserIds.filter((id) => !pendingIds.includes(id));
+			success = response.approved_count === 1 ? 'Approved 1 user' : `Approved ${response.approved_count} users`;
+		} catch (e: unknown) {
+			error = e instanceof Error ? e.message : 'Failed to bulk approve users';
+		} finally {
+			bulkApproveBusy = false;
+		}
+	}
+
+	function togglePendingSelection(userId: string, checked: boolean) {
+		if (checked) {
+			if (!selectedPendingUserIds.includes(userId)) {
+				selectedPendingUserIds = [...selectedPendingUserIds, userId];
+			}
+			return;
+		}
+		selectedPendingUserIds = selectedPendingUserIds.filter((id) => id !== userId);
+	}
+
+	function toggleAllVisiblePendingUsers(checked: boolean) {
+		const visibleIds = filteredPendingUsers.map((user) => user.id);
+		if (checked) {
+			selectedPendingUserIds = Array.from(new Set([...selectedPendingUserIds, ...visibleIds]));
+			return;
+		}
+		selectedPendingUserIds = selectedPendingUserIds.filter((id) => !visibleIds.includes(id));
+	}
+
+	function allVisiblePendingSelected(): boolean {
+		return filteredPendingUsers.length > 0 && filteredPendingUsers.every((user) => selectedPendingUserIds.includes(user.id));
+	}
+
 	const filteredUsers = $derived.by(() => {
 		const needle = query.trim().toLowerCase();
 		if (!needle) return users;
 		return users.filter((user) =>
+			[user.username, user.email, user.full_name || '', user.role].some((value) =>
+				value.toLowerCase().includes(needle)
+			)
+		);
+	});
+
+	const pendingUsers = $derived.by(() => users.filter((user) => !user.is_approved));
+
+	const filteredPendingUsers = $derived.by(() => {
+		const needle = approvalQuery.trim().toLowerCase();
+		if (!needle) return pendingUsers;
+		return pendingUsers.filter((user) =>
 			[user.username, user.email, user.full_name || '', user.role].some((value) =>
 				value.toLowerCase().includes(needle)
 			)
@@ -259,9 +378,17 @@
 
 	<div class="toolbar glass-panel animate-slide-up">
 		<input class="search-input" bind:value={query} placeholder="Search by username, email, name, or role" />
-		<button class="primary-btn" onclick={() => (showCreateForm = !showCreateForm)}>
-			{showCreateForm ? 'Close' : 'Add User'}
-		</button>
+		<div class="toolbar-actions">
+			<button class="secondary-btn" onclick={() => openApprovalModal()}>
+				Pending Approvals
+				{#if pendingUsers.length > 0}
+					<span class="toolbar-badge">{pendingUsers.length}</span>
+				{/if}
+			</button>
+			<button class="primary-btn" onclick={() => (showCreateForm = !showCreateForm)}>
+				{showCreateForm ? 'Close' : 'Add User'}
+			</button>
+		</div>
 	</div>
 
 	{#if error}
@@ -324,6 +451,79 @@
 		</section>
 	{/if}
 
+	{#if showApprovalModal}
+		<div class="modal-backdrop" role="presentation" onclick={(event) => {
+			if (event.currentTarget === event.target) {
+				closeApprovalModal();
+			}
+		}}>
+			<div class="approval-modal glass-panel" role="dialog" aria-modal="true" aria-labelledby="approval-modal-title">
+				<div class="approval-modal-header">
+					<div>
+						<p class="modal-eyebrow">Registration Queue</p>
+						<h2 id="approval-modal-title">Pending Approvals</h2>
+						<p class="modal-copy">Approve users one by one or select several pending registrations and approve them together.</p>
+					</div>
+					<button class="secondary-btn" type="button" onclick={closeApprovalModal}>Close</button>
+				</div>
+
+				<div class="approval-modal-toolbar">
+					<input class="approval-search" bind:value={approvalQuery} placeholder="Search pending users by username, email, name, or role" />
+					<div class="approval-modal-actions">
+						<label class="bulk-select-label">
+							<input type="checkbox" checked={allVisiblePendingSelected()} onchange={(event) => toggleAllVisiblePendingUsers((event.currentTarget as HTMLInputElement).checked)} disabled={filteredPendingUsers.length === 0} />
+							<span>Select visible</span>
+						</label>
+						<button class="secondary-btn" type="button" onclick={() => {
+							selectedPendingUserIds = [];
+							highlightedPendingUserId = '';
+						}} disabled={selectedPendingUserIds.length === 0}>Clear</button>
+						<button class="approve-btn" type="button" onclick={bulkApproveSelectedUsers} disabled={bulkApproveBusy || selectedPendingUserIds.length === 0}>
+							{bulkApproveBusy ? 'Approving...' : `Bulk Approve (${selectedPendingUserIds.length})`}
+						</button>
+					</div>
+				</div>
+
+				{#if pendingUsers.length === 0}
+					<div class="approval-empty glass-panel">
+						<p>No pending registrations right now.</p>
+					</div>
+				{:else if filteredPendingUsers.length === 0}
+					<div class="approval-empty glass-panel">
+						<p>No pending users match this search.</p>
+					</div>
+				{:else}
+					<div class="approval-list">
+						{#each filteredPendingUsers as user}
+							<div class="approval-card glass-panel" class:approval-card--highlight={highlightedPendingUserId === user.id}>
+								<label class="approval-check">
+									<input type="checkbox" checked={selectedPendingUserIds.includes(user.id)} onchange={(event) => togglePendingSelection(user.id, (event.currentTarget as HTMLInputElement).checked)} />
+								</label>
+								<div class="approval-card-main">
+									<div class="approval-card-heading">
+										<a class="user-name user-link" href={userDetailHref(user.id)}>{user.full_name || user.username}</a>
+										<span class="status-pill status-pill--pending">Pending Approval</span>
+									</div>
+									<div class="approval-card-meta">
+										<span>{user.email}</span>
+										<span class="locked-role">{user.role}</span>
+										<span>Registered {formatDate(user.created_at)}</span>
+									</div>
+								</div>
+								<div class="approval-card-actions">
+									<a class="secondary-link" href={userDetailHref(user.id)}>Open</a>
+									<button class="approve-btn" type="button" onclick={() => approveUser(user)} disabled={approveBusyByUser[user.id]}>
+										{approveBusyByUser[user.id] ? 'Approving...' : 'Approve'}
+									</button>
+								</div>
+							</div>
+						{/each}
+					</div>
+				{/if}
+			</div>
+		</div>
+	{/if}
+
 	{#if loading}
 		<div class="center-state loading-state">
 			<div class="spinner"></div>
@@ -340,6 +540,7 @@
 					<col class="col-user" />
 					<col class="col-role" />
 					<col class="col-status" />
+					<col class="col-approval" />
 					<col class="col-perm" />
 					<col class="col-perm" />
 					<col class="col-perm" />
@@ -350,7 +551,8 @@
 					<tr>
 						<th>User</th>
 						<th>Role</th>
-						<th>Status</th>
+						<th>Active</th>
+						<th>Approval</th>
 						<th>Manage Groups</th>
 						<th>Generate</th>
 						<th>Vet</th>
@@ -391,6 +593,11 @@
 										}}
 									/>
 								</label>
+							</td>
+							<td>
+								<span class:status-pill={true} class:status-pill--approved={user.is_approved} class:status-pill--pending={!user.is_approved}>
+									{user.is_approved ? 'Approved' : 'Pending Approval'}
+								</span>
 							</td>
 							<td>
                             <label class="cell-check">
@@ -452,6 +659,9 @@
 					<div class="user-cell">
 						<a class="user-name user-link" href={userDetailHref(user.id)}>{user.full_name || user.username}</a>
 						<span class="user-email">{user.email}</span>
+						<span class:status-pill={true} class:status-pill--approved={user.is_approved} class:status-pill--pending={!user.is_approved}>
+							{user.is_approved ? 'Approved' : 'Pending Approval'}
+						</span>
 					</div>
 					<div class="mobile-grid">
 						{#if isCurrentAdminUser(user.id)}
@@ -518,6 +728,13 @@
 		flex: 1;
 	}
 
+	.toolbar-actions {
+		display: flex;
+		align-items: center;
+		justify-content: flex-end;
+		gap: 0.75rem;
+	}
+
 	.primary-btn {
 		padding: 0.72rem 1rem;
 		border-radius: 0.8rem;
@@ -526,6 +743,35 @@
 		color: #061219;
 		font-weight: 700;
 		cursor: pointer;
+	}
+
+	.secondary-btn {
+		display: inline-flex;
+		align-items: center;
+		justify-content: center;
+		gap: 0.5rem;
+		padding: 0.72rem 1rem;
+		border-radius: 0.8rem;
+		border: 1px solid color-mix(in srgb, var(--theme-glass-border) 88%, transparent);
+		background: color-mix(in srgb, var(--theme-input-bg) 84%, transparent);
+		color: var(--theme-text);
+		font-weight: 700;
+		cursor: pointer;
+	}
+
+	.toolbar-badge {
+		display: inline-flex;
+		align-items: center;
+		justify-content: center;
+		min-width: 1.35rem;
+		height: 1.35rem;
+		padding: 0 0.35rem;
+		border-radius: 999px;
+		background: color-mix(in srgb, var(--theme-primary) 22%, transparent);
+		border: 1px solid color-mix(in srgb, var(--theme-primary) 50%, var(--theme-glass-border));
+		color: var(--theme-text);
+		font-size: 0.72rem;
+		font-weight: 700;
 	}
 
 	.save-btn {
@@ -538,6 +784,29 @@
 		cursor: pointer;
 	}
 
+	.approve-btn {
+		padding: 0.52rem 0.75rem;
+		border-radius: 0.72rem;
+		border: 1px solid color-mix(in srgb, #10b981 45%, var(--theme-glass-border));
+		background: color-mix(in srgb, #10b981 18%, var(--theme-input-bg));
+		color: var(--theme-text);
+		font-weight: 700;
+		cursor: pointer;
+	}
+
+	.secondary-link {
+		display: inline-flex;
+		align-items: center;
+		justify-content: center;
+		padding: 0.62rem 0.82rem;
+		border-radius: 0.75rem;
+		border: 1px solid color-mix(in srgb, var(--theme-glass-border) 88%, transparent);
+		background: color-mix(in srgb, var(--theme-input-bg) 84%, transparent);
+		color: var(--theme-text);
+		text-decoration: none;
+		font-weight: 700;
+	}
+
 	.save-btn.save-btn--dirty {
 		border: 1px solid color-mix(in srgb, var(--theme-primary) 45%, var(--theme-glass-border));
 		background: linear-gradient(180deg, color-mix(in srgb, var(--theme-primary) 85%, #ffffff 15%) 0%, var(--theme-primary) 100%);
@@ -545,7 +814,10 @@
 	}
 
 	.primary-btn:hover:not(:disabled),
-	.save-btn.save-btn--dirty:hover:not(:disabled) {
+	.secondary-btn:hover:not(:disabled),
+	.save-btn.save-btn--dirty:hover:not(:disabled),
+	.approve-btn:hover:not(:disabled),
+	.secondary-link:hover {
 		filter: brightness(1.05);
 	}
 
@@ -597,7 +869,9 @@
 	} */
 
 	.primary-btn:disabled,
-	.save-btn:disabled {
+	.secondary-btn:disabled,
+	.save-btn:disabled,
+	.approve-btn:disabled {
 		opacity: 0.6;
 		cursor: not-allowed;
 	}
@@ -670,6 +944,163 @@
 		justify-content: flex-end;
 	}
 
+	.modal-backdrop {
+		position: fixed;
+		inset: 0;
+		z-index: 80;
+		padding: 1.4rem;
+		background: rgba(2, 6, 23, 0.58);
+		backdrop-filter: blur(10px);
+		-webkit-backdrop-filter: blur(10px);
+		display: flex;
+		align-items: center;
+		justify-content: center;
+	}
+
+	.approval-modal {
+		width: min(980px, 100%);
+		max-height: min(88vh, 940px);
+		padding: 1.1rem;
+		border-radius: 1.2rem;
+		display: flex;
+		flex-direction: column;
+		gap: 1rem;
+		overflow: hidden;
+	}
+
+	.approval-modal-header {
+		display: flex;
+		align-items: flex-start;
+		justify-content: space-between;
+		gap: 1rem;
+	}
+
+	.modal-eyebrow {
+		margin: 0 0 0.3rem;
+		font-size: 0.75rem;
+		font-weight: 700;
+		letter-spacing: 0.12em;
+		text-transform: uppercase;
+		color: var(--theme-text-muted);
+	}
+
+	.approval-modal-header h2 {
+		margin: 0;
+		font-size: 1.35rem;
+	}
+
+	.modal-copy {
+		margin: 0.35rem 0 0;
+		max-width: 60ch;
+		color: var(--theme-text-muted);
+	}
+
+	.approval-modal-toolbar {
+		display: flex;
+		align-items: center;
+		gap: 0.75rem;
+	}
+
+	.approval-search {
+		flex: 1;
+	}
+
+	.approval-modal-actions {
+		display: flex;
+		flex-wrap: wrap;
+		align-items: center;
+		justify-content: flex-end;
+		gap: 0.75rem;
+	}
+
+	.bulk-select-label {
+		display: inline-flex;
+		align-items: center;
+		gap: 0.55rem;
+		padding: 0.68rem 0.85rem;
+		border-radius: 0.8rem;
+		border: 1px solid color-mix(in srgb, var(--theme-glass-border) 88%, transparent);
+		background: color-mix(in srgb, var(--theme-input-bg) 84%, transparent);
+		color: var(--theme-text);
+		font-size: 0.9rem;
+	}
+
+	.approval-empty {
+		padding: 1.2rem;
+		border-radius: 1rem;
+		text-align: center;
+	}
+
+	.approval-empty p {
+		margin: 0;
+		color: var(--theme-text-muted);
+	}
+
+	.approval-list {
+		display: flex;
+		flex-direction: column;
+		gap: 0.8rem;
+		overflow: auto;
+		padding-right: 0.15rem;
+	}
+
+	.approval-card {
+		display: grid;
+		grid-template-columns: auto minmax(0, 1fr) auto;
+		align-items: center;
+		gap: 0.9rem;
+		padding: 0.95rem 1rem;
+		border-radius: 1rem;
+		border: 1px solid rgba(255, 255, 255, 0.06);
+	}
+
+	.approval-card--highlight {
+		border-color: color-mix(in srgb, var(--theme-primary) 55%, var(--theme-glass-border));
+		box-shadow: 0 0 0 1px color-mix(in srgb, var(--theme-primary) 30%, transparent);
+	}
+
+	.approval-check {
+		display: flex;
+		align-items: center;
+		justify-content: center;
+		padding-top: 0.1rem;
+	}
+
+	.approval-card-main {
+		min-width: 0;
+		display: flex;
+		flex-direction: column;
+		gap: 0.45rem;
+	}
+
+	.approval-card-heading {
+		display: flex;
+		flex-wrap: wrap;
+		align-items: center;
+		gap: 0.65rem;
+	}
+
+	.approval-card-meta {
+		display: flex;
+		flex-wrap: wrap;
+		gap: 0.6rem 0.85rem;
+		font-size: 0.84rem;
+		color: var(--theme-text-muted);
+	}
+
+	.approval-card-meta span {
+		display: inline-flex;
+		align-items: center;
+		gap: 0.35rem;
+		min-width: 0;
+	}
+
+	.approval-card-actions {
+		display: flex;
+		align-items: center;
+		gap: 0.65rem;
+	}
+
 	.table-wrap {
 		padding: 0.85rem;
 		border-radius: 1rem;
@@ -691,6 +1122,7 @@
 	}
 
 	.col-status,
+	.col-approval,
 	.col-perm {
 		width: 9%;
 	}
@@ -737,6 +1169,28 @@
 		overflow: hidden;
 		text-overflow: ellipsis;
 		white-space: nowrap;
+	}
+
+	.status-pill {
+		display: inline-flex;
+		align-items: center;
+		width: fit-content;
+		padding: 0.2rem 0.52rem;
+		border-radius: 999px;
+		font-size: 0.72rem;
+		font-weight: 700;
+	}
+
+	.status-pill--approved {
+		background: rgba(34, 197, 94, 0.14);
+		border: 1px solid rgba(34, 197, 94, 0.3);
+		color: #86efac;
+	}
+
+	.status-pill--pending {
+		background: rgba(250, 204, 21, 0.12);
+		border: 1px solid rgba(250, 204, 21, 0.3);
+		color: #fde68a;
 	}
 
 	.locked-role {
@@ -792,11 +1246,26 @@
 	:global([data-color-mode='light']) .table-wrap,
 	:global([data-color-mode='light']) .create-panel,
 	:global([data-color-mode='light']) .toolbar,
+	:global([data-color-mode='light']) .approval-modal,
+	:global([data-color-mode='light']) .approval-empty,
+	:global([data-color-mode='light']) .approval-card,
 	:global([data-color-mode='light']) .mobile-card,
 	:global([data-color-mode='light']) .center-state.glass-panel {
 		background: #ffffff;
 		border: 1px solid rgba(148, 163, 184, 0.3);
 		box-shadow: 0 14px 34px rgba(15, 23, 42, 0.08);
+	}
+
+	:global([data-color-mode='light']) .secondary-btn,
+	:global([data-color-mode='light']) .secondary-link,
+	:global([data-color-mode='light']) .bulk-select-label {
+		background: #ffffff;
+		border-color: rgba(148, 163, 184, 0.42);
+		color: #0f172a;
+	}
+
+	:global([data-color-mode='light']) .modal-backdrop {
+		background: rgba(226, 232, 240, 0.55);
 	}
 
 	:global([data-color-mode='light']) th,
@@ -870,6 +1339,37 @@
 		.create-grid {
 			grid-template-columns: repeat(2, minmax(0, 1fr));
 		}
+
+		.toolbar-actions {
+			width: 100%;
+			justify-content: flex-start;
+		}
+	}
+
+	@media (max-width: 860px) {
+		.approval-modal {
+			max-height: 90vh;
+		}
+
+		.approval-modal-header,
+		.approval-modal-toolbar {
+			flex-direction: column;
+			align-items: stretch;
+		}
+
+		.approval-modal-actions {
+			justify-content: flex-start;
+		}
+
+		.approval-card {
+			grid-template-columns: auto minmax(0, 1fr);
+		}
+
+		.approval-card-actions {
+			grid-column: 1 / -1;
+			justify-content: flex-end;
+			padding-top: 0.2rem;
+		}
 	}
 
 	@media (max-width: 768px) {
@@ -878,6 +1378,51 @@
 		}
 
 		.toolbar {
+			flex-direction: column;
+		}
+
+		.toolbar-actions {
+			flex-direction: column;
+			align-items: stretch;
+		}
+
+		.toolbar-actions > button {
+			width: 100%;
+		}
+
+		.modal-backdrop {
+			padding: 0.75rem;
+			align-items: flex-end;
+		}
+
+		.approval-modal {
+			width: 100%;
+			max-height: 92vh;
+			padding: 0.95rem;
+		}
+
+		.approval-modal-actions {
+			width: 100%;
+		}
+
+		.bulk-select-label,
+		.approval-card-actions,
+		.approval-modal-actions > button,
+		.secondary-link,
+		.approve-btn {
+			width: 100%;
+		}
+
+		.approval-card {
+			grid-template-columns: 1fr;
+		}
+
+		.approval-check {
+			justify-content: flex-start;
+		}
+
+		.approval-card-actions {
+			justify-content: stretch;
 			flex-direction: column;
 		}
 

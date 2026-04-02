@@ -4,8 +4,7 @@
 	import {
 		DEFAULT_SECURITY_QUESTION,
 		login,
-		register,
-		type TokenResponse
+		register
 	} from '$lib/api/auth';
 	import { apiUrl, getStoredSession } from '$lib/api/client';
 	import { session } from '$lib/session';
@@ -21,6 +20,7 @@
 	let selectedRole = $state<'teacher' | 'vetter'>('teacher');
 	let authLoading = $state(false);
 	let authError = $state('');
+	let authSuccess = $state('');
 	let signupEnabled = $state(true);
 	let checkingSignup = $state(true);
 
@@ -41,6 +41,7 @@
 
 	async function handleLandingAuth() {
 		authError = '';
+		authSuccess = '';
 
 		if (mode === 'register') {
 			if (!signupEnabled) {
@@ -63,11 +64,12 @@
 
 		authLoading = true;
 		try {
-			let response: TokenResponse;
 			if (mode === 'login') {
-				response = await login({ email, password });
+				const response = await login({ email, password });
+				session.refresh();
+				redirectByRole(response.user.role);
 			} else {
-				response = await register({
+				const response = await register({
 					email,
 					username: username.trim().toLowerCase(),
 					full_name: fullName.trim() || undefined,
@@ -76,9 +78,11 @@
 					security_answer: securityAnswer.trim(),
 					role: selectedRole
 				});
+				authSuccess = response.message;
+				mode = 'login';
+				password = '';
+				securityAnswer = '';
 			}
-			session.refresh();
-			redirectByRole(response.user.role);
 		} catch (e: unknown) {
 			authError = e instanceof Error ? e.message : 'Sign in failed';
 		} finally {
@@ -145,6 +149,9 @@
 				<form class="signin-form" onsubmit={(e) => { e.preventDefault(); handleLandingAuth(); }}>
 					{#if authError}
 						<p class="signin-error" role="alert">{authError}</p>
+					{/if}
+					{#if authSuccess}
+						<p class="signin-success" role="status">{authSuccess}</p>
 					{/if}
 
 					{#if mode === 'register'}
@@ -259,10 +266,10 @@
 						{authLoading
 							? mode === 'login'
 								? 'Signing In...'
-								: 'Creating Account...'
+								: 'Submitting Registration...'
 							: mode === 'login'
 								? 'Sign In'
-								: 'Create Account'}
+								: 'Submit Registration'}
 					</button>
 				</form>
 
@@ -276,6 +283,7 @@
 									onclick={() => {
 										mode = 'register';
 										authError = '';
+										authSuccess = '';
 									}}
 								>
 									Create one
@@ -291,6 +299,7 @@
 								onclick={() => {
 									mode = 'login';
 									authError = '';
+									authSuccess = '';
 								}}
 							>
 								Sign In
@@ -694,6 +703,16 @@
 		color: #b91c1c;
 		background: rgba(254, 226, 226, 0.6);
 		border: 1px solid rgba(239, 68, 68, 0.24);
+		border-radius: 0.62rem;
+	}
+
+	.signin-success {
+		margin: 0;
+		padding: 0.48rem 0.6rem;
+		font-size: 0.78rem;
+		color: #065f46;
+		background: rgba(209, 250, 229, 0.6);
+		border: 1px solid rgba(16, 185, 129, 0.24);
 		border-radius: 0.62rem;
 	}
 

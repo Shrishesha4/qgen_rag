@@ -118,10 +118,12 @@ class AdminUserSummary(BaseModel):
     full_name: Optional[str]
     role: str
     is_active: bool
+    is_approved: bool
     is_superuser: bool
     can_manage_groups: bool
     can_generate: bool
     can_vet: bool
+    approved_at: Optional[datetime]
     created_at: Optional[datetime]
     last_login_at: Optional[datetime]
 
@@ -151,6 +153,13 @@ class AdminUserUpdateRequest(BaseModel):
 
 class AdminUserPasswordResetRequest(BaseModel):
     new_password: str = Field(..., min_length=8, max_length=128)
+
+class AdminBulkApproveUsersRequest(BaseModel):
+    user_ids: List[str] = Field(default_factory=list, min_length=1, max_length=500)
+
+class AdminBulkApproveUsersResponse(BaseModel):
+    approved_users: List[AdminUserSummary]
+    approved_count: int
 
 
 class AdminNotificationSummary(BaseModel):
@@ -243,6 +252,24 @@ def _serialize_admin_notification(notification) -> AdminNotificationSummary:
         payload=notification.payload,
         is_read=bool(notification.is_read),
         created_at=notification.created_at,
+    )
+
+def _serialize_admin_user(user: User) -> AdminUserSummary:
+    return AdminUserSummary(
+        id=user.id,
+        email=user.email,
+        username=user.username,
+        full_name=user.full_name,
+        role=user.role,
+        is_active=bool(user.is_active),
+        is_approved=bool(user.is_approved),
+        is_superuser=bool(user.is_superuser),
+        can_manage_groups=bool(user.can_manage_groups),
+        can_generate=bool(user.can_generate),
+        can_vet=bool(user.can_vet),
+        approved_at=user.approved_at,
+        created_at=user.created_at,
+        last_login_at=user.last_login_at,
     )
 
 
@@ -607,10 +634,12 @@ async def list_admin_users(
             full_name=user.full_name,
             role=user.role,
             is_active=bool(user.is_active),
+            is_approved=bool(user.is_approved),
             is_superuser=bool(user.is_superuser),
             can_manage_groups=bool(user.can_manage_groups),
             can_generate=bool(user.can_generate),
             can_vet=bool(user.can_vet),
+            approved_at=user.approved_at,
             created_at=user.created_at,
             last_login_at=user.last_login_at,
         )
@@ -710,6 +739,9 @@ async def create_admin_user(
             security_answer_hash=hash_security_answer(security_answer),
             role=role,
             is_active=payload.is_active,
+            is_approved=True,
+            approved_at=datetime.now(timezone.utc),
+            approved_by=current_user.id,
             can_manage_groups=permissions["can_manage_groups"],
             can_generate=permissions["can_generate"],
             can_vet=permissions["can_vet"],
@@ -725,10 +757,12 @@ async def create_admin_user(
         full_name=user.full_name,
         role=user.role,
         is_active=bool(user.is_active),
+        is_approved=bool(user.is_approved),
         is_superuser=bool(user.is_superuser),
         can_manage_groups=bool(user.can_manage_groups),
         can_generate=bool(user.can_generate),
         can_vet=bool(user.can_vet),
+        approved_at=user.approved_at,
         created_at=user.created_at,
         last_login_at=user.last_login_at,
     )
@@ -789,12 +823,75 @@ async def update_admin_user(
         full_name=user.full_name,
         role=user.role,
         is_active=bool(user.is_active),
+        is_approved=bool(user.is_approved),
         is_superuser=bool(user.is_superuser),
         can_manage_groups=bool(user.can_manage_groups),
         can_generate=bool(user.can_generate),
         can_vet=bool(user.can_vet),
+        approved_at=user.approved_at,
         created_at=user.created_at,
         last_login_at=user.last_login_at,
+    )
+
+
+@router.post("/users/{user_id}/approve", response_model=AdminUserSummary)
+async def approve_admin_user_registration(
+    user_id: str,
+    request: Request,
+    current_user: User = Depends(get_current_admin),
+    auth_db: AsyncSession = Depends(get_auth_db),
+):
+    """Approve a pending user registration so the account can sign in."""
+    user_service = UserService(auth_db)
+    client_info = get_client_info(request)
+
+    try:
+        user = await user_service.approve_user_registration(
+            user_id=user_id,
+            admin_user_id=current_user.id,
+            ip_address=client_info.get("ip_address"),
+            user_agent=client_info.get("user_agent"),
+        )
+    except ValueError as exc:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=str(exc))
+
+    return _serialize_admin_user(user)
+
+@router.post("/users/approve-bulk", response_model=AdminBulkApproveUsersResponse)
+async def approve_admin_users_bulk(
+    payload: AdminBulkApproveUsersRequest,
+    request: Request,
+    current_user: User = Depends(get_current_admin),
+    auth_db: AsyncSession = Depends(get_auth_db),
+):
+    """Approve multiple pending user registrations in one request."""
+    user_service = UserService(auth_db)
+    client_info = get_client_info(request)
+
+    approved_users: List[AdminUserSummary] = []
+    seen_ids: set[str] = set()
+
+    for raw_user_id in payload.user_ids:
+        user_id = str(raw_user_id or "").strip()
+        if not user_id or user_id in seen_ids:
+            continue
+        seen_ids.add(user_id)
+
+        existing_user = await user_service.get_user_by_id(user_id)
+        if not existing_user or existing_user.is_approved:
+            continue
+
+        approved_user = await user_service.approve_user_registration(
+            user_id=user_id,
+            admin_user_id=current_user.id,
+            ip_address=client_info.get("ip_address"),
+            user_agent=client_info.get("user_agent"),
+        )
+        approved_users.append(_serialize_admin_user(approved_user))
+
+    return AdminBulkApproveUsersResponse(
+        approved_users=approved_users,
+        approved_count=len(approved_users),
     )
 
 

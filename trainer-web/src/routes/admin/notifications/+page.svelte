@@ -101,6 +101,9 @@
 	}
 
 	function notificationMethod(notification: AdminNotificationSummary): string {
+		if (notification.notification_type === 'user_registration_requested') {
+			return 'Registration';
+		}
 		const selfServiceEnabled = Boolean(notification.payload?.self_service_enabled ?? true);
 		if (!selfServiceEnabled) return 'Admin Approval';
 		const method = String(notification.payload?.method ?? '');

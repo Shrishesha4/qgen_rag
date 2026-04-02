@@ -77,7 +77,10 @@ class User(AuthBase):
     
     # Status
     is_active: Mapped[bool] = mapped_column(Boolean, default=True)
+    is_approved: Mapped[bool] = mapped_column(Boolean, default=True)
     is_superuser: Mapped[bool] = mapped_column(Boolean, default=False)
+    approved_at: Mapped[Optional[datetime]] = mapped_column(DateTime)
+    approved_by: Mapped[Optional[str]] = mapped_column(String(36))
     
     # Security
     failed_login_attempts: Mapped[int] = mapped_column(Integer, default=0)

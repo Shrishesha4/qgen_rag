@@ -36,7 +36,12 @@
 
 		const unsubPage = page.subscribe(($page) => {
 			const nextId = $page.params.id;
-			shouldFocusReset = $page.url.searchParams.get('intent') === 'reset-password';
+			const intent = $page.url.searchParams.get('intent');
+			shouldFocusReset = intent === 'reset-password';
+			if (intent === 'approve-registration' && nextId) {
+				goto(`/admin/users?modal=approvals&user=${nextId}`, { replaceState: true });
+				return;
+			}
 			if (shouldFocusReset && nextId && nextId === routeUserId) {
 				void focusResetSection();
 			}
@@ -150,7 +155,10 @@
 		<div>
 			<p class="eyebrow">Admin User View</p>
 			<h1 class="title">{user ? user.full_name || user.username : 'User Details'}</h1>
-			<p class="subtitle">Inspect user stats, assigned subjects, and action-level access controls.</p>
+		</div>
+		<div class="meta-card glass-panel">
+			<span class="meta-label">Role</span>
+			<strong class="caps">{user?.role}</strong>
 		</div>
 		<a class="back-link" href="/admin/users">Back to User Management</a>
 	</div>
@@ -171,12 +179,12 @@
 				<strong>{user.email}</strong>
 			</div>
 			<div class="meta-card glass-panel">
-				<span class="meta-label">Role</span>
-				<strong class="caps">{user.role}</strong>
-			</div>
-			<div class="meta-card glass-panel">
 				<span class="meta-label">Status</span>
 				<strong>{user.is_active ? 'Active' : 'Disabled'}</strong>
+			</div>
+			<div class="meta-card glass-panel">
+				<span class="meta-label">Approval</span>
+				<strong>{user.is_approved ? 'Approved' : 'Pending Approval'}</strong>
 			</div>
 			<div class="meta-card glass-panel">
 				<span class="meta-label">Last Login</span>
@@ -349,11 +357,6 @@
 		margin: 0.3rem 0 0;
 		font-size: 1.5rem;
 		color: var(--theme-text);
-	}
-
-	.subtitle {
-		margin: 0.4rem 0 0;
-		color: var(--theme-text-muted);
 	}
 
 	.back-link {
@@ -574,6 +577,11 @@
 		background: color-mix(in srgb, var(--theme-primary) 16%, var(--theme-input-bg));
 		color: var(--theme-text);
 		cursor: pointer;
+	}
+
+	.open-btn:disabled {
+		opacity: 0.65;
+		cursor: not-allowed;
 	}
 
 	.mobile-list {

@@ -20,6 +20,7 @@
 	let securityQuestion = $state(DEFAULT_SECURITY_QUESTION);
 	let securityAnswer = $state('');
 	let error = $state('');
+	let success = $state('');
 	let loading = $state(false);
 
 	const roleLabel = $derived(role === 'teacher' ? 'Teacher' : role === 'admin' ? 'Admin' : 'Vetter');
@@ -27,10 +28,13 @@
 
 	async function handleSubmit() {
 		error = '';
+		success = '';
 		loading = true;
 		try {
 			if (mode === 'login') {
 				await login({ email, password });
+				session.refresh();
+				goto(dashboardPath);
 			} else {
 				if (!username.trim()) {
 					error = 'Username is required';
@@ -47,7 +51,7 @@
 					loading = false;
 					return;
 				}
-				await register({
+				const response = await register({
 					email,
 					username: username.trim().toLowerCase(),
 					full_name: fullName.trim() || undefined,
@@ -56,9 +60,11 @@
 					security_answer: securityAnswer.trim(),
 					role
 				});
+				success = response.message;
+				mode = 'login';
+				password = '';
+				securityAnswer = '';
 			}
-			session.refresh();
-			goto(dashboardPath);
 		} catch (e: unknown) {
 			error = e instanceof Error ? e.message : 'Something went wrong';
 		} finally {
@@ -108,6 +114,10 @@
 
 		{#if error}
 			<div class="error-banner" role="alert">{error}</div>
+		{/if}
+
+		{#if success}
+			<div class="success-banner" role="status">{success}</div>
 		{/if}
 
 		<form onsubmit={(e) => { e.preventDefault(); handleSubmit(); }}>
@@ -193,7 +203,7 @@
 				{#if loading}
 					<span class="spinner"></span>
 				{:else}
-					{mode === 'login' ? 'Sign In' : 'Create Account'}
+					{mode === 'login' ? 'Sign In' : 'Submit Registration'}
 				{/if}
 			</button>
 		</form>
@@ -201,12 +211,12 @@
 		<div class="mode-switch">
 			{#if mode === 'login'}
 				<span>Don't have an account?</span>
-				<button class="switch-btn" onclick={() => { mode = 'register'; error = ''; }}>
+				<button class="switch-btn" onclick={() => { mode = 'register'; error = ''; success = ''; }}>
 					Sign Up
 				</button>
 			{:else}
 				<span>Already have an account?</span>
-				<button class="switch-btn" onclick={() => { mode = 'login'; error = ''; }}>
+				<button class="switch-btn" onclick={() => { mode = 'login'; error = ''; success = ''; }}>
 					Sign In
 				</button>
 			{/if}

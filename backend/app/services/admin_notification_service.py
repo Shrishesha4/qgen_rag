@@ -10,6 +10,7 @@ from app.models.auth import AdminNotification
 from app.models.user import ROLE_ADMIN, User
 
 PASSWORD_RESET_NOTIFICATION_TYPE = "password_reset_requested"
+USER_REGISTRATION_NOTIFICATION_TYPE = "user_registration_requested"
 
 
 class AdminNotificationService:
@@ -17,6 +18,14 @@ class AdminNotificationService:
 
     def __init__(self, db: AsyncSession):
         self.db = db
+
+    async def _list_active_admin_ids(self) -> list[str]:
+        result = await self.db.execute(
+            select(User.id)
+            .where(User.role == ROLE_ADMIN, User.is_active == True)
+            .order_by(User.created_at.asc(), User.username.asc())
+        )
+        return [str(admin_id) for admin_id in result.scalars().all()]
 
     async def create_password_reset_notifications(
         self,
@@ -28,12 +37,7 @@ class AdminNotificationService:
         user_agent: str | None = None,
     ) -> int:
         """Create one notification per active admin for a password reset request."""
-        result = await self.db.execute(
-            select(User.id)
-            .where(User.role == ROLE_ADMIN, User.is_active == True)
-            .order_by(User.created_at.asc(), User.username.asc())
-        )
-        admin_ids = [str(admin_id) for admin_id in result.scalars().all()]
+        admin_ids = await self._list_active_admin_ids()
         if not admin_ids:
             return 0
 
@@ -63,6 +67,49 @@ class AdminNotificationService:
                 target_username=target_user.username,
                 action_url=action_url,
                 action_label="View",
+                payload=payload,
+            )
+            for admin_id in admin_ids
+        ]
+        self.db.add_all(notifications)
+        await self.db.commit()
+        return len(notifications)
+
+    async def create_user_registration_notifications(
+        self,
+        target_user: User,
+        *,
+        ip_address: str | None = None,
+        user_agent: str | None = None,
+    ) -> int:
+        """Create one notification per active admin for a newly registered user awaiting approval."""
+        admin_ids = await self._list_active_admin_ids()
+        if not admin_ids:
+            return 0
+
+        role_label = str(target_user.role or "teacher").strip().capitalize() or "Teacher"
+        display_name = target_user.full_name or target_user.username or target_user.email
+        title = "New user registration pending approval"
+        message = f"{display_name} registered as {role_label} and is awaiting admin approval."
+        action_url = f"/admin/users?modal=approvals&user={target_user.id}"
+        payload = {
+            "requested_role": target_user.role,
+            "approval_required": True,
+            "ip_address": ip_address,
+            "user_agent": user_agent,
+        }
+
+        notifications = [
+            AdminNotification(
+                recipient_user_id=admin_id,
+                notification_type=USER_REGISTRATION_NOTIFICATION_TYPE,
+                title=title,
+                message=message,
+                target_user_id=target_user.id,
+                target_user_email=target_user.email,
+                target_username=target_user.username,
+                action_url=action_url,
+                action_label="Review",
                 payload=payload,
             )
             for admin_id in admin_ids

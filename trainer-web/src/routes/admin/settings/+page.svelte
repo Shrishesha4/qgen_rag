@@ -223,7 +223,7 @@
 				<div class="setting-item">
 					<div class="setting-info">
 						<span class="setting-label">User Registration</span>
-						<span class="setting-desc">Allow new users to create accounts. When disabled, only existing users can log in.</span>
+						<span class="setting-desc">Allow new users to submit registrations. New accounts still require admin approval before the first login.</span>
 					</div>
 					<div class="setting-control">
 						<button
