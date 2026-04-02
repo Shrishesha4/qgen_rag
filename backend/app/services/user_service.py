@@ -7,11 +7,11 @@ from typing import Optional, List, Dict, Any
 import uuid
 import hashlib
 
-from sqlalchemy import select, update, delete
+from sqlalchemy import select, update
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.models.user import User, default_permissions_for_role
-from app.models.auth import RefreshToken, AuditLog, AdminNotification
+from app.models.user import User, default_permissions_for_role, ROLE_ADMIN
+from app.models.auth import RefreshToken, AuditLog
 from app.schemas.user import UserCreate, UserUpdate
 from app.core.security import (
     hash_password,
@@ -43,13 +43,7 @@ class UserService:
         """Normalize security-question text for storage."""
         return " ".join((question or "").strip().split())
 
-    async def create_user(
-        self,
-        user_data: UserCreate,
-        *,
-        is_approved: bool = True,
-        approved_by: Optional[str] = None,
-    ) -> User:
+    async def create_user(self, user_data: UserCreate) -> User:
         """Create a new user."""
         # Check if email exists
         existing_email = await self.db.execute(
@@ -66,15 +60,11 @@ class UserService:
             raise ValueError("Username already taken")
 
         role = getattr(user_data, 'role', 'teacher')
-        if role == "admin":
-            raise ValueError("Admin self-registration is not allowed")
         role_defaults = default_permissions_for_role(role)
         security_question = self._normalize_security_question(user_data.security_question)
         security_answer = str(user_data.security_answer or "").strip()
         if not security_question or not security_answer:
             raise ValueError("Security question and answer are required")
-
-        approval_time = datetime.now(timezone.utc) if is_approved else None
 
         # Create user with role and action permissions
         user = User(
@@ -88,9 +78,7 @@ class UserService:
             can_manage_groups=role_defaults["can_manage_groups"],
             can_generate=role_defaults["can_generate"],
             can_vet=role_defaults["can_vet"],
-            is_approved=is_approved,
-            approved_at=approval_time,
-            approved_by=approved_by,
+            is_superuser=role == ROLE_ADMIN,
         )
         self.db.add(user)
         await self.db.commit()
@@ -173,17 +161,6 @@ class UserService:
                 error_message="Account deactivated",
             )
             raise ValueError("Account is deactivated")
-
-        if not user.is_approved:
-            await self._log_auth_event(
-                user_id=user.id,
-                event_type="login_failed",
-                ip_address=ip_address,
-                user_agent=user_agent,
-                success=False,
-                error_message="Account pending approval",
-            )
-            raise ValueError("Account is pending admin approval")
 
         # Reset failed attempts and update last login
         user.failed_login_attempts = 0
@@ -292,108 +269,10 @@ class UserService:
         )
         return True
 
-    async def admin_reset_password(
-        self,
-        user_id: str,
-        new_password: str,
-        *,
-        admin_user_id: str,
-        ip_address: Optional[str] = None,
-        user_agent: Optional[str] = None,
-    ) -> bool:
-        """Reset a user's password from an admin workflow and log the acting admin."""
-        user = await self.get_user_by_id(user_id)
-        if not user:
-            raise ValueError("User not found")
-
-        await self._update_password(user, new_password, revoke_sessions=True)
-        await self._log_auth_event(
-            user_id=user.id,
-            event_type="password_reset_admin_success",
-            ip_address=ip_address,
-            user_agent=user_agent,
-            success=True,
-            event_data={"admin_user_id": admin_user_id},
-        )
-        return True
-
-    async def approve_user_registration(
-        self,
-        user_id: str,
-        *,
-        admin_user_id: str,
-        ip_address: Optional[str] = None,
-        user_agent: Optional[str] = None,
-    ) -> User:
-        """Approve a user registration so the account can sign in."""
-        user = await self.get_user_by_id(user_id)
-        if not user:
-            raise ValueError("User not found")
-
-        if user.is_approved:
-            return user
-
-        user.is_approved = True
-        user.approved_at = datetime.now(timezone.utc)
-        user.approved_by = admin_user_id
-        await self.db.commit()
-        await self.db.refresh(user)
-
-        await self._log_auth_event(
-            user_id=user.id,
-            event_type="user_registration_approved",
-            ip_address=ip_address,
-            user_agent=user_agent,
-            success=True,
-            event_data={"admin_user_id": admin_user_id},
-        )
-        return user
-
-    async def delete_user_login(
-        self,
-        user_id: str,
-        *,
-        admin_user_id: str,
-        ip_address: Optional[str] = None,
-        user_agent: Optional[str] = None,
-        cleanup_summary: Optional[Dict[str, Any]] = None,
-    ) -> Dict[str, str]:
-        """Delete a user's auth login while leaving app data untouched unless separately cleaned."""
-        user = await self.get_user_by_id(user_id)
-        if not user:
-            raise ValueError("User not found")
-
-        deleted_user = {
-            "id": user.id,
-            "username": user.username,
-            "email": user.email,
-        }
-
-        await self.db.execute(
-            delete(AdminNotification).where(AdminNotification.target_user_id == user.id)
-        )
-        await self.db.delete(user)
-        await self.db.commit()
-
-        event_data: Dict[str, Any] = {"admin_user_id": admin_user_id}
-        if cleanup_summary:
-            event_data.update(cleanup_summary)
-
-        await self._log_auth_event(
-            user_id=deleted_user["id"],
-            event_type="user_deleted_by_admin",
-            ip_address=ip_address,
-            user_agent=user_agent,
-            success=True,
-            event_data=event_data,
-        )
-
-        return deleted_user
-
     async def get_security_question_for_email(self, email: str) -> Optional[str]:
         """Return the stored security question for an active user."""
         user = await self.get_user_by_email(email)
-        if not user or not user.is_active or not user.is_approved or not user.security_question or not user.security_answer_hash:
+        if not user or not user.is_active or not user.security_question or not user.security_answer_hash:
             return None
         return user.security_question
 
@@ -408,7 +287,7 @@ class UserService:
     ) -> bool:
         """Reset a user's password after verifying their security answer."""
         user = await self.get_user_by_email(email)
-        if not user or not user.is_active or not user.is_approved or not user.security_answer_hash:
+        if not user or not user.is_active or not user.security_answer_hash:
             raise ValueError("Security question is not available for this account")
 
         if not verify_security_answer(security_answer, user.security_answer_hash):
@@ -538,7 +417,7 @@ class UserService:
         # Get user
         user_id = payload["sub"]
         user = await self.get_user_by_id(user_id)
-        if not user or not user.is_active or not user.is_approved:
+        if not user or not user.is_active:
             return None
 
         # Update last used
@@ -635,7 +514,6 @@ class UserService:
         user_agent: Optional[str] = None,
         success: bool = True,
         error_message: Optional[str] = None,
-        event_data: Optional[dict] = None,
     ):
         """Log authentication event."""
         audit_log = AuditLog(
@@ -645,7 +523,6 @@ class UserService:
             severity="info" if success else "warning",
             ip_address=ip_address,
             user_agent=user_agent,
-            event_data=event_data,
             success=success,
             error_message=error_message,
         )

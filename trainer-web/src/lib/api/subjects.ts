@@ -6,7 +6,6 @@ import { apiFetch } from './client';
 export interface SubjectCreate {
 	name: string;
 	code: string;
-	group_id?: string | null;
 	description?: string;
 	learning_outcomes?: { id: string; name: string; description?: string }[];
 	course_outcomes?: { id: string; name: string; description?: string }[];
@@ -38,7 +37,6 @@ export interface SubjectResponse {
 	id: string;
 	user_id: string | null;
 	creator_username: string | null;
-	group_id?: string | null;
 	name: string;
 	code: string;
 	description: string | null;

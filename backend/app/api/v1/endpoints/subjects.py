@@ -54,19 +54,8 @@ async def create_subject(
     db: AsyncSession = Depends(get_db),
 ):
     """Create a new subject."""
-    if subject_data.group_id:
-        group_result = await db.execute(
-            select(SubjectGroup).where(SubjectGroup.id == subject_data.group_id)
-        )
-        if not group_result.scalar_one_or_none():
-            raise HTTPException(
-                status_code=status.HTTP_404_NOT_FOUND,
-                detail="Target group not found",
-            )
-
     subject = Subject(
         user_id=current_user.id,
-        group_id=subject_data.group_id,
         name=subject_data.name,
         code=subject_data.code,
         description=subject_data.description,

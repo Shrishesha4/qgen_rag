@@ -81,11 +81,6 @@
 			{ vetters: 0, totalVetted: 0, totalApproved: 0, totalRejected: 0 }
 		);
 	});
-
-
-	function userDetailHref(userId: string): string {
-		return `/admin/users/${userId}`;
-	}
 </script>
 
 <svelte:head>
@@ -158,8 +153,7 @@
 						<tr>
 							<td>
 								<div class="user-cell">
-									<a class="user-name user-link" href={userDetailHref(row.vetter.user_id)}>{row.vetter.full_name || row.vetter.username}</a>
-									<!-- <span class="user-name">{row.vetter.full_name || row.vetter.username}</span> -->
+									<span class="user-name">{row.vetter.full_name || row.vetter.username}</span>
 									<span class="user-email">{row.vetter.email}</span>
 								</div>
 							</td>

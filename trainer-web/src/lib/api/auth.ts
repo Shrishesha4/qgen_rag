@@ -42,8 +42,6 @@ export interface AuthenticatedUser {
 	can_generate: boolean;
 	can_vet: boolean;
 	is_active: boolean;
-	is_approved: boolean;
-	approved_at: string | null;
 	created_at: string;
 	last_login_at: string | null;
 }
@@ -79,7 +77,6 @@ export interface ResetPasswordRequest {
 
 export interface PasswordResetMethodResponse {
 	method: PasswordResetMethod;
-	self_service_enabled: boolean;
 }
 
 export interface SecurityQuestionLookupRequest {
@@ -127,7 +124,7 @@ export async function login(credentials: LoginRequest): Promise<TokenResponse> {
 	return data;
 }
 
-export async function register(data: RegisterRequest): Promise<{ message: string }> {
+export async function register(data: RegisterRequest): Promise<TokenResponse> {
 	const res = await fetch(apiUrl('/auth/register'), {
 		method: 'POST',
 		headers: { 'Content-Type': 'application/json' },
@@ -137,7 +134,25 @@ export async function register(data: RegisterRequest): Promise<{ message: string
 		const body = await res.json().catch(() => null);
 		throw new Error(body?.detail || `Registration failed (${res.status})`);
 	}
-	return res.json();
+	const tokenRes: TokenResponse = await res.json();
+	const sessionData: StoredSession = {
+		access_token: tokenRes.access_token,
+		refresh_token: tokenRes.refresh_token,
+		user: {
+			id: tokenRes.user.id,
+			email: tokenRes.user.email,
+			username: tokenRes.user.username,
+			full_name: tokenRes.user.full_name,
+			security_question: tokenRes.user.security_question,
+			role: tokenRes.user.role,
+			avatar_url: tokenRes.user.avatar_url,
+			can_manage_groups: tokenRes.user.can_manage_groups,
+			can_generate: tokenRes.user.can_generate,
+			can_vet: tokenRes.user.can_vet
+		}
+	};
+	storeSession(sessionData);
+	return tokenRes;
 }
 
 export async function logout(): Promise<void> {
