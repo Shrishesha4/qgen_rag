@@ -156,7 +156,7 @@
 			<p class="eyebrow">Admin User View</p>
 			<h1 class="title">{user ? user.full_name || user.username : 'User Details'}</h1>
 		</div>
-		<div class="meta-card glass-panel">
+		<div class="meta-card">
 			<span class="meta-label">Role</span>
 			<strong class="caps">{user?.role}</strong>
 		</div>
@@ -239,7 +239,6 @@
 
 		<section class="section glass-panel reset-section" bind:this={resetSectionElement}>
 			<h2>Admin Password Reset</h2>
-			<p class="section-copy">Set a new password directly for this user account. This revokes their active sessions.</p>
 			<div class="reset-grid">
 				<label class="field">
 					<span>New Password</span>
@@ -422,13 +421,6 @@
 		margin: 0 0 0.85rem;
 		font-size: 1.05rem;
 		color: var(--theme-text);
-	}
-
-	.section-copy {
-		margin: -0.2rem 0 0.9rem;
-		color: var(--theme-text-muted);
-		font-size: 0.9rem;
-		line-height: 1.45;
 	}
 
 	.reset-grid {

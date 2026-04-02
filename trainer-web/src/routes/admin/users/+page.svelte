@@ -479,7 +479,7 @@
 							highlightedPendingUserId = '';
 						}} disabled={selectedPendingUserIds.length === 0}>Clear</button>
 						<button class="approve-btn" type="button" onclick={bulkApproveSelectedUsers} disabled={bulkApproveBusy || selectedPendingUserIds.length === 0}>
-							{bulkApproveBusy ? 'Approving...' : `Bulk Approve (${selectedPendingUserIds.length})`}
+							{bulkApproveBusy ? 'Approving...' : `Approve (${selectedPendingUserIds.length})`}
 						</button>
 					</div>
 				</div>
@@ -540,7 +540,6 @@
 					<col class="col-user" />
 					<col class="col-role" />
 					<col class="col-status" />
-					<col class="col-approval" />
 					<col class="col-perm" />
 					<col class="col-perm" />
 					<col class="col-perm" />
@@ -552,7 +551,6 @@
 						<th>User</th>
 						<th>Role</th>
 						<th>Active</th>
-						<th>Approval</th>
 						<th>Manage Groups</th>
 						<th>Generate</th>
 						<th>Vet</th>
@@ -593,11 +591,6 @@
 										}}
 									/>
 								</label>
-							</td>
-							<td>
-								<span class:status-pill={true} class:status-pill--approved={user.is_approved} class:status-pill--pending={!user.is_approved}>
-									{user.is_approved ? 'Approved' : 'Pending Approval'}
-								</span>
 							</td>
 							<td>
                             <label class="cell-check">
@@ -659,9 +652,6 @@
 					<div class="user-cell">
 						<a class="user-name user-link" href={userDetailHref(user.id)}>{user.full_name || user.username}</a>
 						<span class="user-email">{user.email}</span>
-						<span class:status-pill={true} class:status-pill--approved={user.is_approved} class:status-pill--pending={!user.is_approved}>
-							{user.is_approved ? 'Approved' : 'Pending Approval'}
-						</span>
 					</div>
 					<div class="mobile-grid">
 						{#if isCurrentAdminUser(user.id)}
@@ -1122,7 +1112,6 @@
 	}
 
 	.col-status,
-	.col-approval,
 	.col-perm {
 		width: 9%;
 	}
@@ -1179,12 +1168,6 @@
 		border-radius: 999px;
 		font-size: 0.72rem;
 		font-weight: 700;
-	}
-
-	.status-pill--approved {
-		background: rgba(34, 197, 94, 0.14);
-		border: 1px solid rgba(34, 197, 94, 0.3);
-		color: #86efac;
 	}
 
 	.status-pill--pending {
