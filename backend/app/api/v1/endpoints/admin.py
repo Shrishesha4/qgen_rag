@@ -5,27 +5,31 @@ Provides aggregate statistics across the entire platform:
 subjects, topics, questions generated, vetting stats, per-user breakdowns.
 """
 
-from typing import Optional, List
-from datetime import datetime, timezone, timedelta
+from typing import Optional, List, Any, Dict
+from datetime import datetime, timezone
 import re
 import uuid
 from collections import Counter
 
-from fastapi import APIRouter, Depends, HTTPException, status
-from sqlalchemy import select, func, and_, case, distinct, literal
+from fastapi import APIRouter, Depends, HTTPException, Request, status
+from sqlalchemy import select, func, and_, case, distinct, delete, or_
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import selectinload
-from pydantic import BaseModel
+from pydantic import BaseModel, Field
 
 from app.core.database import get_db
-from app.core.auth_database import AuthSessionLocal
-from app.api.v1.deps import get_current_admin
+from app.core.auth_database import AuthSessionLocal, get_auth_db
+from app.api.v1.deps import get_client_info, get_current_admin
 from app.models.user import User, VALID_ROLES, default_permissions_for_role
 from app.models.question import Question, GenerationSession
 from app.models.subject import Subject, Topic
-from app.models.training import VettingLog
-from app.models.provider_usage import ProviderUsageLog
+from app.models.document import Document
+from app.models.vetting_progress import TeacherVettingProgress
+from app.models.training import VettingLog, TrainingPair
 from app.core.security import hash_password, hash_security_answer
+from app.schemas.auth import MessageResponse
+from app.services.admin_notification_service import AdminNotificationService
+from app.services.user_service import UserService
 
 
 router = APIRouter()
@@ -118,10 +122,12 @@ class AdminUserSummary(BaseModel):
     full_name: Optional[str]
     role: str
     is_active: bool
+    is_approved: bool
     is_superuser: bool
     can_manage_groups: bool
     can_generate: bool
     can_vet: bool
+    approved_at: Optional[datetime]
     created_at: Optional[datetime]
     last_login_at: Optional[datetime]
 
@@ -149,25 +155,49 @@ class AdminUserUpdateRequest(BaseModel):
     can_vet: Optional[bool] = None
 
 
-class ProviderMetric(BaseModel):
-    provider_key: str
-    total_generated: int
-    api_calls: int
-    avg_questions_per_call: float
-    total_rejected: int
-    total_regenerated: int
-    rejection_rate: float
-    regeneration_rate: float
-    inferred_preference: str
-    top_rejection_reasons: List[str]
+class AdminUserPasswordResetRequest(BaseModel):
+    new_password: str = Field(..., min_length=8, max_length=128)
 
 
-class ProviderMetricsResponse(BaseModel):
-    window_days: int
-    total_generated: int
-    total_rejected: int
-    total_regenerated: int
-    providers: List[ProviderMetric]
+class AdminUserDeleteRequest(BaseModel):
+    delete_subjects: bool = False
+    delete_questions: bool = False
+    delete_vetting_data: bool = False
+
+
+class AdminUserDeleteResponse(BaseModel):
+    message: str
+    deleted_subjects: int = 0
+    deleted_questions: int = 0
+    deleted_vetting_logs: int = 0
+    deleted_vetting_progress: int = 0
+
+class AdminBulkApproveUsersRequest(BaseModel):
+    user_ids: List[str] = Field(default_factory=list, min_length=1, max_length=500)
+
+class AdminBulkApproveUsersResponse(BaseModel):
+    approved_users: List[AdminUserSummary]
+    approved_count: int
+
+
+class AdminNotificationSummary(BaseModel):
+    id: str
+    notification_type: str
+    title: str
+    message: str
+    target_user_id: Optional[str]
+    target_user_email: Optional[str]
+    target_username: Optional[str]
+    action_url: Optional[str]
+    action_label: Optional[str]
+    payload: Optional[Dict[str, Any]]
+    is_read: bool
+    created_at: Optional[datetime]
+
+
+class AdminNotificationListResponse(BaseModel):
+    notifications: List[AdminNotificationSummary]
+    unread_count: int
 
 
 # ============== Helpers ==============
@@ -200,6 +230,18 @@ def _question_count_columns():
     )
 
 
+def _live_question_filters():
+    return (
+        Question.generation_status == "accepted",
+        Question.is_archived == False,
+        Question.is_latest == True,
+    )
+
+
+def _managed_live_question_filters():
+    return (*_live_question_filters(), Question.subject_id.isnot(None))
+
+
 def _validate_role(role: str) -> str:
     normalized = (role or "").strip().lower()
     if normalized not in VALID_ROLES:
@@ -226,25 +268,153 @@ def _resolve_permissions(role: str, payload: dict) -> dict[str, bool]:
     }
 
 
-def _provider_key_expr():
-    """Extract provider_key from Question, preferring the direct column over JSONB."""
-    base_url_expr = func.lower(func.coalesce(Question.generation_metadata["base_url"].astext, ""))
-    inferred_from_base_url = case(
-        (base_url_expr.like("%api.x.ai%"), literal("grok")),
-        (base_url_expr.like("%api.deepseek.com%"), literal("deepseek")),
-        (base_url_expr.like("%generativelanguage.googleapis.com%"), literal("gemini")),
-        (base_url_expr.like("%localhost:11434%"), literal("ollama")),
-        else_=literal("unknown"),
+def _serialize_admin_notification(notification) -> AdminNotificationSummary:
+    return AdminNotificationSummary(
+        id=notification.id,
+        notification_type=notification.notification_type,
+        title=notification.title,
+        message=notification.message,
+        target_user_id=notification.target_user_id,
+        target_user_email=notification.target_user_email,
+        target_username=notification.target_username,
+        action_url=notification.action_url,
+        action_label=notification.action_label,
+        payload=notification.payload,
+        is_read=bool(notification.is_read),
+        created_at=notification.created_at,
     )
 
-    return func.coalesce(
-        func.nullif(Question.provider_key, ""),
-        func.nullif(Question.generation_metadata["provider_key"].astext, ""),
-        func.nullif(Question.generation_metadata["provider"].astext, ""),
-        func.nullif(Question.generation_metadata["llm_provider"].astext, ""),
-        inferred_from_base_url,
-        literal("unknown"),
+def _serialize_admin_user(user: User) -> AdminUserSummary:
+    return AdminUserSummary(
+        id=user.id,
+        email=user.email,
+        username=user.username,
+        full_name=user.full_name,
+        role=user.role,
+        is_active=bool(user.is_active),
+        is_approved=bool(user.is_approved),
+        is_superuser=bool(user.is_superuser),
+        can_manage_groups=bool(user.can_manage_groups),
+        can_generate=bool(user.can_generate),
+        can_vet=bool(user.can_vet),
+        approved_at=user.approved_at,
+        created_at=user.created_at,
+        last_login_at=user.last_login_at,
     )
+
+
+def _count_rows(result) -> int:
+    return int(getattr(result, "rowcount", 0) or 0)
+
+
+async def _delete_admin_user_data(
+    db: AsyncSession,
+    *,
+    user_id: str,
+    delete_subjects: bool,
+    delete_questions: bool,
+    delete_vetting_data: bool,
+) -> dict[str, int]:
+    counts = {
+        "deleted_subjects": 0,
+        "deleted_questions": 0,
+        "deleted_vetting_logs": 0,
+        "deleted_vetting_progress": 0,
+    }
+
+    subject_ids = [
+        str(subject_id)
+        for subject_id in (
+            await db.execute(select(Subject.id).where(Subject.user_id == user_id))
+        ).scalars().all()
+    ]
+
+    topic_ids: list[str] = []
+    if subject_ids:
+        topic_ids = [
+            str(topic_id)
+            for topic_id in (
+                await db.execute(select(Topic.id).where(Topic.subject_id.in_(subject_ids)))
+            ).scalars().all()
+        ]
+
+    question_ids: list[str] = []
+    if delete_questions and (subject_ids or topic_ids):
+        question_filters = []
+        if subject_ids:
+            question_filters.append(Question.subject_id.in_(subject_ids))
+        if topic_ids:
+            question_filters.append(Question.topic_id.in_(topic_ids))
+
+        question_ids = [
+            str(question_id)
+            for question_id in (
+                await db.execute(select(Question.id).where(or_(*question_filters)))
+            ).scalars().all()
+        ]
+        if question_ids:
+            question_vetting_log_ids = [
+                str(log_id)
+                for log_id in (
+                    await db.execute(select(VettingLog.id).where(VettingLog.question_id.in_(question_ids)))
+                ).scalars().all()
+            ]
+            training_pair_filters = [
+                TrainingPair.chosen_question_id.in_(question_ids),
+                TrainingPair.rejected_question_id.in_(question_ids),
+            ]
+            if question_vetting_log_ids:
+                training_pair_filters.append(TrainingPair.vetting_log_id.in_(question_vetting_log_ids))
+
+            await db.execute(delete(TrainingPair).where(or_(*training_pair_filters)))
+            counts["deleted_questions"] = _count_rows(
+                await db.execute(delete(Question).where(Question.id.in_(question_ids)))
+            )
+
+    if delete_vetting_data:
+        user_vetting_log_ids = [
+            str(log_id)
+            for log_id in (
+                await db.execute(select(VettingLog.id).where(VettingLog.vetter_id == user_id))
+            ).scalars().all()
+        ]
+        if user_vetting_log_ids:
+            await db.execute(delete(TrainingPair).where(TrainingPair.vetting_log_id.in_(user_vetting_log_ids)))
+
+        counts["deleted_vetting_logs"] = _count_rows(
+            await db.execute(delete(VettingLog).where(VettingLog.vetter_id == user_id))
+        )
+        counts["deleted_vetting_progress"] = _count_rows(
+            await db.execute(delete(TeacherVettingProgress).where(TeacherVettingProgress.user_id == user_id))
+        )
+
+    if delete_subjects and subject_ids:
+        document_filters = [Document.subject_id.in_(subject_ids)]
+        if topic_ids:
+            document_filters.append(Document.topic_id.in_(topic_ids))
+
+        document_ids = [
+            str(document_id)
+            for document_id in (
+                await db.execute(select(Document.id).where(or_(*document_filters)))
+            ).scalars().all()
+        ]
+
+        generation_session_filters = [GenerationSession.subject_id.in_(subject_ids)]
+        if topic_ids:
+            generation_session_filters.append(GenerationSession.topic_id.in_(topic_ids))
+        if document_ids:
+            generation_session_filters.append(GenerationSession.document_id.in_(document_ids))
+        await db.execute(delete(GenerationSession).where(or_(*generation_session_filters)))
+
+        if document_ids:
+            await db.execute(delete(Document).where(Document.id.in_(document_ids)))
+
+        counts["deleted_subjects"] = _count_rows(
+            await db.execute(delete(Subject).where(Subject.id.in_(subject_ids)))
+        )
+
+    return counts
 
 
 # ============== Endpoints ==============
@@ -263,21 +433,24 @@ async def get_admin_dashboard(
     subject_count_q = select(func.count(Subject.id))
     topic_count_q = select(func.count(Topic.id))
 
-    total_questions_q = select(func.count(Question.id)).where(
-        Question.generation_status == "accepted"
-    )
+    live_question_filters = _managed_live_question_filters()
+
+    total_questions_q = select(func.count(Question.id)).where(*live_question_filters)
     vetted_q = select(func.count(Question.id)).where(
+        *live_question_filters,
         Question.vetting_status.in_(["approved", "rejected"])
     )
     approved_q = select(func.count(Question.id)).where(
+        *live_question_filters,
         Question.vetting_status == "approved"
     )
     rejected_q = select(func.count(Question.id)).where(
+        *live_question_filters,
         Question.vetting_status == "rejected"
     )
     pending_q = select(func.count(Question.id)).where(
+        *live_question_filters,
         Question.vetting_status == "pending",
-        Question.generation_status == "accepted",
     )
 
     (
@@ -306,7 +479,7 @@ async def get_admin_dashboard(
             func.count(case((Question.vetting_status == "approved", 1))).label("approved"),
             func.count(case((Question.vetting_status == "rejected", 1))).label("rejected"),
         )
-        .where(Question.vetted_by.isnot(None))
+        .where(*live_question_filters, Question.vetted_by.isnot(None))
         .group_by(Question.vetted_by)
     )
     vetter_rows = (await db.execute(vetter_stats_q)).all()
@@ -353,7 +526,7 @@ async def get_admin_dashboard(
             func.count(case((Question.vetting_status == "approved", 1))).label("approved"),
             func.count(case((Question.vetting_status == "rejected", 1))).label("rejected"),
         )
-        .where(Question.vetted_by.isnot(None))
+        .where(*live_question_filters, Question.vetted_by.isnot(None))
         .group_by(Question.vetted_by)
     )
     user_vet_rows = (await db.execute(user_vet_q)).all()
@@ -375,8 +548,8 @@ async def get_admin_dashboard(
         .select_from(Question)
         .join(GenerationSession, Question.session_id == GenerationSession.id, isouter=True)
         .where(
+            *live_question_filters,
             Question.vetting_status == "pending",
-            Question.generation_status == "accepted",
         )
         .group_by(GenerationSession.user_id)
     )
@@ -472,7 +645,7 @@ async def list_admin_subjects(
             select(Question.subject_id, *_question_count_columns())
             .where(
                 Question.subject_id.in_(subject_ids),
-                Question.generation_status == "accepted",
+                *_live_question_filters(),
             )
             .group_by(Question.subject_id)
         )
@@ -534,7 +707,7 @@ async def get_admin_subject(
         select(*_question_count_columns())
         .where(
             Question.subject_id == subject.id,
-            Question.generation_status == "accepted",
+            *_live_question_filters(),
         )
     )
     subject_stats_row = subject_stats_result.one()
@@ -545,7 +718,7 @@ async def get_admin_subject(
             select(Question.topic_id, *_question_count_columns())
             .where(
                 Question.topic_id.in_(topic_ids),
-                Question.generation_status == "accepted",
+                *_live_question_filters(),
             )
             .group_by(Question.topic_id)
         )
@@ -608,15 +781,63 @@ async def list_admin_users(
             full_name=user.full_name,
             role=user.role,
             is_active=bool(user.is_active),
+            is_approved=bool(user.is_approved),
             is_superuser=bool(user.is_superuser),
             can_manage_groups=bool(user.can_manage_groups),
             can_generate=bool(user.can_generate),
             can_vet=bool(user.can_vet),
+            approved_at=user.approved_at,
             created_at=user.created_at,
             last_login_at=user.last_login_at,
         )
         for user in users
     ]
+
+
+@router.get("/notifications", response_model=AdminNotificationListResponse)
+async def list_admin_notifications(
+    unread_only: bool = False,
+    limit: int = 100,
+    current_user: User = Depends(get_current_admin),
+    auth_db: AsyncSession = Depends(get_auth_db),
+):
+    """List notifications for the current admin user."""
+    notification_service = AdminNotificationService(auth_db)
+    notifications = await notification_service.list_for_admin(
+        current_user.id,
+        unread_only=unread_only,
+        limit=limit,
+    )
+    unread_count = await notification_service.get_unread_count(current_user.id)
+    return AdminNotificationListResponse(
+        notifications=[_serialize_admin_notification(notification) for notification in notifications],
+        unread_count=unread_count,
+    )
+
+
+@router.post("/notifications/{notification_id}/read", response_model=AdminNotificationSummary)
+async def mark_admin_notification_read(
+    notification_id: str,
+    current_user: User = Depends(get_current_admin),
+    auth_db: AsyncSession = Depends(get_auth_db),
+):
+    """Mark a single notification as read for the current admin user."""
+    notification_service = AdminNotificationService(auth_db)
+    notification = await notification_service.mark_read(current_user.id, notification_id)
+    if not notification:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Notification not found")
+    return _serialize_admin_notification(notification)
+
+
+@router.post("/notifications/read-all", response_model=MessageResponse)
+async def mark_all_admin_notifications_read(
+    current_user: User = Depends(get_current_admin),
+    auth_db: AsyncSession = Depends(get_auth_db),
+):
+    """Mark all notifications as read for the current admin user."""
+    notification_service = AdminNotificationService(auth_db)
+    updated = await notification_service.mark_all_read(current_user.id)
+    return MessageResponse(message=f"Marked {updated} notification(s) as read")
 
 
 @router.post("/users", response_model=AdminUserSummary, status_code=status.HTTP_201_CREATED)
@@ -665,6 +886,9 @@ async def create_admin_user(
             security_answer_hash=hash_security_answer(security_answer),
             role=role,
             is_active=payload.is_active,
+            is_approved=True,
+            approved_at=datetime.now(timezone.utc),
+            approved_by=current_user.id,
             can_manage_groups=permissions["can_manage_groups"],
             can_generate=permissions["can_generate"],
             can_vet=permissions["can_vet"],
@@ -680,10 +904,12 @@ async def create_admin_user(
         full_name=user.full_name,
         role=user.role,
         is_active=bool(user.is_active),
+        is_approved=bool(user.is_approved),
         is_superuser=bool(user.is_superuser),
         can_manage_groups=bool(user.can_manage_groups),
         can_generate=bool(user.can_generate),
         can_vet=bool(user.can_vet),
+        approved_at=user.approved_at,
         created_at=user.created_at,
         last_login_at=user.last_login_at,
     )
@@ -744,206 +970,172 @@ async def update_admin_user(
         full_name=user.full_name,
         role=user.role,
         is_active=bool(user.is_active),
+        is_approved=bool(user.is_approved),
         is_superuser=bool(user.is_superuser),
         can_manage_groups=bool(user.can_manage_groups),
         can_generate=bool(user.can_generate),
         can_vet=bool(user.can_vet),
+        approved_at=user.approved_at,
         created_at=user.created_at,
         last_login_at=user.last_login_at,
     )
 
 
-@router.get("/provider-metrics", response_model=ProviderMetricsResponse)
-async def get_provider_metrics(
-    days: int = 30,
-    usage_type: Optional[str] = None,  # "gel", "vquest", or None for all
+@router.post("/users/{user_id}/approve", response_model=AdminUserSummary)
+async def approve_admin_user_registration(
+    user_id: str,
+    request: Request,
+    current_user: User = Depends(get_current_admin),
+    auth_db: AsyncSession = Depends(get_auth_db),
+):
+    """Approve a pending user registration so the account can sign in."""
+    user_service = UserService(auth_db)
+    client_info = get_client_info(request)
+
+    try:
+        user = await user_service.approve_user_registration(
+            user_id=user_id,
+            admin_user_id=current_user.id,
+            ip_address=client_info.get("ip_address"),
+            user_agent=client_info.get("user_agent"),
+        )
+    except ValueError as exc:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=str(exc))
+
+    return _serialize_admin_user(user)
+
+@router.post("/users/approve-bulk", response_model=AdminBulkApproveUsersResponse)
+async def approve_admin_users_bulk(
+    payload: AdminBulkApproveUsersRequest,
+    request: Request,
+    current_user: User = Depends(get_current_admin),
+    auth_db: AsyncSession = Depends(get_auth_db),
+):
+    """Approve multiple pending user registrations in one request."""
+    user_service = UserService(auth_db)
+    client_info = get_client_info(request)
+
+    approved_users: List[AdminUserSummary] = []
+    seen_ids: set[str] = set()
+
+    for raw_user_id in payload.user_ids:
+        user_id = str(raw_user_id or "").strip()
+        if not user_id or user_id in seen_ids:
+            continue
+        seen_ids.add(user_id)
+
+        existing_user = await user_service.get_user_by_id(user_id)
+        if not existing_user or existing_user.is_approved:
+            continue
+
+        approved_user = await user_service.approve_user_registration(
+            user_id=user_id,
+            admin_user_id=current_user.id,
+            ip_address=client_info.get("ip_address"),
+            user_agent=client_info.get("user_agent"),
+        )
+        approved_users.append(_serialize_admin_user(approved_user))
+
+    return AdminBulkApproveUsersResponse(
+        approved_users=approved_users,
+        approved_count=len(approved_users),
+    )
+
+
+@router.post("/users/{user_id}/reset-password", response_model=MessageResponse)
+async def admin_reset_user_password(
+    user_id: str,
+    payload: AdminUserPasswordResetRequest,
+    request: Request,
+    current_user: User = Depends(get_current_admin),
+    auth_db: AsyncSession = Depends(get_auth_db),
+):
+    """Allow admins to reset the password for any user account."""
+    user_service = UserService(auth_db)
+    client_info = get_client_info(request)
+
+    try:
+        await user_service.admin_reset_password(
+            user_id=user_id,
+            new_password=payload.new_password,
+            admin_user_id=current_user.id,
+            ip_address=client_info.get("ip_address"),
+            user_agent=client_info.get("user_agent"),
+        )
+    except ValueError as exc:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=str(exc))
+
+    return MessageResponse(message="Password reset successfully")
+
+
+@router.delete("/users/{user_id}", response_model=AdminUserDeleteResponse)
+async def delete_admin_user(
+    user_id: str,
+    payload: AdminUserDeleteRequest,
+    request: Request,
     current_user: User = Depends(get_current_admin),
     db: AsyncSession = Depends(get_db),
+    auth_db: AsyncSession = Depends(get_auth_db),
 ):
-    """Return provider-level generation and rejection/regeneration metrics.
-    
-    Args:
-        days: Number of days to look back (1-365)
-        usage_type: Filter by usage type - "gel" for GEL Train conversational inquiry, 
-                   "vquest" for question generation, or None for combined stats
-    """
-    window_days = max(1, min(days, 365))
-    since = datetime.now(timezone.utc) - timedelta(days=window_days)
-    provider_expr = _provider_key_expr().label("provider_key")
+    """Delete a user's login and optionally remove related platform data."""
+    if user_id == current_user.id:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="You cannot delete your own account")
 
-    generated_rows = (
-        await db.execute(
-            select(
-                provider_expr,
-                func.count(Question.id).label("generated"),
-                func.count(distinct(Question.session_id)).label("api_calls"),
-            )
-            .where(
-                Question.generation_status == "accepted",
-                Question.generated_at >= since,
-            )
-            .group_by(provider_expr)
+    user_service = UserService(auth_db)
+    target_user = await user_service.get_user_by_id(user_id)
+    if not target_user:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="User not found")
+
+    if target_user.role == "admin":
+        remaining_admins = await auth_db.execute(
+            select(func.count())
+            .select_from(User)
+            .where(User.role == "admin", User.id != user_id)
         )
-    ).all()
-    generated_map = {
-        str(row.provider_key or "unknown"): {
-            "generated": int(row.generated or 0),
-            "api_calls": int(row.api_calls or 0),
-        }
-        for row in generated_rows
-    }
-    
-    # Query provider_usage_logs for GEL Train and other non-question-generation usage
-    # Only include if usage_type is "gel" or None (all)
-    if usage_type != "vquest":
-        usage_log_rows = (
-            await db.execute(
-                select(
-                    ProviderUsageLog.provider_key,
-                    func.count(ProviderUsageLog.id).label("usage_count"),
-                )
-                .where(
-                    ProviderUsageLog.created_at >= since,
-                )
-                .group_by(ProviderUsageLog.provider_key)
+        if int(remaining_admins.scalar() or 0) == 0:
+            raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="You cannot delete the last admin account")
+
+    cleanup_counts = await _delete_admin_user_data(
+        db,
+        user_id=user_id,
+        delete_subjects=payload.delete_subjects,
+        delete_questions=payload.delete_questions,
+        delete_vetting_data=payload.delete_vetting_data,
+    )
+    await db.commit()
+
+    client_info = get_client_info(request)
+    deleted_user = await user_service.delete_user_login(
+        user_id,
+        admin_user_id=current_user.id,
+        ip_address=client_info.get("ip_address"),
+        user_agent=client_info.get("user_agent"),
+        cleanup_summary={
+            "delete_subjects": payload.delete_subjects,
+            "delete_questions": payload.delete_questions,
+            "delete_vetting_data": payload.delete_vetting_data,
+            **cleanup_counts,
+        },
+    )
+
+    if not any((payload.delete_subjects, payload.delete_questions, payload.delete_vetting_data)):
+        message = f"Deleted {deleted_user['username']}'s login. Their subjects, questions, and vetting data were preserved."
+    else:
+        cleanup_parts: list[str] = []
+        if payload.delete_subjects:
+            cleanup_parts.append(f"{cleanup_counts['deleted_subjects']} subject(s)")
+        if payload.delete_questions:
+            cleanup_parts.append(f"{cleanup_counts['deleted_questions']} question(s)")
+        if payload.delete_vetting_data:
+            cleanup_parts.append(
+                f"{cleanup_counts['deleted_vetting_logs']} vetting log(s) and {cleanup_counts['deleted_vetting_progress']} saved progress record(s)"
             )
-        ).all()
-        
-        # Add usage log calls to the generated_map
-        for row in usage_log_rows:
-            provider_key = str(row.provider_key or "unknown")
-            usage_count = int(row.usage_count or 0)
-            if usage_type == "gel":
-                # For GEL-only view, only show GEL stats
-                generated_map[provider_key] = {
-                    "generated": 0,
-                    "api_calls": usage_count,
-                }
-            elif provider_key in generated_map:
-                # For "all" view, add to existing api_calls
-                generated_map[provider_key]["api_calls"] += usage_count
-            else:
-                # Create new entry for providers only used in GEL Train
-                generated_map[provider_key] = {
-                    "generated": 0,
-                    "api_calls": usage_count,
-                }
+        message = f"Deleted {deleted_user['username']}'s login and removed " + ", ".join(cleanup_parts) + "."
 
-    rejected_rows = (
-        await db.execute(
-            select(
-                provider_expr,
-                func.count(Question.id).label("rejected"),
-            )
-            .where(
-                Question.vetting_status == "rejected",
-                Question.generated_at >= since,
-            )
-            .group_by(provider_expr)
-        )
-    ).all()
-    rejected_map = {
-        str(row.provider_key or "unknown"): int(row.rejected or 0)
-        for row in rejected_rows
-    }
-
-    regenerated_rows = (
-        await db.execute(
-            select(
-                provider_expr,
-                func.count(Question.id).label("regenerated"),
-            )
-            .where(
-                Question.replaces_id.isnot(None),
-                Question.generated_at >= since,
-            )
-            .group_by(provider_expr)
-        )
-    ).all()
-    regenerated_map = {
-        str(row.provider_key or "unknown"): int(row.regenerated or 0)
-        for row in regenerated_rows
-    }
-
-    reason_rows = (
-        await db.execute(
-            select(
-                provider_expr,
-                VettingLog.reason_codes,
-                VettingLog.rejection_reasons,
-            )
-            .join(VettingLog, VettingLog.question_id == Question.id)
-            .where(
-                VettingLog.decision == "reject",
-                VettingLog.created_at >= since,
-            )
-        )
-    ).all()
-
-    reason_map: dict[str, Counter] = {}
-    for row in reason_rows:
-        provider_key = str(row.provider_key or "unknown")
-        bucket = reason_map.setdefault(provider_key, Counter())
-        codes = row.reason_codes or []
-        reasons = row.rejection_reasons or []
-        for code in codes:
-            if code:
-                bucket[str(code)] += 1
-        if not codes:
-            for reason in reasons:
-                if reason:
-                    bucket[str(reason)] += 1
-
-    provider_keys = set(generated_map) | set(rejected_map) | set(regenerated_map)
-    provider_metrics: List[ProviderMetric] = []
-    total_generated = 0
-    total_rejected = 0
-    total_regenerated = 0
-
-    for provider_key in sorted(provider_keys):
-        generated = generated_map.get(provider_key, {}).get("generated", 0)
-        api_calls = generated_map.get(provider_key, {}).get("api_calls", 0)
-        rejected = rejected_map.get(provider_key, 0)
-        regenerated = regenerated_map.get(provider_key, 0)
-
-        total_generated += generated
-        total_rejected += rejected
-        total_regenerated += regenerated
-
-        rejection_rate = (rejected / generated) if generated else 0.0
-        regeneration_rate = (regenerated / rejected) if rejected else 0.0
-        if rejection_rate <= 0.2:
-            inferred_preference = "preferred"
-        elif rejection_rate <= 0.4:
-            inferred_preference = "neutral"
-        else:
-            inferred_preference = "avoid"
-
-        top_reasons = [
-            reason for reason, _ in reason_map.get(provider_key, Counter()).most_common(3)
-        ]
-
-        provider_metrics.append(
-            ProviderMetric(
-                provider_key=provider_key,
-                total_generated=generated,
-                api_calls=api_calls,
-                avg_questions_per_call=round((generated / api_calls) if api_calls else 0.0, 2),
-                total_rejected=rejected,
-                total_regenerated=regenerated,
-                rejection_rate=round(rejection_rate, 4),
-                regeneration_rate=round(regeneration_rate, 4),
-                inferred_preference=inferred_preference,
-                top_rejection_reasons=top_reasons,
-            )
-        )
-
-    provider_metrics.sort(key=lambda item: item.total_generated, reverse=True)
-
-    return ProviderMetricsResponse(
-        window_days=window_days,
-        total_generated=total_generated,
-        total_rejected=total_rejected,
-        total_regenerated=total_regenerated,
-        providers=provider_metrics,
+    return AdminUserDeleteResponse(
+        message=message,
+        deleted_subjects=cleanup_counts["deleted_subjects"],
+        deleted_questions=cleanup_counts["deleted_questions"],
+        deleted_vetting_logs=cleanup_counts["deleted_vetting_logs"],
+        deleted_vetting_progress=cleanup_counts["deleted_vetting_progress"],
     )

@@ -61,6 +61,7 @@ def _default_password_reset_settings() -> dict:
     )
     return {
         "method": PASSWORD_RESET_METHOD_SMTP if smtp_ready else PASSWORD_RESET_METHOD_SECURITY_QUESTION,
+        "self_service_enabled": True,
         "smtp": smtp_config,
     }
 

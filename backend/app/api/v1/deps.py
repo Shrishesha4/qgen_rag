@@ -106,6 +106,12 @@ async def get_current_user(
             status_code=status.HTTP_403_FORBIDDEN,
             detail="User account is deactivated",
         )
+
+    if not user.is_approved:
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="User account is pending admin approval",
+        )
     
     # Store user ID in request state for database RLS
     request.state.user_id = user.id

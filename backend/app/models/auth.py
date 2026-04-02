@@ -79,3 +79,34 @@ class AuditLog(AuthBase):
     
     def __repr__(self) -> str:
         return f"<AuditLog {self.event_type} at {self.timestamp}>"
+
+
+class AdminNotification(AuthBase):
+    """Per-admin notification items stored in the auth database."""
+
+    __tablename__ = "admin_notifications"
+
+    id: Mapped[str] = mapped_column(
+        String(36), primary_key=True, default=lambda: str(uuid.uuid4())
+    )
+    recipient_user_id: Mapped[str] = mapped_column(
+        String(36), ForeignKey("users.id", ondelete="CASCADE"), nullable=False, index=True
+    )
+    notification_type: Mapped[str] = mapped_column(String(80), nullable=False, index=True)
+    title: Mapped[str] = mapped_column(String(255), nullable=False)
+    message: Mapped[str] = mapped_column(Text, nullable=False)
+
+    target_user_id: Mapped[Optional[str]] = mapped_column(String(36), index=True)
+    target_user_email: Mapped[Optional[str]] = mapped_column(String(255))
+    target_username: Mapped[Optional[str]] = mapped_column(String(50))
+
+    action_url: Mapped[Optional[str]] = mapped_column(String(500))
+    action_label: Mapped[Optional[str]] = mapped_column(String(50))
+    payload: Mapped[Optional[dict]] = mapped_column(JSON)
+
+    is_read: Mapped[bool] = mapped_column(Boolean, default=False, index=True)
+    read_at: Mapped[Optional[datetime]] = mapped_column(DateTime)
+    created_at: Mapped[Optional[datetime]] = mapped_column(DateTime, default=datetime.utcnow, index=True)
+
+    def __repr__(self) -> str:
+        return f"<AdminNotification {self.notification_type} for {self.recipient_user_id}>"

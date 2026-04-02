@@ -35,10 +35,12 @@ export interface AdminUserSummary {
 	full_name: string | null;
 	role: AdminRole;
 	is_active: boolean;
+	is_approved: boolean;
 	is_superuser: boolean;
 	can_manage_groups: boolean;
 	can_generate: boolean;
 	can_vet: boolean;
+	approved_at: string | null;
 	created_at: string | null;
 	last_login_at: string | null;
 }
@@ -64,6 +66,49 @@ export interface AdminUserUpdateRequest {
 	can_manage_groups?: boolean;
 	can_generate?: boolean;
 	can_vet?: boolean;
+}
+
+export interface AdminUserPasswordResetRequest {
+	new_password: string;
+}
+
+export interface AdminUserDeleteRequest {
+	delete_subjects: boolean;
+	delete_questions: boolean;
+	delete_vetting_data: boolean;
+}
+
+export interface AdminUserDeleteResponse {
+	message: string;
+	deleted_subjects: number;
+	deleted_questions: number;
+	deleted_vetting_logs: number;
+	deleted_vetting_progress: number;
+}
+
+export interface AdminBulkApproveUsersResponse {
+	approved_users: AdminUserSummary[];
+	approved_count: number;
+}
+
+export interface AdminNotificationSummary {
+	id: string;
+	notification_type: string;
+	title: string;
+	message: string;
+	target_user_id: string | null;
+	target_user_email: string | null;
+	target_username: string | null;
+	action_url: string | null;
+	action_label: string | null;
+	payload: Record<string, unknown> | null;
+	is_read: boolean;
+	created_at: string | null;
+}
+
+export interface AdminNotificationListResponse {
+	notifications: AdminNotificationSummary[];
+	unread_count: number;
 }
 
 export interface AdminDashboard {
@@ -145,5 +190,60 @@ export async function updateAdminUser(
 	return apiFetch<AdminUserSummary>(`/admin/users/${userId}`, {
 		method: 'PATCH',
 		body: JSON.stringify(payload)
+	});
+}
+
+export async function resetAdminUserPassword(
+	userId: string,
+	payload: AdminUserPasswordResetRequest
+): Promise<{ message: string }> {
+	return apiFetch<{ message: string }>(`/admin/users/${userId}/reset-password`, {
+		method: 'POST',
+		body: JSON.stringify(payload)
+	});
+}
+
+export async function deleteAdminUser(
+	userId: string,
+	payload: AdminUserDeleteRequest
+): Promise<AdminUserDeleteResponse> {
+	return apiFetch<AdminUserDeleteResponse>(`/admin/users/${userId}`, {
+		method: 'DELETE',
+		body: JSON.stringify(payload)
+	});
+}
+
+export async function approveAdminUser(userId: string): Promise<AdminUserSummary> {
+	return apiFetch<AdminUserSummary>(`/admin/users/${userId}/approve`, {
+		method: 'POST'
+	});
+}
+
+export async function bulkApproveAdminUsers(userIds: string[]): Promise<AdminBulkApproveUsersResponse> {
+	return apiFetch<AdminBulkApproveUsersResponse>('/admin/users/approve-bulk', {
+		method: 'POST',
+		body: JSON.stringify({ user_ids: userIds })
+	});
+}
+
+export async function listAdminNotifications(
+	options: { unreadOnly?: boolean; limit?: number } = {}
+): Promise<AdminNotificationListResponse> {
+	const params = new URLSearchParams();
+	if (options.unreadOnly) params.set('unread_only', 'true');
+	if (options.limit) params.set('limit', String(options.limit));
+	const suffix = params.toString() ? `?${params.toString()}` : '';
+	return apiFetch<AdminNotificationListResponse>(`/admin/notifications${suffix}`);
+}
+
+export async function markAdminNotificationRead(notificationId: string): Promise<AdminNotificationSummary> {
+	return apiFetch<AdminNotificationSummary>(`/admin/notifications/${notificationId}/read`, {
+		method: 'POST'
+	});
+}
+
+export async function markAllAdminNotificationsRead(): Promise<{ message: string }> {
+	return apiFetch<{ message: string }>('/admin/notifications/read-all', {
+		method: 'POST'
 	});
 }

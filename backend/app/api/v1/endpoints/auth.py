@@ -33,6 +33,7 @@ from app.schemas.auth import (
     LogoutAllResponse,
 )
 from app.core.security import create_password_reset_token, decode_token, password_token_version
+from app.services.admin_notification_service import AdminNotificationService
 from app.services.user_service import UserService
 from app.services.email_service import EmailService
 from app.services.system_settings_service import get_password_reset_settings
@@ -67,27 +68,7 @@ async def is_signup_enabled(db: AsyncSession) -> bool:
     return DEFAULT_SETTINGS.get(SETTING_SIGNUP_ENABLED, {}).get("enabled", True)
 
 
-async def is_student_signup_enabled(db: AsyncSession) -> bool:
-    """Check if student self-signup is enabled in system settings."""
-    result = await db.execute(
-        select(SystemSettings).where(SystemSettings.key == SETTING_STUDENT_SIGNUP_ENABLED)
-    )
-    setting = result.scalar_one_or_none()
-    if setting and setting.value:
-        return setting.value.get("enabled", False)
-    return DEFAULT_SETTINGS.get(SETTING_STUDENT_SIGNUP_ENABLED, {}).get("enabled", False)
-
-
-@router.get("/bootstrap-status", response_model=BootstrapStatus)
-async def get_bootstrap_status(
-    db: AsyncSession = Depends(get_auth_db),
-):
-    """Return whether an admin account already exists (public)."""
-    user_service = UserService(db)
-    return BootstrapStatus(admin_exists=await user_service.admin_exists())
-
-
-@router.post("/register", response_model=TokenResponse, status_code=status.HTTP_201_CREATED)
+@router.post("/register", response_model=MessageResponse, status_code=status.HTTP_201_CREATED)
 async def register(
     request: Request,
     user_data: UserCreate,
@@ -96,6 +77,20 @@ async def register(
     """
     Register a new user account.
     """
+    if user_data.role == "admin":
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="Admin accounts must be created by an existing admin.",
+        )
+
+    signup_enabled = await is_signup_enabled(db)
+    auto_approve_vetter = user_data.role == "vetter"
+    if not signup_enabled and not auto_approve_vetter:
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="Teacher registration is currently disabled. Vetter registration remains available.",
+        )
+    
     user_service = UserService(db)
     admin_exists = await user_service.admin_exists()
 
@@ -124,21 +119,25 @@ async def register(
     client_info = get_client_info(request)
     
     try:
-        # Create user
-        user = await user_service.create_user(user_data)
-        
-        # Generate tokens
-        access_token, refresh_token = await user_service.create_refresh_token(
-            user_id=user.id,
-            **client_info,
-        )
-        
-        return TokenResponse(
-            access_token=access_token,
-            refresh_token=refresh_token,
-            token_type="bearer",
-            expires_in=settings.ACCESS_TOKEN_EXPIRE_MINUTES * 60,
-            user=UserResponse.model_validate(user),
+        user = await user_service.create_user(user_data, is_approved=auto_approve_vetter)
+
+        if auto_approve_vetter:
+            return MessageResponse(
+                message="Vetter account created and approved. You can sign in now."
+            )
+
+        notification_service = AdminNotificationService(db)
+        try:
+            await notification_service.create_user_registration_notifications(
+                user,
+                ip_address=client_info.get("ip_address"),
+                user_agent=client_info.get("user_agent"),
+            )
+        except Exception as exc:
+            logger.warning("Registration notification creation failed for %s: %s", user.email, exc)
+
+        return MessageResponse(
+            message="Registration submitted. An admin must approve your account before you can sign in."
         )
     
     except ValueError as e:
@@ -203,6 +202,28 @@ async def forgot_password(
 ):
     """Request a password reset email without revealing whether the account exists."""
     password_reset_settings = await get_password_reset_settings(db, include_secret=True)
+    user_service = UserService(db)
+    client_info = get_client_info(request)
+    user = await user_service.get_user_by_email(payload.email)
+
+    if not password_reset_settings.get("self_service_enabled", True):
+        if user and user.is_active and user.is_approved:
+            notification_service = AdminNotificationService(db)
+            try:
+                await notification_service.create_password_reset_notifications(
+                    user,
+                    method=password_reset_settings["method"],
+                    self_service_enabled=False,
+                    ip_address=client_info.get("ip_address"),
+                    user_agent=client_info.get("user_agent"),
+                )
+            except Exception as exc:
+                logger.warning("Admin-assisted reset notification creation failed for %s: %s", user.email, exc)
+
+        return MessageResponse(
+            message="If an account exists for that email, admins have been alerted to reset the password."
+        )
+
     if password_reset_settings["method"] != PASSWORD_RESET_METHOD_SMTP:
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,
@@ -216,11 +237,19 @@ async def forgot_password(
             detail="Password reset email is not configured",
         )
 
-    user_service = UserService(db)
-    client_info = get_client_info(request)
-    user = await user_service.get_user_by_email(payload.email)
+    if user and user.is_active and user.is_approved:
+        notification_service = AdminNotificationService(db)
+        try:
+            await notification_service.create_password_reset_notifications(
+                user,
+                method=PASSWORD_RESET_METHOD_SMTP,
+                self_service_enabled=True,
+                ip_address=client_info.get("ip_address"),
+                user_agent=client_info.get("user_agent"),
+            )
+        except Exception as exc:
+            logger.warning("Password reset notification creation failed for %s: %s", user.email, exc)
 
-    if user and user.is_active:
         token = create_password_reset_token(
             data={
                 "sub": str(user.id),
@@ -251,11 +280,18 @@ async def forgot_password(
 
 @router.post("/security-question", response_model=SecurityQuestionResponse)
 async def get_security_question(
+    request: Request,
     payload: SecurityQuestionRequest,
     db: AsyncSession = Depends(get_auth_db),
 ):
     """Return the stored security question for password-reset flows."""
     password_reset_settings = await get_password_reset_settings(db, include_secret=False)
+    if not password_reset_settings.get("self_service_enabled", True):
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="Self-service password reset is currently disabled",
+        )
+
     if password_reset_settings["method"] != PASSWORD_RESET_METHOD_SECURITY_QUESTION:
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,
@@ -263,14 +299,27 @@ async def get_security_question(
         )
 
     user_service = UserService(db)
-    question = await user_service.get_security_question_for_email(payload.email)
-    if not question:
+    user = await user_service.get_user_by_email(payload.email)
+    if not user or not user.is_active or not user.is_approved or not user.security_question or not user.security_answer_hash:
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,
             detail="Security question is not available for this account",
         )
 
-    return SecurityQuestionResponse(security_question=question)
+    client_info = get_client_info(request)
+    notification_service = AdminNotificationService(db)
+    try:
+        await notification_service.create_password_reset_notifications(
+            user,
+            method=PASSWORD_RESET_METHOD_SECURITY_QUESTION,
+            self_service_enabled=True,
+            ip_address=client_info.get("ip_address"),
+            user_agent=client_info.get("user_agent"),
+        )
+    except Exception as exc:
+        logger.warning("Security-question reset notification creation failed for %s: %s", user.email, exc)
+
+    return SecurityQuestionResponse(security_question=user.security_question)
 
 
 @router.post("/security-question/reset-password", response_model=MessageResponse)
@@ -281,6 +330,12 @@ async def reset_password_with_security_question(
 ):
     """Reset a password using the user's configured security answer."""
     password_reset_settings = await get_password_reset_settings(db, include_secret=False)
+    if not password_reset_settings.get("self_service_enabled", True):
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="Self-service password reset is currently disabled",
+        )
+
     if password_reset_settings["method"] != PASSWORD_RESET_METHOD_SECURITY_QUESTION:
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,
@@ -325,10 +380,17 @@ async def reset_password(
 
     user_service = UserService(db)
     user = await user_service.get_user_by_id(user_id) if user_id else None
-    if not user or not user.is_active or user.email.strip().lower() != token_email:
+    if not user or not user.is_active or not user.is_approved or user.email.strip().lower() != token_email:
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,
             detail="Invalid or expired password reset token",
+        )
+
+    password_reset_settings = await get_password_reset_settings(db, include_secret=False)
+    if not password_reset_settings.get("self_service_enabled", True):
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="Self-service password reset is currently disabled",
         )
 
     token_version = int(token_payload.get("pwd") or 0)

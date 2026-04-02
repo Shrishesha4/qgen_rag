@@ -9,6 +9,7 @@
 	} from '$lib/api/auth';
 
 	let resetMethod = $state<PasswordResetMethod>('smtp');
+	let selfServiceEnabled = $state(true);
 	let methodLoading = $state(true);
 	let email = $state('');
 	let loadedQuestionEmail = $state('');
@@ -30,6 +31,7 @@
 		try {
 			const response = await getPasswordResetMethod();
 			resetMethod = response.method;
+			selfServiceEnabled = response.self_service_enabled;
 		} catch (e: unknown) {
 			error = e instanceof Error ? e.message : 'Unable to load password reset options';
 		} finally {
@@ -56,6 +58,11 @@
 		error = '';
 		message = '';
 
+		if (!selfServiceEnabled) {
+			error = 'Self-service password reset is currently disabled.';
+			return;
+		}
+
 		const normalizedEmail = email.trim().toLowerCase();
 		if (!normalizedEmail) {
 			error = 'Email is required';
@@ -81,6 +88,19 @@
 		const normalizedEmail = email.trim().toLowerCase();
 		if (!normalizedEmail) {
 			error = 'Email is required';
+			return;
+		}
+
+		if (!selfServiceEnabled) {
+			loading = true;
+			try {
+				const response = await requestPasswordReset({ email: normalizedEmail });
+				message = response.message;
+			} catch (e: unknown) {
+				error = e instanceof Error ? e.message : 'Unable to send password reset request';
+			} finally {
+				loading = false;
+			}
 			return;
 		}
 
@@ -147,6 +167,8 @@
 			<h1 class="auth-title font-serif">Reset Your Password</h1>
 			{#if methodLoading}
 				<p class="auth-subtitle">Loading reset options...</p>
+			{:else if !selfServiceEnabled}
+				<p class="auth-subtitle">Enter your email and an admin will be alerted to reset your password.</p>
 			{:else if resetMethod === 'smtp'}
 				<p class="auth-subtitle">Enter your email and we’ll send you a secure reset link.</p>
 			{:else}
@@ -180,7 +202,7 @@
 				/>
 			</label>
 
-			{#if !methodLoading && resetMethod === 'security_question'}
+			{#if !methodLoading && selfServiceEnabled && resetMethod === 'security_question'}
 				{#if securityQuestion}
 					<div class="question-card">
 						<span class="question-label">Security Question</span>
@@ -232,6 +254,8 @@
 			<button type="submit" class="submit-btn" disabled={loading || methodLoading}>
 				{#if loading || methodLoading}
 					<span class="spinner"></span>
+				{:else if !selfServiceEnabled}
+					Send Alert to Admin
 				{:else if resetMethod === 'smtp'}
 					Send Reset Link
 				{:else if securityQuestion}

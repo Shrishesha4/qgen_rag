@@ -64,6 +64,10 @@ AuthBase = declarative_base()
 
 async def init_auth_db():
     """Initialize SQLite auth database and create tables."""
+    from app.models.user import User  # noqa: F401
+    from app.models.auth import RefreshToken, AuditLog, AdminNotification  # noqa: F401
+    from app.models.system_settings import SystemSettings  # noqa: F401
+
     async with auth_engine.begin() as conn:
         await conn.run_sync(AuthBase.metadata.create_all)
 
@@ -96,6 +100,12 @@ async def init_auth_db():
             await conn.execute(text("ALTER TABLE users ADD COLUMN security_question VARCHAR(255)"))
         if "security_answer_hash" not in existing_columns:
             await conn.execute(text("ALTER TABLE users ADD COLUMN security_answer_hash VARCHAR(255)"))
+        if "is_approved" not in existing_columns:
+            await conn.execute(text("ALTER TABLE users ADD COLUMN is_approved BOOLEAN"))
+        if "approved_at" not in existing_columns:
+            await conn.execute(text("ALTER TABLE users ADD COLUMN approved_at DATETIME"))
+        if "approved_by" not in existing_columns:
+            await conn.execute(text("ALTER TABLE users ADD COLUMN approved_by VARCHAR(36)"))
 
         # Backfill defaults for legacy rows where new columns are null.
         await conn.execute(
@@ -153,6 +163,24 @@ async def init_auth_db():
                 """
             ),
             {"security_answer_hash": hash_security_answer("reset")},
+        )
+        await conn.execute(
+            text(
+                """
+                UPDATE users
+                SET is_approved = 1
+                WHERE is_approved IS NULL
+                """
+            )
+        )
+        await conn.execute(
+            text(
+                """
+                UPDATE users
+                SET approved_at = COALESCE(approved_at, created_at, CURRENT_TIMESTAMP)
+                WHERE is_approved = 1 AND approved_at IS NULL
+                """
+            )
         )
     
     # Ensure database file has correct permissions after creation
