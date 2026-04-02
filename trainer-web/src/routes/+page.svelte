@@ -4,7 +4,8 @@
 	import {
 		DEFAULT_SECURITY_QUESTION,
 		login,
-		register
+		register,
+		getBootstrapStatus
 	} from '$lib/api/auth';
 	import { apiUrl, getStoredSession } from '$lib/api/client';
 	import { session } from '$lib/session';
@@ -122,7 +123,17 @@
 		authError = '';
 		authSuccess = '';
 
-		if (mode === 'register') {
+		if (mode === 'register' || mode === 'bootstrap') {
+			if (mode === 'bootstrap') {
+				if (!username.trim()) {
+					authError = 'Username is required for admin account';
+					return;
+				}
+				if (!fullName.trim()) {
+					authError = 'Full name is required for admin account';
+					return;
+				}
+			} else {
 			if (!selectedRoleCanSignUp()) {
 				authError = 'Teacher sign up is currently disabled. Vetter sign up remains available.';
 				return;
@@ -130,6 +141,7 @@
 			if (!username.trim()) {
 				authError = 'Username is required';
 				return;
+			}
 			}
 			if (password.length < 8) {
 				authError = 'Password must be at least 8 characters';
@@ -183,28 +195,7 @@
 			introReady = true;
 		});
 
-		void (async () => {
-			try {
-				const res = await fetch(apiUrl('/settings/signup'));
-				if (res.ok) {
-					const data = await res.json();
-					if (!cancelled) {
-						signupEnabled = data.signup_enabled ?? true;
-						if (!signupEnabled && selectedRole === 'teacher') {
-							selectedRole = 'vetter';
-						}
-					}
-				}
-			} catch {
-				if (!cancelled) {
-					signupEnabled = true;
-				}
-			} finally {
-				if (!cancelled) {
-					checkingSignup = false;
-				}
-			}
-		})();
+		void initAuthState();
 
 		return () => {
 			cancelled = true;
@@ -235,7 +226,34 @@
 						<p class="signin-success" role="status">{authSuccess}</p>
 					{/if}
 
-					{#if mode === 'register'}
+					{#if mode === 'bootstrap'}
+						<div class="bootstrap-notice">
+							<h3>Welcome to VQuest!</h3>
+							<p>This appears to be your first setup. Create the administrator account to continue.</p>
+						</div>
+						<label class="signin-field">
+							<span class="signin-label">Username</span>
+							<input
+								type="text"
+								class="signin-input"
+								bind:value={username}
+								placeholder="e.g. admin"
+								autocomplete="username"
+								required
+							/>
+						</label>
+						<label class="signin-field">
+							<span class="signin-label">Full Name</span>
+							<input
+								type="text"
+								class="signin-input"
+								bind:value={fullName}
+								placeholder="System Administrator"
+								autocomplete="name"
+								required
+							/>
+						</label>
+					{:else if mode === 'register'}
 						<label class="signin-field">
 							<span class="signin-label">Username</span>
 							<input
@@ -348,17 +366,15 @@
 					{/if}
 
 					<button type="submit" class="signin-submit" disabled={authLoading}>
-						{authLoading
-							? mode === 'login'
-								? 'Signing In...'
-								: 'Submitting Registration...'
-							: mode === 'login'
-								? 'Sign In'
-								: 'Submit Registration'}
+						{#if authLoading}
+							{mode === 'login' ? 'Signing In...' : mode === 'bootstrap' ? 'Creating Admin Account...' : 'Submitting Registration...'}
+						{:else}
+							{mode === 'login' ? 'Sign In' : mode === 'bootstrap' ? 'Create Admin Account' : 'Submit Registration'}
+						{/if}
 					</button>
 				</form>
 
-				{#if !checkingSignup}
+				{#if mode !== 'bootstrap' && !checkingSignup}
 					<div class="mode-switch">
 						{#if mode === 'login'}
 							{#if !signupEnabled}
@@ -392,7 +408,7 @@
 						{/if}
 					</div>
 				{/if}
-			</form>
+			</div>
 		</div>
 	</section>
 </div>
@@ -665,11 +681,6 @@
 		color: rgba(15, 23, 42, 0.78);
 	}
 
-	.optional {
-		font-weight: 500;
-		opacity: 0.8;
-	}
-
 	.signin-input {
 		padding: 0.62rem 0.74rem;
 		border-radius: 0.7rem;
@@ -774,20 +785,6 @@
 		justify-content: center;
 		align-items: center;
 		gap: 0.35rem;
-	}
-
-	.switch-btn {
-		border: none;
-		background: transparent;
-		font-size: 0.82rem;
-		font-weight: 700;
-		color: var(--theme-primary);
-		cursor: pointer;
-		padding: 0;
-	}
-
-	.switch-btn:hover {
-		text-decoration: underline;
 	}
 
 	.bootstrap-notice {
