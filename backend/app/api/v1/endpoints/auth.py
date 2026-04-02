@@ -70,24 +70,30 @@ async def register(
     """
     Register a new user account.
     """
-    # Check if signup is enabled
-    if not await is_signup_enabled(db):
-        raise HTTPException(
-            status_code=status.HTTP_403_FORBIDDEN,
-            detail="User registration is currently disabled. Please contact an administrator.",
-        )
-
     if user_data.role == "admin":
         raise HTTPException(
             status_code=status.HTTP_403_FORBIDDEN,
             detail="Admin accounts must be created by an existing admin.",
+        )
+
+    signup_enabled = await is_signup_enabled(db)
+    auto_approve_vetter = user_data.role == "vetter"
+    if not signup_enabled and not auto_approve_vetter:
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="Teacher registration is currently disabled. Vetter registration remains available.",
         )
     
     user_service = UserService(db)
     client_info = get_client_info(request)
     
     try:
-        user = await user_service.create_user(user_data, is_approved=False)
+        user = await user_service.create_user(user_data, is_approved=auto_approve_vetter)
+
+        if auto_approve_vetter:
+            return MessageResponse(
+                message="Vetter account created and approved. You can sign in now."
+            )
 
         notification_service = AdminNotificationService(db)
         try:

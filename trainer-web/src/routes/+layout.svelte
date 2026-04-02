@@ -68,7 +68,7 @@
 		if (pathname.startsWith('/vetter')) {
 			return [
 				{ href: '/vetter/dashboard', label: 'Home', icon: '🏠' },
-				{ href: '/vetter/subjects', label: 'Subjects', icon: '📚' },
+				// { href: '/vetter/subjects', label: 'Subjects', icon: '📚' },
 				{ href: '/vetter/profile', label: 'Profile', icon: '👤' },
 				// { href: '/vetter/loop', label: 'Vetting Loop', icon: '🎙️' }
 			];
@@ -111,7 +111,11 @@
 		return !hideGlobalBackPrefixes.some((prefix) => pathname.startsWith(prefix));
 	});
 
-	let enableVettingLoopScroll = $derived(pathname.startsWith('/teacher/train/loop'));
+	let enableVettingLoopScroll = $derived(
+		pathname.startsWith('/teacher/train/loop') ||
+		pathname.startsWith('/vetter/dashboard/loop') ||
+		pathname.startsWith('/vetter/loop')
+	);
 	let enableAdminWindowScroll = $derived(pathname.startsWith('/admin') && !pathname.includes('/login'));
 
 	// Role-based routing: redirect to dashboard on root path

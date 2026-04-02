@@ -942,7 +942,6 @@
 			grid-template-columns: 1fr;
 		}
 
-		.danger-header,
 		.delete-modal-header {
 			flex-direction: column;
 		}

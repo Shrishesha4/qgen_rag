@@ -24,6 +24,10 @@
 	let signupEnabled = $state(true);
 	let checkingSignup = $state(true);
 
+	function selectedRoleCanSignUp(): boolean {
+		return signupEnabled || selectedRole === 'vetter';
+	}
+
 	function redirectByRole(role: string) {
 		switch (role) {
 			case 'admin':
@@ -44,8 +48,8 @@
 		authSuccess = '';
 
 		if (mode === 'register') {
-			if (!signupEnabled) {
-				authError = 'Sign up is currently disabled';
+			if (!selectedRoleCanSignUp()) {
+				authError = 'Teacher sign up is currently disabled. Vetter sign up remains available.';
 				return;
 			}
 			if (!username.trim()) {
@@ -109,8 +113,8 @@
 					const data = await res.json();
 					if (!cancelled) {
 						signupEnabled = data.signup_enabled ?? true;
-						if (!signupEnabled && mode === 'register') {
-							mode = 'login';
+						if (!signupEnabled && selectedRole === 'teacher') {
+							selectedRole = 'vetter';
 						}
 					}
 				}
@@ -176,39 +180,43 @@
 								autocomplete="name"
 							/>
 						</label>
-						<div class="signin-field">
-							<span class="signin-label">Role</span>
-							<div class="role-selector">
-								<button
-									type="button"
-									class="role-option"
-									class:selected={selectedRole === 'teacher'}
-									onclick={() => {
-										selectedRole = 'teacher';
-									}}
-								>
-									<svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
-										<path d="M12 20h9"></path>
-										<path d="M16.5 3.5a 2.12 2.12 0 0 1 3 3L7 19l-4 1 1-4Z"></path>
-									</svg>
-									Teacher
-								</button>
-								<button
-									type="button"
-									class="role-option"
-									class:selected={selectedRole === 'vetter'}
-									onclick={() => {
-										selectedRole = 'vetter';
-									}}
-								>
-									<svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
-										<circle cx="11" cy="11" r="8"></circle>
-										<path d="m21 21-4.3-4.3"></path>
-									</svg>
-									Vetter
-								</button>
+						{#if signupEnabled}
+							<div class="signin-field">
+								<span class="signin-label">Role</span>
+								<div class="role-selector">
+									<button
+										type="button"
+										class="role-option"
+										class:selected={selectedRole === 'teacher'}
+										onclick={() => {
+											selectedRole = 'teacher';
+										}}
+									>
+										<svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+											<path d="M12 20h9"></path>
+											<path d="M16.5 3.5a 2.12 2.12 0 0 1 3 3L7 19l-4 1 1-4Z"></path>
+										</svg>
+										Teacher
+									</button>
+									<button
+										type="button"
+										class="role-option"
+										class:selected={selectedRole === 'vetter'}
+										onclick={() => {
+											selectedRole = 'vetter';
+										}}
+									>
+										<svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+											<circle cx="11" cy="11" r="8"></circle>
+											<path d="m21 21-4.3-4.3"></path>
+										</svg>
+										Vetter
+									</button>
+								</div>
 							</div>
-						</div>
+						{:else}
+							<p class="signup-note" role="status">Teacher sign up is currently closed. Vetter sign up stays open and vetter accounts are approved automatically.</p>
+						{/if}
 						<label class="signin-field">
 							<span class="signin-label">Security Question</span>
 							<input
@@ -276,21 +284,21 @@
 				{#if !checkingSignup}
 					<div class="mode-switch">
 						{#if mode === 'login'}
-							{#if signupEnabled}
-								<button
-									type="button"
-									class="text-link"
-									onclick={() => {
-										mode = 'register';
-										authError = '';
-										authSuccess = '';
-									}}
-								>
-									Create one
-								</button>
-							{:else}
-								<!-- <span class="muted-copy">Sign up is currently disabled.</span> -->
+							{#if !signupEnabled}
+								<!-- <span class="muted-copy">Teacher sign up is closed.</span> -->
 							{/if}
+							<button
+								type="button"
+								class="text-link"
+								onclick={() => {
+									mode = 'register';
+									selectedRole = signupEnabled ? selectedRole : 'vetter';
+									authError = '';
+									authSuccess = '';
+								}}
+							>
+								{signupEnabled ? 'Create one' : 'Join as Vetter'}
+							</button>
 						{:else}
 							<span>Already have an account?</span>
 							<button
@@ -744,10 +752,25 @@
 		background: rgba(255, 255, 255, 0.34);
 	}
 
+	.role-option:disabled {
+		opacity: 0.55;
+		cursor: not-allowed;
+		transform: none;
+		background: rgba(255, 255, 255, 0.18);
+		color: rgba(15, 23, 42, 0.55);
+	}
+
 	.role-option.selected {
 		border-color: rgba(var(--theme-primary-rgb), 0.38);
 		background: rgba(var(--theme-primary-rgb), 0.14);
 		color: var(--theme-primary);
+	}
+
+	.signup-note {
+		margin: 0;
+		font-size: 0.78rem;
+		line-height: 1.4;
+		color: rgba(15, 23, 42, 0.7);
 	}
 
 	.mode-switch {
