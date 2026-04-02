@@ -37,11 +37,11 @@
 	}
 
 	function vetAllTopics() {
-		goto(`/vetter/loop?subject=${subjectId}`);
+		goto(`/vetter/dashboard/loop?subject=${subjectId}`);
 	}
 
 	function vetTopic(topicId: string) {
-		goto(`/vetter/loop?subject=${subjectId}&topic=${topicId}`);
+		goto(`/vetter/dashboard/loop?subject=${subjectId}&topic=${topicId}`);
 	}
 
 	const filteredTopics = $derived.by(() => {
