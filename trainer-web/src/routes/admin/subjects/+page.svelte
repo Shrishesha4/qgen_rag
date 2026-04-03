@@ -120,7 +120,7 @@
 	}
 
 	function userDetailHref(userId: string): string {
-		return `/users/${userId}`;
+		return `/admin/users/${userId}`;
 	}
 
 	function formatDate(value: string) {
