@@ -1554,10 +1554,10 @@ class DocumentService:
         """
         Get IDs of all completed reference documents for a subject.
         Used to include reference book chunks in question generation searches.
+        Returns documents from ALL users so any teacher's uploads are available to everyone.
         """
         result = await self.db.execute(
             select(Document.id).where(
-                Document.user_id == user_id,
                 Document.subject_id == subject_id,
                 Document.index_type == index_type,
                 Document.processing_status == "completed",
@@ -1611,9 +1611,10 @@ class DocumentService:
         Get chunks from reference documents.
         If query_embedding is provided, returns the most relevant chunks.
         Otherwise returns all chunks.
+        Returns documents from ALL users so any teacher's uploads are available to everyone.
         """
-        # Get reference documents
-        docs = await self.get_reference_documents(user_id, subject_id, index_type)
+        # Get reference documents from all users for this subject
+        docs = await self.get_reference_documents(user_id, subject_id, index_type, all_users=True)
         
         if not docs:
             return []

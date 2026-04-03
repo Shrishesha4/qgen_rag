@@ -319,9 +319,8 @@ class NoveltyService:
         num_chunks: int = 3,
     ) -> List[DocumentChunk]:
         """Get reference chunks aligned with the focus topics."""
-        # Get reference documents for this subject
+        # Get reference documents for this subject from all users
         doc_query = select(Document).where(
-            Document.user_id == user_id,
             Document.subject_id == subject_id,
             Document.index_type.in_(["reference_book", "template_paper"]),
             Document.processing_status == "completed",

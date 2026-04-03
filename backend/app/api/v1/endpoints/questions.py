@@ -3438,11 +3438,11 @@ Output valid JSON only."""
                         alpha=0.6,
                     )
                 if not ref_chunks_a2:
-                    # Fallback: any uploaded documents for the subject
+                    # Fallback: any uploaded documents for the subject (from any teacher)
                     from app.models.document import Document as DocModel
                     any_docs_res = await db.execute(
                         select(DocModel.id).where(
-                            DocModel.user_id == current_user.id,
+                            DocModel.subject_id == question_snapshot["subject_id"],
                             DocModel.processing_status == "completed",
                         ).limit(5)
                     )
