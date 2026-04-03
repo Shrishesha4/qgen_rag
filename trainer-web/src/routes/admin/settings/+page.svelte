@@ -5,6 +5,46 @@
 	import { apiFetch } from '$lib/api/client';
 	import type { PasswordResetMethod } from '$lib/api/auth';
 
+	type SettingsTab = 'general' | 'ai';
+	type AITab = 'connectors' | 'statistics';
+	type SMTPEncryptionMode = 'tls' | 'ssl' | 'none';
+
+	interface ProviderConfig {
+		key: string;
+		name: string;
+		base_url: string;
+		enabled: boolean;
+		questions_per_batch: number;
+		model: string;
+		api_key: string;
+	}
+
+	interface ProviderSettingsResponse {
+		generation_batch_size: number;
+		providers: ProviderConfig[];
+	}
+
+	interface ProviderMetric {
+		provider_key: string;
+		total_generated: number;
+		api_calls: number;
+		avg_questions_per_call: number;
+		total_rejected: number;
+		total_regenerated: number;
+		rejection_rate: number;
+		regeneration_rate: number;
+		inferred_preference: string;
+		top_rejection_reasons: string[];
+	}
+
+	interface ProviderMetricsResponse {
+		window_days: number;
+		total_generated: number;
+		total_rejected: number;
+		total_regenerated: number;
+		providers: ProviderMetric[];
+	}
+
 	interface SMTPSettingsPayload {
 		host: string;
 		port: number;
@@ -25,8 +65,6 @@
 		smtp_password_set: boolean;
 	}
 
-	type SMTPEncryptionMode = 'tls' | 'ssl' | 'none';
-
 	const DEFAULT_SMTP_SETTINGS: SMTPSettingsPayload = {
 		host: '',
 		port: 587,
@@ -41,11 +79,20 @@
 	};
 
 	let loading = $state(true);
+	// AI connectors state
+	let settingsLoading = $state(false);
+	let metricsLoading = $state(false);
+	let pageError = $state('');
+	let settingsSaved = $state(false);
+	let activeSettingsTab = $state<SettingsTab>('general');
+	let activeAITab = $state<AITab>('connectors');
+	let metricsWindowDays = $state(30);
+	// Signup state
 	let signupEnabled = $state(true);
 	let signupLoading = $state(false);
 	let signupError = $state('');
 	let signupSaved = $state(false);
-
+	// Password reset state
 	let passwordResetMethod = $state<PasswordResetMethod>('security_question');
 	let passwordResetSelfServiceEnabled = $state(true);
 	let smtpSettings = $state<SMTPSettingsPayload>({ ...DEFAULT_SMTP_SETTINGS });
@@ -57,6 +104,22 @@
 	let testEmail = $state('');
 	let testEmailLoading = $state(false);
 
+	let providers = $state<ProviderConfig[]>([]);
+	let providerMetrics = $state<ProviderMetricsResponse | null>(null);
+	let visibleKeys = $state<Record<string, boolean>>({});
+
+	function normalizeProvider(provider: Partial<ProviderConfig> | null | undefined): ProviderConfig {
+		return {
+			key: String(provider?.key ?? ''),
+			name: String(provider?.name ?? provider?.key ?? 'Provider'),
+			base_url: String(provider?.base_url ?? ''),
+			enabled: provider?.enabled !== false,
+			questions_per_batch: Number(provider?.questions_per_batch ?? 10),
+			model: String(provider?.model ?? ''),
+			api_key: String(provider?.api_key ?? '')
+		};
+	}
+
 	onMount(() => {
 		const unsub = session.subscribe((s) => {
 			if (!s || s.user.role !== 'admin') {
@@ -67,57 +130,122 @@
 				testEmail = s.user.email;
 			}
 		});
-		void loadSettings();
+		void loadInitialData();
 		return unsub;
 	});
 
-	async function loadSettings() {
+	async function loadInitialData() {
 		loading = true;
+		pageError = '';
 		signupError = '';
 		passwordResetError = '';
 		passwordResetMessage = '';
 		try {
-			const [signupResponse, passwordResetResponse] = await Promise.all([
+			const [signup, providerSettings, passwordResetResponse] = await Promise.all([
 				apiFetch<{ signup_enabled: boolean }>('/settings/signup'),
+				apiFetch<ProviderSettingsResponse>('/settings/providers-generation'),
 				apiFetch<PasswordResetSettingsResponse>('/settings/password-reset/admin')
 			]);
-			signupEnabled = signupResponse.signup_enabled;
+			signupEnabled = signup.signup_enabled;
+			providers = (providerSettings.providers || []).map((p) => normalizeProvider(p));
 			applyPasswordResetSettings(passwordResetResponse);
+			await loadMetrics();
 		} catch (e: unknown) {
-			const message = e instanceof Error ? e.message : 'Failed to load settings';
-			signupError = message;
-			passwordResetError = message;
+			pageError = e instanceof Error ? e.message : 'Failed to load admin settings';
 		} finally {
 			loading = false;
 		}
 	}
 
-	function applyPasswordResetSettings(value: PasswordResetSettingsResponse) {
-		passwordResetMethod = value.method;
-		passwordResetSelfServiceEnabled = value.self_service_enabled;
-		smtpSettings = {
-			...DEFAULT_SMTP_SETTINGS,
-			...value.smtp,
-			password: ''
-		};
-		smtpPasswordSet = value.smtp_password_set;
+	async function loadMetrics() {
+		metricsLoading = true;
+		try {
+			providerMetrics = await apiFetch<ProviderMetricsResponse>(`/admin/provider-metrics?days=${metricsWindowDays}&usage_type=vquest`);
+		} catch (e: unknown) {
+			pageError = e instanceof Error ? e.message : 'Failed to load provider metrics';
+		} finally {
+			metricsLoading = false;
+		}
 	}
 
-	function pulseSignupSaved() {
-		signupSaved = true;
-		setTimeout(() => {
-			signupSaved = false;
-		}, 1800);
+	function addProvider() {
+		providers = [
+			...providers,
+			{
+				key: `provider_${providers.length + 1}`,
+				name: 'New Service',
+				base_url: 'https://api.example.com/v1',
+				enabled: true,
+				questions_per_batch: 10,
+				model: '',
+				api_key: ''
+			}
+		];
 	}
 
-	function pulsePasswordResetSaved() {
-		passwordResetSaved = true;
-		setTimeout(() => {
-			passwordResetSaved = false;
-		}, 1800);
+	function removeProvider(index: number) {
+		if (providers.length <= 1) {
+			pageError = 'At least one provider must be configured.';
+			return;
+		}
+		providers = providers.filter((_, i) => i !== index);
 	}
 
-	async function toggleSignup() {
+	function updateProviderField(index: number, field: keyof ProviderConfig, value: string | number | boolean) {
+		providers = providers.map((provider, i) => (i === index ? { ...provider, [field]: value } : provider));
+	}
+
+	function totalQuestionsPerBatch(): number {
+		return providers.filter((p) => p.enabled).reduce((sum, p) => sum + p.questions_per_batch, 0);
+	}
+
+	function hasEnabledProvider(): boolean {
+		return providers.some((p) => p.enabled);
+	}
+
+	function toggleApiKeyVisibility(key: string) {
+		visibleKeys = { ...visibleKeys, [key]: !visibleKeys[key] };
+	}
+
+	async function saveProviderSettings() {
+		settingsLoading = true;
+		pageError = '';
+		settingsSaved = false;
+
+		if (!hasEnabledProvider()) {
+			pageError = 'At least one provider must be enabled.';
+			settingsLoading = false;
+			return;
+		}
+
+		try {
+			const payload = {
+				providers: providers.map((provider) => ({
+					...provider,
+					key: String(provider.key ?? '').trim().toLowerCase(),
+					name: String(provider.name ?? '').trim(),
+					base_url: String(provider.base_url ?? '').trim(),
+					model: String(provider.model ?? '').trim(),
+					api_key: String(provider.api_key ?? '').trim(),
+					questions_per_batch: Number(provider.questions_per_batch || 1)
+				}))
+			};
+
+			const res = await apiFetch<ProviderSettingsResponse>('/settings/providers-generation', {
+				method: 'PUT',
+				body: JSON.stringify(payload)
+			});
+			providers = (res.providers || []).map((p) => normalizeProvider(p));
+			settingsSaved = true;
+			setTimeout(() => (settingsSaved = false), 1800);
+		} catch (e: unknown) {
+			pageError = e instanceof Error ? e.message : 'Failed to save provider settings';
+		} finally {
+			settingsLoading = false;
+		}
+	}
+
+async function toggleSignup() {
 		signupLoading = true;
 		signupError = '';
 		signupSaved = false;
@@ -127,12 +255,20 @@
 				body: JSON.stringify({ signup_enabled: !signupEnabled })
 			});
 			signupEnabled = res.signup_enabled;
-			pulseSignupSaved();
+			signupSaved = true;
+			setTimeout(() => (signupSaved = false), 1800);
 		} catch (e: unknown) {
-			signupError = e instanceof Error ? e.message : 'Failed to update signup setting';
+			signupError = e instanceof Error ? e.message : 'Failed to update signup settings';
 		} finally {
 			signupLoading = false;
 		}
+	}
+
+	function applyPasswordResetSettings(value: PasswordResetSettingsResponse) {
+		passwordResetMethod = value.method;
+		passwordResetSelfServiceEnabled = value.self_service_enabled;
+		smtpSettings = { ...DEFAULT_SMTP_SETTINGS, ...value.smtp, password: '' };
+		smtpPasswordSet = value.smtp_password_set;
 	}
 
 	function getEncryptionMode(): SMTPEncryptionMode {
@@ -142,11 +278,7 @@
 	}
 
 	function setEncryptionMode(mode: SMTPEncryptionMode) {
-		smtpSettings = {
-			...smtpSettings,
-			use_tls: mode === 'tls',
-			use_ssl: mode === 'ssl'
-		};
+		smtpSettings = { ...smtpSettings, use_tls: mode === 'tls', use_ssl: mode === 'ssl' };
 	}
 
 	async function savePasswordResetSettings() {
@@ -170,14 +302,14 @@
 					password_reset_url_template: smtpSettings.password_reset_url_template.trim()
 				}
 			};
-
 			const response = await apiFetch<PasswordResetSettingsResponse>('/settings/password-reset/admin', {
 				method: 'PUT',
 				body: JSON.stringify(payload)
 			});
 			applyPasswordResetSettings(response);
 			passwordResetMessage = 'Password reset settings saved.';
-			pulsePasswordResetSaved();
+			passwordResetSaved = true;
+			setTimeout(() => (passwordResetSaved = false), 1800);
 		} catch (e: unknown) {
 			passwordResetError = e instanceof Error ? e.message : 'Failed to save password reset settings';
 		} finally {
@@ -201,20 +333,41 @@
 			testEmailLoading = false;
 		}
 	}
+
+	function preferenceClass(preference: string): string {
+		const value = preference.toLowerCase();
+		if (value === 'preferred') return 'pill-preferred';
+		if (value === 'avoid') return 'pill-avoid';
+		return 'pill-neutral';
+	}
 </script>
 
 <svelte:head>
-	<title>Admin Settings — VQuest Trainer</title>
+	<title>Admin Settings - VQuest Trainer</title>
 </svelte:head>
 
 <div class="page">
+	<!-- <header class="header">
+		<h1>Admin Settings</h1>
+		<p>Configure platform access and AI generation connectors.</p>
+	</header> -->
+
+	<div class="tabs" role="tablist" aria-label="Settings tabs">
+		<button class="tab-btn" class:active={activeSettingsTab === 'general'} onclick={() => (activeSettingsTab = 'general')}>General</button>
+		<button class="tab-btn" class:active={activeSettingsTab === 'ai'} onclick={() => (activeSettingsTab = 'ai')}>AI</button>
+	</div>
+
+	{#if pageError}
+		<div class="settings-error" role="alert">{pageError}</div>
+	{/if}
+
 	{#if loading}
 		<div class="center-state glass-panel">
 			<div class="spinner"></div>
 			<p>Loading settings...</p>
 		</div>
-	{:else}
-		<div class="section glass-panel">
+	{:else if activeSettingsTab === 'general'}
+		<section class="glass-panel section">
 			<h2 class="section-title">Access Control</h2>
 			{#if signupError}
 				<div class="settings-error" role="alert">{signupError}</div>
@@ -223,15 +376,10 @@
 				<div class="setting-item">
 					<div class="setting-info">
 						<span class="setting-label">User Registration</span>
-						<span class="setting-desc">Allow public teacher signup. Vetter signup remains available even when this is off, and vetter accounts are approved automatically.</span>
+						<span class="setting-desc">Allow new users to submit registrations. New accounts still require admin approval before the first login.</span>
 					</div>
 					<div class="setting-control">
-						<button
-							class="toggle-btn"
-							class:enabled={signupEnabled}
-							onclick={toggleSignup}
-							disabled={signupLoading}
-						>
+						<button class="toggle-btn" class:enabled={signupEnabled} onclick={toggleSignup} disabled={signupLoading}>
 							{#if signupLoading}
 								<span class="toggle-spinner"></span>
 							{:else}
@@ -247,9 +395,9 @@
 					</div>
 				</div>
 			</div>
-		</div>
+		</section>
 
-		<div class="section glass-panel">
+		<section class="glass-panel section">
 			<div class="section-heading">
 				<div>
 					<h2 class="section-title">Password Reset</h2>
@@ -280,9 +428,7 @@
 						class:selected={passwordResetSelfServiceEnabled}
 						role="tab"
 						aria-selected={passwordResetSelfServiceEnabled}
-						onclick={() => {
-							passwordResetSelfServiceEnabled = true;
-						}}
+						onclick={() => { passwordResetSelfServiceEnabled = true; }}
 					>
 						<span class="method-tab-label">Self-Service</span>
 						<span class="method-tab-copy">Users finish the reset flow themselves using the method below.</span>
@@ -293,9 +439,7 @@
 						class:selected={!passwordResetSelfServiceEnabled}
 						role="tab"
 						aria-selected={!passwordResetSelfServiceEnabled}
-						onclick={() => {
-							passwordResetSelfServiceEnabled = false;
-						}}
+						onclick={() => { passwordResetSelfServiceEnabled = false; }}
 					>
 						<span class="method-tab-label">Admin Approval</span>
 						<span class="method-tab-copy">Users only send a reset alert. Admins set the new password.</span>
@@ -310,44 +454,39 @@
 			{/if}
 
 			{#if passwordResetSelfServiceEnabled}
-
-			<div class="method-tabs" role="tablist" aria-label="Password reset method">
-				<button
-					type="button"
-					id="password-reset-security-tab"
-					class="method-tab"
-					class:selected={passwordResetMethod === 'security_question'}
-					role="tab"
-					aria-selected={passwordResetMethod === 'security_question'}
-					aria-controls="password-reset-security-panel"
-					onclick={() => {
-						passwordResetMethod = 'security_question';
-					}}
-				>
-					<span class="method-tab-label">Security Question</span>
-					<span class="method-tab-copy">Profile-based recovery</span>
-				</button>
-				<button
-					type="button"
-					id="password-reset-smtp-tab"
-					class="method-tab"
-					class:selected={passwordResetMethod === 'smtp'}
-					role="tab"
-					aria-selected={passwordResetMethod === 'smtp'}
-					aria-controls="password-reset-smtp-panel"
-					onclick={() => {
-						passwordResetMethod = 'smtp';
-					}}
-				>
-					<span class="method-tab-label">SMTP Email</span>
-					<span class="method-tab-copy">Signed email reset links</span>
-				</button>
-			</div>
+				<div class="method-tabs" role="tablist" aria-label="Password reset method">
+					<button
+						type="button"
+						id="password-reset-security-tab"
+						class="method-tab"
+						class:selected={passwordResetMethod === 'security_question'}
+						role="tab"
+						aria-selected={passwordResetMethod === 'security_question'}
+						aria-controls="password-reset-security-panel"
+						onclick={() => { passwordResetMethod = 'security_question'; }}
+					>
+						<span class="method-tab-label">Security Question</span>
+						<span class="method-tab-copy">Profile-based recovery</span>
+					</button>
+					<button
+						type="button"
+						id="password-reset-smtp-tab"
+						class="method-tab"
+						class:selected={passwordResetMethod === 'smtp'}
+						role="tab"
+						aria-selected={passwordResetMethod === 'smtp'}
+						aria-controls="password-reset-smtp-panel"
+						onclick={() => { passwordResetMethod = 'smtp'; }}
+					>
+						<span class="method-tab-label">SMTP Email</span>
+						<span class="method-tab-copy">Signed email reset links</span>
+					</button>
+				</div>
 			{/if}
 
 			{#if passwordResetMethod === 'security_question'}
-				<div>
-
+				<div class="settings-note" role="status">
+					Users answer their profile security question to verify identity and set a new password.
 				</div>
 			{:else}
 				<div class="method-panel" id="password-reset-smtp-panel" role="tabpanel" aria-labelledby="password-reset-smtp-tab">
@@ -431,26 +570,636 @@
 					</div>
 				</div>
 			{/if}
-		</div>
+		</section>
+	{:else}
+		<section class="glass-panel section">
+			<!-- <div class="section-head">
+				<div>
+					<h2>AI</h2>
+					<p>Manage AI connectors and generation statistics.</p>
+				</div>
+			</div> -->
+
+			<div class="tabs ai-tabs" role="tablist" aria-label="AI tabs">
+				<button class="tab-btn" class:active={activeAITab === 'connectors'} onclick={() => (activeAITab = 'connectors')}>Connectors</button>
+				<button class="tab-btn" class:active={activeAITab === 'statistics'} onclick={() => (activeAITab = 'statistics')}>Statistics</button>
+			</div>
+
+			{#if activeAITab === 'connectors'}
+				<div class="section-head ai-subhead">
+					<div>
+						<h3>AI Service Connectors</h3>
+						<p>Manage your AI service integrations and API keys</p>
+					</div>
+					<button class="primary-btn" onclick={addProvider}>Add Service</button>
+				</div>
+
+				<div class="batch-summary">
+					<span>Total questions per batch (computed):</span>
+					<strong>{totalQuestionsPerBatch()}</strong>
+				</div>
+
+				<div class="table-wrap">
+					<table>
+						<thead>
+							<tr>
+								<th>Service</th>
+								<th>Base URL</th>
+								<th>Model</th>
+								<th>API Key</th>
+								<th>Batch</th>
+								<th>Status</th>
+								<th>Actions</th>
+							</tr>
+						</thead>
+						<tbody>
+							{#each providers as provider, index}
+								<tr>
+									<td>
+										<input
+											class="cell-input service-input"
+											value={provider.name}
+											oninput={(event) => updateProviderField(index, 'name', (event.currentTarget as HTMLInputElement).value)}
+										/>
+										<input
+											class="cell-input key-input"
+											value={provider.key}
+											placeholder="provider_key"
+											oninput={(event) => updateProviderField(index, 'key', (event.currentTarget as HTMLInputElement).value)}
+										/>
+									</td>
+									<td>
+										<input
+											class="cell-input"
+											value={provider.base_url}
+											placeholder="https://api.example.com/v1"
+											oninput={(event) => updateProviderField(index, 'base_url', (event.currentTarget as HTMLInputElement).value)}
+										/>
+									</td>
+									<td>
+										<input
+											class="cell-input"
+											value={provider.model}
+											placeholder="Model name"
+											oninput={(event) => updateProviderField(index, 'model', (event.currentTarget as HTMLInputElement).value)}
+										/>
+									</td>
+									<td>
+										<div class="key-cell">
+											<input
+												class="cell-input"
+												type={visibleKeys[provider.key] ? 'text' : 'password'}
+												value={provider.api_key}
+												placeholder="Enter API key"
+												oninput={(event) => updateProviderField(index, 'api_key', (event.currentTarget as HTMLInputElement).value)}
+											/>
+											<button class="tiny-btn" onclick={() => toggleApiKeyVisibility(provider.key)}>
+												{visibleKeys[provider.key] ? 'Hide' : 'Show'}
+											</button>
+										</div>
+									</td>
+									<td>
+										<input
+											type="number"
+											min="1"
+											max="1000"
+											class="cell-input"
+											value={provider.questions_per_batch}
+											oninput={(event) => updateProviderField(index, 'questions_per_batch', Number((event.currentTarget as HTMLInputElement).value || '1'))}
+										/>
+									</td>
+									<td>
+										<button class="status-pill" class:active={provider.enabled} onclick={() => updateProviderField(index, 'enabled', !provider.enabled)}>
+											{provider.enabled ? 'Active' : 'Inactive'}
+										</button>
+									</td>
+									<td>
+										<button class="remove-btn" onclick={() => removeProvider(index)} disabled={providers.length <= 1}>Delete</button>
+									</td>
+								</tr>
+							{/each}
+						</tbody>
+					</table>
+				</div>
+
+				<div class="actions-row">
+					{#if settingsSaved}
+						<span class="saved-indicator">Saved</span>
+					{/if}
+					<button class="primary-btn" onclick={saveProviderSettings} disabled={settingsLoading}>
+						{settingsLoading ? 'Saving...' : 'Save Connectors'}
+					</button>
+				</div>
+			{:else}
+				<div class="section-head ai-subhead">
+					<div>
+						<h3>Usage Statistics</h3>
+						<p>Overview of AI generation performance and vetting outcomes</p>
+					</div>
+					<div class="metric-controls">
+						<select bind:value={metricsWindowDays} class="cell-input window-select" onchange={loadMetrics}>
+							<option value={7}>7 days</option>
+							<option value={30}>30 days</option>
+							<option value={90}>90 days</option>
+						</select>
+						<button class="secondary-btn" onclick={loadMetrics} disabled={metricsLoading}>
+							{metricsLoading ? 'Refreshing...' : 'Refresh'}
+						</button>
+					</div>
+				</div>
+
+				{#if !providerMetrics}
+					<div class="center-state">
+						<p>No statistics available yet.</p>
+					</div>
+				{:else}
+					<div class="summary-grid">
+						<div class="summary-item"><span>Total Generations</span><strong>{providerMetrics.total_generated}</strong></div>
+						<div class="summary-item"><span>Total Rejected</span><strong>{providerMetrics.total_rejected}</strong></div>
+						<div class="summary-item"><span>Total Regenerated</span><strong>{providerMetrics.total_regenerated}</strong></div>
+						<div class="summary-item"><span>Acceptance Rate</span><strong>{providerMetrics.total_generated > 0 ? Math.round(((providerMetrics.total_generated - providerMetrics.total_rejected) / providerMetrics.total_generated) * 100) : 0}%</strong></div>
+					</div>
+
+					<div class="table-wrap">
+						<table>
+							<thead>
+								<tr>
+									<th>Service</th>
+									<th>Generations</th>
+									<th>Calls</th>
+									<th>Avg/Call</th>
+									<th>Rejected</th>
+									<th>Regenerated</th>
+									<th>Preference</th>
+								</tr>
+							</thead>
+							<tbody>
+								{#each providerMetrics.providers as metric}
+									<tr>
+										<td>{metric.provider_key}</td>
+										<td>{metric.total_generated}</td>
+										<td>{metric.api_calls}</td>
+										<td>{metric.avg_questions_per_call}</td>
+										<td>{metric.total_rejected}</td>
+										<td>{metric.total_regenerated}</td>
+										<td><span class={`pref-pill ${preferenceClass(metric.inferred_preference)}`}>{metric.inferred_preference}</span></td>
+									</tr>
+								{/each}
+							</tbody>
+						</table>
+					</div>
+				{/if}
+			{/if}
+		</section>
 	{/if}
 </div>
 
 <style>
 	.page {
-		max-width: 1040px;
+		max-width: 1220px;
 		margin: 0 auto;
-		padding: 2rem 1.25rem 2.4rem;
-		display: flex;
-		flex-direction: column;
+		padding: 1.4rem 1.1rem 2.4rem;
+		display: grid;
 		gap: 1rem;
 	}
 
+	/* .header h1 {
+		margin: 0;
+		font-size: 2rem;
+		font-weight: 800;
+		color: var(--theme-text);
+	}
+
+	.header p {
+		margin: 0.3rem 0 0;
+		color: var(--theme-text-muted);
+	} */
+
+	.tabs {
+		display: inline-flex;
+		gap: 0.35rem;
+		padding: 0.35rem;
+		border: 1px solid var(--theme-glass-border);
+		border-radius: 0.75rem;
+		background: color-mix(in srgb, var(--theme-surface) 86%, transparent);
+		width: fit-content;
+	}
+
+	.ai-tabs {
+		margin-bottom: 0.9rem;
+	}
+
+	.tab-btn {
+		border: 1px solid transparent;
+		border-radius: 0.55rem;
+		padding: 0.5rem 0.9rem;
+		background: transparent;
+		font-weight: 700;
+		color: var(--theme-text-muted);
+		cursor: pointer;
+	}
+
+	.tab-btn.active {
+		background: color-mix(in srgb, var(--theme-primary) 18%, transparent);
+		border-color: color-mix(in srgb, var(--theme-primary) 35%, var(--theme-glass-border));
+		color: var(--theme-text);
+	}
+
 	.section {
-		padding: 1.2rem;
-		border-radius: 1rem;
+		padding: 1rem;
+		border-radius: 0.95rem;
+	}
+
+	.section-head {
+		display: flex;
+		justify-content: space-between;
+		gap: 1rem;
+		align-items: center;
+		margin-bottom: 0.8rem;
+	}
+
+	.ai-subhead {
+		margin-bottom: 0.6rem;
+	}
+
+	/* .section-head h2 {
+		margin: 0;
+		font-size: 1.5rem;
+	} */
+
+	.section-head p {
+		margin: 0.15rem 0 0;
+		color: var(--theme-text-muted);
+	}
+
+	.batch-summary {
+		display: flex;
+		align-items: center;
+		gap: 0.5rem;
+		padding: 0.55rem 0.7rem;
+		border-radius: 0.65rem;
+		margin-bottom: 0.75rem;
+		background: color-mix(in srgb, var(--theme-primary) 10%, transparent);
+		border: 1px solid color-mix(in srgb, var(--theme-primary) 28%, var(--theme-glass-border));
+	}
+
+	.batch-summary span {
+		color: var(--theme-text-muted);
+		font-size: 0.84rem;
+	}
+
+	.batch-summary strong {
+		color: var(--theme-primary);
+	}
+
+	.table-wrap {
+		overflow-x: auto;
+		border: 1px solid var(--theme-glass-border);
+		border-radius: 0.75rem;
+	}
+
+	table {
+		width: 100%;
+		border-collapse: collapse;
+		min-width: 980px;
+	}
+
+	th,
+	td {
+		text-align: left;
+		padding: 0.65rem;
+		border-bottom: 1px solid var(--theme-glass-border);
+		vertical-align: middle;
+		color: var(--theme-text);
+	}
+
+	th {
+		font-size: 0.78rem;
+		font-weight: 700;
+		text-transform: uppercase;
+		letter-spacing: 0.02em;
+		color: var(--theme-text-muted);
+	}
+
+	tr:last-child td {
+		border-bottom: none;
+	}
+
+	.cell-input {
+		width: 100%;
+		padding: 0.45rem 0.55rem;
+		border-radius: 0.55rem;
+		border: 1px solid var(--theme-glass-border);
+		background: var(--theme-input-bg);
+		color: var(--theme-text);
+		outline: none;
+	}
+
+	.service-input {
+		margin-bottom: 0.35rem;
+	}
+
+	.key-input {
+		font-size: 0.78rem;
+	}
+
+	.key-cell {
+		display: flex;
+		gap: 0.35rem;
+	}
+
+	.tiny-btn,
+	.remove-btn,
+	.secondary-btn,
+	.primary-btn {
+		border-radius: 0.55rem;
+		padding: 0.45rem 0.68rem;
+		font-size: 0.76rem;
+		font-weight: 700;
+		border: 1px solid var(--theme-glass-border);
+		cursor: pointer;
+	}
+
+	.tiny-btn,
+	.remove-btn,
+	.secondary-btn {
+		background: var(--theme-input-bg);
+		color: var(--theme-text-muted);
+	}
+
+	.primary-btn {
+		background: color-mix(in srgb, var(--theme-primary) 22%, transparent);
+		color: var(--theme-text);
+	}
+
+	.status-pill {
+		border: 1px solid var(--theme-glass-border);
+		border-radius: 999px;
+		padding: 0.3rem 0.62rem;
+		font-size: 0.74rem;
+		font-weight: 700;
+		background: var(--theme-input-bg);
+		color: var(--theme-text-muted);
+		cursor: pointer;
+	}
+
+	.status-pill.active {
+		background: rgba(16, 185, 129, 0.18);
+		border-color: rgba(16, 185, 129, 0.4);
+		color: #34d399;
+	}
+
+	.actions-row {
+		display: flex;
+		justify-content: space-between;
+		align-items: center;
+		margin-top: 0.8rem;
+	}
+
+	.saved-indicator {
+		color: #10b981;
+		font-weight: 700;
+		font-size: 0.8rem;
+	}
+
+	.setting-item {
+		display: flex;
+		justify-content: space-between;
+		align-items: center;
+		gap: 1rem;
+	}
+
+	.metric-controls {
+		display: flex;
+		align-items: center;
+		gap: 0.4rem;
+	}
+
+	.window-select {
+		max-width: 100px;
+	}
+
+	.summary-grid {
+		display: grid;
+		grid-template-columns: repeat(4, minmax(0, 1fr));
+		gap: 0.65rem;
+		margin-bottom: 0.8rem;
+	}
+
+	.summary-item {
+		border: 1px solid var(--theme-glass-border);
+		border-radius: 0.7rem;
+		padding: 0.65rem;
 		display: flex;
 		flex-direction: column;
-		gap: 1rem;
+		gap: 0.24rem;
+		background: color-mix(in srgb, var(--theme-surface) 90%, transparent);
+	}
+
+	.summary-item span {
+		font-size: 0.78rem;
+		color: var(--theme-text-muted);
+	}
+
+	.summary-item strong {
+		font-size: 1.15rem;
+	}
+
+	.pref-pill {
+		display: inline-flex;
+		align-items: center;
+		padding: 0.2rem 0.45rem;
+		border-radius: 999px;
+		font-size: 0.68rem;
+		font-weight: 700;
+		text-transform: uppercase;
+	}
+
+	.pill-preferred {
+		background: rgba(16, 185, 129, 0.18);
+		color: #34d399;
+	}
+
+	.pill-neutral {
+		background: rgba(245, 158, 11, 0.16);
+		color: #f59e0b;
+	}
+
+	.pill-avoid {
+		background: rgba(239, 68, 68, 0.16);
+		color: #f87171;
+	}
+
+	.settings-error {
+		background: rgba(220, 38, 38, 0.14);
+		border: 1px solid rgba(220, 38, 38, 0.28);
+		color: #f87171;
+		border-radius: 0.7rem;
+		padding: 0.62rem 0.78rem;
+	}
+
+	.center-state {
+		padding: 1.5rem;
+		display: flex;
+		align-items: center;
+		justify-content: center;
+		gap: 0.6rem;
+		border-radius: 0.9rem;
+		color: var(--theme-text-muted);
+	}
+
+	.spinner {
+		width: 1.35rem;
+		height: 1.35rem;
+		border: 2px solid rgba(255, 255, 255, 0.2);
+		border-top-color: var(--theme-primary);
+		border-radius: 999px;
+		animation: spin 1s linear infinite;
+	}
+
+	@keyframes spin {
+		to {
+			transform: rotate(360deg);
+		}
+	}
+
+	@media (max-width: 900px) {
+		.summary-grid {
+			grid-template-columns: repeat(2, minmax(0, 1fr));
+		}
+
+		.section-head,
+		.setting-item {
+			flex-direction: column;
+			align-items: flex-start;
+		}
+	}
+
+	@media (max-width: 640px) {
+		.page {
+			padding: 1.1rem 0.85rem 1.8rem;
+		}
+
+		.summary-grid {
+			grid-template-columns: 1fr;
+		}
+
+		.tabs {
+			display: flex;
+			width: 100%;
+		}
+	}
+
+	:global([data-color-mode='light']) .tabs,
+	:global([data-color-mode='light']) .glass-panel,
+	:global([data-color-mode='light']) .summary-item,
+	:global([data-color-mode='light']) .table-wrap {
+		background: #ffffff;
+		border-color: rgba(148, 163, 184, 0.32);
+		box-shadow: 0 10px 26px rgba(15, 23, 42, 0.08);
+	}
+
+	/* --- General tab new styles --- */
+
+	.section-title {
+		margin: 0 0 0.75rem;
+		font-size: 1.1rem;
+		font-weight: 700;
+	}
+
+	.settings-list {
+		display: flex;
+		flex-direction: column;
+		gap: 0.75rem;
+	}
+
+	.setting-info {
+		display: flex;
+		flex-direction: column;
+		gap: 0.18rem;
+	}
+
+	.setting-label {
+		font-weight: 700;
+		font-size: 0.9rem;
+	}
+
+	.setting-desc {
+		font-size: 0.82rem;
+		color: var(--theme-text-muted);
+		max-width: 480px;
+	}
+
+	.setting-control {
+		display: flex;
+		align-items: center;
+		gap: 0.6rem;
+		flex-shrink: 0;
+	}
+
+	.toggle-btn {
+		display: flex;
+		align-items: center;
+		gap: 0.5rem;
+		border: 1px solid var(--theme-glass-border);
+		border-radius: 999px;
+		padding: 0.32rem 0.7rem 0.32rem 0.38rem;
+		background: var(--theme-input-bg);
+		cursor: pointer;
+		font-size: 0.78rem;
+		font-weight: 700;
+		color: var(--theme-text-muted);
+		transition: border-color 0.15s, background 0.15s;
+		min-width: 4.8rem;
+	}
+
+	.toggle-btn.enabled {
+		border-color: rgba(16, 185, 129, 0.4);
+		background: rgba(16, 185, 129, 0.1);
+		color: #34d399;
+	}
+
+	.toggle-track {
+		position: relative;
+		width: 1.8rem;
+		height: 1rem;
+		border-radius: 999px;
+		background: rgba(148, 163, 184, 0.3);
+		transition: background 0.15s;
+		flex-shrink: 0;
+	}
+
+	.toggle-btn.enabled .toggle-track {
+		background: rgba(16, 185, 129, 0.5);
+	}
+
+	.toggle-thumb {
+		position: absolute;
+		top: 0.12rem;
+		left: 0.12rem;
+		width: 0.76rem;
+		height: 0.76rem;
+		border-radius: 999px;
+		background: #fff;
+		transition: transform 0.15s;
+	}
+
+	.toggle-btn.enabled .toggle-thumb {
+		transform: translateX(0.8rem);
+	}
+
+	.toggle-label {
+		line-height: 1;
+	}
+
+	.toggle-spinner {
+		display: inline-block;
+		width: 1rem;
+		height: 1rem;
+		border: 2px solid rgba(255, 255, 255, 0.2);
+		border-top-color: var(--theme-primary);
+		border-radius: 999px;
+		animation: spin 1s linear infinite;
 	}
 
 	.section-heading {
@@ -458,270 +1207,103 @@
 		justify-content: space-between;
 		align-items: flex-start;
 		gap: 1rem;
-	}
-
-	.section-title {
-		margin: 0;
-		font-size: 1.08rem;
-		font-weight: 700;
-		color: var(--theme-text);
+		margin-bottom: 1rem;
 	}
 
 	.section-copy {
-		margin: 0.4rem 0 0;
-		font-size: 0.84rem;
-		color: var(--theme-text-muted);
-		line-height: 1.45;
-	}
-
-	.policy-block {
-		display: flex;
-		flex-direction: column;
-		gap: 0.75rem;
-	}
-
-	.settings-note {
-		padding: 0.8rem 0.9rem;
-		border-radius: 0.8rem;
-		background: rgba(58, 170, 255, 0.428);
-		border: 1px solid rgba(99, 79, 0, 0.28);
-		color: #333333;
+		margin: 0.2rem 0 0;
 		font-size: 0.83rem;
-		line-height: 1.45;
+		color: var(--theme-text-muted);
 	}
 
 	.save-group {
 		display: flex;
 		align-items: center;
-		gap: 0.75rem;
-	}
-
-	.settings-error,
-	.settings-success {
-		border-radius: 0.75rem;
-		padding: 0.65rem 0.85rem;
-		font-size: 0.85rem;
-	}
-
-	.settings-error {
-		background: rgba(220, 38, 38, 0.15);
-		border: 0.5px solid rgba(220, 38, 38, 0.3);
-		color: #f87171;
-	}
-
-	.settings-success {
-		background: rgba(15, 118, 110, 0.16);
-		border: 0.5px solid rgba(0, 133, 33, 0.528);
-		color: #006015;
-	}
-
-	.settings-list {
-		display: flex;
-		flex-direction: column;
-		gap: 1rem;
-	}
-
-	.setting-item {
-		display: flex;
-		justify-content: space-between;
-		align-items: center;
-		gap: 1.5rem;
-		padding: 1rem;
-		border-radius: 0.85rem;
-		background: color-mix(in srgb, var(--theme-surface) 88%, transparent);
-		border: 1px solid var(--theme-glass-border);
-	}
-
-	.setting-info {
-		display: flex;
-		flex-direction: column;
-		gap: 0.25rem;
-		flex: 1;
-	}
-
-	.setting-label {
-		font-size: 0.95rem;
-		font-weight: 600;
-		color: var(--theme-text);
-	}
-
-	.setting-desc {
-		font-size: 0.82rem;
-		color: var(--theme-text-muted);
-		line-height: 1.45;
-	}
-
-	.setting-control {
-		display: flex;
-		align-items: center;
-		gap: 0.75rem;
-	}
-
-	.toggle-btn {
-		display: flex;
-		align-items: center;
 		gap: 0.6rem;
-		padding: 0.5rem 0.85rem;
-		border: 1px solid var(--theme-glass-border);
-		border-radius: 999px;
-		background: var(--theme-input-bg);
-		color: var(--theme-text-muted);
-		font-size: 0.82rem;
-		font-weight: 600;
-		cursor: pointer;
-		transition: all 0.2s;
-		font-family: inherit;
-		min-width: 120px;
-		justify-content: center;
-	}
-
-	.toggle-btn:hover:not(:disabled),
-	.save-btn:hover:not(:disabled),
-	.secondary-btn:hover:not(:disabled),
-	.method-tab:hover {
-		filter: brightness(1.06);
-	}
-
-	.toggle-btn:disabled,
-	.save-btn:disabled,
-	.secondary-btn:disabled {
-		opacity: 0.6;
-		cursor: not-allowed;
-	}
-
-	.toggle-btn.enabled {
-		background: color-mix(in srgb, #10b981 18%, var(--theme-input-bg));
-		border-color: color-mix(in srgb, #10b981 55%, var(--theme-glass-border));
-		color: color-mix(in srgb, #10b981 74%, var(--theme-text));
-	}
-
-	.toggle-track {
-		width: 32px;
-		height: 18px;
-		border-radius: 999px;
-		background: color-mix(in srgb, var(--theme-text-muted) 28%, transparent);
-		position: relative;
-		transition: background 0.2s;
-	}
-
-	.toggle-btn.enabled .toggle-track {
-		background: #10b981;
-	}
-
-	.toggle-thumb {
-		position: absolute;
-		top: 2px;
-		left: 2px;
-		width: 14px;
-		height: 14px;
-		border-radius: 50%;
-		background: white;
-		transition: transform 0.2s;
-	}
-
-	.toggle-btn.enabled .toggle-thumb {
-		transform: translateX(14px);
-	}
-
-	.toggle-label {
-		min-width: 55px;
-	}
-
-	.toggle-spinner,
-	.spinner {
-		border-radius: 50%;
-		border: 2px solid rgba(255, 255, 255, 0.2);
-		border-top-color: var(--theme-primary);
-		animation: spin 0.8s linear infinite;
-	}
-
-	.toggle-spinner {
-		width: 1rem;
-		height: 1rem;
-	}
-
-	.spinner {
-		width: 1.6rem;
-		height: 1.6rem;
-	}
-
-	.saved-indicator {
-		font-size: 0.78rem;
-		font-weight: 700;
-		color: #10b981;
-	}
-
-	.save-btn,
-	.secondary-btn {
-		padding: 0.7rem 1rem;
-		border-radius: 0.8rem;
-		border: 1px solid var(--theme-glass-border);
-		font: inherit;
-		font-weight: 700;
-		cursor: pointer;
+		flex-shrink: 0;
 	}
 
 	.save-btn {
-		background: linear-gradient(180deg, color-mix(in srgb, var(--theme-primary) 85%, #ffffff 15%) 0%, var(--theme-primary) 100%);
-		color: #061219;
-		border-color: color-mix(in srgb, var(--theme-primary) 45%, var(--theme-glass-border));
+		border-radius: 0.55rem;
+		padding: 0.5rem 0.9rem;
+		font-size: 0.8rem;
+		font-weight: 700;
+		border: 1px solid var(--theme-glass-border);
+		background: color-mix(in srgb, var(--theme-primary) 22%, transparent);
+		color: var(--theme-text);
+		cursor: pointer;
 	}
 
-	.secondary-btn {
-		background: var(--theme-input-bg);
-		color: var(--theme-text);
+	.save-btn:disabled {
+		opacity: 0.6;
+		cursor: default;
+	}
+
+	.settings-success {
+		background: rgba(16, 185, 129, 0.12);
+		border: 1px solid rgba(16, 185, 129, 0.3);
+		color: #34d399;
+		border-radius: 0.7rem;
+		padding: 0.62rem 0.78rem;
+		margin-bottom: 0.75rem;
+		font-size: 0.84rem;
+	}
+
+	.settings-note {
+		background: color-mix(in srgb, var(--theme-primary) 8%, transparent);
+		border: 1px solid color-mix(in srgb, var(--theme-primary) 22%, var(--theme-glass-border));
+		border-radius: 0.7rem;
+		padding: 0.62rem 0.78rem;
+		font-size: 0.83rem;
+		color: var(--theme-text-muted);
+		margin-top: 0.6rem;
+	}
+
+	.policy-block {
+		margin-bottom: 0.75rem;
 	}
 
 	.method-tabs {
-		display: grid;
-		grid-template-columns: repeat(2, minmax(0, 1fr));
-		gap: 0.65rem;
-		padding: 0.4rem;
-		border-radius: 1rem;
-		border: 1px solid var(--theme-glass-border);
-		background: color-mix(in srgb, var(--theme-surface) 82%, transparent);
+		display: flex;
+		gap: 0.5rem;
+		margin-bottom: 0.6rem;
+		flex-wrap: wrap;
 	}
 
 	.method-tab {
-		padding: 0.9rem 1rem;
-		border-radius: 0.8rem;
-		border: 1px solid transparent;
-		background: transparent;
 		display: flex;
 		flex-direction: column;
 		align-items: flex-start;
-		gap: 0.22rem;
-		text-align: left;
+		gap: 0.18rem;
+		flex: 1;
+		min-width: 160px;
+		padding: 0.65rem 0.85rem;
+		border: 1px solid var(--theme-glass-border);
+		border-radius: 0.7rem;
+		background: var(--theme-input-bg);
 		cursor: pointer;
-		font: inherit;
-		transition: background 0.2s ease, border-color 0.2s ease, transform 0.2s ease;
+		text-align: left;
+		transition: border-color 0.15s, background 0.15s;
 	}
 
 	.method-tab.selected {
-		border-color: color-mix(in srgb, var(--theme-primary) 52%, var(--theme-glass-border));
-		background: color-mix(in srgb, var(--theme-primary) 12%, var(--theme-input-bg));
+		border-color: color-mix(in srgb, var(--theme-primary) 50%, var(--theme-glass-border));
+		background: color-mix(in srgb, var(--theme-primary) 12%, transparent);
 	}
 
 	.method-tab-label {
-		font-size: 0.95rem;
 		font-weight: 700;
+		font-size: 0.85rem;
 		color: var(--theme-text);
 	}
 
 	.method-tab-copy {
-		font-size: 0.78rem;
-		line-height: 1.45;
+		font-size: 0.75rem;
 		color: var(--theme-text-muted);
 	}
 
 	.method-panel {
-		padding: 1rem;
-		border-radius: 1rem;
-		border: 1px solid var(--theme-glass-border);
-		background: color-mix(in srgb, var(--theme-surface) 88%, transparent);
-		display: flex;
-		flex-direction: column;
-		gap: 1rem;
+		margin-top: 0.5rem;
 	}
 
 	.method-summary {
@@ -729,44 +1311,51 @@
 		justify-content: space-between;
 		align-items: flex-start;
 		gap: 1rem;
-	}
-
-	.method-summary-label {
-		display: inline-block;
-		font-size: 0.74rem;
-		text-transform: uppercase;
-		letter-spacing: 0.08em;
-		color: var(--theme-text-muted);
-		margin-bottom: 0.35rem;
+		padding: 0.85rem;
+		border: 1px solid var(--theme-glass-border);
+		border-radius: 0.8rem;
+		margin-bottom: 0.85rem;
+		background: color-mix(in srgb, var(--theme-surface) 80%, transparent);
 	}
 
 	.method-summary h3 {
-		margin: 0;
-		font-size: 1rem;
-		color: var(--theme-text);
+		margin: 0.18rem 0 0.3rem;
+		font-size: 0.95rem;
 	}
 
 	.method-summary p {
-		margin: 0.4rem 0 0;
-		font-size: 0.84rem;
-		line-height: 1.5;
+		margin: 0;
+		font-size: 0.82rem;
 		color: var(--theme-text-muted);
+		max-width: 520px;
+	}
+
+	.method-summary-label {
+		font-size: 0.72rem;
+		font-weight: 700;
+		text-transform: uppercase;
+		letter-spacing: 0.04em;
+		color: var(--theme-primary);
 	}
 
 	.method-badge {
-		padding: 0.45rem 0.7rem;
+		flex-shrink: 0;
+		padding: 0.28rem 0.6rem;
 		border-radius: 999px;
-		background: color-mix(in srgb, var(--theme-primary) 12%, var(--theme-input-bg));
-		border: 1px solid color-mix(in srgb, var(--theme-primary) 38%, var(--theme-glass-border));
-		font-size: 0.78rem;
+		font-size: 0.72rem;
 		font-weight: 700;
-		color: var(--theme-text);
+		background: rgba(16, 185, 129, 0.14);
+		border: 1px solid rgba(16, 185, 129, 0.32);
+		color: #34d399;
 	}
 
 	.smtp-panel {
+		border: 1px solid var(--theme-glass-border);
+		border-radius: 0.8rem;
+		padding: 1rem;
 		display: flex;
 		flex-direction: column;
-		gap: 1rem;
+		gap: 0.9rem;
 	}
 
 	.smtp-header {
@@ -777,159 +1366,102 @@
 	}
 
 	.smtp-header h3 {
-		margin: 0;
-		font-size: 0.98rem;
-		color: var(--theme-text);
+		margin: 0 0 0.2rem;
+		font-size: 0.95rem;
 	}
 
 	.smtp-header p {
-		margin: 0.35rem 0 0;
-		font-size: 0.82rem;
-		line-height: 1.45;
+		margin: 0;
+		font-size: 0.8rem;
 		color: var(--theme-text-muted);
 	}
 
 	.secret-indicator {
-		padding: 0.45rem 0.7rem;
-		border-radius: 999px;
-		background: rgba(250, 204, 21, 0.12);
-		border: 1px solid rgba(250, 204, 21, 0.28);
-		color: #fcd34d;
-		font-size: 0.78rem;
-		font-weight: 700;
+		flex-shrink: 0;
+		font-size: 0.75rem;
+		color: #f59e0b;
+		border: 1px solid rgba(245, 158, 11, 0.3);
+		background: rgba(245, 158, 11, 0.1);
+		border-radius: 0.5rem;
+		padding: 0.25rem 0.55rem;
+		font-weight: 600;
 	}
 
 	.form-grid {
 		display: grid;
 		grid-template-columns: repeat(2, minmax(0, 1fr));
-		gap: 0.9rem;
+		gap: 0.75rem;
 	}
 
 	.field {
 		display: flex;
 		flex-direction: column;
-		gap: 0.35rem;
+		gap: 0.3rem;
+		font-size: 0.82rem;
 	}
 
 	.field span {
-		font-size: 0.78rem;
 		font-weight: 600;
 		color: var(--theme-text-muted);
 	}
 
 	.field input,
 	.field select {
-		width: 100%;
-		padding: 0.72rem 0.9rem;
-		border-radius: 0.75rem;
+		padding: 0.45rem 0.55rem;
+		border-radius: 0.55rem;
 		border: 1px solid var(--theme-glass-border);
 		background: var(--theme-input-bg);
 		color: var(--theme-text);
-		font: inherit;
-	}
-
-	.field input:focus,
-	.field select:focus {
 		outline: none;
-		border-color: rgba(var(--theme-primary-rgb), 0.5);
-		box-shadow: 0 0 0 3px rgba(var(--theme-primary-rgb), 0.15);
+		font-size: 0.84rem;
+		width: 100%;
+		box-sizing: border-box;
 	}
 
 	.field small {
-		font-size: 0.76rem;
+		font-size: 0.74rem;
 		color: var(--theme-text-muted);
-		line-height: 1.4;
+	}
+
+	.field small code {
+		background: color-mix(in srgb, var(--theme-primary) 12%, transparent);
+		border-radius: 0.25rem;
+		padding: 0.05rem 0.28rem;
+		font-size: 0.8em;
 	}
 
 	.field-span-2 {
 		grid-column: span 2;
 	}
 
-	.test-row {
-		display: flex;
-		align-items: flex-end;
-		gap: 0.85rem;
-	}
-
 	.field-grow {
 		flex: 1;
 	}
 
-	.center-state {
-		padding: 1.6rem;
+	.test-row {
 		display: flex;
-		flex-direction: column;
-		align-items: center;
-		gap: 0.7rem;
-		border-radius: 1rem;
-		color: var(--theme-text-muted);
+		align-items: flex-end;
+		gap: 0.6rem;
 	}
 
-	@keyframes spin {
-		to {
-			transform: rotate(360deg);
-		}
-	}
-
-	@media (max-width: 780px) {
-		.page {
-			padding: 1.3rem 0.95rem 1.9rem;
-		}
-
-		.section-heading,
-		.setting-item,
-		.smtp-header,
-		.test-row {
-			flex-direction: column;
-			align-items: flex-start;
-		}
-
-		.method-tabs,
+	@media (max-width: 640px) {
 		.form-grid {
 			grid-template-columns: 1fr;
-		}
-
-		.method-summary {
-			flex-direction: column;
 		}
 
 		.field-span-2 {
 			grid-column: span 1;
 		}
 
-		.save-group,
-		.setting-control {
-			width: 100%;
-			justify-content: flex-start;
+		.section-heading,
+		.smtp-header,
+		.method-summary {
+			flex-direction: column;
 		}
 
-		.secondary-btn,
-		.save-btn {
-			width: 100%;
+		.test-row {
+			flex-direction: column;
+			align-items: stretch;
 		}
-	}
-
-	:global([data-color-mode='light']) .section,
-	:global([data-color-mode='light']) .setting-item,
-	:global([data-color-mode='light']) .center-state,
-	:global([data-color-mode='light']) .method-tabs,
-	:global([data-color-mode='light']) .method-panel,
-	:global([data-color-mode='light']) .smtp-panel {
-		background: #ffffff;
-		border-color: rgba(148, 163, 184, 0.32);
-		box-shadow: 0 12px 32px rgba(15, 23, 42, 0.08);
-	}
-
-	:global([data-color-mode='light']) .field input,
-	:global([data-color-mode='light']) .field select,
-	:global([data-color-mode='light']) .toggle-btn,
-	:global([data-color-mode='light']) .secondary-btn {
-		background: #f8fafc;
-		border-color: rgba(148, 163, 184, 0.36);
-		color: #334155;
-	}
-
-	:global([data-color-mode='light']) .save-btn {
-		color: #052232;
 	}
 </style>

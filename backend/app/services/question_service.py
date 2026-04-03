@@ -197,6 +197,32 @@ class QuestionGenerationService:
             settings.QUESTION_OPTION_SIMILARITY_THRESHOLD
         )
 
+    def _get_provider_key(self) -> str:
+        """Infer provider key from the configured LLM service."""
+        svc = self.llm_service
+        # Check for explicit provider_key attribute (set by CustomOpenAIService / ProviderService)
+        for attr in ("_custom_provider_key", "provider_key"):
+            val = getattr(svc, attr, None)
+            if val and val not in ("", "unknown"):
+                return str(val)
+        from app.services.deepseek_service import DeepSeekService
+        from app.services.gemini_service import GeminiService
+        from app.services.llm_service import OllamaLLMService
+        if isinstance(svc, OllamaLLMService):
+            return "ollama"
+        if isinstance(svc, GeminiService):
+            return "gemini"
+        if isinstance(svc, DeepSeekService):
+            base = getattr(svc, "base_url", "") or ""
+            if "deepseek.com" in base:
+                return "deepseek"
+            if "api.x.ai" in base:
+                return "grok"
+            if base:
+                return base.split("//")[-1].split("/")[0].split(".")[0] or "custom"
+            return "deepseek"
+        return settings.LLM_PROVIDER.lower() or "unknown"
+
     async def generate_questions(
         self,
         user_id: str,
@@ -1429,9 +1455,11 @@ Return JSON only:
             generation_attempt_count=generation_attempt_count,
             used_reference_materials=used_reference_materials,
             novelty_metadata=novelty_result.similarity_breakdown if novelty_result else None,
+            provider_key=self._get_provider_key(),
             generation_metadata={
                 "raw_response": question_data,
                 "source_info": source_info,
+                "provider_key": self._get_provider_key(),
             },
         )
         
@@ -2235,8 +2263,10 @@ Output valid JSON only."""
             used_reference_materials=used_reference or bool(chunk_ids),
             novelty_metadata=novelty_result.similarity_breakdown,
             generation_status="accepted",
+            provider_key=self._get_provider_key(),
             generation_metadata={
                 "raw_response": question_data,
+                "provider_key": self._get_provider_key(),
             },
         )
         
@@ -3559,6 +3589,27 @@ Output valid JSON only."""
             type_distribution = self._distribute_types(count, types)
             logger.info(f"quick_generate_from_subject: type distribution={type_distribution}")
 
+            # ── Multi-provider allocation ──────────────────────────────────
+            from app.services.provider_service import ProviderService
+            from typing import Tuple
+            _provider_service = ProviderService()
+            provider_allocations: List[Any] = []
+            provider_llm_services: Dict[str, Tuple[LLMProvider, Dict[str, Any]]] = {}
+            try:
+                provider_allocations = await _provider_service.allocate_batch(count)
+                for alloc in provider_allocations:
+                    _llm_svc, _meta = _provider_service.create_llm_service(alloc.provider)
+                    provider_llm_services[alloc.provider.key] = (_llm_svc, _meta)
+                logger.info(
+                    f"quick_generate_from_subject: multi-provider allocation: "
+                    f"{[(a.provider.key, a.question_count) for a in provider_allocations]}"
+                )
+            except Exception as _alloc_err:
+                logger.warning(
+                    f"quick_generate_from_subject: Provider allocation failed, using default: {_alloc_err}"
+                )
+                provider_allocations = []
+
             # Prepare rejection guidance once so parallel workers don't hit DB concurrently.
             rejection_guidance_cache = ""
             if subject_id or topic_id:
@@ -3584,10 +3635,31 @@ Output valid JSON only."""
             max_attempts_per_slot = 4
             slot_queue = []
             slot_id_seq = 0
-            for q_type, type_count in type_distribution.items():
-                for _ in range(type_count):
-                    slot_queue.append({"id": slot_id_seq, "q_type": q_type, "attempts": 0})
-                    slot_id_seq += 1
+
+            if provider_allocations:
+                # Assign provider_key to each slot proportionally within type distribution
+                for q_type, type_count in type_distribution.items():
+                    type_ratio = type_count / count if count > 0 else 0
+                    provider_type_counts: List[Tuple[str, int]] = []
+                    remaining_type = type_count
+                    for i, alloc in enumerate(provider_allocations):
+                        if i == len(provider_allocations) - 1:
+                            prov_type_count = remaining_type
+                        else:
+                            prov_type_count = int(alloc.question_count * type_ratio)
+                            prov_type_count = min(prov_type_count, remaining_type)
+                        if prov_type_count > 0:
+                            provider_type_counts.append((alloc.provider.key, prov_type_count))
+                            remaining_type -= prov_type_count
+                    for pk, pcount in provider_type_counts:
+                        for _ in range(pcount):
+                            slot_queue.append({"id": slot_id_seq, "q_type": q_type, "attempts": 0, "provider_key": pk})
+                            slot_id_seq += 1
+            else:
+                for q_type, type_count in type_distribution.items():
+                    for _ in range(type_count):
+                        slot_queue.append({"id": slot_id_seq, "q_type": q_type, "attempts": 0, "provider_key": None})
+                        slot_id_seq += 1
 
             if parallel_workers > 1:
                 yield QuickGenerateProgress(
@@ -3601,6 +3673,12 @@ Output valid JSON only."""
 
             async def _build_candidate(slot: dict, attempt_index: int, exclusion_snapshot: List[str]) -> dict:
                 q_type = slot["q_type"]
+                slot_provider_key = slot.get("provider_key")
+                # Pick the provider-specific LLM service for this slot
+                if slot_provider_key and slot_provider_key in provider_llm_services:
+                    slot_llm_svc, _ = provider_llm_services[slot_provider_key]
+                else:
+                    slot_llm_svc = self.llm_service
                 try:
                     pool_size = len(subj_chunk_pool)
                     pool_offset = (attempt_index * 3) % max(1, pool_size - 2)
@@ -3622,6 +3700,7 @@ Output valid JSON only."""
                         subject_id=subject_id,
                         topic_id=topic_id,
                         rejection_guidance_override=rejection_guidance_cache,
+                        llm_service_override=slot_llm_svc,
                     )
 
                     if not question_data:
@@ -3650,11 +3729,12 @@ Output valid JSON only."""
                         "question_data": question_data,
                         "selected_chunks": selected_chunks,
                         "confidence_score": confidence_score,
+                        "provider_key": slot_provider_key,
                     }
                 except Exception as gen_err:
                     logger.warning(
                         f"quick_generate_from_subject: worker failed for slot={slot.get('id')} "
-                        f"type={q_type}: {gen_err}"
+                        f"type={q_type} provider={slot_provider_key}: {gen_err}"
                     )
                     return {
                         "ok": False,
@@ -3794,22 +3874,32 @@ Output valid JSON only."""
                         if selected_chunks:
                             chunk_doc_id = getattr(selected_chunks[0], 'document_id', None) or fallback_document_id
 
-                        question, question_response = await self._save_question(
-                            document_id=chunk_doc_id,
-                            session_id=session_id,
-                            question_data=question_data,
-                            question_type=q_type,
-                            marks=type_marks,
-                            difficulty=difficulty,
-                            chunk_ids=[c.id for c in selected_chunks],
-                            chunks=selected_chunks,
-                            subject_id=subject_id,
-                            topic_id=assigned_topic_id,
-                            skip_quality_validation=True,
-                            prevalidated_confidence=confidence_score,
-                            user_id=user_id,
-                            used_reference_materials=bool(selected_chunks),
-                        )
+                        # Temporarily swap llm_service so _get_provider_key() returns the right key
+                        _result_pkey = result.get("provider_key")
+                        _orig_llm = None
+                        if _result_pkey and _result_pkey in provider_llm_services:
+                            _orig_llm = self.llm_service
+                            self.llm_service = provider_llm_services[_result_pkey][0]
+                        try:
+                            question, question_response = await self._save_question(
+                                document_id=chunk_doc_id,
+                                session_id=session_id,
+                                question_data=question_data,
+                                question_type=q_type,
+                                marks=type_marks,
+                                difficulty=difficulty,
+                                chunk_ids=[c.id for c in selected_chunks],
+                                chunks=selected_chunks,
+                                subject_id=subject_id,
+                                topic_id=assigned_topic_id,
+                                skip_quality_validation=True,
+                                prevalidated_confidence=confidence_score,
+                                user_id=user_id,
+                                used_reference_materials=bool(selected_chunks),
+                            )
+                        finally:
+                            if _orig_llm is not None:
+                                self.llm_service = _orig_llm
                         questions_generated += 1
                         final_embedding = question.question_embedding if question.question_embedding is not None else new_embedding
                         generated_embeddings.append(final_embedding)
@@ -3954,6 +4044,7 @@ Output valid JSON only."""
         subject_id: Optional[str] = None,
         topic_id: Optional[str] = None,
         rejection_guidance_override: Optional[str] = None,
+        llm_service_override: Optional[LLMProvider] = None,
     ) -> Optional[Dict[str, Any]]:
         """Generate a single question for quick generation with context awareness.
         
@@ -4085,6 +4176,7 @@ Output valid JSON only."""
                 prompt=prompt,
                 system_prompt=system_prompt,
                 question_type=question_type,
+                llm_service_override=llm_service_override,
             )
             
             if not response:
@@ -4116,10 +4208,12 @@ Output valid JSON only."""
         system_prompt: str,
         question_type: str,
         max_retries: int = 3,
+        llm_service_override: Optional[LLMProvider] = None,
     ) -> Optional[Dict[str, Any]]:
         """Generate JSON with retry on parse errors."""
         import logging
         logger = logging.getLogger(__name__)
+        llm_service = llm_service_override or self.llm_service
         
         last_error = None
         for attempt in range(max_retries):
@@ -4132,7 +4226,7 @@ Output valid JSON only."""
                     # Higher base temperature for diversity with smaller models
                     temperature = 0.85
                 
-                response = await self.llm_service.generate_json(
+                response = await llm_service.generate_json(
                     prompt=prompt,
                     system_prompt=system_prompt,
                     temperature=temperature,

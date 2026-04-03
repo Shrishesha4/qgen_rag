@@ -32,6 +32,7 @@ from app.schemas.question import (
     QuickGenerateProgress,
 )
 from app.services.question_service import QuestionGenerationService
+from app.services.provider_service import get_provider_service, create_question_service_for_provider
 from app.services.document_service import DocumentService
 from app.api.v1.deps import get_current_user, rate_limit, ensure_user_can_generate, ensure_user_can_vet
 from app.models.user import User
@@ -48,6 +49,35 @@ MIME_TYPE_MAPPING = {
     ".txt": "text/plain",
     ".docx": "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
 }
+
+
+async def _build_provider_aware_question_service(
+    db_session: AsyncSession,
+    provider_key: Optional[str] = None,
+) -> QuestionGenerationService:
+    """Create a QuestionGenerationService backed by an admin-configured provider.
+
+    If ``provider_key`` is given the matching enabled provider is used; otherwise
+    the preferred provider (from settings.LLM_PROVIDER) or the first enabled
+    provider is chosen.  Falls back to the default QuestionGenerationService when
+    no providers are configured or on any error.
+    """
+    try:
+        ps = get_provider_service()
+        enabled = await ps.get_enabled_providers()
+        if enabled:
+            if provider_key:
+                provider = next((p for p in enabled if p.key == provider_key), enabled[0])
+            else:
+                preferred = (getattr(settings, "LLM_PROVIDER", "") or "").strip().lower()
+                provider = next((p for p in enabled if p.key == preferred), enabled[0])
+            return await create_question_service_for_provider(db_session, provider)
+    except Exception as provider_exc:
+        logger.warning(
+            "Provider-aware generation setup failed, falling back to default: %s",
+            provider_exc,
+        )
+    return QuestionGenerationService(db_session)
 
 
 router = APIRouter()
@@ -442,7 +472,7 @@ async def _run_background_subject_generation(
                     logger.warning(f"Failed to create generation run in DB: {db_err}")
 
             marks_by_type = {"mcq": 1, "short_answer": 2, "long_answer": 5}
-            question_service = QuestionGenerationService(task_db)
+            question_service = await _build_provider_aware_question_service(task_db)
 
             if len(selected_topic_ids) > 1:
                 topic_rows_res = await task_db.execute(
@@ -481,10 +511,36 @@ async def _run_background_subject_generation(
                 # Shuffle to avoid predictable patterns
                 import random
                 random.shuffle(topic_distribution)
+
+                # Build weighted provider assignment list (e.g. deepseek×15 + xai×15 → shuffled)
+                _slot_provider_assignments: list[str] = []
+                try:
+                    _ps = get_provider_service()
+                    _allocations = await _ps.allocate_batch(count)
+                    for _alloc in _allocations:
+                        _slot_provider_assignments.extend(
+                            [_alloc.provider.key] * _alloc.question_count
+                        )
+                    random.shuffle(_slot_provider_assignments)
+                except Exception as _palloc_exc:
+                    logger.warning(
+                        "Provider allocation failed, slots will use default provider: %s",
+                        _palloc_exc,
+                    )
                 
                 # Create slots from the shuffled distribution
                 for slot_idx, chosen_tid in enumerate(topic_distribution):
-                    multi_slot_queue.append({"slot_id": slot_idx, "topic_id": chosen_tid, "attempts": 0})
+                    assigned_provider = (
+                        _slot_provider_assignments[slot_idx]
+                        if slot_idx < len(_slot_provider_assignments)
+                        else None
+                    )
+                    multi_slot_queue.append({
+                        "slot_id": slot_idx,
+                        "topic_id": chosen_tid,
+                        "attempts": 0,
+                        "provider_key": assigned_provider,
+                    })
 
                 async def _run_single_topic_slot(slot: dict) -> dict:
                     chosen_topic_id = slot["topic_id"]
@@ -495,7 +551,9 @@ async def _run_background_subject_generation(
 
                     try:
                         async with AsyncSessionLocal() as worker_db:
-                            worker_question_service = QuestionGenerationService(worker_db)
+                            worker_question_service = await _build_provider_aware_question_service(
+                                worker_db, slot.get("provider_key")
+                            )
                             generator = worker_question_service.quick_generate_from_subject(
                                 user_id=user_id,
                                 subject_id=subject_id,
@@ -665,7 +723,7 @@ async def _run_background_subject_generation(
                         "message": f"Generated {saved_count}/{total} questions" if saved_count > 0 and progress_event.status == "generating" else (progress_event.message or "Generating questions"),
                         "updated_at": datetime.now(timezone.utc).isoformat(),
                     }
-                    
+
                     # Broadcast progress via WebSocket for cross-device visibility
                     if db_run_created and effective_topic_id:
                         try:
