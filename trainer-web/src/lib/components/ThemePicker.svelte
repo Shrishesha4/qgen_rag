@@ -1,6 +1,6 @@
 <script lang="ts">
 	import { onMount } from 'svelte';
-	import { currentColorMode, setColorMode, currentThemeName, setTheme, type ColorMode } from '$lib/theme';
+	import { currentColorMode, setColorMode, currentThemeName, setTheme, zenMode, toggleZenMode, type ColorMode } from '$lib/theme';
 	import { themeNames, themes } from '$lib/theme/themes';
 
 	let open = $state(false);
@@ -28,6 +28,10 @@
 
 	function selectColorMode(mode: ColorMode) {
 		setColorMode(mode);
+	}
+
+	function handleZenToggle() {
+		toggleZenMode();
 	}
 </script>
 
@@ -66,6 +70,20 @@
 						Dark
 					</button>
 				</div>
+			</div>
+
+			<div class="zen-section">
+				<button
+					type="button"
+					class="zen-toggle"
+					class:active={$zenMode}
+					onclick={handleZenToggle}
+					aria-pressed={$zenMode}
+				>
+					<span class="zen-icon">{$zenMode ? '✨' : '🧘'}</span>
+					<span class="zen-label">Zen Mode</span>
+					<span class="zen-badge">{$zenMode ? 'ON' : 'OFF'}</span>
+				</button>
 			</div>
 
 			<div class="menu-divider" aria-hidden="true"></div>
@@ -203,6 +221,67 @@
 		height: 1px;
 		background: rgba(255, 255, 255, 0.16);
 		margin: 0.15rem 0 0.2rem;
+	}
+
+	/* Zen Mode Toggle */
+	.zen-section {
+		padding: 0.25rem;
+	}
+
+	.zen-toggle {
+		width: 100%;
+		display: flex;
+		align-items: center;
+		gap: 0.5rem;
+		padding: 0.5rem 0.6rem;
+		border-radius: 0.5rem;
+		border: 1px solid rgba(255, 255, 255, 0.12);
+		background: rgba(255, 255, 255, 0.04);
+		color: var(--theme-text);
+		font-size: 0.8rem;
+		font-weight: 600;
+		cursor: pointer;
+		transition: all 0.15s ease;
+	}
+
+	.zen-toggle:hover {
+		background: rgba(255, 255, 255, 0.1);
+		border-color: rgba(255, 255, 255, 0.2);
+	}
+
+	.zen-toggle.active {
+		background: linear-gradient(135deg, rgba(16, 185, 129, 0.2), rgba(59, 130, 246, 0.15));
+		border-color: rgba(16, 185, 129, 0.5);
+	}
+
+	.zen-icon {
+		font-size: 1rem;
+		line-height: 1;
+	}
+
+	.zen-label {
+		flex: 1;
+		text-align: left;
+	}
+
+	.zen-badge {
+		font-size: 0.65rem;
+		font-weight: 700;
+		letter-spacing: 0.05em;
+		padding: 0.15rem 0.4rem;
+		border-radius: 0.25rem;
+		background: rgba(255, 255, 255, 0.1);
+		color: var(--theme-text-secondary);
+	}
+
+	.zen-toggle.active .zen-badge {
+		background: rgba(16, 185, 129, 0.3);
+		color: #10b981;
+	}
+
+	:global([data-color-mode='light']) .zen-toggle.active .zen-badge {
+		background: rgba(16, 185, 129, 0.15);
+		color: #059669;
 	}
 
 	.picker-option {

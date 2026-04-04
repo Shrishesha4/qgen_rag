@@ -930,13 +930,29 @@
 		approved.clear();
 		rejected.clear();
 
-		if (autoAdvance && allowAutoGeneration && subjectId) {
-			showBatchCompleteNotice = false;
-			batchComplete = false;
+		if (autoAdvance && subjectId) {
+			batchComplete = true;
 			postTriggerGenerationActive = false;
 			postTriggerBaseQuestionCount = 0;
 			completingBatch = false;
-			await startBackgroundGeneration();
+			stopBackgroundGen();
+			persistProgressNow(true);
+			if (allowAutoGeneration) {
+				try {
+					await scheduleBackgroundGeneration({
+						subjectId,
+						count: generationBatchSize,
+						types: 'mcq',
+						difficulty: 'medium',
+						topicId: topicId || undefined,
+						allowWithoutReference: allowNoPdfGeneration,
+					});
+				} catch {
+					// Non-fatal — navigate back regardless
+				}
+			}
+			skipNextLeaveConfirm = true;
+			history.back();
 			return;
 		}
 

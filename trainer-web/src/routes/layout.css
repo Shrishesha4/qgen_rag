@@ -1620,3 +1620,380 @@ a:hover {
   backdrop-filter: blur(14px) saturate(165%) brightness(1.04) !important;
   -webkit-backdrop-filter: blur(14px) saturate(165%) brightness(1.04) !important;
 }
+
+
+/* ═══════════════════════════════════════════════════════════════════════════════
+   ZEN MODE — Corporate minimalist style with no blur, solid backgrounds,
+   clean typography, and calm aesthetics. Accent colors adapt to current theme.
+   ═══════════════════════════════════════════════════════════════════════════════ */
+
+/* ── Zen Mode: Hide wallpaper & overlays, show solid background ── */
+:root[data-zen-mode='true'] .bg-image-layer,
+:root[data-zen-mode='true'] .bg-overlay-layer,
+:root[data-zen-mode='true'] .bg-mobile-frost-layer {
+  display: none !important;
+}
+
+:root[data-zen-mode='true'] {
+  --zen-surface: #ffffff;
+  --zen-surface-secondary: #f8fafc;
+  --zen-surface-tertiary: #f1f5f9;
+  --zen-border: #e2e8f0;
+  --zen-border-strong: #cbd5e1;
+  --zen-text: #1e293b;
+  --zen-text-secondary: #64748b;
+  --zen-text-muted: #94a3b8;
+  --zen-shadow-sm: 0 1px 2px rgba(0, 0, 0, 0.04);
+  --zen-shadow: 0 1px 3px rgba(0, 0, 0, 0.06), 0 1px 2px rgba(0, 0, 0, 0.04);
+  --zen-shadow-md: 0 4px 6px rgba(0, 0, 0, 0.05), 0 2px 4px rgba(0, 0, 0, 0.03);
+  --zen-radius: 8px;
+  --zen-radius-lg: 12px;
+}
+
+/* ── Zen Mode Dark Variant ── */
+:root[data-zen-mode='true'][data-color-mode='dark'] {
+  --zen-surface: #18181b;
+  --zen-surface-secondary: #1f1f23;
+  --zen-surface-tertiary: #27272a;
+  --zen-border: #3f3f46;
+  --zen-border-strong: #52525b;
+  --zen-text: #fafafa;
+  --zen-text-secondary: #a1a1aa;
+  --zen-text-muted: #71717a;
+  --zen-shadow-sm: 0 1px 2px rgba(0, 0, 0, 0.2);
+  --zen-shadow: 0 1px 3px rgba(0, 0, 0, 0.3), 0 1px 2px rgba(0, 0, 0, 0.2);
+  --zen-shadow-md: 0 4px 6px rgba(0, 0, 0, 0.25), 0 2px 4px rgba(0, 0, 0, 0.15);
+}
+
+/* ── Zen Mode: Base app shell ── */
+:root[data-zen-mode='true'] body {
+  background: var(--zen-surface-secondary) !important;
+}
+
+:root[data-zen-mode='true'] .app-shell {
+  background: var(--zen-surface-secondary) !important;
+}
+
+/* ── Zen Mode: Kill all glass effects, use solid surfaces ── */
+:root[data-zen-mode='true'] .glass-panel,
+:root[data-zen-mode='true'] .glass-card,
+:root[data-zen-mode='true'] .glass-sidebar,
+:root[data-zen-mode='true'] .profile-card,
+:root[data-zen-mode='true'] .auth-card,
+:root[data-zen-mode='true'] .content-panel,
+:root[data-zen-mode='true'] .resume-strip,
+:root[data-zen-mode='true'] .mode-banner,
+:root[data-zen-mode='true'] .step-card,
+:root[data-zen-mode='true'] .status-card,
+:root[data-zen-mode='true'] .metrics-card,
+:root[data-zen-mode='true'] .metric-item,
+:root[data-zen-mode='true'] .info-card,
+:root[data-zen-mode='true'] .summary-box,
+:root[data-zen-mode='true'] .wizard-navigation,
+:root[data-zen-mode='true'] .settings-form,
+:root[data-zen-mode='true'] .detail-item,
+:root[data-zen-mode='true'] .stat-card,
+:root[data-zen-mode='true'] .subject-card,
+:root[data-zen-mode='true'] .topic-card,
+:root[data-zen-mode='true'] .teacher-card,
+:root[data-zen-mode='true'] .meta-card,
+:root[data-zen-mode='true'] .mobile-card,
+:root[data-zen-mode='true'] .admin-mobile-card,
+:root[data-zen-mode='true'] .table-wrap,
+:root[data-zen-mode='true'] .header,
+:root[data-zen-mode='true'] .toolbar,
+:root[data-zen-mode='true'] .center-state,
+:root[data-zen-mode='true'] .section {
+  background: var(--zen-surface) !important;
+  border: 1px solid var(--zen-border) !important;
+  box-shadow: var(--zen-shadow) !important;
+  backdrop-filter: none !important;
+  -webkit-backdrop-filter: none !important;
+  border-radius: var(--zen-radius-lg) !important;
+}
+
+:root[data-zen-mode='true'] .glass-panel::before,
+:root[data-zen-mode='true'] .glass-panel::after,
+:root[data-zen-mode='true'] .glass-card::before,
+:root[data-zen-mode='true'] .glass-card::after {
+  display: none !important;
+}
+
+/* ── Zen Mode: Desktop sidebar ── */
+:root[data-zen-mode='true'] .desktop-sidebar {
+  background: var(--zen-surface) !important;
+  border: 1px solid var(--zen-border) !important;
+  box-shadow: var(--zen-shadow-md) !important;
+  backdrop-filter: none !important;
+  -webkit-backdrop-filter: none !important;
+}
+
+:root[data-zen-mode='true'] .sidebar-brand {
+  border-bottom-color: var(--zen-border) !important;
+}
+
+:root[data-zen-mode='true'] .sidebar-footer {
+  border-top-color: var(--zen-border) !important;
+}
+
+:root[data-zen-mode='true'] .brand-icon {
+  background: var(--zen-surface-tertiary) !important;
+  border: 1px solid var(--zen-border) !important;
+  box-shadow: var(--zen-shadow-sm) !important;
+}
+
+:root[data-zen-mode='true'] .brand-title {
+  color: var(--zen-text) !important;
+}
+
+:root[data-zen-mode='true'] .brand-subtitle {
+  color: var(--zen-text-muted) !important;
+}
+
+/* ── Zen Mode: Sidebar navigation links ── */
+:root[data-zen-mode='true'] .sidebar-link {
+  background: var(--zen-surface) !important;
+  border: 1px solid var(--zen-border) !important;
+  color: var(--zen-text) !important;
+  border-radius: var(--zen-radius) !important;
+  transition: all 0.15s ease !important;
+}
+
+:root[data-zen-mode='true'] .sidebar-link:hover {
+  background: var(--zen-surface-tertiary) !important;
+  border-color: rgba(var(--theme-primary-rgb), 0.3) !important;
+  transform: none !important;
+}
+
+:root[data-zen-mode='true'] .sidebar-link.active {
+  background: rgba(var(--theme-primary-rgb), 0.1) !important;
+  border-color: rgba(var(--theme-primary-rgb), 0.4) !important;
+  color: var(--theme-primary) !important;
+  box-shadow: none !important;
+}
+
+:root[data-zen-mode='true'] .sidebar-link-icon {
+  background: var(--zen-surface-secondary) !important;
+  border: 1px solid var(--zen-border) !important;
+  box-shadow: none !important;
+}
+
+:root[data-zen-mode='true'] .sidebar-link.active .sidebar-link-icon {
+  background: rgba(var(--theme-primary-rgb), 0.15) !important;
+  border-color: rgba(var(--theme-primary-rgb), 0.35) !important;
+}
+
+/* ── Zen Mode: Desktop content window ── */
+:root[data-zen-mode='true'] .desktop-window {
+  background: var(--zen-surface) !important;
+  border: 1px solid var(--zen-border) !important;
+  box-shadow: var(--zen-shadow-md) !important;
+  backdrop-filter: none !important;
+  -webkit-backdrop-filter: none !important;
+}
+
+/* ── Zen Mode: Collapsed logo button ── */
+:root[data-zen-mode='true'] .collapsed-logo-btn {
+  background: var(--zen-surface) !important;
+  border: 1px solid var(--zen-border) !important;
+  box-shadow: var(--zen-shadow-md) !important;
+  backdrop-filter: none !important;
+  -webkit-backdrop-filter: none !important;
+}
+
+:root[data-zen-mode='true'] .collapsed-logo-btn:hover {
+  border-color: rgba(var(--theme-primary-rgb), 0.4) !important;
+  box-shadow: var(--zen-shadow-md), 0 0 0 3px rgba(var(--theme-primary-rgb), 0.1) !important;
+}
+
+/* ── Zen Mode: Mobile navigation ── */
+:root[data-zen-mode='true'] .mobile-nav-bar {
+  background: var(--zen-surface) !important;
+  border-bottom: 1px solid var(--zen-border) !important;
+  box-shadow: var(--zen-shadow) !important;
+  backdrop-filter: none !important;
+  -webkit-backdrop-filter: none !important;
+}
+
+:root[data-zen-mode='true'] .drawer-panel {
+  background: var(--zen-surface) !important;
+  backdrop-filter: none !important;
+  -webkit-backdrop-filter: none !important;
+}
+
+:root[data-zen-mode='true'] .drawer-link {
+  background: var(--zen-surface) !important;
+  border: 1px solid var(--zen-border) !important;
+}
+
+:root[data-zen-mode='true'] .drawer-link.active {
+  background: rgba(var(--theme-primary-rgb), 0.1) !important;
+  border-color: rgba(var(--theme-primary-rgb), 0.4) !important;
+  color: var(--theme-primary) !important;
+}
+
+/* ── Zen Mode: Buttons ── */
+:root[data-zen-mode='true'] .btn-primary,
+:root[data-zen-mode='true'] .primary-btn,
+:root[data-zen-mode='true'] button[class*='primary'] {
+  background: var(--theme-primary) !important;
+  border: none !important;
+  box-shadow: var(--zen-shadow) !important;
+  border-radius: var(--zen-radius) !important;
+}
+
+:root[data-zen-mode='true'] .btn-primary:hover,
+:root[data-zen-mode='true'] .primary-btn:hover,
+:root[data-zen-mode='true'] button[class*='primary']:hover {
+  background: var(--theme-primary-hover) !important;
+  box-shadow: var(--zen-shadow-md) !important;
+  transform: none !important;
+}
+
+:root[data-zen-mode='true'] .btn-secondary,
+:root[data-zen-mode='true'] .secondary-btn {
+  background: var(--zen-surface) !important;
+  border: 1px solid var(--zen-border) !important;
+  color: var(--zen-text) !important;
+}
+
+:root[data-zen-mode='true'] .btn-secondary:hover,
+:root[data-zen-mode='true'] .secondary-btn:hover {
+  background: var(--zen-surface-tertiary) !important;
+  border-color: var(--zen-border-strong) !important;
+}
+
+/* ── Zen Mode: Inputs ── */
+:root[data-zen-mode='true'] input,
+:root[data-zen-mode='true'] textarea,
+:root[data-zen-mode='true'] select,
+:root[data-zen-mode='true'] .glass-input {
+  background: var(--zen-surface) !important;
+  border: 1px solid var(--zen-border) !important;
+  color: var(--zen-text) !important;
+  border-radius: var(--zen-radius) !important;
+  box-shadow: var(--zen-shadow-sm) !important;
+}
+
+:root[data-zen-mode='true'] input:focus,
+:root[data-zen-mode='true'] textarea:focus,
+:root[data-zen-mode='true'] select:focus,
+:root[data-zen-mode='true'] .glass-input:focus {
+  border-color: rgba(var(--theme-primary-rgb), 0.5) !important;
+  box-shadow: 0 0 0 3px rgba(var(--theme-primary-rgb), 0.1) !important;
+  outline: none !important;
+}
+
+:root[data-zen-mode='true'] input::placeholder,
+:root[data-zen-mode='true'] textarea::placeholder {
+  color: var(--zen-text-muted) !important;
+}
+
+/* ── Zen Mode: Typography refinements ── */
+:root[data-zen-mode='true'] h1,
+:root[data-zen-mode='true'] h2,
+:root[data-zen-mode='true'] h3,
+:root[data-zen-mode='true'] h4,
+:root[data-zen-mode='true'] h5,
+:root[data-zen-mode='true'] h6 {
+  color: var(--zen-text) !important;
+  font-weight: 600 !important;
+}
+
+:root[data-zen-mode='true'] p,
+:root[data-zen-mode='true'] span,
+:root[data-zen-mode='true'] label {
+  color: var(--zen-text-secondary);
+}
+
+/* ── Zen Mode: Tables ── */
+:root[data-zen-mode='true'] table {
+  background: var(--zen-surface) !important;
+}
+
+:root[data-zen-mode='true'] th {
+  background: var(--zen-surface-secondary) !important;
+  color: var(--zen-text) !important;
+  border-bottom: 1px solid var(--zen-border) !important;
+}
+
+:root[data-zen-mode='true'] td {
+  border-bottom: 1px solid var(--zen-border) !important;
+}
+
+:root[data-zen-mode='true'] tr:hover td {
+  background: var(--zen-surface-tertiary) !important;
+}
+
+/* ── Zen Mode: Modals ── */
+:root[data-zen-mode='true'] .modal,
+:root[data-zen-mode='true'] [role='dialog'] {
+  background: var(--zen-surface) !important;
+  border: 1px solid var(--zen-border) !important;
+  box-shadow: 0 25px 50px rgba(0, 0, 0, 0.12) !important;
+  backdrop-filter: none !important;
+  -webkit-backdrop-filter: none !important;
+  border-radius: var(--zen-radius-lg) !important;
+}
+
+/* ── Zen Mode: Dropdowns & Tooltips ── */
+:root[data-zen-mode='true'] .dropdown,
+:root[data-zen-mode='true'] .tooltip,
+:root[data-zen-mode='true'] .picker-menu {
+  background: var(--zen-surface) !important;
+  border: 1px solid var(--zen-border) !important;
+  box-shadow: var(--zen-shadow-md) !important;
+  backdrop-filter: none !important;
+  -webkit-backdrop-filter: none !important;
+}
+
+/* ── Zen Mode: Theme picker adjustments ── */
+:root[data-zen-mode='true'] .picker-toggle {
+  border: 1px solid var(--zen-border) !important;
+  box-shadow: var(--zen-shadow-sm) !important;
+}
+
+:root[data-zen-mode='true'] .picker-menu {
+  border-radius: var(--zen-radius-lg) !important;
+}
+
+:root[data-zen-mode='true'] .mode-option {
+  border: 1px solid var(--zen-border) !important;
+  background: var(--zen-surface) !important;
+}
+
+:root[data-zen-mode='true'] .mode-option.active {
+  background: rgba(var(--theme-primary-rgb), 0.1) !important;
+  border-color: rgba(var(--theme-primary-rgb), 0.4) !important;
+  color: var(--theme-primary) !important;
+}
+
+:root[data-zen-mode='true'] .theme-grid button {
+  border: 2px solid var(--zen-border) !important;
+  box-shadow: var(--zen-shadow-sm) !important;
+}
+
+:root[data-zen-mode='true'] .theme-grid button.active {
+  border-color: var(--theme-primary) !important;
+  box-shadow: var(--zen-shadow), 0 0 0 2px rgba(var(--theme-primary-rgb), 0.2) !important;
+}
+
+/* ── Zen Mode: Scrollbars ── */
+:root[data-zen-mode='true'] ::-webkit-scrollbar {
+  width: 8px;
+  height: 8px;
+}
+
+:root[data-zen-mode='true'] ::-webkit-scrollbar-track {
+  background: var(--zen-surface-tertiary);
+  border-radius: 4px;
+}
+
+:root[data-zen-mode='true'] ::-webkit-scrollbar-thumb {
+  background: var(--zen-border-strong);
+  border-radius: 4px;
+}
+
+:root[data-zen-mode='true'] ::-webkit-scrollbar-thumb:hover {
+  background: var(--zen-text-muted);
+}

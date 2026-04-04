@@ -3,7 +3,7 @@
 	import { onMount } from 'svelte';
 	import { goto } from '$app/navigation';
 	import { page } from '$app/stores';
-	import { initTheme } from '$lib/theme';
+	import { initTheme, zenMode, toggleZenMode } from '$lib/theme';
 	import ThemePicker from '$lib/components/ThemePicker.svelte';
 	import MobileNavBar from '$lib/components/MobileNavBar.svelte';
 	import { warmVettingTaxonomy } from '$lib/api/vetting';
@@ -11,6 +11,62 @@
 	import { session, currentUser } from '$lib/session';
 
 	let { children } = $props();
+
+	// Desktop sidebar — hidden by default
+	let sidebarVisible = $state(true);
+	let isCollapsing = $state(false);
+	let isExpanding = $state(false);
+
+	// Derived: sidebar is fully collapsed (not visible, not animating)
+	let sidebarCollapsed = $derived(!sidebarVisible && !isExpanding);
+
+	// Hover preview — floating panel shown on logo hover when collapsed
+	let sidebarHoverOpen = $state(false);
+	let _hoverCloseTimer: ReturnType<typeof setTimeout> | null = null;
+
+	function onSidebarHoverEnter() {
+		if (_hoverCloseTimer) { clearTimeout(_hoverCloseTimer); _hoverCloseTimer = null; }
+		sidebarHoverOpen = true;
+	}
+
+	function onSidebarHoverLeave() {
+		_hoverCloseTimer = setTimeout(() => { sidebarHoverOpen = false; }, 200);
+	}
+
+	// Logo click when collapsed → toggle hover menu (not expand)
+	function handleLogoClick() {
+		sidebarHoverOpen = !sidebarHoverOpen;
+	}
+
+	// Logo click when expanded → collapse
+	function handleCollapseClick() {
+		if (isCollapsing || isExpanding) return;
+		isCollapsing = true;
+		sidebarHoverOpen = false;
+	}
+
+	function handleCollapseAnimationEnd() {
+		if (isCollapsing) {
+			isCollapsing = false;
+			sidebarVisible = false;
+		}
+	}
+
+	function handleExpandAnimationEnd() {
+		if (isExpanding) {
+			isExpanding = false;
+		}
+	}
+
+	// Pin button in hover panel → expand full sidebar
+	function handlePinClick() {
+		if (isCollapsing || isExpanding) return;
+		sidebarHoverOpen = false;
+		sidebarVisible = true;
+		requestAnimationFrame(() => {
+			isExpanding = true;
+		});
+	}
 
 	// Prevent CSS preload timeout by patching preload links
 	onMount(() => {
@@ -221,37 +277,104 @@
 	</button>
 {/if}
 
-<div class="app-shell" class:with-desktop-chrome={showDesktopChrome} class:profile-window-scroll={pathname.endsWith('/profile')} class:vetting-loop-scroll={enableVettingLoopScroll} class:admin-window-scroll={enableAdminWindowScroll} class:admin-ui={pathname.startsWith('/admin')}>
+<div class="app-shell" class:with-desktop-chrome={showDesktopChrome} class:sidebar-collapsed={sidebarCollapsed} class:profile-window-scroll={pathname.endsWith('/profile')} class:vetting-loop-scroll={enableVettingLoopScroll} class:admin-window-scroll={enableAdminWindowScroll} class:admin-ui={pathname.startsWith('/admin')}>
 	{#if showDesktopChrome}
-		<aside class="desktop-sidebar glass-panel">
-			<div class="sidebar-brand">
-				<div class="brand-icon">
+		<!-- Floating logo button + hover preview panel (shown when sidebar is collapsed) -->
+		{#if !sidebarVisible && !isExpanding}
+			<img src="/logo.png" alt="VQuest logo" class="collapsed-logo-img" />
+			<!-- <button
+				class="collapsed-logo-btn"
+				// onclick={handleLogoClick}
+				// onmouseenter={onSidebarHoverEnter}
+				// onmouseleave={onSidebarHoverLeave}
+				aria-label="Open navigation"
+			>
+				<img src="/logo.png" alt="VQuest logo" class="collapsed-logo-img" />
+			</button> -->
+
+			{#if sidebarHoverOpen}
+				<div
+					class="sidebar-hover-panel glass-panel"
+					// onmouseenter={onSidebarHoverEnter}
+					// onmouseleave={onSidebarHoverLeave}
+					role="complementary"
+					aria-label="Navigation preview"
+				>
+					<div class="sidebar-brand">
+						<div class="brand-icon">
+							<img src="/logo.png" alt="VQuest logo" class="brand-logo-img" loading="eager" />
+						</div>
+						<div class="brand-text">
+							<p class="brand-title">VQuest</p>
+							<p class="brand-subtitle">Console</p>
+						</div>
+					</div>
+					<nav class="sidebar-nav">
+						{#each navItems as item}
+							<a
+								href={item.href}
+								class="sidebar-link"
+								class:active={item.href === activeNavHref}
+								onclick={() => { sidebarHoverOpen = false; }}
+							>
+								<span class="sidebar-link-icon">{item.icon}</span>
+								<span>{item.label}</span>
+							</a>
+						{/each}
+					</nav>
+					<button class="hover-pin-btn" onclick={handlePinClick}>
+						<svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round">
+							<line x1="12" y1="17" x2="12" y2="22"/>
+							<path d="M5 17h14v-1.76a2 2 0 0 0-1.11-1.79l-1.78-.9A2 2 0 0 1 15 10.76V6h1a2 2 0 0 0 0-4H8a2 2 0 0 0 0 4h1v4.76a2 2 0 0 1-1.11 1.79l-1.78.9A2 2 0 0 0 5 15.24Z"/>
+						</svg>
+						Pin sidebar
+					</button>
+					<div class="sidebar-footer hover-footer">
+						<div class="theme-row">
+							<span class="theme-label">Theme</span>
+							<ThemePicker />
+						</div>
+					</div>
+				</div>
+			{/if}
+		{/if}
+
+		{#if sidebarVisible || isCollapsing}
+			<aside 
+				class="desktop-sidebar glass-panel" 
+				class:collapsing={isCollapsing}
+				class:expanding={isExpanding}
+				onanimationend={isCollapsing ? handleCollapseAnimationEnd : handleExpandAnimationEnd}
+			>
+				<div class="sidebar-brand">
 					<img src="/logo.png" alt="VQuest logo" class="brand-logo-img" loading="eager" decoding="async" />
+					<!-- <button class="brand-icon" onclick={handleCollapseClick} aria-label="Collapse sidebar" title="Collapse sidebar">
+						<img src="/logo.png" alt="VQuest logo" class="brand-logo-img" loading="eager" decoding="async" />
+					</button> -->
+					<div class="brand-text">
+						<p class="brand-title">VQuest</p>
+						<p class="brand-subtitle">Console</p>
+					</div>
 				</div>
-				<div>
-					<p class="brand-title">VQuest</p>
-					<p class="brand-subtitle">Console</p>
-				</div>
-			</div>
-			<nav class="sidebar-nav">
-				{#each navItems as item}
-					<a
-						href={item.href}
-						class="sidebar-link"
-						class:active={item.href === activeNavHref}
-					>
-						<span class="sidebar-link-icon">{item.icon}</span>
-						<span>{item.label}</span>
-					</a>
-				{/each}
-			</nav>
-			<div class="sidebar-footer">
-				<div class="theme-row">
-					<span class="theme-label">Theme</span>
-					<ThemePicker />
-				</div>
-				<div class="copyright-row">
-					<p class="drawer-copyright-text">
+				<nav class="sidebar-nav">
+					{#each navItems as item}
+						<a
+							href={item.href}
+							class="sidebar-link"
+							class:active={item.href === activeNavHref}
+						>
+							<span class="sidebar-link-icon">{item.icon}</span>
+							<span>{item.label}</span>
+						</a>
+					{/each}
+				</nav>
+				<div class="sidebar-footer">
+					<div class="theme-row">
+						<span class="theme-label">Theme</span>
+						<ThemePicker />
+					</div>
+					<div class="copyright-row">
+						<p class="drawer-copyright-text">
 						2023 © Vianasoft Pvt Ltd
 					</p>
 					<div class="legal-links">
@@ -261,8 +384,9 @@
 				</div>
 			</div>
 		</aside>
+		{/if}
 
-		<section class="desktop-window-wrap">
+		<section class="desktop-window-wrap" class:expanded={sidebarCollapsed}>
 			<div class="desktop-window glass-panel">
 				<div class="desktop-window-content">
 					{@render children()}
@@ -399,7 +523,7 @@
 			border-radius: 0 !important;
 			height: auto !important;
 			min-height: 0 !important;
-		}
+    		}
 
 		/* Also kill the glass-panel pseudo-elements on these wrappers */
 		.desktop-window::before,
@@ -417,13 +541,26 @@
 			--desktop-shell-vpad-top: 4rem;
 			--desktop-shell-vpad-bottom: 1.5rem;
 			--desktop-frame-height: calc(100dvh - env(safe-area-inset-top) - env(safe-area-inset-bottom) - var(--desktop-shell-vpad-top) - var(--desktop-shell-vpad-bottom));
+			--shell-hpad: clamp(0.9rem, 1.8vw, 1.5rem);
 			display: grid;
+			/* Start in collapsed state (0px sidebar) so first render matches sidebarVisible=false */
+			grid-template-columns: 0px minmax(0, 1fr);
+			gap: 0;
+			padding: calc(env(safe-area-inset-top) + var(--desktop-shell-vpad-top)) var(--shell-hpad) calc(env(safe-area-inset-bottom) + var(--desktop-shell-vpad-bottom));
+			height: 100dvh;
+			max-width: 100%;
+			margin: 0 auto;
+			/* Animate layout changes without any transform (preserves backdrop-filter) */
+			transition:
+				grid-template-columns 0.45s cubic-bezier(0.16, 1, 0.3, 1),
+				gap 0.45s cubic-bezier(0.16, 1, 0.3, 1);
+		}
+
+		/* Expanded state */
+		.app-shell.with-desktop-chrome:not(.sidebar-collapsed) {
 			grid-template-columns: clamp(250px, 24vw, 300px) minmax(0, 1fr);
 			gap: clamp(1rem, 2.5vw, 2.5rem);
-			padding: calc(env(safe-area-inset-top) + var(--desktop-shell-vpad-top)) clamp(0.9rem, 1.8vw, 1.5rem) calc(env(safe-area-inset-bottom) + var(--desktop-shell-vpad-bottom));
-			height: 100dvh;
 			max-width: 1500px;
-			margin: 0 auto;
 		}
 
 		.desktop-sidebar {
@@ -451,12 +588,31 @@
 			place-items: center;
 			background: rgba(255, 255, 255, 0.62);
 			border: 1px solid rgba(255, 255, 255, 0.74);
+			cursor: pointer;
+			transition: all 0.25s cubic-bezier(0.34, 1.56, 0.64, 1);
+			padding: 0;
+			font-size: inherit;
+			font-family: inherit;
+		}
+
+		.brand-icon:hover {
+			transform: scale(1.08);
+			box-shadow: 0 4px 16px rgba(var(--theme-primary-rgb), 0.25);
+			border-color: rgba(var(--theme-primary-rgb), 0.5);
+		}
+
+		.brand-icon:active {
+			transform: scale(0.95);
 		}
 
 		.brand-logo-img {
-			width: 28px;
-			height: 28px;
+			width: 52px;
+			height: 52px;
 			object-fit: contain;
+		}
+
+		.brand-text {
+			transition: opacity 0.2s ease, transform 0.2s ease;
 		}
 
 		.brand-title {
@@ -693,6 +849,268 @@
 
 		.global-back-btn {
 			display: none;
+		}
+
+		/* ===== SIDEBAR COLLAPSE/EXPAND ANIMATIONS ===== */
+
+		/* Collapsing sidebar - swoops into the top-left corner logo */
+		.desktop-sidebar.collapsing {
+			animation: sidebarSwoopOut 0.45s cubic-bezier(0.4, 0, 0.2, 1) forwards;
+			pointer-events: none;
+			transform-origin: top left;
+		}
+
+		@keyframes sidebarSwoopOut {
+			0% {
+				opacity: 1;
+				transform: scale(1) translate(0, 0);
+				border-radius: 1.25rem;
+			}
+			30% {
+				opacity: 0.9;
+				transform: scale(0.7, 0.7) translate(-5%, -5%);
+				border-radius: 1rem;
+			}
+			60% {
+				opacity: 0.5;
+				transform: scale(0.35, 0.35) translate(-30%, -30%);
+				border-radius: 0.75rem;
+			}
+			100% {
+				opacity: 0;
+				transform: scale(0.12, 0.12) translate(-85%, -85%);
+				border-radius: 50%;
+			}
+		}
+
+		/* Elements inside sidebar fade out during collapse */
+		.desktop-sidebar.collapsing .sidebar-nav,
+		.desktop-sidebar.collapsing .sidebar-footer,
+		.desktop-sidebar.collapsing .brand-text {
+			animation: fadeOutQuick 0.15s ease forwards;
+		}
+
+		@keyframes fadeOutQuick {
+			to {
+				opacity: 0;
+				transform: scale(0.9) translateX(-10px);
+			}
+		}
+
+		/* Expanding sidebar - smooth entrance from top-left (no bounce) */
+		.desktop-sidebar.expanding {
+			animation: sidebarSwoopIn 0.5s cubic-bezier(0.16, 1, 0.3, 1) forwards;
+			transform-origin: top left;
+		}
+
+		@keyframes sidebarSwoopIn {
+			0% {
+				opacity: 0;
+				transform: scale(0.12, 0.12) translate(-85%, -85%);
+				border-radius: 50%;
+			}
+			45% {
+				opacity: 0.85;
+				transform: scale(0.55, 0.55) translate(-25%, -25%);
+				border-radius: 0.8rem;
+			}
+			100% {
+				opacity: 1;
+				transform: scale(1) translate(0, 0);
+				border-radius: 1.25rem;
+			}
+		}
+
+		/* Elements inside sidebar fade in during expand */
+		.desktop-sidebar.expanding .sidebar-nav,
+		.desktop-sidebar.expanding .sidebar-footer,
+		.desktop-sidebar.expanding .brand-text {
+			animation: fadeInQuick 0.35s ease 0.15s forwards;
+			opacity: 0;
+		}
+
+		@keyframes fadeInQuick {
+			from {
+				opacity: 0;
+				transform: translateX(-10px);
+			}
+			to {
+				opacity: 1;
+				transform: translateX(0);
+			}
+		}
+
+		/* Floating collapsed logo button */
+		/* Logo sits in the top-left corner of the glass content panel.
+		   Panel top = safe-area + 4rem, panel left = --shell-hpad.
+		   Inset 0.7rem inside the panel to clear the border-radius. */
+		/* .collapsed-logo-btn {
+			position: fixed;
+			top: calc(env(safe-area-inset-top) + 4rem + 0.7rem);
+			left: calc(clamp(0.9rem, 1.8vw, 1.5rem) + 0.7rem);
+			z-index: 100;
+			width: 56px;
+			height: 56px;
+			border-radius: 14px;
+			background: rgba(255, 255, 255, 0.18);
+			border: 1px solid rgba(255, 255, 255, 0.28);
+			box-shadow:
+				0 2px 12px rgba(0, 0, 0, 0.1),
+				inset 0 1px 0 rgba(255, 255, 255, 0.35);
+			backdrop-filter: blur(8px);
+			-webkit-backdrop-filter: blur(8px);
+			display: grid;
+			place-items: center;
+			cursor: pointer;
+			padding: 0;
+			animation: logoAppear 0.35s cubic-bezier(0.16, 1, 0.3, 1) forwards;
+			transition: background 0.2s ease, border-color 0.2s ease, box-shadow 0.2s ease, transform 0.2s ease;
+		} */
+
+		@keyframes logoAppear {
+			from { opacity: 0; transform: scale(0.7); }
+			to   { opacity: 1; transform: scale(1); }
+		}
+
+		/* .collapsed-logo-btn:hover {
+			background: rgba(255, 255, 255, 0.32);
+			border-color: rgba(255, 255, 255, 0.5);
+			box-shadow:
+				0 4px 20px rgba(var(--theme-primary-rgb), 0.18),
+				inset 0 1px 0 rgba(255, 255, 255, 0.5);
+			transform: scale(1.06);
+		}
+
+		.collapsed-logo-btn:active {
+			transform: scale(0.94);
+		} */
+
+		.collapsed-logo-img {
+			width: 34px;
+			height: 34px;
+			object-fit: contain;
+		}
+
+		/* :global([data-color-mode='dark']) .collapsed-logo-btn {
+			background: rgba(15, 23, 42, 0.4);
+			border-color: rgba(255, 255, 255, 0.12);
+			box-shadow:
+				0 2px 12px rgba(0, 0, 0, 0.3),
+				inset 0 1px 0 rgba(255, 255, 255, 0.06);
+		}
+
+		:global([data-color-mode='dark']) .collapsed-logo-btn:hover {
+			background: rgba(var(--theme-primary-rgb), 0.18);
+			border-color: rgba(var(--theme-primary-rgb), 0.35);
+		} */
+
+		/* Grid transition moved to app-shell.with-desktop-chrome above */
+
+		/* Collapsed state — window spans full grid */
+		.app-shell.with-desktop-chrome.sidebar-collapsed {
+			grid-template-columns: 0px minmax(0, 1fr);
+			gap: 0;
+			max-width: 100%;
+		}
+
+		.app-shell.with-desktop-chrome.sidebar-collapsed .desktop-window-wrap {
+			grid-column: 1 / -1;
+		}
+
+		/* Inner page containers: lift max-width cap when sidebar is gone */
+		:global(.app-shell.sidebar-collapsed .page) {
+			max-width: 100% !important;
+		}
+
+		/* Nudge page headings right to clear the 56px logo (at 0.7rem inset + 56px = ~4.2rem from panel edge, page padding = 1.5rem) */
+		:global(.app-shell.sidebar-collapsed .hero-intro) {
+			padding-left: 3rem;
+		}
+
+		/* ===== HOVER SIDEBAR PANEL ===== */
+		/* Opens below the logo button: logo top = safe-area + 4rem + 0.7rem, logo height = 56px */
+		.sidebar-hover-panel {
+			position: fixed;
+			top: calc(env(safe-area-inset-top) + 4rem + 0.7rem + 56px + 0.5rem);
+			left: clamp(0.9rem, 1.8vw, 1.5rem);
+			width: clamp(250px, 24vw, 300px);
+			max-height: calc(100dvh - env(safe-area-inset-top) - env(safe-area-inset-bottom) - 5.5rem);
+			z-index: 200;
+			display: flex;
+			flex-direction: column;
+			padding: 1rem;
+			border-radius: 1.25rem;
+			/* overflow must be visible so the ThemePicker dropdown can escape the panel.
+			   glass-panel sets overflow:hidden globally; we override via the rule below. */
+			overflow: visible;
+			/* Slide-in only — no opacity trick so backdrop-filter is undisturbed after entry */
+			animation: hoverPanelIn 0.22s cubic-bezier(0.16, 1, 0.3, 1) forwards;
+			box-shadow:
+				0 24px 64px rgba(0, 0, 0, 0.22),
+				0 8px 24px rgba(0, 0, 0, 0.12),
+				inset 0 1px 0 rgba(255, 255, 255, 0.4);
+		}
+
+		/* Clip only the nav scroll area, not the footer where the dropdown lives */
+		.sidebar-hover-panel .sidebar-nav {
+			overflow-y: auto;
+			overflow-x: hidden;
+		}
+
+		/* Beat the global glass-panel overflow:hidden so the ThemePicker dropdown escapes */
+		:global(.sidebar-hover-panel.glass-panel) {
+			overflow: visible !important;
+		}
+
+		/* Force the ThemePicker dropdown to open RIGHTWARD inside the hover panel */
+		:global(.sidebar-hover-panel .picker-menu) {
+			bottom: auto !important;
+			top: 0 !important;
+			right: auto !important;
+			left: calc(100% + 0.75rem) !important;
+			transform-origin: top left !important;
+		}
+
+		.hover-footer {
+			margin-top: 0.5rem;
+		}
+
+		@keyframes hoverPanelIn {
+			from {
+				opacity: 0;
+				transform: translateX(-18px);
+			}
+			to {
+				opacity: 1;
+				transform: translateX(0);
+			}
+		}
+
+		.hover-pin-btn {
+			display: flex;
+			align-items: center;
+			gap: 0.5rem;
+			width: 100%;
+			padding: 0.52rem 0.75rem;
+			margin-top: 0.6rem;
+			border-radius: 10px;
+			border: 1px solid rgba(var(--theme-primary-rgb), 0.28);
+			background: rgba(var(--theme-primary-rgb), 0.07);
+			color: rgb(var(--theme-primary-rgb));
+			font-size: 0.78rem;
+			font-weight: 600;
+			cursor: pointer;
+			transition: all 0.18s ease;
+			letter-spacing: 0.02em;
+		}
+
+		.hover-pin-btn:hover {
+			background: rgba(var(--theme-primary-rgb), 0.14);
+			border-color: rgba(var(--theme-primary-rgb), 0.5);
+		}
+
+		:global([data-color-mode='dark']) .hover-pin-btn {
+			color: rgba(var(--theme-primary-rgb), 0.9);
 		}
 	}
 

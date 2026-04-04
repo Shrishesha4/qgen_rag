@@ -123,11 +123,54 @@ export function cycleTheme() {
 	});
 }
 
+// ==================== ZEN MODE ====================
+const ZEN_MODE_STORAGE_KEY = 'qgen-trainer-zen-mode';
+
+function getInitialZenMode(): boolean {
+	if (browser) {
+		const stored = localStorage.getItem(ZEN_MODE_STORAGE_KEY);
+		return stored === 'true';
+	}
+	return false;
+}
+
+export const zenMode = writable<boolean>(getInitialZenMode());
+
+function applyZenMode(enabled: boolean) {
+	if (!browser) return;
+	const root = document.documentElement;
+	if (enabled) {
+		root.setAttribute('data-zen-mode', 'true');
+	} else {
+		root.removeAttribute('data-zen-mode');
+	}
+}
+
+/** Toggle zen mode on/off */
+export function toggleZenMode() {
+	zenMode.update((current) => {
+		const next = !current;
+		if (browser) localStorage.setItem(ZEN_MODE_STORAGE_KEY, String(next));
+		applyZenMode(next);
+		return next;
+	});
+}
+
+/** Set zen mode explicitly */
+export function setZenMode(enabled: boolean) {
+	zenMode.set(enabled);
+	if (browser) localStorage.setItem(ZEN_MODE_STORAGE_KEY, String(enabled));
+	applyZenMode(enabled);
+}
+
 /** Initialize theme on app mount. */
 export function initTheme() {
 	const name = getInitialTheme();
 	const mode = getInitialColorMode();
+	const zen = getInitialZenMode();
 	currentThemeName.set(name);
 	currentColorMode.set(mode);
+	zenMode.set(zen);
 	applyTheme(themes[name], mode);
+	applyZenMode(zen);
 }
