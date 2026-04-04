@@ -180,6 +180,9 @@ class Settings(BaseSettings):
     # Server
     API_PORT: int = Field(default=8000)
     
+    # Hugging Face Hub
+    HF_TOKEN: Optional[str] = Field(default=None)
+
     # Training Pipeline (LoRA fine-tuning)
     TRAINING_DATA_DIR: str = Field(default="./.data/training_data")
     LORA_ADAPTERS_DIR: str = Field(default="./.data/lora_adapters")

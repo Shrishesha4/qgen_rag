@@ -31,7 +31,8 @@ module.exports = {
       error_file: "/home/admin/serv/vquest/logs/worker.log",
       autorestart: true,
       max_restarts: 10,
-      time: true
+      time: true,
+      env_file: "/home/admin/serv/vquest/backend/.env.local"
     }
   ]
 };
