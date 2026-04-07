@@ -42,6 +42,7 @@ from app.models.system_settings import (
     PASSWORD_RESET_METHOD_SECURITY_QUESTION,
     PASSWORD_RESET_METHOD_SMTP,
     SETTING_SIGNUP_ENABLED,
+    SETTING_EMAIL_DOMAIN_RESTRICTION,
     SystemSettings,
 )
 
@@ -59,6 +60,45 @@ async def is_signup_enabled(db: AsyncSession) -> bool:
     if setting and setting.value:
         return setting.value.get("enabled", True)
     return DEFAULT_SETTINGS.get(SETTING_SIGNUP_ENABLED, {}).get("enabled", True)
+
+
+async def check_email_domain_allowed(db: AsyncSession, email: str) -> tuple[bool, list[str]]:
+    """
+    Check if the email domain is allowed for registration.
+    Returns (is_allowed, allowed_domains).
+    If domain restriction is disabled, returns (True, []).
+    """
+    result = await db.execute(
+        select(SystemSettings).where(SystemSettings.key == SETTING_EMAIL_DOMAIN_RESTRICTION)
+    )
+    setting = result.scalar_one_or_none()
+
+    defaults = DEFAULT_SETTINGS.get(SETTING_EMAIL_DOMAIN_RESTRICTION, {})
+    if setting and setting.value:
+        enabled = setting.value.get("enabled", defaults.get("enabled", False))
+        allowed_domains = setting.value.get("allowed_domains", defaults.get("allowed_domains", []))
+    else:
+        enabled = defaults.get("enabled", False)
+        allowed_domains = defaults.get("allowed_domains", [])
+
+    # If restriction is disabled, allow all
+    if not enabled:
+        return True, []
+
+    # If no domains configured, allow all
+    if not allowed_domains:
+        return True, []
+
+    # Extract domain from email
+    email_domain = email.lower().split("@")[-1] if "@" in email else ""
+
+    # Check if domain matches any allowed domain
+    for domain in allowed_domains:
+        normalized = domain.lower().strip().lstrip("@")
+        if email_domain == normalized:
+            return True, allowed_domains
+
+    return False, allowed_domains
 
 
 @router.post("/register", response_model=MessageResponse, status_code=status.HTTP_201_CREATED)
@@ -82,6 +122,17 @@ async def register(
         raise HTTPException(
             status_code=status.HTTP_403_FORBIDDEN,
             detail="Teacher registration is currently disabled. Vetter registration remains available.",
+        )
+
+    # Check email domain restriction
+    domain_allowed, allowed_domains = await check_email_domain_allowed(db, user_data.email)
+    if not domain_allowed:
+        domains_str = ", ".join(f"@{d}" for d in allowed_domains[:3])
+        if len(allowed_domains) > 3:
+            domains_str += f" and {len(allowed_domains) - 3} more"
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail=f"Domain not allowed for registration. Please contact admin.",
         )
     
     user_service = UserService(db)

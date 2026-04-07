@@ -4,17 +4,25 @@
  */
 
 import { writable, derived, get } from 'svelte/store';
-import { themes, themeNames, type ThemeName, type ThemeConfig } from './themes';
+import { themes, themeNamesStore, builtInThemeNames, registerCustomThemes, type ThemeName, type ThemeConfig } from './themes';
 import { browser } from '$app/environment';
+import { apiUrl, getStoredSession, apiFetch } from '$lib/api/client';
 
 const STORAGE_KEY = 'qgen-trainer-theme';
 const COLOR_MODE_STORAGE_KEY = 'qgen-trainer-color-mode';
 export type ColorMode = 'light' | 'dark';
 
+/** Store for custom themes list */
+export const customThemes = writable<ThemeConfig[]>([]);
+
+/** Debounce timer for saving preferences */
+let savePreferencesTimeout: ReturnType<typeof setTimeout> | null = null;
+
 function getInitialTheme(): ThemeName {
 	if (browser) {
 		const stored = localStorage.getItem(STORAGE_KEY);
-		if (stored && themeNames.includes(stored as ThemeName)) {
+		// Check built-in themes first, custom themes loaded later
+		if (stored && (builtInThemeNames.includes(stored as ThemeName) || themes[stored as ThemeName])) {
 			return stored as ThemeName;
 		}
 	}
@@ -89,11 +97,17 @@ function applyTheme(config: ThemeConfig, mode: ColorMode) {
 
 /** Set a new theme by name. */
 export function setTheme(name: ThemeName) {
+	const theme = themes[name];
+	if (!theme) {
+		console.warn(`Theme "${name}" not found, falling back to fire`);
+		name = 'fire';
+	}
 	currentThemeName.set(name);
 	if (browser) {
 		localStorage.setItem(STORAGE_KEY, name);
 	}
 	applyTheme(themes[name], get(currentColorMode));
+	savePreferencesToBackend();
 }
 
 /** Set global color mode. */
@@ -104,6 +118,7 @@ export function setColorMode(mode: ColorMode) {
 	}
 	const themeName = get(currentThemeName);
 	applyTheme(themes[themeName], mode);
+	savePreferencesToBackend();
 }
 
 /** Toggle color mode light <-> dark. */
@@ -115,8 +130,9 @@ export function toggleColorMode() {
 /** Cycle to the next theme in order. */
 export function cycleTheme() {
 	currentThemeName.update((current) => {
-		const idx = themeNames.indexOf(current);
-		const next = themeNames[(idx + 1) % themeNames.length];
+		const names = get(themeNamesStore);
+		const idx = names.indexOf(current);
+		const next = names[(idx + 1) % names.length];
 		if (browser) localStorage.setItem(STORAGE_KEY, next);
 		applyTheme(themes[next], get(currentColorMode));
 		return next;
@@ -152,6 +168,7 @@ export function toggleZenMode() {
 		const next = !current;
 		if (browser) localStorage.setItem(ZEN_MODE_STORAGE_KEY, String(next));
 		applyZenMode(next);
+		savePreferencesToBackend();
 		return next;
 	});
 }
@@ -161,6 +178,121 @@ export function setZenMode(enabled: boolean) {
 	zenMode.set(enabled);
 	if (browser) localStorage.setItem(ZEN_MODE_STORAGE_KEY, String(enabled));
 	applyZenMode(enabled);
+	savePreferencesToBackend();
+}
+
+/** Save preferences to backend (debounced) */
+function savePreferencesToBackend() {
+	if (!browser) return;
+	const session = getStoredSession();
+	if (!session?.access_token) return;
+
+	if (savePreferencesTimeout) {
+		clearTimeout(savePreferencesTimeout);
+	}
+
+	savePreferencesTimeout = setTimeout(async () => {
+		try {
+			await apiFetch('/settings/preferences', {
+				method: 'PUT',
+				body: JSON.stringify({
+					theme: get(currentThemeName),
+					color_mode: get(currentColorMode),
+					zen_mode: get(zenMode),
+				}),
+			});
+		} catch (err) {
+			console.warn('Failed to save preferences to backend:', err);
+		}
+	}, 500);
+}
+
+/** Load user preferences from backend */
+export async function loadUserPreferences(): Promise<void> {
+	if (!browser) return;
+	const session = getStoredSession();
+	if (!session?.access_token) return;
+
+	try {
+		const prefs = await apiFetch<{ theme: string; color_mode: string; zen_mode: boolean }>('/settings/preferences');
+		if (prefs) {
+			// Apply from backend, update local stores and storage
+			if (prefs.theme && (builtInThemeNames.includes(prefs.theme as ThemeName) || themes[prefs.theme as ThemeName])) {
+				currentThemeName.set(prefs.theme as ThemeName);
+				localStorage.setItem(STORAGE_KEY, prefs.theme);
+			}
+			if (prefs.color_mode === 'light' || prefs.color_mode === 'dark') {
+				currentColorMode.set(prefs.color_mode);
+				localStorage.setItem(COLOR_MODE_STORAGE_KEY, prefs.color_mode);
+			}
+			if (typeof prefs.zen_mode === 'boolean') {
+				zenMode.set(prefs.zen_mode);
+				localStorage.setItem(ZEN_MODE_STORAGE_KEY, String(prefs.zen_mode));
+			}
+			// Apply the loaded preferences
+			applyTheme(themes[get(currentThemeName)], get(currentColorMode));
+			applyZenMode(get(zenMode));
+		}
+	} catch (err) {
+		console.warn('Failed to load preferences from backend:', err);
+	}
+}
+
+/** Load custom themes from API and register them. */
+export async function loadCustomThemes(): Promise<void> {
+	if (!browser) return;
+	
+	try {
+		const session = getStoredSession();
+		const headers: HeadersInit = {};
+		if (session?.access_token) {
+			headers['Authorization'] = `Bearer ${session.access_token}`;
+		}
+		
+		const response = await fetch(apiUrl('/themes'), { headers });
+		if (!response.ok) {
+			console.warn('Failed to load custom themes:', response.status);
+			return;
+		}
+		
+		const data = await response.json();
+		const fetchedThemes: ThemeConfig[] = (data.themes || []).map((t: Record<string, unknown>) => ({
+			name: t.name as string,
+			label: t.label as string,
+			icon: t.icon as string || '🎨',
+			bgImage: t.bgImage as string || '',
+			wallpaperOverlay: t.wallpaperOverlay as string || '',
+			bg: t.bg as string || '',
+			bgColor: t.bgColor as string || '#1a1a2e',
+			primary: t.primary as string || '#6366f1',
+			primaryHover: t.primaryHover as string || '#818cf8',
+			accentGradient: t.accentGradient as string || '#a855f7',
+			primaryRgb: t.primaryRgb as string || '99, 102, 241',
+			text: t.text as string || '#f8fafc',
+			textMuted: t.textMuted as string || '#94a3b8',
+			textPrimary: t.textPrimary as string || '#1e293b',
+			textSecondary: t.textSecondary as string || 'rgba(0,0,0,0.55)',
+			glassBg: t.glassBg as string || 'rgba(255, 255, 255, 0.55)',
+			glassBorder: t.glassBorder as string || 'rgba(255, 255, 255, 0.7)',
+			navGlass: t.navGlass as string || 'rgba(255, 255, 255, 0.5)',
+			border: t.border as string || 'rgba(255,255,255,0.14)',
+			glow: t.glow as string || 'rgba(99,102,241,0.35)',
+			isBuiltin: t.isBuiltin as boolean ?? false,
+			isCustom: t.isCustom as boolean ?? !t.isBuiltin,
+		}));
+		
+		registerCustomThemes(fetchedThemes);
+		customThemes.set(fetchedThemes);
+		
+		// Re-apply current theme if it was a custom one that just loaded
+		const storedTheme = localStorage.getItem(STORAGE_KEY);
+		if (storedTheme && themes[storedTheme as ThemeName]) {
+			currentThemeName.set(storedTheme as ThemeName);
+			applyTheme(themes[storedTheme as ThemeName], get(currentColorMode));
+		}
+	} catch (err) {
+		console.warn('Error loading custom themes:', err);
+	}
 }
 
 /** Initialize theme on app mount. */
@@ -173,4 +305,10 @@ export function initTheme() {
 	zenMode.set(zen);
 	applyTheme(themes[name], mode);
 	applyZenMode(zen);
+	
+	// Load custom themes asynchronously
+	loadCustomThemes();
+	
+	// Load user preferences from backend (will override localStorage if logged in)
+	loadUserPreferences();
 }

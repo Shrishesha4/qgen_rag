@@ -297,7 +297,7 @@
 									authSuccess = '';
 								}}
 							>
-								{signupEnabled ? 'Create one' : 'Join as Vetter'}
+								{signupEnabled ? 'Create one' : 'Create User'}
 							</button>
 						{:else}
 							<span>Already have an account?</span>

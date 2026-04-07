@@ -1149,6 +1149,7 @@
 		gap: 0.75rem;
 		flex: 1;
 		min-height: 0;
+		max-height: calc(100vh);
 	}
 
 	.tab-bar {

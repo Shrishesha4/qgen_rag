@@ -4,6 +4,7 @@ A stateful RAG-based question generation system for educators
 """
 
 import uuid
+import asyncio
 from contextlib import asynccontextmanager
 from fastapi import FastAPI, Request
 from fastapi.middleware.cors import CORSMiddleware
@@ -17,7 +18,7 @@ from app.core.database import init_db
 from app.core.logging import setup_logging, logger, request_id_ctx
 from app.api.v1 import api_router
 from app.services.embedding_service import warmup_embedding_service
-from app.services.reranker_service import warmup_reranker_service
+from app.services.reranker_service import warmup_reranker_service_async
 
 
 @asynccontextmanager
@@ -43,9 +44,10 @@ async def lifespan(app: FastAPI):
     except Exception as e:
         logger.warning(f"⚠️ Embedding model warmup failed: {e}")
     
-    # Note: Reranker will load lazily on first use to avoid blocking startup
+    # Warmup reranker in background thread to avoid blocking startup
     if settings.RERANKER_ENABLED:
-        logger.info(f"⏳ Reranker will load on first use: {settings.RERANKER_MODEL}")
+        # Run warmup concurrently with other startup tasks
+        asyncio.create_task(warmup_reranker_service_async())
     else:
         logger.info("🔧 Reranker disabled")
     

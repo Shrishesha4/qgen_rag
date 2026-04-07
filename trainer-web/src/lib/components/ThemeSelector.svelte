@@ -1,6 +1,6 @@
 <script lang="ts">
 	import { currentThemeName, setTheme } from '$lib/theme';
-	import { themeNames, themes } from '$lib/theme/themes';
+	import { themeNamesStore, themes } from '$lib/theme/themes';
 	import type { ThemeName } from '$lib/theme/themes';
 
 	let expanded = $state(false);
@@ -24,7 +24,7 @@
 		</svg>
 	</button>
 	<div class="selector-thumbs">
-		{#each themeNames as name, i}
+		{#each $themeNamesStore as name, i}
 			<button
 				class="thumb"
 				class:active={$currentThemeName === name}

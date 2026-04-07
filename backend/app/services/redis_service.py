@@ -23,14 +23,23 @@ class RedisService:
         return cls._instance
 
     async def connect(self):
-        """Connect to Redis."""
+        """Connect to Redis with automatic reconnection support."""
         if self._client is None:
-            self._client = redis.from_url(settings.REDIS_URL, decode_responses=True)
+            self._client = redis.from_url(
+                settings.REDIS_URL,
+                decode_responses=True,
+                health_check_interval=30,  # Ping every 30s to detect stale connections
+                socket_keepalive=True,
+                retry_on_timeout=True,
+            )
 
     async def disconnect(self):
         """Disconnect from Redis."""
         if self._client:
-            await self._client.close()
+            try:
+                await self._client.aclose()
+            except Exception:
+                pass
             self._client = None
 
     async def get(self, key: str) -> Optional[str]:

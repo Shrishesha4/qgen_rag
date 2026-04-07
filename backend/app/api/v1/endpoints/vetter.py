@@ -34,6 +34,7 @@ from app.api.v1.deps import get_current_superuser
 from app.services.metrics_service import vetting_submit_success_total, vetting_submit_failure_total, edit_distance_mean
 from app.schemas.question import QuestionSourceInfo, SourceReference
 from app.services.stats_broadcast_service import broadcast_vetting_stats_update
+from app.services.analytics_websocket_manager import analytics_ws_manager
 
 
 router = APIRouter()
@@ -922,6 +923,21 @@ async def get_questions_for_vetting(
     
     result = await db.execute(query)
     questions = result.scalars().all()
+    
+    # Register vetting activity for analytics tracking
+    if questions and status == "pending":
+        # Get subject and topic names for the first question to show context
+        subject_name = questions[0].subject.name if questions[0].subject else None
+        topic_name = questions[0].topic.name if questions[0].topic else None
+        
+        await analytics_ws_manager.register_activity(
+            user_id=str(current_user.id),
+            username=current_user.username,
+            email=current_user.email,
+            activity="vetting",
+            subject_name=subject_name,
+            topic_name=topic_name,
+        )
     
     # Build response
     question_responses = []

@@ -11,6 +11,7 @@ from app.models.system_settings import (
     PASSWORD_RESET_METHOD_SMTP,
     SETTING_SIGNUP_ENABLED,
     SETTING_PROVIDER_GENERATION_CONFIG,
+    SETTING_EMAIL_DOMAIN_RESTRICTION,
     DEFAULT_SETTINGS,
 )
 from app.models.user import ROLE_ADMIN, User
@@ -30,10 +31,14 @@ router = APIRouter()
 
 class SignupSettingsResponse(BaseModel):
     signup_enabled: bool
+    domain_restriction_enabled: bool = False
+    allowed_domains: list[str] = []
 
 
 class SignupSettingsUpdate(BaseModel):
     signup_enabled: bool | None = None
+    domain_restriction_enabled: bool | None = None
+    allowed_domains: list[str] | None = None
 
 
 class ProviderGenerationItem(BaseModel):
@@ -173,9 +178,12 @@ async def get_signup_settings(
     db: AsyncSession = Depends(get_auth_db),
 ):
     """Get signup settings (public endpoint)."""
-    value = await get_setting(db, SETTING_SIGNUP_ENABLED)
+    signup_value = await get_setting(db, SETTING_SIGNUP_ENABLED)
+    domain_value = await get_setting(db, SETTING_EMAIL_DOMAIN_RESTRICTION)
     return SignupSettingsResponse(
-        signup_enabled=value.get("enabled", True),
+        signup_enabled=signup_value.get("enabled", True),
+        domain_restriction_enabled=domain_value.get("enabled", False),
+        allowed_domains=domain_value.get("allowed_domains", []),
     )
 
 
@@ -189,10 +197,26 @@ async def update_signup_settings(
     _ensure_admin(current_user)
 
     current_signup = await get_setting(db, SETTING_SIGNUP_ENABLED)
+    current_domain = await get_setting(db, SETTING_EMAIL_DOMAIN_RESTRICTION)
 
     new_signup_enabled = update.signup_enabled
     if new_signup_enabled is None:
         new_signup_enabled = current_signup.get("enabled", True)
+
+    new_domain_restriction_enabled = update.domain_restriction_enabled
+    if new_domain_restriction_enabled is None:
+        new_domain_restriction_enabled = current_domain.get("enabled", False)
+
+    new_allowed_domains = update.allowed_domains
+    if new_allowed_domains is None:
+        new_allowed_domains = current_domain.get("allowed_domains", [])
+    else:
+        # Normalize domains: lowercase, strip whitespace, remove empty
+        new_allowed_domains = [
+            d.lower().strip().lstrip("@")
+            for d in new_allowed_domains
+            if d and d.strip()
+        ]
 
     await set_setting(
         db,
@@ -202,8 +226,18 @@ async def update_signup_settings(
         description="Whether public signup is enabled",
     )
 
+    await set_setting(
+        db,
+        SETTING_EMAIL_DOMAIN_RESTRICTION,
+        {"enabled": new_domain_restriction_enabled, "allowed_domains": new_allowed_domains},
+        current_user.id,
+        description="Email domain restrictions for signup",
+    )
+
     return SignupSettingsResponse(
         signup_enabled=new_signup_enabled,
+        domain_restriction_enabled=new_domain_restriction_enabled,
+        allowed_domains=new_allowed_domains,
     )
 
 
@@ -334,3 +368,66 @@ async def send_password_reset_test_email(
     target_email = payload.email or current_user.email
     await email_service.send_test_email(to_email=target_email)
     return MessageResponse(message=f"Test email sent to {target_email}")
+
+
+# ===================== User Preferences =====================
+
+
+class UserPreferencesResponse(BaseModel):
+    theme: str = "fire"
+    color_mode: str = "light"
+    zen_mode: bool = False
+
+
+class UserPreferencesUpdate(BaseModel):
+    theme: str | None = None
+    color_mode: str | None = None
+    zen_mode: bool | None = None
+
+
+@router.get("/preferences", response_model=UserPreferencesResponse)
+async def get_user_preferences(
+    current_user: User = Depends(get_current_user),
+):
+    """Get the current user's theme and display preferences."""
+    prefs = current_user.preferences or {}
+    return UserPreferencesResponse(
+        theme=prefs.get("theme", "fire"),
+        color_mode=prefs.get("color_mode", "light"),
+        zen_mode=prefs.get("zen_mode", False),
+    )
+
+
+@router.put("/preferences", response_model=UserPreferencesResponse)
+async def update_user_preferences(
+    update: UserPreferencesUpdate,
+    current_user: User = Depends(get_current_user),
+    db: AsyncSession = Depends(get_auth_db),
+):
+    """Update the current user's theme and display preferences."""
+    from sqlalchemy import select
+    from app.models.user import User as UserModel
+
+    # Get fresh user from db
+    result = await db.execute(select(UserModel).where(UserModel.id == current_user.id))
+    user = result.scalar_one_or_none()
+    if not user:
+        raise HTTPException(status_code=404, detail="User not found")
+
+    prefs = dict(user.preferences or {})
+    
+    if update.theme is not None:
+        prefs["theme"] = update.theme
+    if update.color_mode is not None:
+        prefs["color_mode"] = update.color_mode
+    if update.zen_mode is not None:
+        prefs["zen_mode"] = update.zen_mode
+
+    user.preferences = prefs
+    await db.commit()
+
+    return UserPreferencesResponse(
+        theme=prefs.get("theme", "fire"),
+        color_mode=prefs.get("color_mode", "light"),
+        zen_mode=prefs.get("zen_mode", False),
+    )

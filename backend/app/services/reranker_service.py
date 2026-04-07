@@ -220,6 +220,22 @@ class RerankerService:
 
 # Module-level function for easy import
 def warmup_reranker_service() -> None:
-    """Warmup the reranker service singleton."""
+    """Warmup the reranker service singleton (blocking)."""
     service = RerankerService()
     service.warmup()
+
+
+async def warmup_reranker_service_async() -> None:
+    """
+    Warmup the reranker service asynchronously.
+    Runs model loading in a thread pool to avoid blocking the event loop.
+    """
+    import asyncio
+    from app.core.logging import logger
+    
+    try:
+        logger.info("⏳ Starting reranker warmup in background thread...")
+        await asyncio.to_thread(warmup_reranker_service)
+        logger.info("✅ Reranker warmup completed")
+    except Exception as e:
+        logger.warning(f"⚠️ Reranker warmup failed: {e}")

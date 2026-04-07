@@ -6,13 +6,16 @@ import asyncio
 import json
 import logging
 from typing import Callable, Awaitable
-from redis.exceptions import RedisError, ReadOnlyError
+from redis.exceptions import RedisError, ReadOnlyError, ConnectionError as RedisConnectionError
 
 from app.services.redis_service import RedisService
 from app.services.queue_service import QueueService
 
 
 logger = logging.getLogger(__name__)
+
+# Max backoff time for reconnection attempts
+MAX_BACKOFF_SECONDS = 30
 
 
 class WorkerService:
@@ -30,26 +33,35 @@ class WorkerService:
     ) -> None:
         await self.redis.connect()
         client = self.redis._client
+        consecutive_errors = 0
 
         logger.info("Worker started for queue=%s", queue_name)
         while True:
             try:
                 job_payload = await client.lpop(f"queue:{queue_name}")
+                consecutive_errors = 0  # Reset on success
             except ReadOnlyError as exc:
                 logger.error(
                     "Redis is read-only for queue=%s. Check REDIS_HOST/REDIS_URL points to primary. error=%s",
                     queue_name,
                     exc,
                 )
+                consecutive_errors += 1
+                backoff = min(2 ** consecutive_errors, MAX_BACKOFF_SECONDS)
                 await self.redis.disconnect()
-                await asyncio.sleep(2)
+                await asyncio.sleep(backoff)
                 await self.redis.connect()
                 client = self.redis._client
                 continue
-            except RedisError as exc:
-                logger.exception("Redis error while polling queue=%s error=%s", queue_name, exc)
+            except (RedisError, RedisConnectionError, OSError) as exc:
+                consecutive_errors += 1
+                backoff = min(2 ** consecutive_errors, MAX_BACKOFF_SECONDS)
+                logger.warning(
+                    "Redis error while polling queue=%s error=%s, reconnecting in %ds (attempt %d)",
+                    queue_name, exc, backoff, consecutive_errors
+                )
                 await self.redis.disconnect()
-                await asyncio.sleep(2)
+                await asyncio.sleep(backoff)
                 await self.redis.connect()
                 client = self.redis._client
                 continue

@@ -1649,7 +1649,8 @@ class TrainingService:
         if settings.TRAINING_ENABLE_TOKENIZER_DRIFT_CHECK:
             from transformers import AutoTokenizer  # type: ignore
 
-            tokenizer = AutoTokenizer.from_pretrained(self._resolve_model_source(base_model))
+            token = settings.HF_TOKEN or None
+            tokenizer = AutoTokenizer.from_pretrained(self._resolve_model_source(base_model), token=token)
             if tokenizer.pad_token is None:
                 tokenizer.pad_token = tokenizer.eos_token
             tokenizer_fingerprint = self._tokenizer_fingerprint_from_tokenizer(tokenizer)
@@ -2157,8 +2158,9 @@ class TrainingService:
         model_source = self._resolve_model_source(version.base_model)
         hp = version.hyperparameters or {}
         peft_method = str(hp.get("peft_method", settings.TRAINING_PREFERRED_PEFT_METHOD)).strip().lower()
+        hf_token = settings.HF_TOKEN or None
 
-        tokenizer = AutoTokenizer.from_pretrained(model_source)
+        tokenizer = AutoTokenizer.from_pretrained(model_source, token=hf_token)
         if tokenizer.pad_token is None:
             tokenizer.pad_token = tokenizer.eos_token
 
@@ -2186,6 +2188,7 @@ class TrainingService:
                 "torch_dtype": torch.float32,
             }
 
+        model_kwargs["token"] = hf_token
         model = AutoModelForCausalLM.from_pretrained(model_source, **model_kwargs)
         if self._has_adapter_checkpoint(version.lora_adapter_path):
             model = PeftModel.from_pretrained(model, version.lora_adapter_path)
@@ -2726,9 +2729,10 @@ class TrainingService:
 
         logger.info("Loading SFT dataset from %s", data_path)
         dataset = load_dataset("json", data_files=data_path, split="train")
+        hf_token = settings.HF_TOKEN or None
 
         logger.info("Loading base model: %s", model_source)
-        tokenizer = AutoTokenizer.from_pretrained(model_source)
+        tokenizer = AutoTokenizer.from_pretrained(model_source, token=hf_token)
         if tokenizer.pad_token is None:
             tokenizer.pad_token = tokenizer.eos_token
 
@@ -2809,6 +2813,7 @@ class TrainingService:
             eval_dataset = split_dataset["test"]
 
         # LoRA config
+        model_load_kwargs["token"] = hf_token
         lora_config = LoraConfig(
             task_type=TaskType.CAUSAL_LM,
             r=hp.get("lora_r", 16),
@@ -2963,8 +2968,9 @@ class TrainingService:
             }
         )
 
+        hf_token = settings.HF_TOKEN or None
         logger.info("Loading model for DPO: %s", model_source)
-        tokenizer = AutoTokenizer.from_pretrained(model_source)
+        tokenizer = AutoTokenizer.from_pretrained(model_source, token=hf_token)
         if tokenizer.pad_token is None:
             tokenizer.pad_token = tokenizer.eos_token
 
@@ -3036,6 +3042,7 @@ class TrainingService:
             train_dataset = split_dataset["train"]
             eval_dataset = split_dataset["test"]
 
+        model_load_kwargs["token"] = hf_token
         lora_config = LoraConfig(
             task_type=TaskType.CAUSAL_LM,
             r=hp.get("lora_r", 16),

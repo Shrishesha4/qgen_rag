@@ -67,6 +67,7 @@ async def init_auth_db():
     from app.models.user import User  # noqa: F401
     from app.models.auth import RefreshToken, AuditLog, AdminNotification  # noqa: F401
     from app.models.system_settings import SystemSettings  # noqa: F401
+    from app.models.custom_theme import CustomTheme  # noqa: F401
 
     async with auth_engine.begin() as conn:
         await conn.run_sync(AuthBase.metadata.create_all)
@@ -170,6 +171,13 @@ async def init_auth_db():
                 """
             )
         )
+        
+        # Schema evolution for custom_themes table
+        theme_info = await conn.execute(text("PRAGMA table_info(custom_themes)"))
+        theme_columns = {row[1] for row in theme_info.fetchall()}
+        
+        if "is_builtin" not in theme_columns:
+            await conn.execute(text("ALTER TABLE custom_themes ADD COLUMN is_builtin BOOLEAN DEFAULT 0"))
     
     # Ensure database file has correct permissions after creation
     if auth_db_path.exists():

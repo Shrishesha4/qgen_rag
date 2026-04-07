@@ -132,12 +132,14 @@ class LocalModelManager:
         with self.loading_lock:
             try:
                 logger.info(f"Loading model: {self.config.base_model_path}")
+                hf_token = settings.HF_TOKEN or None
                 
                 # Load tokenizer
                 self.tokenizer = AutoTokenizer.from_pretrained(
                     self.config.base_model_path,
                     cache_dir=self.config.model_cache_dir,
-                    trust_remote_code=True
+                    trust_remote_code=True,
+                    token=hf_token
                 )
                 
                 if self.tokenizer.pad_token is None:
@@ -163,6 +165,8 @@ class LocalModelManager:
                 # Flash attention
                 if self.config.use_flash_attention:
                     model_kwargs["attn_implementation"] = "flash_attention_2"
+                
+                model_kwargs["token"] = hf_token
                 
                 # Load base model
                 self.model = AutoModelForCausalLM.from_pretrained(

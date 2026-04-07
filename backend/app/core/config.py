@@ -214,6 +214,7 @@ class Settings(BaseSettings):
         env_file = (".env", ".env.local")
         env_file_encoding = "utf-8"
         case_sensitive = True
+        extra = "ignore"  # Allow extra env vars without failing validation
 
 
 settings = Settings()

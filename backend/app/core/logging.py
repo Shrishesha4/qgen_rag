@@ -42,10 +42,15 @@ class InterceptHandler(logging.Handler):
             level = record.levelno
 
         # Find caller from where the logged message originated
-        frame, depth = sys._getframe(6), 6
-        while frame and frame.f_code.co_filename == logging.__file__:
-            frame = frame.f_back
-            depth += 1
+        # Use try-except because call stack may be shallow during shutdown
+        try:
+            frame, depth = sys._getframe(6), 6
+            while frame and frame.f_code.co_filename == logging.__file__:
+                frame = frame.f_back
+                depth += 1
+        except ValueError:
+            # Call stack not deep enough (e.g., during shutdown)
+            depth = 1
 
         logger.opt(depth=depth, exception=record.exc_info).log(
             level, record.getMessage()

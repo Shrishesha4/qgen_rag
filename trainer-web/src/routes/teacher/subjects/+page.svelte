@@ -1802,7 +1802,7 @@
 		border-radius: 1rem;
 		overflow-x: auto;
 		overflow-y: auto;
-		max-height: calc(100vh - 420px);
+		max-height: calc(100vh - 400px);
 	}
 
 	.desktop-only {

@@ -34,6 +34,7 @@ class SystemSettings(AuthBase):
 SETTING_SIGNUP_ENABLED = "signup_enabled"
 SETTING_PROVIDER_GENERATION_CONFIG = "provider_generation_config"
 SETTING_PASSWORD_RESET = "password_reset"
+SETTING_EMAIL_DOMAIN_RESTRICTION = "email_domain_restriction"
 
 PASSWORD_RESET_METHOD_SMTP = "smtp"
 PASSWORD_RESET_METHOD_SECURITY_QUESTION = "security_question"
@@ -66,6 +67,10 @@ def _default_password_reset_settings() -> dict:
 # Default values
 DEFAULT_SETTINGS = {
     SETTING_SIGNUP_ENABLED: {"enabled": True},
+    SETTING_EMAIL_DOMAIN_RESTRICTION: {
+        "enabled": False,
+        "allowed_domains": ["saveetha.com"],
+    },
     SETTING_PROVIDER_GENERATION_CONFIG: {
         "providers": [
             {

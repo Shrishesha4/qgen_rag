@@ -34,6 +34,7 @@ from app.services.document_service import DocumentService
 from app.services.reranker_service import RerankerService
 from app.services.novelty_service import NoveltyService, NoveltyResult
 from app.core.config import settings
+from app.services.analytics_websocket_manager import analytics_ws_manager
 
 
 # System prompts for question generation
@@ -243,6 +244,34 @@ class QuestionGenerationService:
                 message="Document not found or access denied",
             )
             return
+        
+        # Get user info for analytics
+        from app.core.auth_database import AuthSessionLocal
+        from app.models.user import User as AuthUser
+        async with AuthSessionLocal() as auth_db:
+            user_result = await auth_db.execute(
+                select(AuthUser).where(AuthUser.id == user_id)
+            )
+            user = user_result.scalar_one_or_none()
+        
+        # Get subject and topic names
+        subject_name = None
+        topic_name = None
+        if document.subject_id:
+            subject_result = await self.db.execute(
+                select(Subject).where(Subject.id == document.subject_id)
+            )
+            subject = subject_result.scalar_one_or_none()
+            if subject:
+                subject_name = subject.name
+        
+        if request.topic_id:
+            topic_result = await self.db.execute(
+                select(Topic).where(Topic.id == request.topic_id)
+            )
+            topic = topic_result.scalar_one_or_none()
+            if topic:
+                topic_name = topic.name
 
         if document.processing_status != "completed":
             yield GenerationProgress(
@@ -265,6 +294,17 @@ class QuestionGenerationService:
             return
 
         try:
+            # Register generation activity for analytics tracking
+            if user:
+                await analytics_ws_manager.register_activity(
+                    user_id=str(user_id),
+                    username=user.username,
+                    email=user.email,
+                    activity="generating",
+                    subject_name=subject_name,
+                    topic_name=topic_name,
+                )
+            
             yield GenerationProgress(
                 status="processing",
                 progress=5,
@@ -387,6 +427,9 @@ class QuestionGenerationService:
                         )
                         
                         questions_generated += 1
+                        
+                        # Update analytics heartbeat to keep activity alive
+                        await analytics_ws_manager.update_heartbeat(str(user_id))
 
                         # Update blacklist with new question
                         blacklist["embeddings"].append(question.question_embedding)
@@ -441,6 +484,9 @@ class QuestionGenerationService:
             )
 
         finally:
+            # Clear analytics activity
+            await analytics_ws_manager.clear_activity(str(user_id))
+            
             # Release lock
             await self.redis_service.release_generation_lock(
                 str(user_id), str(document_id)
@@ -3352,6 +3398,7 @@ Output valid JSON only."""
             )
 
             # 2. Get reference document IDs for style/scope context
+            logger.info(f"quick_generate_from_subject: step 2 - getting reference docs (document_service={self.document_service is not None})")
             reference_doc_ids: List[str] = []
             if self.document_service and not no_reference_mode:
                 reference_doc_ids = await self.document_service.get_reference_document_ids(
@@ -3359,10 +3406,12 @@ Output valid JSON only."""
                     subject_id=subject_id,
                     index_type="reference_book",
                 )
+            logger.info(f"quick_generate_from_subject: step 2 done - {len(reference_doc_ids)} reference docs")
 
             all_search_doc_ids = primary_doc_ids + reference_doc_ids
 
             # 3. Get all chunks from primary documents
+            logger.info(f"quick_generate_from_subject: step 3 - querying chunks for {len(primary_doc_ids)} docs")
             all_chunks: List[DocumentChunk] = []
             if primary_doc_ids:
                 chunk_result = await self.db.execute(
@@ -3372,8 +3421,10 @@ Output valid JSON only."""
                     .order_by(DocumentChunk.document_id, DocumentChunk.chunk_index)
                 )
                 all_chunks = chunk_result.scalars().all()
+            logger.info(f"quick_generate_from_subject: step 3 done - {len(all_chunks)} chunks found")
 
             if not all_chunks and not no_reference_mode:
+                logger.warning(f"quick_generate_from_subject: NO CHUNKS - yielding error")
                 yield QuickGenerateProgress(
                     status="error",
                     progress=0,

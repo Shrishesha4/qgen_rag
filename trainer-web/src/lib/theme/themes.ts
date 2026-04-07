@@ -3,7 +3,7 @@
  * Each theme has an Unsplash background image and a CSS gradient fallback.
  */
 
-export type ThemeName = 'aurora' | 'water' | 'fire' | 'earth' | 'night' | 'dusk' | 'sunset' | 'purplesands';
+export type ThemeName = 'aurora' | 'water' | 'fire' | 'earth' | 'night' | 'dusk' | 'sunset' | 'purplesands' | string;
 
 export interface ThemeConfig {
 	name: ThemeName;
@@ -35,6 +35,10 @@ export interface ThemeConfig {
 	border: string;
 	/** Accent glow */
 	glow: string;
+	/** Whether this is a built-in theme (from DB seed) */
+	isBuiltin?: boolean;
+	/** Whether this is a custom theme (not a built-in) */
+	isCustom?: boolean;
 }
 
 export const themes: Record<ThemeName, ThemeConfig> = {
@@ -257,4 +261,44 @@ export const themes: Record<ThemeName, ThemeConfig> = {
 	}
 };
 
-export const themeNames: ThemeName[] = ['aurora', 'water', 'fire', 'earth', 'night', 'dusk', 'sunset', 'purplesands'];
+import { writable, get } from 'svelte/store';
+
+/** Built-in theme names (cannot be overwritten by custom themes) */
+export const builtInThemeNames: ThemeName[] = ['aurora', 'water', 'fire', 'earth', 'night', 'dusk', 'sunset', 'purplesands'];
+
+/** Reactive store for all theme names (built-in + custom) */
+export const themeNamesStore = writable<ThemeName[]>([...builtInThemeNames]);
+
+/** Legacy export for backward compatibility - use themeNamesStore for reactivity */
+export function getThemeNames(): ThemeName[] {
+	return get(themeNamesStore);
+}
+
+/** Merge themes from database into the themes registry */
+export function registerCustomThemes(dbThemes: ThemeConfig[]) {
+	// When themes come from DB (after seeding), they include both builtin and custom
+	// Override the hardcoded themes with DB versions, add any new custom themes
+	
+	// Build new theme list starting fresh
+	const newNames: ThemeName[] = [];
+	
+	// Add/update themes from database
+	for (const theme of dbThemes) {
+		const config: ThemeConfig = {
+			...theme,
+			name: theme.name as ThemeName,
+		};
+		themes[theme.name as ThemeName] = config;
+		if (!newNames.includes(theme.name)) {
+			newNames.push(theme.name);
+		}
+	}
+	
+	// If no themes from DB, use hardcoded builtin themes as fallback
+	if (newNames.length === 0) {
+		newNames.push(...builtInThemeNames);
+	}
+	
+	// Update the store - triggers reactivity in all subscribers
+	themeNamesStore.set(newNames);
+}

@@ -1,7 +1,8 @@
 <script lang="ts">
 	import { onMount } from 'svelte';
 	import { currentColorMode, setColorMode, currentThemeName, setTheme, zenMode, toggleZenMode, type ColorMode } from '$lib/theme';
-	import { themeNames, themes } from '$lib/theme/themes';
+	import { themeNamesStore, themes } from '$lib/theme/themes';
+	import type { ThemeName } from '$lib/theme/themes';
 
 	let open = $state(false);
 	let rootEl: HTMLDivElement | null = null;
@@ -21,7 +22,7 @@
 		};
 	});
 
-	function select(name: (typeof themeNames)[number]) {
+	function select(name: ThemeName) {
 		setTheme(name);
 		open = false;
 	}
@@ -88,7 +89,7 @@
 
 			<div class="menu-divider" aria-hidden="true"></div>
 
-			{#each themeNames as name}
+			{#each $themeNamesStore as name}
 				<button
 					class="picker-option"
 					class:active={$currentThemeName === name}

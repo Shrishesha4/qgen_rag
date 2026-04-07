@@ -4,8 +4,11 @@
 	import { session } from '$lib/session';
 	import { apiFetch } from '$lib/api/client';
 	import type { PasswordResetMethod } from '$lib/api/auth';
+	import { loadCustomThemes, customThemes } from '$lib/theme';
+	import { builtInThemeNames } from '$lib/theme/themes';
+	import type { ThemeConfig } from '$lib/theme/themes';
 
-	type SettingsTab = 'general' | 'ai';
+	type SettingsTab = 'general' | 'ai' | 'themes';
 	type AITab = 'connectors' | 'statistics';
 	type SMTPEncryptionMode = 'tls' | 'ssl' | 'none';
 
@@ -89,6 +92,9 @@
 	let metricsWindowDays = $state(30);
 	// Signup state
 	let signupEnabled = $state(true);
+	let domainRestrictionEnabled = $state(false);
+	let allowedDomains = $state<string[]>([]);
+	let newDomain = $state('');
 	let signupLoading = $state(false);
 	let signupError = $state('');
 	let signupSaved = $state(false);
@@ -107,6 +113,63 @@
 	let providers = $state<ProviderConfig[]>([]);
 	let providerMetrics = $state<ProviderMetricsResponse | null>(null);
 	let visibleKeys = $state<Record<string, boolean>>({});
+
+	// Theme customization state
+	interface ThemeFormData {
+		id?: string;
+		name: string;
+		label: string;
+		icon: string;
+		bgImage: string;
+		wallpaperOverlay: string;
+		bg: string;
+		bgColor: string;
+		primary: string;
+		primaryHover: string;
+		accentGradient: string;
+		primaryRgb: string;
+		text: string;
+		textMuted: string;
+		textPrimary: string;
+		textSecondary: string;
+		glassBg: string;
+		glassBorder: string;
+		navGlass: string;
+		border: string;
+		glow: string;
+		isActive: boolean;
+	}
+
+	const DEFAULT_THEME_FORM: ThemeFormData = {
+		name: '',
+		label: '',
+		icon: '🎨',
+		bgImage: '',
+		wallpaperOverlay: 'linear-gradient(180deg, rgba(0,0,0,0.1) 0%, rgba(0,0,0,0.05) 50%, rgba(0,0,0,0.15) 100%)',
+		bg: 'linear-gradient(175deg, #1a1a2e 0%, #16213e 50%, #0f3460 100%)',
+		bgColor: '#1a1a2e',
+		primary: '#6366f1',
+		primaryHover: '#818cf8',
+		accentGradient: '#a855f7',
+		primaryRgb: '99, 102, 241',
+		text: '#f8fafc',
+		textMuted: '#94a3b8',
+		textPrimary: '#1e293b',
+		textSecondary: 'rgba(0,0,0,0.55)',
+		glassBg: 'rgba(255, 255, 255, 0.55)',
+		glassBorder: 'rgba(255, 255, 255, 0.7)',
+		navGlass: 'rgba(255, 255, 255, 0.5)',
+		border: 'rgba(255,255,255,0.14)',
+		glow: 'rgba(99,102,241,0.35)',
+		isActive: true
+	};
+
+	let themes = $state<ThemeConfig[]>([]);
+	let themesLoading = $state(false);
+	let themesError = $state('');
+	let themesSaved = $state(false);
+	let editingTheme = $state<ThemeFormData | null>(null);
+	let isCreatingTheme = $state(false);
 
 	function normalizeProvider(provider: Partial<ProviderConfig> | null | undefined): ProviderConfig {
 		return {
@@ -142,14 +205,16 @@
 		passwordResetMessage = '';
 		try {
 			const [signup, providerSettings, passwordResetResponse] = await Promise.all([
-				apiFetch<{ signup_enabled: boolean }>('/settings/signup'),
+				apiFetch<{ signup_enabled: boolean; domain_restriction_enabled: boolean; allowed_domains: string[] }>('/settings/signup'),
 				apiFetch<ProviderSettingsResponse>('/settings/providers-generation'),
 				apiFetch<PasswordResetSettingsResponse>('/settings/password-reset/admin')
 			]);
 			signupEnabled = signup.signup_enabled;
+			domainRestrictionEnabled = signup.domain_restriction_enabled ?? false;
+			allowedDomains = signup.allowed_domains ?? [];
 			providers = (providerSettings.providers || []).map((p) => normalizeProvider(p));
 			applyPasswordResetSettings(passwordResetResponse);
-			await loadMetrics();
+			await Promise.all([loadMetrics(), loadThemes()]);
 		} catch (e: unknown) {
 			pageError = e instanceof Error ? e.message : 'Failed to load admin settings';
 		} finally {
@@ -250,17 +315,156 @@ async function toggleSignup() {
 		signupError = '';
 		signupSaved = false;
 		try {
-			const res = await apiFetch<{ signup_enabled: boolean }>('/settings/signup', {
+			const res = await apiFetch<{ signup_enabled: boolean; domain_restriction_enabled: boolean; allowed_domains: string[] }>('/settings/signup', {
 				method: 'PUT',
 				body: JSON.stringify({ signup_enabled: !signupEnabled })
 			});
 			signupEnabled = res.signup_enabled;
+			domainRestrictionEnabled = res.domain_restriction_enabled ?? false;
+			allowedDomains = res.allowed_domains ?? [];
 			signupSaved = true;
 			setTimeout(() => (signupSaved = false), 1800);
 		} catch (e: unknown) {
 			signupError = e instanceof Error ? e.message : 'Failed to update signup settings';
 		} finally {
 			signupLoading = false;
+		}
+	}
+
+	async function saveDomainRestriction() {
+		signupLoading = true;
+		signupError = '';
+		signupSaved = false;
+		try {
+			const res = await apiFetch<{ signup_enabled: boolean; domain_restriction_enabled: boolean; allowed_domains: string[] }>('/settings/signup', {
+				method: 'PUT',
+				body: JSON.stringify({
+					domain_restriction_enabled: domainRestrictionEnabled,
+					allowed_domains: allowedDomains
+				})
+			});
+			signupEnabled = res.signup_enabled;
+			domainRestrictionEnabled = res.domain_restriction_enabled ?? false;
+			allowedDomains = res.allowed_domains ?? [];
+			signupSaved = true;
+			setTimeout(() => (signupSaved = false), 1800);
+		} catch (e: unknown) {
+			signupError = e instanceof Error ? e.message : 'Failed to update domain restriction settings';
+		} finally {
+			signupLoading = false;
+		}
+	}
+
+	function addDomain() {
+		const domain = newDomain.trim().toLowerCase().replace(/^@/, '');
+		if (domain && !allowedDomains.includes(domain)) {
+			allowedDomains = [...allowedDomains, domain];
+			newDomain = '';
+		}
+	}
+
+	function removeDomain(domain: string) {
+		allowedDomains = allowedDomains.filter((d) => d !== domain);
+	}
+
+	// Theme management functions
+	async function loadThemes() {
+		themesLoading = true;
+		themesError = '';
+		try {
+			const res = await apiFetch<{ themes: ThemeConfig[] }>('/themes/all');
+			themes = res.themes || [];
+		} catch (e: unknown) {
+			themesError = e instanceof Error ? e.message : 'Failed to load themes';
+		} finally {
+			themesLoading = false;
+		}
+	}
+
+	function startCreateTheme() {
+		editingTheme = { ...DEFAULT_THEME_FORM };
+		isCreatingTheme = true;
+	}
+
+	function startEditTheme(theme: ThemeConfig) {
+		editingTheme = {
+			id: (theme as unknown as { id: string }).id,
+			name: theme.name,
+			label: theme.label,
+			icon: theme.icon,
+			bgImage: theme.bgImage,
+			wallpaperOverlay: theme.wallpaperOverlay,
+			bg: theme.bg,
+			bgColor: theme.bgColor,
+			primary: theme.primary,
+			primaryHover: theme.primaryHover,
+			accentGradient: theme.accentGradient,
+			primaryRgb: theme.primaryRgb,
+			text: theme.text,
+			textMuted: theme.textMuted,
+			textPrimary: theme.textPrimary,
+			textSecondary: theme.textSecondary,
+			glassBg: theme.glassBg,
+			glassBorder: theme.glassBorder,
+			navGlass: theme.navGlass,
+			border: theme.border,
+			glow: theme.glow,
+			isActive: (theme as unknown as { isActive: boolean }).isActive ?? true
+		};
+		isCreatingTheme = false;
+	}
+
+	function cancelEditTheme() {
+		editingTheme = null;
+		isCreatingTheme = false;
+	}
+
+	async function saveTheme() {
+		if (!editingTheme) return;
+		
+		themesLoading = true;
+		themesError = '';
+		themesSaved = false;
+
+		try {
+			if (isCreatingTheme) {
+				await apiFetch('/themes', {
+					method: 'POST',
+					body: JSON.stringify(editingTheme)
+				});
+			} else if (editingTheme.id) {
+				await apiFetch(`/themes/${editingTheme.id}`, {
+					method: 'PUT',
+					body: JSON.stringify(editingTheme)
+				});
+			}
+
+			await loadThemes();
+			await loadCustomThemes(); // Refresh the global theme store
+			editingTheme = null;
+			isCreatingTheme = false;
+			themesSaved = true;
+			setTimeout(() => (themesSaved = false), 1800);
+		} catch (e: unknown) {
+			themesError = e instanceof Error ? e.message : 'Failed to save theme';
+		} finally {
+			themesLoading = false;
+		}
+	}
+
+	async function deleteTheme(themeId: string) {
+		if (!confirm('Are you sure you want to delete this theme?')) return;
+
+		themesLoading = true;
+		themesError = '';
+		try {
+			await apiFetch(`/themes/${themeId}`, { method: 'DELETE' });
+			await loadThemes();
+			await loadCustomThemes();
+		} catch (e: unknown) {
+			themesError = e instanceof Error ? e.message : 'Failed to delete theme';
+		} finally {
+			themesLoading = false;
 		}
 	}
 
@@ -355,6 +559,7 @@ async function toggleSignup() {
 	<div class="tabs" role="tablist" aria-label="Settings tabs">
 		<button class="tab-btn" class:active={activeSettingsTab === 'general'} onclick={() => (activeSettingsTab = 'general')}>General</button>
 		<button class="tab-btn" class:active={activeSettingsTab === 'ai'} onclick={() => (activeSettingsTab = 'ai')}>AI</button>
+		<button class="tab-btn" class:active={activeSettingsTab === 'themes'} onclick={() => (activeSettingsTab = 'themes')}>Themes</button>
 	</div>
 
 	{#if pageError}
@@ -394,6 +599,53 @@ async function toggleSignup() {
 						{/if}
 					</div>
 				</div>
+
+				<div class="setting-item domain-restriction-item">
+					<div class="setting-info">
+						<span class="setting-label">Email Domain Restriction</span>
+						<span class="setting-desc">Only allow registrations from specific email domains. When enabled, users must register with an email from one of the allowed domains.</span>
+					</div>
+					<div class="setting-control">
+						<button class="toggle-btn" class:enabled={domainRestrictionEnabled} onclick={() => { domainRestrictionEnabled = !domainRestrictionEnabled; }} disabled={signupLoading}>
+							<span class="toggle-track">
+								<span class="toggle-thumb"></span>
+							</span>
+							<span class="toggle-label">{domainRestrictionEnabled ? 'Enabled' : 'Disabled'}</span>
+						</button>
+					</div>
+				</div>
+
+				{#if domainRestrictionEnabled}
+					<div class="domain-list-section">
+						<div class="domain-input-row">
+							<input
+								type="text"
+								class="cell-input domain-input"
+								placeholder="e.g. saveetha.com"
+								bind:value={newDomain}
+								onkeydown={(e) => { if (e.key === 'Enter') { e.preventDefault(); addDomain(); } }}
+							/>
+							<button class="secondary-btn" onclick={addDomain} disabled={!newDomain.trim()}>Add Domain</button>
+						</div>
+						{#if allowedDomains.length > 0}
+							<div class="domain-tags">
+								{#each allowedDomains as domain}
+									<span class="domain-tag">
+										@{domain}
+										<button class="domain-remove" onclick={() => removeDomain(domain)} title="Remove domain">×</button>
+									</span>
+								{/each}
+							</div>
+						{:else}
+							<p class="domain-empty-msg">No domains configured. Add at least one domain to restrict registrations.</p>
+						{/if}
+						<div class="domain-save-row">
+							<button class="primary-btn" onclick={saveDomainRestriction} disabled={signupLoading}>
+								{signupLoading ? 'Saving...' : 'Save Domain Settings'}
+							</button>
+						</div>
+					</div>
+				{/if}
 			</div>
 		</section>
 
@@ -571,7 +823,7 @@ async function toggleSignup() {
 				</div>
 			{/if}
 		</section>
-	{:else}
+	{:else if activeSettingsTab === 'ai'}
 		<section class="glass-panel section">
 			<!-- <div class="section-head">
 				<div>
@@ -747,6 +999,151 @@ async function toggleSignup() {
 								{/each}
 							</tbody>
 						</table>
+					</div>
+				{/if}
+			{/if}
+		</section>
+	{:else if activeSettingsTab === 'themes'}
+		<section class="glass-panel section">
+			<div class="section-heading">
+				<div>
+					<h2 class="section-title">Theme Customization</h2>
+					<p class="section-copy">Create and manage custom themes for the application.</p>
+				</div>
+				<button class="primary-btn" onclick={startCreateTheme} disabled={themesLoading}>
+					Create Theme
+				</button>
+			</div>
+
+			{#if themesError}
+				<div class="settings-error" role="alert">{themesError}</div>
+			{/if}
+
+			{#if editingTheme}
+				<div class="theme-editor">
+					<h3 class="editor-title">{isCreatingTheme ? 'Create New Theme' : 'Edit Theme'}</h3>
+					
+					<div class="form-grid theme-form">
+						<div class="field">
+							<span>Name (slug)</span>
+							<input type="text" bind:value={editingTheme.name} placeholder="my-theme" disabled={!isCreatingTheme} pattern="^[a-z0-9_-]+$" />
+							<small>Lowercase, no spaces. Used internally.</small>
+						</div>
+						<div class="field">
+							<span>Label</span>
+							<input type="text" bind:value={editingTheme.label} placeholder="My Theme" />
+						</div>
+						<div class="field">
+							<span>Icon</span>
+							<input type="text" bind:value={editingTheme.icon} placeholder="🎨" maxlength="10" />
+						</div>
+						<div class="field">
+							<span>Background Image URL</span>
+							<input type="text" bind:value={editingTheme.bgImage} placeholder="/theme-pictures/custom.webp" />
+						</div>
+						<div class="field field-span-2">
+							<span>Background Gradient</span>
+							<input type="text" bind:value={editingTheme.bg} placeholder="linear-gradient(...)" />
+						</div>
+						<div class="field">
+							<span>Background Color</span>
+							<div class="color-input-row">
+								<input type="color" bind:value={editingTheme.bgColor} />
+								<input type="text" bind:value={editingTheme.bgColor} placeholder="#1a1a2e" />
+							</div>
+						</div>
+						<div class="field">
+							<span>Primary Color</span>
+							<div class="color-input-row">
+								<input type="color" bind:value={editingTheme.primary} />
+								<input type="text" bind:value={editingTheme.primary} placeholder="#6366f1" />
+							</div>
+						</div>
+						<div class="field">
+							<span>Primary Hover</span>
+							<div class="color-input-row">
+								<input type="color" bind:value={editingTheme.primaryHover} />
+								<input type="text" bind:value={editingTheme.primaryHover} placeholder="#818cf8" />
+							</div>
+						</div>
+						<div class="field">
+							<span>Accent Gradient</span>
+							<div class="color-input-row">
+								<input type="color" bind:value={editingTheme.accentGradient} />
+								<input type="text" bind:value={editingTheme.accentGradient} placeholder="#a855f7" />
+							</div>
+						</div>
+						<div class="field">
+							<span>Primary RGB</span>
+							<input type="text" bind:value={editingTheme.primaryRgb} placeholder="99, 102, 241" />
+						</div>
+						<div class="field">
+							<span>Text Color</span>
+							<div class="color-input-row">
+								<input type="color" bind:value={editingTheme.text} />
+								<input type="text" bind:value={editingTheme.text} placeholder="#f8fafc" />
+							</div>
+						</div>
+						<div class="field">
+							<span>Text Muted</span>
+							<input type="text" bind:value={editingTheme.textMuted} placeholder="#94a3b8" />
+						</div>
+						<div class="field">
+							<span>Text Primary</span>
+							<input type="text" bind:value={editingTheme.textPrimary} placeholder="#1e293b" />
+						</div>
+						<div class="field">
+							<span>Glass Background</span>
+							<input type="text" bind:value={editingTheme.glassBg} placeholder="rgba(255, 255, 255, 0.55)" />
+						</div>
+						<div class="field">
+							<span>Glass Border</span>
+							<input type="text" bind:value={editingTheme.glassBorder} placeholder="rgba(255, 255, 255, 0.7)" />
+						</div>
+						<div class="field">
+							<span>Glow Color</span>
+							<input type="text" bind:value={editingTheme.glow} placeholder="rgba(99,102,241,0.35)" />
+						</div>
+					</div>
+
+					<div class="editor-actions">
+						<button class="secondary-btn" onclick={cancelEditTheme}>Cancel</button>
+						<button class="primary-btn" onclick={saveTheme} disabled={themesLoading || !editingTheme.name || !editingTheme.label}>
+							{themesLoading ? 'Saving...' : 'Save Theme'}
+						</button>
+						{#if themesSaved}
+							<span class="saved-indicator">Saved</span>
+						{/if}
+					</div>
+				</div>
+			{:else}
+				{#if themes.length === 0}
+					<div class="center-state">
+						<p>No custom themes yet. Click "Create Theme" to add one.</p>
+					</div>
+				{:else}
+					<div class="themes-grid">
+						{#each themes as theme (theme.name)}
+							<div class="theme-card" style="--card-primary: {theme.primary}; --card-bg: {theme.bgColor};">
+								<div class="theme-card-header">
+									<span class="theme-icon">{theme.icon}</span>
+									<div class="theme-meta">
+										<strong>{theme.label}</strong>
+										<span class="theme-name">@{theme.name}</span>
+									</div>
+								</div>
+								<div class="theme-colors">
+									<span class="color-chip" style="background: {theme.primary};" title="Primary"></span>
+									<span class="color-chip" style="background: {theme.primaryHover};" title="Primary Hover"></span>
+									<span class="color-chip" style="background: {theme.accentGradient};" title="Accent"></span>
+									<span class="color-chip" style="background: {theme.bgColor};" title="Background"></span>
+								</div>
+								<div class="theme-card-actions">
+									<button class="tiny-btn" onclick={() => startEditTheme(theme)}>Edit</button>
+									<button class="tiny-btn danger" onclick={() => deleteTheme((theme as unknown as { id: string }).id)}>Delete</button>
+								</div>
+							</div>
+						{/each}
 					</div>
 				{/if}
 			{/if}
@@ -967,6 +1364,82 @@ async function toggleSignup() {
 		justify-content: space-between;
 		align-items: center;
 		gap: 1rem;
+	}
+
+	.domain-restriction-item {
+		padding-top: 0.75rem;
+		border-top: 1px solid var(--theme-glass-border);
+	}
+
+	.domain-list-section {
+		margin-top: 0.75rem;
+		padding: 0.85rem;
+		border: 1px solid var(--theme-glass-border);
+		border-radius: 0.7rem;
+		background: color-mix(in srgb, var(--theme-surface) 50%, transparent);
+	}
+
+	.domain-input-row {
+		display: flex;
+		gap: 0.5rem;
+		margin-bottom: 0.75rem;
+	}
+
+	.domain-input {
+		flex: 1;
+		max-width: 280px;
+	}
+
+	.domain-tags {
+		display: flex;
+		flex-wrap: wrap;
+		gap: 0.45rem;
+		margin-bottom: 0.75rem;
+	}
+
+	.domain-tag {
+		display: inline-flex;
+		align-items: center;
+		gap: 0.35rem;
+		padding: 0.32rem 0.55rem;
+		background: color-mix(in srgb, var(--theme-primary) 18%, transparent);
+		border: 1px solid color-mix(in srgb, var(--theme-primary) 35%, var(--theme-glass-border));
+		border-radius: 999px;
+		font-size: 0.8rem;
+		font-weight: 600;
+		color: var(--theme-text);
+	}
+
+	.domain-remove {
+		display: inline-flex;
+		align-items: center;
+		justify-content: center;
+		width: 1.1rem;
+		height: 1.1rem;
+		border: none;
+		background: transparent;
+		color: var(--theme-text-muted);
+		cursor: pointer;
+		font-size: 1rem;
+		line-height: 1;
+		border-radius: 999px;
+		transition: background 0.15s, color 0.15s;
+	}
+
+	.domain-remove:hover {
+		background: rgba(239, 68, 68, 0.2);
+		color: #f87171;
+	}
+
+	.domain-empty-msg {
+		margin: 0 0 0.75rem;
+		font-size: 0.82rem;
+		color: var(--theme-text-muted);
+	}
+
+	.domain-save-row {
+		display: flex;
+		justify-content: flex-end;
 	}
 
 	.metric-controls {
@@ -1463,5 +1936,118 @@ async function toggleSignup() {
 			flex-direction: column;
 			align-items: stretch;
 		}
+	}
+
+	/* Theme Customization Styles */
+	.theme-editor {
+		border: 1px solid var(--theme-glass-border);
+		border-radius: 0.8rem;
+		padding: 1.2rem;
+		background: color-mix(in srgb, var(--theme-surface) 50%, transparent);
+	}
+
+	.editor-title {
+		margin: 0 0 1rem;
+		font-size: 1rem;
+		font-weight: 700;
+	}
+
+	.theme-form {
+		margin-bottom: 1rem;
+	}
+
+	.color-input-row {
+		display: flex;
+		gap: 0.5rem;
+		align-items: center;
+	}
+
+	.color-input-row input[type="color"] {
+		width: 2.5rem;
+		height: 2.2rem;
+		padding: 0.15rem;
+		border: 1px solid var(--theme-glass-border);
+		border-radius: 0.4rem;
+		cursor: pointer;
+	}
+
+	.color-input-row input[type="text"] {
+		flex: 1;
+	}
+
+	.editor-actions {
+		display: flex;
+		gap: 0.6rem;
+		align-items: center;
+		justify-content: flex-end;
+	}
+
+	.themes-grid {
+		display: grid;
+		grid-template-columns: repeat(auto-fill, minmax(280px, 1fr));
+		gap: 1rem;
+	}
+
+	.theme-card {
+		border: 1px solid var(--theme-glass-border);
+		border-radius: 0.8rem;
+		padding: 1rem;
+		background: color-mix(in srgb, var(--card-bg, var(--theme-surface)) 15%, transparent);
+		display: flex;
+		flex-direction: column;
+		gap: 0.75rem;
+	}
+
+	.theme-card-header {
+		display: flex;
+		align-items: center;
+		gap: 0.65rem;
+	}
+
+	.theme-icon {
+		font-size: 1.5rem;
+		line-height: 1;
+	}
+
+	.theme-meta {
+		display: flex;
+		flex-direction: column;
+		gap: 0.1rem;
+	}
+
+	.theme-meta strong {
+		font-size: 0.95rem;
+	}
+
+	.theme-name {
+		font-size: 0.75rem;
+		color: var(--theme-text-muted);
+		font-family: monospace;
+	}
+
+	.theme-colors {
+		display: flex;
+		gap: 0.35rem;
+	}
+
+	.color-chip {
+		width: 1.5rem;
+		height: 1.5rem;
+		border-radius: 0.35rem;
+		border: 1px solid rgba(255, 255, 255, 0.2);
+	}
+
+	.theme-card-actions {
+		display: flex;
+		gap: 0.4rem;
+		margin-top: auto;
+	}
+
+	.tiny-btn.danger {
+		color: #f87171;
+	}
+
+	.tiny-btn.danger:hover {
+		background: rgba(239, 68, 68, 0.15);
 	}
 </style>
