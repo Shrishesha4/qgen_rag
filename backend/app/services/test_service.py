@@ -219,32 +219,63 @@ class TestService:
             reranker_service=reranker_service,
         )
 
-        # Build difficulty plan — pedagogical order: easy → medium → hard
+        # Build difficulty pool or plan based on config
         difficulty_config = test.difficulty_config or {}
-        generation_plan: List[Dict[str, Any]] = []
-        # Ordered pedagogically
+        difficulty_pool = []
         for level in ["easy", "medium", "hard"]:
             cfg = difficulty_config.get(level)
             if isinstance(cfg, dict) and cfg.get("count", 0) > 0:
-                generation_plan.append({
-                    "difficulty": level,
-                    "count": cfg["count"],
-                    "focus_topics": cfg.get("lo_mapping") or None,
-                })
-
-        # If no difficulty config, default to balanced 10 questions
-        if not generation_plan:
-            generation_plan = [
-                {"difficulty": "easy", "count": 4, "focus_topics": None},
-                {"difficulty": "medium", "count": 3, "focus_topics": None},
-                {"difficulty": "hard", "count": 3, "focus_topics": None},
-            ]
-
-        # Handle topic-wise generation — use topic names as focus
+                difficulty_pool.extend([level] * cfg["count"])
+        
+        if not difficulty_pool:
+            difficulty_pool = ["easy"] * 4 + ["medium"] * 3 + ["hard"] * 3
+            
+        generation_plan: List[Dict[str, Any]] = []
         topic_config = test.topic_config or []
-        topic_focus = None
+
         if test.generation_type in ("topic_wise", "multi_topic") and topic_config:
-            topic_focus = [t.get("topic_name", "") for t in topic_config if t.get("topic_name")]
+            diff_idx = 0
+            for topic in topic_config:
+                t_count = topic.get("count", 5)
+                if not isinstance(t_count, int):
+                    try:
+                        t_count = int(t_count)
+                    except:
+                        t_count = 5
+                
+                t_id_str = topic.get("topic_id")
+                t_name = topic.get("topic_name", "")
+                
+                t_diff_counts = {"easy": 0, "medium": 0, "hard": 0}
+                for _ in range(t_count):
+                    diff = difficulty_pool[diff_idx % len(difficulty_pool)]
+                    t_diff_counts[diff] += 1
+                    diff_idx += 1
+                
+                for level, count in t_diff_counts.items():
+                    if count > 0:
+                        generation_plan.append({
+                            "difficulty": level,
+                            "count": count,
+                            "focus_topics": [t_name] if t_name else None,
+                            "topic_id": t_id_str
+                        })
+        else:
+            for level in ["easy", "medium", "hard"]:
+                cfg = difficulty_config.get(level)
+                if isinstance(cfg, dict) and cfg.get("count", 0) > 0:
+                    generation_plan.append({
+                        "difficulty": level,
+                        "count": cfg["count"],
+                        "focus_topics": cfg.get("lo_mapping") or None,
+                        "topic_id": None
+                    })
+            if not generation_plan:
+                generation_plan = [
+                    {"difficulty": "easy", "count": 4, "focus_topics": None, "topic_id": None},
+                    {"difficulty": "medium", "count": 3, "focus_topics": None, "topic_id": None},
+                    {"difficulty": "hard", "count": 3, "focus_topics": None, "topic_id": None},
+                ]
 
         # Build blacklist from existing questions for this subject (deduplication)
         blacklist_result = await self.db.execute(
@@ -291,13 +322,20 @@ class TestService:
             difficulty = plan["difficulty"]
             count = plan["count"]
             marks_per_q = self._get_marks_for_difficulty(difficulty)
-            focus = topic_focus or plan.get("focus_topics")
+            focus = plan.get("focus_topics")
+            topic_id_str = plan.get("topic_id")
 
             logger.info(
                 f"Generating {count} {difficulty} questions for test {test_id}"
             )
 
-            for i in range(count):
+            generated_for_plan = 0
+            max_retries_per_q = 10  # retry up to 10 times per question slot
+            attempts = 0
+            max_total_attempts = count * (max_retries_per_q + 2)  # hard ceiling
+
+            while generated_for_plan < count and attempts < max_total_attempts:
+                attempts += 1
                 try:
                     # Select relevant chunks
                     focus_topics_for_chunk = focus
@@ -320,17 +358,18 @@ class TestService:
                     )
 
                     if not question_data:
-                        logger.warning(f"LLM returned no data for question {i+1} ({difficulty})")
+                        logger.warning(f"LLM returned no data for question attempt {attempts} ({difficulty})")
                         continue
 
                     # Check for duplicates against existing + newly generated
+                    # Threshold of 0.92 avoids false positives on semantically-similar-but-distinct questions
                     is_duplicate = await qgen_service._check_duplicate(
                         question_text=question_data["question_text"],
                         blacklist_embeddings=blacklist_embeddings,
-                        threshold=0.85,
+                        threshold=0.92,
                     )
                     if is_duplicate:
-                        logger.info(f"Skipping duplicate question ({difficulty} #{i+1})")
+                        logger.info(f"Duplicate detected ({difficulty} attempt {attempts}), retrying...")
                         continue
 
                     # Save question to the question bank
@@ -342,8 +381,9 @@ class TestService:
                         marks=marks_per_q,
                         difficulty=difficulty,
                         chunk_ids=[c.id for c in selected_chunks],
-                        chunks=None,  # Skip strict validation for test generation
+                        chunks=selected_chunks,
                         subject_id=test.subject_id,
+                        topic_id=uuid.UUID(topic_id_str) if topic_id_str else None,
                     )
 
                     # Add to blacklist for future dedup within this batch
@@ -360,18 +400,25 @@ class TestService:
                     self.db.add(tq)
                     total_marks += marks_per_q
                     order_index += 1
+                    generated_for_plan += 1
                     generated_questions.append(question_obj)
 
                     logger.info(
-                        f"Generated {difficulty} question {i+1}/{count} for test {test_id}"
+                        f"Generated {difficulty} question {generated_for_plan}/{count} for test {test_id}"
                     )
 
                 except Exception as e:
                     logger.error(
-                        f"Failed to generate {difficulty} question {i+1}: {e}"
+                        f"Failed to generate {difficulty} question (attempt {attempts}): {e}"
                     )
                     questions_failed += 1
                     continue
+
+            if generated_for_plan < count:
+                logger.warning(
+                    f"Could only generate {generated_for_plan}/{count} {difficulty} "
+                    f"questions after {attempts} attempts for test {test_id}"
+                )
 
         if not generated_questions:
             raise ValueError(
@@ -490,6 +537,13 @@ class TestService:
             })
         return questions
 
+    async def get_submissions_count(self, test_id: UUID) -> int:
+        """Get total submissions count for a test."""
+        result = await self.db.execute(
+            select(func.count(TestSubmission.id)).where(TestSubmission.test_id == test_id)
+        )
+        return result.scalar() or 0
+
     async def update_test_question(
         self, test_id: UUID, test_question_id: UUID, teacher_id: UUID, data: dict
     ) -> Optional[dict]:
@@ -604,11 +658,13 @@ class TestService:
 
     async def get_test_for_student(self, test_id: UUID, student_id: UUID) -> Optional[dict]:
         """Get test details and questions for a student to take."""
+        import random
+        
         test = await self.get_test(test_id)
         if not test or test.status != "published":
             return None
 
-        # Check if already submitted
+        # Check previous submissions (for info, but allow re-attempts)
         result = await self.db.execute(
             select(TestSubmission).where(
                 and_(
@@ -616,10 +672,9 @@ class TestService:
                     TestSubmission.student_id == student_id,
                     TestSubmission.status == "submitted",
                 )
-            )
+            ).order_by(TestSubmission.submitted_at.desc())
         )
-        if result.scalar_one_or_none():
-            return {"already_submitted": True, "test_id": test_id}
+        previous_submission = result.scalar_one_or_none()
 
         # Get questions (without correct answers)
         questions = await self.get_test_questions(test_id)
@@ -627,6 +682,12 @@ class TestService:
             q.pop("correct_answer", None)
             q.pop("correct_answer_override", None)
             q.pop("explanation", None)
+            # Shuffle options if present
+            if q.get("options"):
+                random.shuffle(q["options"])
+        
+        # Shuffle questions order
+        random.shuffle(questions)
 
         return {
             "id": test.id,
@@ -637,6 +698,11 @@ class TestService:
             "total_marks": test.total_marks,
             "duration_minutes": test.duration_minutes,
             "questions": questions,
+            "previous_attempt": {
+                "score": previous_submission.score,
+                "total_marks": previous_submission.total_marks,
+                "submitted_at": previous_submission.submitted_at.isoformat() if previous_submission.submitted_at else None,
+            } if previous_submission else None,
         }
 
     async def submit_test(self, test_id: UUID, student_id: UUID, data: dict) -> dict:
@@ -645,18 +711,16 @@ class TestService:
         if not test or test.status != "published":
             raise ValueError("Test not available")
 
-        # Check if already submitted
+        # Check for existing submission (for re-attempts, we update it)
         result = await self.db.execute(
             select(TestSubmission).where(
                 and_(
                     TestSubmission.test_id == test_id,
                     TestSubmission.student_id == student_id,
-                    TestSubmission.status == "submitted",
                 )
             )
         )
-        if result.scalar_one_or_none():
-            raise ValueError("Already submitted this test")
+        existing_submission = result.scalar_one_or_none()
 
         # Get questions with answers
         questions = await self.get_test_questions(test_id)
@@ -691,25 +755,50 @@ class TestService:
 
         percentage = round((score / total_marks * 100), 1) if total_marks > 0 else 0.0
 
-        submission = TestSubmission(
-            test_id=test_id,
-            student_id=student_id,
-            score=score,
-            total_marks=total_marks,
-            percentage=percentage,
-            answers=answer_results,
-            time_taken_seconds=data.get("total_time_seconds"),
-            status="submitted",
-            submitted_at=datetime.now(timezone.utc),
-        )
-        self.db.add(submission)
+        if existing_submission:
+            # Update existing submission for re-attempt
+            existing_submission.score = score
+            existing_submission.total_marks = total_marks
+            existing_submission.percentage = percentage
+            existing_submission.answers = answer_results
+            existing_submission.time_taken_seconds = data.get("total_time_seconds")
+            existing_submission.status = "submitted"
+            existing_submission.submitted_at = datetime.now(timezone.utc)
+            submission = existing_submission
+        else:
+            # Create new submission
+            submission = TestSubmission(
+                test_id=test_id,
+                student_id=student_id,
+                score=score,
+                total_marks=total_marks,
+                percentage=percentage,
+                answers=answer_results,
+                time_taken_seconds=data.get("total_time_seconds"),
+                status="submitted",
+                submitted_at=datetime.now(timezone.utc),
+            )
+            self.db.add(submission)
+        
         await self.db.commit()
         await self.db.refresh(submission)
 
         # Award XP and gamification stats
+        tutor_feedback = None
         try:
             from app.services.gamification_service import GamificationService
             gamification = GamificationService(self.db)
+            # Build question_details for AI tutor feedback
+            question_details = [
+                {
+                    "question_text": question_map.get(r["question_id"], {}).get("question_text", ""),
+                    "options": question_map.get(r["question_id"], {}).get("options", []),
+                    "selected_answer": r["selected_answer"],
+                    "correct_answer": r["correct_answer"],
+                    "is_correct": r["is_correct"],
+                }
+                for r in answer_results
+            ]
             gamification_result = await gamification.process_test_submission(
                 student_id=student_id,
                 subject_id=test.subject_id,
@@ -718,8 +807,10 @@ class TestService:
                 total_marks=total_marks,
                 total_questions=len(questions),
                 total_time_seconds=data.get("total_time_seconds", 0),
-                results=answer_results
+                results=answer_results,
+                question_details=question_details,
             )
+            tutor_feedback = gamification_result.get("tutor_feedback")
         except Exception as e:
             logger.error(f"Failed to record gamification for test: {e}")
 
@@ -735,6 +826,7 @@ class TestService:
             "started_at": submission.started_at,
             "submitted_at": submission.submitted_at,
             "results": answer_results,
+            "tutor_feedback": tutor_feedback,
         }
 
     def _check_answer(self, selected: str, correct: str) -> bool:

@@ -1,8 +1,9 @@
 /**
  * Take Test Screen - Gamified one-question-at-a-time test experience
- * Features: animated transitions, progress bar, timer, streak counter, score reveal
+ * Features: 3...2...1...GO! countdown, react-native-reanimated 120fps animations,
+ * haptic feedback, AI Tutor feedback, celebration effects
  */
-import React, { useEffect, useState, useCallback, useRef } from 'react';
+import React, { useEffect, useState, useCallback } from 'react';
 import {
     View,
     Text,
@@ -10,17 +11,64 @@ import {
     TouchableOpacity,
     ActivityIndicator,
     Alert,
-    Animated,
     Dimensions,
+    ScrollView,
 } from 'react-native';
 import { useRouter, useLocalSearchParams } from 'expo-router';
 import { SafeAreaView } from 'react-native-safe-area-context';
+import * as Haptics from 'expo-haptics';
+import ReAnimated, {
+    useSharedValue,
+    useAnimatedStyle,
+    withSpring,
+    withTiming,
+    withDelay,
+    withSequence,
+    withRepeat,
+    runOnJS,
+    Easing,
+} from 'react-native-reanimated';
 import { useColorScheme } from '@/hooks/use-color-scheme';
 import { Colors, Spacing, FontSizes, BorderRadius } from '@/constants/theme';
 import { IconSymbol } from '@/components/ui/icon-symbol';
 import { testsService } from '@/services/tests';
 
 const { width: SCREEN_WIDTH } = Dimensions.get('window');
+
+// Spring configs for high-refresh-rate smoothness
+const SPRING_SNAPPY = { damping: 20, stiffness: 200, mass: 0.8 };
+const SPRING_BOUNCY = { damping: 12, stiffness: 150, mass: 0.6 };
+const SPRING_GENTLE = { damping: 15, stiffness: 100, mass: 1 };
+
+// Level definitions with emojis and descriptions
+const LEVEL_INFO = {
+    easy: {
+        level: 1,
+        emoji: '🌱',
+        title: 'Level 1 - Warm Up',
+        subtitle: 'Easy Questions',
+        description: 'Let\'s start with the basics. Build your confidence!',
+        color: '#34C759',
+    },
+    medium: {
+        level: 2,
+        emoji: '🔥',
+        title: 'Level 2 - Getting Serious',
+        subtitle: 'Medium Questions',
+        description: 'Time to challenge yourself. Stay focused!',
+        color: '#FF9500',
+    },
+    hard: {
+        level: 3,
+        emoji: '💎',
+        title: 'Level 3 - Expert Mode',
+        subtitle: 'Hard Questions',
+        description: 'The real test begins. Show what you\'ve got!',
+        color: '#FF3B30',
+    },
+};
+
+type DifficultyLevel = 'easy' | 'medium' | 'hard';
 
 export default function TakeTestScreen() {
     const colorScheme = useColorScheme() ?? 'light';
@@ -31,28 +79,91 @@ export default function TakeTestScreen() {
     const [test, setTest] = useState<any>(null);
     const [questions, setQuestions] = useState<any[]>([]);
     const [isLoading, setIsLoading] = useState(true);
+    const [showCountdown, setShowCountdown] = useState(false);
+    const [countdownValue, setCountdownValue] = useState('3');
     const [currentIndex, setCurrentIndex] = useState(0);
     const [answers, setAnswers] = useState<Record<string, string>>({});
     const [submitting, setSubmitting] = useState(false);
     const [showResult, setShowResult] = useState(false);
     const [result, setResult] = useState<any>(null);
     const [elapsedSeconds, setElapsedSeconds] = useState(0);
+    const [testStarted, setTestStarted] = useState(false);
 
-    // Animations
-    const slideAnim = useRef(new Animated.Value(0)).current;
-    const fadeAnim = useRef(new Animated.Value(1)).current;
-    const scaleAnim = useRef(new Animated.Value(1)).current;
-    const progressAnim = useRef(new Animated.Value(0)).current;
-    const optionAnims = useRef<Animated.Value[]>([]).current;
-    const resultScaleAnim = useRef(new Animated.Value(0)).current;
-    const resultFadeAnim = useRef(new Animated.Value(0)).current;
+    // Level-based organization
+    const [groupedQuestions, setGroupedQuestions] = useState<{
+        easy: any[];
+        medium: any[];
+        hard: any[];
+    }>({ easy: [], medium: [], hard: [] });
+    const [currentLevel, setCurrentLevel] = useState<DifficultyLevel | null>(null);
+    const [showLevelInterstitial, setShowLevelInterstitial] = useState(false);
+    const [levelOrder, setLevelOrder] = useState<DifficultyLevel[]>([]);
+    const [currentLevelIndex, setCurrentLevelIndex] = useState(0);
+    const [questionIndexInLevel, setQuestionIndexInLevel] = useState(0);
 
-    // Timer
+    // Reanimated shared values
+    const countdownScale = useSharedValue(0);
+    const countdownOpacity = useSharedValue(0);
+    const overlayOpacity = useSharedValue(1);
+
+    const questionSlideX = useSharedValue(0);
+    const questionFade = useSharedValue(1);
+    const questionScale = useSharedValue(1);
+    const progressWidth = useSharedValue(0);
+
+    // Option animation values - declared individually to satisfy hooks rules
+    const opt0Opacity = useSharedValue(0); const opt0TranslateY = useSharedValue(30);
+    const opt1Opacity = useSharedValue(0); const opt1TranslateY = useSharedValue(30);
+    const opt2Opacity = useSharedValue(0); const opt2TranslateY = useSharedValue(30);
+    const opt3Opacity = useSharedValue(0); const opt3TranslateY = useSharedValue(30);
+    const opt4Opacity = useSharedValue(0); const opt4TranslateY = useSharedValue(30);
+    const opt5Opacity = useSharedValue(0); const opt5TranslateY = useSharedValue(30);
+    const optionValues = [
+        { opacity: opt0Opacity, translateY: opt0TranslateY },
+        { opacity: opt1Opacity, translateY: opt1TranslateY },
+        { opacity: opt2Opacity, translateY: opt2TranslateY },
+        { opacity: opt3Opacity, translateY: opt3TranslateY },
+        { opacity: opt4Opacity, translateY: opt4TranslateY },
+        { opacity: opt5Opacity, translateY: opt5TranslateY },
+    ];
+
+    const resultScale = useSharedValue(0);
+    const resultOpacity = useSharedValue(0);
+    const tutorFade = useSharedValue(0);
+    const tutorSlide = useSharedValue(20);
+    const confettiOp = useSharedValue(0);
+    const pulseScale = useSharedValue(1);
+    const selectedPop = useSharedValue(1);
+
+    // Level interstitial animation values
+    const levelScale = useSharedValue(0);
+    const levelOpacity = useSharedValue(0);
+    const levelEmojiScale = useSharedValue(0);
+    const levelTitleY = useSharedValue(30);
+    const levelDescY = useSharedValue(30);
+
+    // Timer - only counts when test has started and not showing result
     useEffect(() => {
-        if (isLoading || showResult) return;
+        if (!testStarted || showResult) return;
         const timer = setInterval(() => setElapsedSeconds((s) => s + 1), 1000);
         return () => clearInterval(timer);
-    }, [isLoading, showResult]);
+    }, [testStarted, showResult]);
+
+    // Pulse animation for submitting state
+    useEffect(() => {
+        if (submitting) {
+            pulseScale.value = withRepeat(
+                withSequence(
+                    withTiming(1.06, { duration: 700, easing: Easing.inOut(Easing.ease) }),
+                    withTiming(1, { duration: 700, easing: Easing.inOut(Easing.ease) })
+                ),
+                -1, // infinite repeat
+                true  // reverse
+            );
+        } else {
+            pulseScale.value = 1;
+        }
+    }, [submitting]);
 
     const formatTime = (s: number) => {
         const m = Math.floor(s / 60);
@@ -60,112 +171,251 @@ export default function TakeTestScreen() {
         return `${m}:${sec.toString().padStart(2, '0')}`;
     };
 
+    // ====== Level Interstitial ======
+    const startLevelInterstitial = useCallback((level: DifficultyLevel) => {
+        setCurrentLevel(level);
+        setShowLevelInterstitial(true);
+        
+        // Reset animations
+        levelScale.value = 0;
+        levelOpacity.value = 0;
+        levelEmojiScale.value = 0;
+        levelTitleY.value = 30;
+        levelDescY.value = 30;
+
+        Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Heavy);
+
+        // Animate in
+        levelOpacity.value = withTiming(1, { duration: 300 });
+        levelScale.value = withSpring(1, SPRING_BOUNCY);
+        levelEmojiScale.value = withDelay(100, withSpring(1, { damping: 8, stiffness: 200 }));
+        levelTitleY.value = withDelay(200, withSpring(0, SPRING_GENTLE));
+        levelDescY.value = withDelay(350, withSpring(0, SPRING_GENTLE));
+
+        // Auto-dismiss after animation
+        setTimeout(() => {
+            levelOpacity.value = withTiming(0, { duration: 300 }, () => {
+                runOnJS(setShowLevelInterstitial)(false);
+            });
+        }, 2000);
+    }, []);
+
+    // ====== Countdown ======
+    const startCountdown = useCallback(() => {
+        setShowCountdown(true);
+        const steps = ['3', '2', '1', 'GO!'];
+        let i = 0;
+
+        const showNext = () => {
+            if (i >= steps.length) {
+                // End countdown
+                overlayOpacity.value = withTiming(0, { duration: 300 }, () => {
+                    runOnJS(setShowCountdown)(false);
+                    runOnJS(setTestStarted)(true);
+                });
+                return;
+            }
+            runOnJS(setCountdownValue)(steps[i]);
+            runOnJS(Haptics.impactAsync)(Haptics.ImpactFeedbackStyle.Heavy);
+
+            countdownScale.value = 0;
+            countdownOpacity.value = 1;
+            countdownScale.value = withSequence(
+                withSpring(1.3, { damping: 8, stiffness: 300 }),
+                withSpring(1, { damping: 14, stiffness: 200 })
+            );
+
+            // Fade out after showing
+            setTimeout(() => {
+                countdownOpacity.value = withTiming(0, { duration: 250 });
+                i++;
+                setTimeout(showNext, 300);
+            }, 600);
+        };
+
+        setTimeout(showNext, 200);
+    }, []);
+
     // Load test
     useEffect(() => {
         if (!testId) return;
         (async () => {
             try {
                 const data = await testsService.getStudentTest(testId);
-                if (data.already_submitted) {
-                    Alert.alert('Already Submitted', 'You have already completed this test.', [
-                        { text: 'OK', onPress: () => router.back() },
-                    ]);
-                    return;
-                }
                 setTest(data);
-                setQuestions(data.questions || []);
-                // Init option animations
-                const opts = data.questions?.[0]?.options || [];
-                for (let i = 0; i < 6; i++) {
-                    if (!optionAnims[i]) optionAnims.push(new Animated.Value(0));
-                }
-                // Animate first question entry
-                setTimeout(() => animateQuestionEntry(opts.length), 300);
+                
+                // Group questions by difficulty
+                const qs = data.questions || [];
+                const grouped = {
+                    easy: qs.filter((q: any) => q.difficulty_level === 'easy'),
+                    medium: qs.filter((q: any) => q.difficulty_level === 'medium'),
+                    hard: qs.filter((q: any) => q.difficulty_level === 'hard'),
+                };
+                
+                // Handle questions without difficulty level - put them in medium
+                const unassigned = qs.filter((q: any) => 
+                    !['easy', 'medium', 'hard'].includes(q.difficulty_level)
+                );
+                grouped.medium = [...grouped.medium, ...unassigned];
+                
+                setGroupedQuestions(grouped);
+                
+                // Determine level order (only include levels with questions)
+                const order: DifficultyLevel[] = [];
+                if (grouped.easy.length > 0) order.push('easy');
+                if (grouped.medium.length > 0) order.push('medium');
+                if (grouped.hard.length > 0) order.push('hard');
+                setLevelOrder(order);
+                
+                // Flatten questions in order: easy -> medium -> hard
+                const orderedQuestions = [
+                    ...grouped.easy,
+                    ...grouped.medium,
+                    ...grouped.hard,
+                ];
+                setQuestions(orderedQuestions);
+                
+                setIsLoading(false);
+                // Start countdown after load
+                setTimeout(() => startCountdown(), 300);
             } catch (error: any) {
                 Alert.alert('Error', error?.response?.data?.detail || 'Failed to load test');
                 router.back();
-            } finally {
-                setIsLoading(false);
             }
         })();
     }, [testId]);
 
+    // Show first level interstitial after countdown
+    useEffect(() => {
+        if (testStarted && levelOrder.length > 0 && !currentLevel) {
+            // Show the first level interstitial
+            const firstLevel = levelOrder[0];
+            setCurrentLevelIndex(0);
+            setQuestionIndexInLevel(0);
+            startLevelInterstitial(firstLevel);
+        }
+    }, [testStarted, levelOrder, currentLevel, startLevelInterstitial]);
+
+    // Animate first question after level interstitial dismisses
+    useEffect(() => {
+        if (testStarted && questions.length > 0 && currentLevel && !showLevelInterstitial) {
+            animateQuestionEntry(questions[currentIndex]?.options?.length || 0);
+        }
+    }, [testStarted, showLevelInterstitial, currentLevel]);
+
+    // Helper to get the current level for a question index
+    const getLevelForIndex = useCallback((index: number): DifficultyLevel | null => {
+        const easyCount = groupedQuestions.easy.length;
+        const mediumCount = groupedQuestions.medium.length;
+        
+        if (index < easyCount) return 'easy';
+        if (index < easyCount + mediumCount) return 'medium';
+        return 'hard';
+    }, [groupedQuestions]);
+
+    // Check if we're transitioning to a new level
+    const checkLevelTransition = useCallback((newIndex: number) => {
+        const newLevel = getLevelForIndex(newIndex);
+        const currentQuestionLevel = getLevelForIndex(currentIndex);
+        
+        if (newLevel && newLevel !== currentQuestionLevel && levelOrder.includes(newLevel)) {
+            // Transitioning to a new level
+            const newLevelIdx = levelOrder.indexOf(newLevel);
+            setCurrentLevelIndex(newLevelIdx);
+            setQuestionIndexInLevel(0);
+            setCurrentIndex(newIndex);
+            startLevelInterstitial(newLevel);
+            return true;
+        }
+        return false;
+    }, [getLevelForIndex, currentIndex, levelOrder, startLevelInterstitial]);
+
     const animateQuestionEntry = (optCount: number) => {
-        slideAnim.setValue(SCREEN_WIDTH);
-        fadeAnim.setValue(0);
-        scaleAnim.setValue(0.9);
+        questionSlideX.value = SCREEN_WIDTH;
+        questionFade.value = 0;
+        questionScale.value = 0.92;
 
         // Reset option anims
         for (let i = 0; i < 6; i++) {
-            if (optionAnims[i]) optionAnims[i].setValue(0);
+            optionValues[i].opacity.value = 0;
+            optionValues[i].translateY.value = 30;
         }
 
-        Animated.parallel([
-            Animated.spring(slideAnim, { toValue: 0, useNativeDriver: true, tension: 50, friction: 9 }),
-            Animated.timing(fadeAnim, { toValue: 1, duration: 300, useNativeDriver: true }),
-            Animated.spring(scaleAnim, { toValue: 1, useNativeDriver: true, tension: 50, friction: 9 }),
-        ]).start();
+        questionSlideX.value = withSpring(0, SPRING_SNAPPY);
+        questionFade.value = withTiming(1, { duration: 300 });
+        questionScale.value = withSpring(1, SPRING_SNAPPY);
 
-        // Stagger option animations
+        // Stagger options
         for (let i = 0; i < optCount; i++) {
-            if (optionAnims[i]) {
-                Animated.timing(optionAnims[i], {
-                    toValue: 1,
-                    duration: 250,
-                    delay: 200 + i * 80,
-                    useNativeDriver: true,
-                }).start();
-            }
+            optionValues[i].opacity.value = withDelay(200 + i * 70, withTiming(1, { duration: 250 }));
+            optionValues[i].translateY.value = withDelay(200 + i * 70, withSpring(0, SPRING_BOUNCY));
         }
 
         // Progress bar
-        Animated.timing(progressAnim, {
-            toValue: (currentIndex + 1) / Math.max(questions.length, 1),
-            duration: 400,
-            useNativeDriver: false,
-        }).start();
+        progressWidth.value = withTiming(
+            ((currentIndex + 1) / Math.max(questions.length, 1)) * 100,
+            { duration: 400, easing: Easing.out(Easing.cubic) }
+        );
     };
 
     const animateQuestionExit = (direction: 'left' | 'right', cb: () => void) => {
         const toX = direction === 'left' ? -SCREEN_WIDTH : SCREEN_WIDTH;
-        Animated.parallel([
-            Animated.timing(slideAnim, { toValue: toX, duration: 200, useNativeDriver: true }),
-            Animated.timing(fadeAnim, { toValue: 0, duration: 200, useNativeDriver: true }),
-        ]).start(cb);
+        questionSlideX.value = withTiming(toX, { duration: 200, easing: Easing.in(Easing.cubic) });
+        questionFade.value = withTiming(0, { duration: 200 }, () => {
+            runOnJS(cb)();
+        });
     };
 
     const goToQuestion = (newIndex: number) => {
         if (newIndex < 0 || newIndex >= questions.length) return;
+        Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
+        
+        // Check if we're transitioning to a new level (only when going forward)
+        if (newIndex > currentIndex && checkLevelTransition(newIndex)) {
+            // Level transition will handle the animation
+            return;
+        }
+        
         const direction = newIndex > currentIndex ? 'left' : 'right';
         animateQuestionExit(direction, () => {
             setCurrentIndex(newIndex);
+            // Update current level and question index in level
+            const level = getLevelForIndex(newIndex);
+            if (level) {
+                setCurrentLevel(level);
+                if (level === 'easy') {
+                    setQuestionIndexInLevel(newIndex);
+                } else if (level === 'medium') {
+                    setQuestionIndexInLevel(newIndex - groupedQuestions.easy.length);
+                } else {
+                    setQuestionIndexInLevel(newIndex - groupedQuestions.easy.length - groupedQuestions.medium.length);
+                }
+            }
+            
             const opts = questions[newIndex]?.options || [];
-            // Update progress
-            Animated.timing(progressAnim, {
-                toValue: (newIndex + 1) / questions.length,
-                duration: 400,
-                useNativeDriver: false,
-            }).start();
+            progressWidth.value = withTiming(
+                ((newIndex + 1) / questions.length) * 100,
+                { duration: 400 }
+            );
             animateQuestionEntry(opts.length);
         });
     };
 
     const selectAnswer = (questionId: string, optLetter: string) => {
+        Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
         setAnswers((prev) => ({ ...prev, [questionId]: optLetter }));
-
-        // Bounce animation on selection
-        Animated.sequence([
-            Animated.timing(scaleAnim, { toValue: 1.02, duration: 100, useNativeDriver: true }),
-            Animated.spring(scaleAnim, { toValue: 1, useNativeDriver: true, tension: 100, friction: 6 }),
-        ]).start();
+        selectedPop.value = withSequence(
+            withTiming(1.03, { duration: 80 }),
+            withSpring(1, { damping: 10, stiffness: 300 })
+        );
     };
 
     const handleSubmit = () => {
+        Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Medium);
         const unanswered = questions.length - Object.keys(answers).length;
         const msg = unanswered > 0
             ? `You have ${unanswered} unanswered question(s). Submit anyway?`
             : 'Ready to submit your test?';
-
         Alert.alert('Submit Test', msg, [
             { text: 'Cancel', style: 'cancel' },
             { text: 'Submit', onPress: doSubmit },
@@ -185,11 +435,24 @@ export default function TakeTestScreen() {
             setResult(res);
             setShowResult(true);
 
-            // Animate result
-            Animated.parallel([
-                Animated.spring(resultScaleAnim, { toValue: 1, useNativeDriver: true, tension: 40, friction: 5 }),
-                Animated.timing(resultFadeAnim, { toValue: 1, duration: 600, useNativeDriver: true }),
-            ]).start();
+            const pct = Math.round(res.percentage || 0);
+            if (pct >= 80) {
+                Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success);
+                confettiOp.value = withSequence(
+                    withTiming(1, { duration: 300 }),
+                    withDelay(1500, withTiming(0, { duration: 2000 }))
+                );
+            } else {
+                Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Medium);
+            }
+
+            resultScale.value = withSpring(1, SPRING_GENTLE);
+            resultOpacity.value = withTiming(1, { duration: 600 });
+
+            if (res.tutor_feedback) {
+                tutorFade.value = withDelay(1000, withTiming(1, { duration: 600 }));
+                tutorSlide.value = withDelay(1000, withSpring(0, SPRING_GENTLE));
+            }
         } catch (error: any) {
             Alert.alert('Error', error?.response?.data?.detail || 'Failed to submit');
         } finally {
@@ -197,12 +460,155 @@ export default function TakeTestScreen() {
         }
     };
 
+    // ====== Animated Styles ======
+    const countdownStyle = useAnimatedStyle(() => ({
+        transform: [{ scale: countdownScale.value }],
+        opacity: countdownOpacity.value,
+    }));
+    const overlayStyle = useAnimatedStyle(() => ({
+        opacity: overlayOpacity.value,
+    }));
+    const questionStyle = useAnimatedStyle(() => ({
+        transform: [
+            { translateX: questionSlideX.value },
+            { scale: questionScale.value },
+        ],
+        opacity: questionFade.value,
+    }));
+    const progressStyle = useAnimatedStyle(() => ({
+        width: (SCREEN_WIDTH * progressWidth.value) / 100,
+    }));
+    const resultAnimStyle = useAnimatedStyle(() => ({
+        transform: [{ scale: resultScale.value }],
+        opacity: resultOpacity.value,
+    }));
+    const tutorStyle = useAnimatedStyle(() => ({
+        opacity: tutorFade.value,
+        transform: [{ translateY: tutorSlide.value }],
+    }));
+    const confettiStyle = useAnimatedStyle(() => ({
+        opacity: confettiOp.value,
+    }));
+    const pulseStyle = useAnimatedStyle(() => ({
+        transform: [{ scale: pulseScale.value }],
+    }));
+
+    // Option animated styles - must call hooks at top level, not in loops
+    const optStyle0 = useAnimatedStyle(() => ({ opacity: optionValues[0].opacity.value, transform: [{ translateY: optionValues[0].translateY.value }] }));
+    const optStyle1 = useAnimatedStyle(() => ({ opacity: optionValues[1].opacity.value, transform: [{ translateY: optionValues[1].translateY.value }] }));
+    const optStyle2 = useAnimatedStyle(() => ({ opacity: optionValues[2].opacity.value, transform: [{ translateY: optionValues[2].translateY.value }] }));
+    const optStyle3 = useAnimatedStyle(() => ({ opacity: optionValues[3].opacity.value, transform: [{ translateY: optionValues[3].translateY.value }] }));
+    const optStyle4 = useAnimatedStyle(() => ({ opacity: optionValues[4].opacity.value, transform: [{ translateY: optionValues[4].translateY.value }] }));
+    const optStyle5 = useAnimatedStyle(() => ({ opacity: optionValues[5].opacity.value, transform: [{ translateY: optionValues[5].translateY.value }] }));
+    const optionAnimStyles = [optStyle0, optStyle1, optStyle2, optStyle3, optStyle4, optStyle5];
+
+    // Level interstitial animated styles
+    const levelContainerStyle = useAnimatedStyle(() => ({
+        opacity: levelOpacity.value,
+        transform: [{ scale: levelScale.value }],
+    }));
+    const levelEmojiStyle = useAnimatedStyle(() => ({
+        transform: [{ scale: levelEmojiScale.value }],
+    }));
+    const levelTitleStyle = useAnimatedStyle(() => ({
+        transform: [{ translateY: levelTitleY.value }],
+        opacity: 1 - levelTitleY.value / 30,
+    }));
+    const levelDescStyle = useAnimatedStyle(() => ({
+        transform: [{ translateY: levelDescY.value }],
+        opacity: 1 - levelDescY.value / 30,
+    }));
+
+    // ====== Loading ======
     if (isLoading) {
         return (
             <SafeAreaView style={[styles.container, { backgroundColor: colors.background }]}>
                 <View style={styles.centered}>
                     <ActivityIndicator size="large" color={colors.primary} />
                     <Text style={{ color: colors.textSecondary, marginTop: 12 }}>Loading test...</Text>
+                </View>
+            </SafeAreaView>
+        );
+    }
+
+    // ====== Countdown Overlay ======
+    if (showCountdown) {
+        return (
+            <SafeAreaView style={[styles.container, { backgroundColor: colors.background }]}>
+                <ReAnimated.View style={[styles.countdownOverlay, overlayStyle, { backgroundColor: colors.background }]}>
+                    <ReAnimated.View style={countdownStyle}>
+                        <Text style={[
+                            styles.countdownText,
+                            {
+                                color: countdownValue === 'GO!' ? colors.success : colors.primary,
+                                fontSize: countdownValue === 'GO!' ? 72 : 120,
+                            },
+                        ]}>
+                            {countdownValue}
+                        </Text>
+                    </ReAnimated.View>
+                    <Text style={[styles.countdownSubtext, { color: colors.textSecondary }]}>
+                        {test?.title || 'Get Ready!'}
+                    </Text>
+                    <Text style={[styles.countdownMeta, { color: colors.textTertiary }]}>
+                        {questions.length} questions
+                    </Text>
+                </ReAnimated.View>
+            </SafeAreaView>
+        );
+    }
+
+    // ====== Level Interstitial ======
+    if (showLevelInterstitial && currentLevel) {
+        const levelInfo = LEVEL_INFO[currentLevel];
+        const questionsInLevel = groupedQuestions[currentLevel].length;
+        
+        return (
+            <SafeAreaView style={[styles.container, { backgroundColor: colors.background }]}>
+                <ReAnimated.View style={[styles.levelOverlay, levelContainerStyle]}>
+                    <ReAnimated.View style={levelEmojiStyle}>
+                        <Text style={styles.levelEmoji}>{levelInfo.emoji}</Text>
+                    </ReAnimated.View>
+                    
+                    <ReAnimated.View style={levelTitleStyle}>
+                        <Text style={[styles.levelTitle, { color: levelInfo.color }]}>
+                            {levelInfo.title}
+                        </Text>
+                        <Text style={[styles.levelSubtitle, { color: colors.textSecondary }]}>
+                            {levelInfo.subtitle}
+                        </Text>
+                    </ReAnimated.View>
+                    
+                    <ReAnimated.View style={levelDescStyle}>
+                        <Text style={[styles.levelDescription, { color: colors.text }]}>
+                            {levelInfo.description}
+                        </Text>
+                        <View style={[styles.levelQuestionsInfo, { backgroundColor: levelInfo.color + '15' }]}>
+                            <Text style={[styles.levelQuestionsText, { color: levelInfo.color }]}>
+                                {questionsInLevel} question{questionsInLevel !== 1 ? 's' : ''} in this level
+                            </Text>
+                        </View>
+                    </ReAnimated.View>
+                </ReAnimated.View>
+            </SafeAreaView>
+        );
+    }
+
+    // ====== Submitting State ======
+    if (submitting) {
+        return (
+            <SafeAreaView style={[styles.container, { backgroundColor: colors.background }]}>
+                <View style={styles.centered}>
+                    <ReAnimated.View style={[{ alignItems: 'center' }, pulseStyle]}>
+                        <Text style={{ fontSize: 48, marginBottom: 16 }}>🤖</Text>
+                        <ActivityIndicator size="large" color={colors.primary} />
+                        <Text style={{ color: colors.text, marginTop: 16, fontSize: FontSizes.lg, fontWeight: '600', textAlign: 'center' }}>
+                            The Tutor is evaluating{'\n'}your answers...
+                        </Text>
+                        <Text style={{ color: colors.textSecondary, marginTop: 8, fontSize: FontSizes.sm }}>
+                            This may take a moment
+                        </Text>
+                    </ReAnimated.View>
                 </View>
             </SafeAreaView>
         );
@@ -222,18 +628,19 @@ export default function TakeTestScreen() {
 
         return (
             <SafeAreaView style={[styles.container, { backgroundColor: colors.background }]}>
-                <View style={styles.resultContainer}>
-                    <Animated.View style={{
-                        transform: [{ scale: resultScaleAnim }],
-                        opacity: resultFadeAnim,
-                        alignItems: 'center',
-                    }}>
+                <ScrollView contentContainerStyle={styles.resultScrollContent}>
+                    {pct >= 80 && (
+                        <ReAnimated.View style={[styles.confettiOverlay, confettiStyle]} pointerEvents="none">
+                            <Text style={styles.confettiText}>🎉🎊✨🎉🎊✨🎉</Text>
+                        </ReAnimated.View>
+                    )}
+
+                    <ReAnimated.View style={[{ alignItems: 'center' }, resultAnimStyle]}>
                         <Text style={{ fontSize: 80 }}>{grade.emoji}</Text>
                         <Text style={{ fontSize: 32, fontWeight: '900', color: colors.text, marginTop: 16 }}>
                             {grade.label}
                         </Text>
 
-                        {/* Score Circle */}
                         <View style={[styles.scoreCircle, { borderColor: grade.color }]}>
                             <Text style={{ fontSize: 48, fontWeight: '900', color: grade.color }}>{pct}%</Text>
                             <Text style={{ fontSize: FontSizes.sm, color: colors.textSecondary }}>
@@ -241,7 +648,6 @@ export default function TakeTestScreen() {
                             </Text>
                         </View>
 
-                        {/* Stats Row */}
                         <View style={styles.resultStats}>
                             <View style={styles.resultStatItem}>
                                 <Text style={{ fontSize: FontSizes.xxl, fontWeight: '800', color: colors.primary }}>
@@ -262,16 +668,53 @@ export default function TakeTestScreen() {
                                 <Text style={{ fontSize: FontSizes.xs, color: colors.textSecondary }}>Answered</Text>
                             </View>
                         </View>
+                    </ReAnimated.View>
 
-                        <TouchableOpacity
-                            style={[styles.doneButton, { backgroundColor: colors.primary }]}
-                            onPress={() => router.back()}
-                        >
-                            <Text style={{ color: '#FFF', fontSize: FontSizes.md, fontWeight: '700' }}>
-                                Done 🎉
-                            </Text>
-                        </TouchableOpacity>
-                    </Animated.View>
+                    {result.tutor_feedback ? (
+                        <ReAnimated.View style={[
+                            styles.tutorCard,
+                            { backgroundColor: colors.card, borderColor: colors.border },
+                            tutorStyle,
+                        ]}>
+                            <View style={styles.tutorHeader}>
+                                <View style={[styles.tutorAvatar, { backgroundColor: colors.primary + '20' }]}>
+                                    <Text style={styles.tutorAvatarEmoji}>🤖</Text>
+                                </View>
+                                <View>
+                                    <Text style={[styles.tutorName, { color: colors.text }]}>AI Tutor</Text>
+                                    <Text style={[styles.tutorSubtitle, { color: colors.textTertiary }]}>Personalized feedback</Text>
+                                </View>
+                            </View>
+                            <View style={[styles.tutorBubble, { backgroundColor: colors.primary + '10' }]}>
+                                <Text style={[styles.tutorFeedbackText, { color: colors.text }]}>
+                                    {result.tutor_feedback}
+                                </Text>
+                            </View>
+                        </ReAnimated.View>
+                    ) : null}
+
+                    <TouchableOpacity
+                        style={[styles.doneButton, { backgroundColor: colors.primary }]}
+                        onPress={() => {
+                            Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
+                            router.back();
+                        }}
+                    >
+                        <Text style={{ color: '#FFF', fontSize: FontSizes.md, fontWeight: '700' }}>
+                            Done 🎉
+                        </Text>
+                    </TouchableOpacity>
+                </ScrollView>
+            </SafeAreaView>
+        );
+    }
+
+    // ====== Waiting for countdown to finish ======
+    if (!testStarted) {
+        return (
+            <SafeAreaView style={[styles.container, { backgroundColor: colors.background }]}>
+                <View style={styles.centered}>
+                    <ActivityIndicator size="large" color={colors.primary} />
                 </View>
             </SafeAreaView>
         );
@@ -300,6 +743,7 @@ export default function TakeTestScreen() {
             {/* Top Bar */}
             <View style={styles.topBar}>
                 <TouchableOpacity onPress={() => {
+                    Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
                     Alert.alert('Exit Test', 'Your progress will be lost. Are you sure?', [
                         { text: 'Continue Test', style: 'cancel' },
                         { text: 'Exit', style: 'destructive', onPress: () => router.back() },
@@ -310,15 +754,10 @@ export default function TakeTestScreen() {
 
                 {/* Progress Bar */}
                 <View style={[styles.progressBarBg, { backgroundColor: colors.border }]}>
-                    <Animated.View style={[
+                    <ReAnimated.View style={[
                         styles.progressBarFill,
-                        {
-                            backgroundColor: colors.primary,
-                            width: progressAnim.interpolate({
-                                inputRange: [0, 1],
-                                outputRange: ['0%', '100%'],
-                            }),
-                        },
+                        { backgroundColor: colors.primary },
+                        progressStyle,
                     ]} />
                 </View>
 
@@ -331,11 +770,21 @@ export default function TakeTestScreen() {
                 </View>
             </View>
 
-            {/* Question Counter */}
+            {/* Level & Question Counter */}
             <View style={styles.counterRow}>
-                <Text style={{ fontSize: FontSizes.sm, color: colors.textSecondary }}>
-                    Question {currentIndex + 1} of {questions.length}
-                </Text>
+                <View style={{ flexDirection: 'row', alignItems: 'center', gap: 8 }}>
+                    {currentLevel && (
+                        <View style={[styles.levelBadge, { backgroundColor: LEVEL_INFO[currentLevel].color + '15' }]}>
+                            <Text style={{ fontSize: 12 }}>{LEVEL_INFO[currentLevel].emoji}</Text>
+                            <Text style={{ fontSize: FontSizes.xs, fontWeight: '700', color: LEVEL_INFO[currentLevel].color }}>
+                                L{LEVEL_INFO[currentLevel].level}
+                            </Text>
+                        </View>
+                    )}
+                    <Text style={{ fontSize: FontSizes.sm, color: colors.textSecondary }}>
+                        Question {currentIndex + 1} of {questions.length}
+                    </Text>
+                </View>
                 <View style={[styles.answeredBadge, { backgroundColor: colors.primary + '15' }]}>
                     <Text style={{ fontSize: FontSizes.xs, fontWeight: '600', color: colors.primary }}>
                         {answeredCount}/{questions.length} answered
@@ -361,16 +810,7 @@ export default function TakeTestScreen() {
             )}
 
             {/* Question Card */}
-            <Animated.View style={[
-                styles.questionContainer,
-                {
-                    transform: [
-                        { translateX: slideAnim },
-                        { scale: scaleAnim },
-                    ],
-                    opacity: fadeAnim,
-                },
-            ]}>
+            <ReAnimated.View style={[styles.questionContainer, questionStyle]}>
                 <View style={[styles.questionCard, { backgroundColor: colors.card, borderColor: colors.border }]}>
                     <Text style={[styles.questionText, { color: colors.text }]}>
                         {currentQ.question_text}
@@ -382,21 +822,10 @@ export default function TakeTestScreen() {
                     {options.map((opt: string, i: number) => {
                         const optLetter = opt.charAt(0).toUpperCase();
                         const isSelected = selectedAnswer === optLetter;
-                        const anim = optionAnims[i] || new Animated.Value(1);
+                        const animStyle = optionAnimStyles[i] || {};
 
                         return (
-                            <Animated.View
-                                key={i}
-                                style={{
-                                    opacity: anim,
-                                    transform: [{
-                                        translateY: anim.interpolate({
-                                            inputRange: [0, 1],
-                                            outputRange: [30, 0],
-                                        }),
-                                    }],
-                                }}
-                            >
+                            <ReAnimated.View key={i} style={animStyle}>
                                 <TouchableOpacity
                                     style={[
                                         styles.optionButton,
@@ -434,11 +863,11 @@ export default function TakeTestScreen() {
                                         {opt.substring(opt.indexOf(')') + 1).trim() || opt}
                                     </Text>
                                 </TouchableOpacity>
-                            </Animated.View>
+                            </ReAnimated.View>
                         );
                     })}
                 </View>
-            </Animated.View>
+            </ReAnimated.View>
 
             {/* Navigation */}
             <View style={styles.navBar}>
@@ -451,7 +880,6 @@ export default function TakeTestScreen() {
                     <Text style={{ color: colors.primary, fontWeight: '600' }}>Prev</Text>
                 </TouchableOpacity>
 
-                {/* Question dots */}
                 <View style={styles.dotsRow}>
                     {questions.map((_, i) => {
                         const qid = questions[i]?.question_id || questions[i]?.id;
@@ -482,13 +910,9 @@ export default function TakeTestScreen() {
                         onPress={handleSubmit}
                         disabled={submitting}
                     >
-                        {submitting ? (
-                            <ActivityIndicator size="small" color="#FFF" />
-                        ) : (
-                            <Text style={{ color: '#FFF', fontWeight: '700', fontSize: FontSizes.sm }}>
-                                Submit ✨
-                            </Text>
-                        )}
+                        <Text style={{ color: '#FFF', fontWeight: '700', fontSize: FontSizes.sm }}>
+                            Submit ✨
+                        </Text>
                     </TouchableOpacity>
                 ) : (
                     <TouchableOpacity
@@ -507,6 +931,27 @@ export default function TakeTestScreen() {
 const styles = StyleSheet.create({
     container: { flex: 1 },
     centered: { flex: 1, justifyContent: 'center', alignItems: 'center' },
+    // Countdown
+    countdownOverlay: {
+        ...StyleSheet.absoluteFillObject,
+        justifyContent: 'center',
+        alignItems: 'center',
+        zIndex: 100,
+    },
+    countdownText: {
+        fontWeight: '900',
+        textAlign: 'center',
+    },
+    countdownSubtext: {
+        fontSize: FontSizes.lg,
+        fontWeight: '600',
+        marginTop: 24,
+    },
+    countdownMeta: {
+        fontSize: FontSizes.sm,
+        marginTop: 8,
+    },
+    // Top bar
     topBar: {
         flexDirection: 'row',
         alignItems: 'center',
@@ -538,6 +983,14 @@ const styles = StyleSheet.create({
     },
     answeredBadge: {
         paddingHorizontal: 10,
+        paddingVertical: 4,
+        borderRadius: BorderRadius.full,
+    },
+    levelBadge: {
+        flexDirection: 'row',
+        alignItems: 'center',
+        gap: 4,
+        paddingHorizontal: 8,
         paddingVertical: 4,
         borderRadius: BorderRadius.full,
     },
@@ -622,12 +1075,22 @@ const styles = StyleSheet.create({
         paddingHorizontal: 20,
         borderRadius: BorderRadius.lg,
     },
-    // Result styles
-    resultContainer: {
-        flex: 1,
+    // Result
+    confettiOverlay: {
+        position: 'absolute',
+        top: 0,
+        left: 0,
+        right: 0,
+        alignItems: 'center',
+        zIndex: 10,
+    },
+    confettiText: { fontSize: 40, letterSpacing: 8 },
+    resultScrollContent: {
+        flexGrow: 1,
         justifyContent: 'center',
         alignItems: 'center',
         padding: Spacing.xl,
+        paddingBottom: 100,
     },
     scoreCircle: {
         width: 160,
@@ -651,5 +1114,78 @@ const styles = StyleSheet.create({
         paddingVertical: 14,
         paddingHorizontal: 48,
         borderRadius: BorderRadius.xl,
+        marginTop: Spacing.lg,
+    },
+    // AI Tutor
+    tutorCard: {
+        width: '100%',
+        marginTop: Spacing.lg,
+        marginBottom: Spacing.md,
+        borderRadius: BorderRadius.xl,
+        padding: Spacing.lg,
+        borderWidth: 1,
+    },
+    tutorHeader: {
+        flexDirection: 'row',
+        alignItems: 'center',
+        gap: Spacing.sm,
+        marginBottom: Spacing.md,
+    },
+    tutorAvatar: {
+        width: 40,
+        height: 40,
+        borderRadius: 20,
+        justifyContent: 'center',
+        alignItems: 'center',
+    },
+    tutorAvatarEmoji: { fontSize: 22 },
+    tutorName: { fontSize: FontSizes.md, fontWeight: '700' },
+    tutorSubtitle: { fontSize: FontSizes.xs },
+    tutorBubble: {
+        borderRadius: BorderRadius.lg,
+        padding: Spacing.md,
+    },
+    tutorFeedbackText: {
+        fontSize: FontSizes.sm + 1,
+        lineHeight: 22,
+    },
+    // Level Interstitial
+    levelOverlay: {
+        flex: 1,
+        justifyContent: 'center',
+        alignItems: 'center',
+        paddingHorizontal: Spacing.xl,
+    },
+    levelEmoji: {
+        fontSize: 100,
+        marginBottom: Spacing.lg,
+    },
+    levelTitle: {
+        fontSize: 32,
+        fontWeight: '900',
+        textAlign: 'center',
+        marginBottom: 8,
+    },
+    levelSubtitle: {
+        fontSize: FontSizes.lg,
+        fontWeight: '600',
+        textAlign: 'center',
+        marginBottom: Spacing.md,
+    },
+    levelDescription: {
+        fontSize: FontSizes.md,
+        textAlign: 'center',
+        lineHeight: 24,
+        marginBottom: Spacing.lg,
+    },
+    levelQuestionsInfo: {
+        paddingHorizontal: 20,
+        paddingVertical: 12,
+        borderRadius: BorderRadius.lg,
+    },
+    levelQuestionsText: {
+        fontSize: FontSizes.sm,
+        fontWeight: '700',
+        textAlign: 'center',
     },
 });

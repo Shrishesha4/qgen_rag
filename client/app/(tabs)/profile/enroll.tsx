@@ -14,7 +14,7 @@ import {
     Alert,
 } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
-import { useRouter } from 'expo-router';
+import { useRouter, Stack } from 'expo-router';
 import { useColorScheme } from '@/hooks/use-color-scheme';
 import { Colors, Spacing, FontSizes, BorderRadius } from '@/constants/theme';
 import learnService, { SubjectStudent } from '@/services/learn';
@@ -83,140 +83,139 @@ export default function EnrollScreen() {
     };
 
     return (
-        <SafeAreaView style={[styles.safeArea, { backgroundColor: colors.background }]}>
-            {/* Header */}
-            <View style={styles.header}>
-                <TouchableOpacity onPress={() => router.back()} style={styles.backButton}>
-                    <Text style={[styles.backText, { color: colors.primary }]}>← Back</Text>
-                </TouchableOpacity>
-                <Text style={[styles.title, { color: colors.text }]}>Browse Subjects</Text>
-                <View style={{ width: 60 }} />
-            </View>
+        <>
+            <Stack.Screen
+                options={{
+                    headerShown: true,
+                    title: 'Browse Subjects',
+                    headerBackTitle: 'Back',
+                    headerShadowVisible: false,
+                    headerStyle: { backgroundColor: colors.background },
+                    headerTintColor: colors.primary,
+                    headerTitleStyle: { color: colors.text, fontWeight: '600' },
+                }}
+            />
+            <SafeAreaView style={[styles.safeArea, { backgroundColor: colors.background }]} edges={['bottom']}>
 
-            <ScrollView
-                contentContainerStyle={styles.content}
-                refreshControl={<RefreshControl refreshing={refreshing} onRefresh={onRefresh} />}
-            >
-                {loading ? (
-                    <ActivityIndicator size="large" color={colors.primary} style={{ marginTop: 60 }} />
-                ) : subjects.length === 0 ? (
-                    <View style={styles.emptyState}>
-                        <Text style={styles.emptyEmoji}>📚</Text>
-                        <Text style={[styles.emptyTitle, { color: colors.text }]}>
-                            No subjects available
-                        </Text>
-                        <Text style={[styles.emptyText, { color: colors.textSecondary }]}>
-                            Check back later when teachers publish subjects.
-                        </Text>
-                    </View>
-                ) : (
-                    <>
-                        <Text style={[styles.sectionDesc, { color: colors.textSecondary }]}>
-                            Request enrollment in subjects taught by your teachers. Once approved, you can access lessons and tests.
-                        </Text>
+                <ScrollView
+                    contentContainerStyle={styles.content}
+                    refreshControl={<RefreshControl refreshing={refreshing} onRefresh={onRefresh} />}
+                >
+                    {loading ? (
+                        <ActivityIndicator size="large" color={colors.primary} style={{ marginTop: 60 }} />
+                    ) : subjects.length === 0 ? (
+                        <View style={styles.emptyState}>
+                            <Text style={styles.emptyEmoji}>📚</Text>
+                            <Text style={[styles.emptyTitle, { color: colors.text }]}>
+                                No subjects available
+                            </Text>
+                            <Text style={[styles.emptyText, { color: colors.textSecondary }]}>
+                                Check back later when teachers publish subjects.
+                            </Text>
+                        </View>
+                    ) : (
+                        <>
+                            <Text style={[styles.sectionDesc, { color: colors.textSecondary }]}>
+                                Request enrollment in subjects taught by your teachers. Once approved, you can access lessons and tests.
+                            </Text>
 
-                        {subjects.map((subject) => {
-                            const badge = getStatusBadge(subject.enrollment_status);
-                            const canEnroll = !subject.enrollment_status || subject.enrollment_status === 'rejected';
+                            {subjects.map((subject) => {
+                                const badge = getStatusBadge(subject.enrollment_status);
+                                const canEnroll = !subject.enrollment_status || subject.enrollment_status === 'rejected';
 
-                            return (
-                                <View
-                                    key={subject.id}
-                                    style={[styles.subjectCard, { backgroundColor: colors.backgroundSecondary }]}
-                                >
-                                    <View style={styles.cardHeader}>
-                                        <View style={{ flex: 1 }}>
-                                            <Text style={[styles.subjectCode, { color: colors.primary }]}>
-                                                {subject.code}
+                                return (
+                                    <View
+                                        key={subject.id}
+                                        style={[styles.subjectCard, { backgroundColor: colors.backgroundSecondary }]}
+                                    >
+                                        <View style={styles.cardHeader}>
+                                            <View style={{ flex: 1 }}>
+                                                <Text style={[styles.subjectCode, { color: colors.primary }]}>
+                                                    {subject.code}
+                                                </Text>
+                                                <Text style={[styles.subjectName, { color: colors.text }]} numberOfLines={2}>
+                                                    {subject.name}
+                                                </Text>
+                                            </View>
+                                            {badge && (
+                                                <View style={[styles.statusBadge, { backgroundColor: badge.bg }]}>
+                                                    <Text style={[styles.statusText, { color: badge.color }]}>
+                                                        {badge.text}
+                                                    </Text>
+                                                </View>
+                                            )}
+                                        </View>
+
+                                        {subject.description ? (
+                                            <Text
+                                                style={[styles.description, { color: colors.textSecondary }]}
+                                                numberOfLines={2}
+                                            >
+                                                {subject.description}
                                             </Text>
-                                            <Text style={[styles.subjectName, { color: colors.text }]} numberOfLines={2}>
-                                                {subject.name}
+                                        ) : null}
+
+                                        <View style={styles.metaRow}>
+                                            <Text style={[styles.metaText, { color: colors.textSecondary }]}>
+                                                👤 {subject.teacher_name || 'Teacher'}
+                                            </Text>
+                                            <Text style={[styles.metaText, { color: colors.textSecondary }]}>
+                                                📖 {subject.total_topics} topics
                                             </Text>
                                         </View>
-                                        {badge && (
-                                            <View style={[styles.statusBadge, { backgroundColor: badge.bg }]}>
-                                                <Text style={[styles.statusText, { color: badge.color }]}>
-                                                    {badge.text}
+
+                                        {canEnroll && (
+                                            <TouchableOpacity
+                                                style={[
+                                                    styles.enrollButton,
+                                                    { backgroundColor: colors.primary },
+                                                    enrolling === subject.id && styles.enrollButtonDisabled,
+                                                ]}
+                                                onPress={() => handleEnroll(subject)}
+                                                disabled={enrolling === subject.id}
+                                            >
+                                                {enrolling === subject.id ? (
+                                                    <ActivityIndicator size="small" color="#fff" />
+                                                ) : (
+                                                    <Text style={styles.enrollButtonText}>
+                                                        {subject.enrollment_status === 'rejected'
+                                                            ? '🔄 Re-request Enrollment'
+                                                            : '📩 Request Enrollment'}
+                                                    </Text>
+                                                )}
+                                            </TouchableOpacity>
+                                        )}
+
+                                        {subject.enrollment_status === 'pending' && (
+                                            <Text style={[styles.pendingNote, { color: '#FF9500' }]}>
+                                                Waiting for teacher approval...
+                                            </Text>
+                                        )}
+
+                                        {subject.enrollment_status === 'approved' && (
+                                            <View style={styles.enrolledInfo}>
+                                                <Text style={[styles.metaText, { color: '#34C759' }]}>
+                                                    🎓 {Math.round(subject.mastery)}% mastery · {subject.xp_earned} XP
                                                 </Text>
                                             </View>
                                         )}
                                     </View>
-
-                                    {subject.description ? (
-                                        <Text
-                                            style={[styles.description, { color: colors.textSecondary }]}
-                                            numberOfLines={2}
-                                        >
-                                            {subject.description}
-                                        </Text>
-                                    ) : null}
-
-                                    <View style={styles.metaRow}>
-                                        <Text style={[styles.metaText, { color: colors.textSecondary }]}>
-                                            👤 {subject.teacher_name || 'Teacher'}
-                                        </Text>
-                                        <Text style={[styles.metaText, { color: colors.textSecondary }]}>
-                                            📖 {subject.total_topics} topics
-                                        </Text>
-                                    </View>
-
-                                    {canEnroll && (
-                                        <TouchableOpacity
-                                            style={[
-                                                styles.enrollButton,
-                                                { backgroundColor: colors.primary },
-                                                enrolling === subject.id && styles.enrollButtonDisabled,
-                                            ]}
-                                            onPress={() => handleEnroll(subject)}
-                                            disabled={enrolling === subject.id}
-                                        >
-                                            {enrolling === subject.id ? (
-                                                <ActivityIndicator size="small" color="#fff" />
-                                            ) : (
-                                                <Text style={styles.enrollButtonText}>
-                                                    {subject.enrollment_status === 'rejected'
-                                                        ? '🔄 Re-request Enrollment'
-                                                        : '📩 Request Enrollment'}
-                                                </Text>
-                                            )}
-                                        </TouchableOpacity>
-                                    )}
-
-                                    {subject.enrollment_status === 'pending' && (
-                                        <Text style={[styles.pendingNote, { color: '#FF9500' }]}>
-                                            Waiting for teacher approval...
-                                        </Text>
-                                    )}
-
-                                    {subject.enrollment_status === 'approved' && (
-                                        <View style={styles.enrolledInfo}>
-                                            <Text style={[styles.metaText, { color: '#34C759' }]}>
-                                                🎓 {Math.round(subject.mastery)}% mastery · {subject.xp_earned} XP
-                                            </Text>
-                                        </View>
-                                    )}
-                                </View>
-                            );
-                        })}
-                    </>
-                )}
-            </ScrollView>
-        </SafeAreaView>
+                                );
+                            })}
+                        </>
+                    )}
+                </ScrollView>
+            </SafeAreaView>
+        </>
     );
 }
 
 const styles = StyleSheet.create({
     safeArea: { flex: 1 },
-    header: {
-        flexDirection: 'row',
-        alignItems: 'center',
-        justifyContent: 'space-between',
-        paddingHorizontal: Spacing.lg,
-        paddingVertical: Spacing.md,
-    },
-    backButton: { width: 60 },
-    backText: { fontSize: FontSizes.md, fontWeight: '600' },
-    title: { fontSize: FontSizes.lg, fontWeight: '700' },
+    header: { display: 'none' }, // legacy
+    backButton: { display: 'none' },
+    backText: { display: 'none' },
+    title: { display: 'none' },
     content: { paddingHorizontal: Spacing.lg, paddingBottom: 100 },
     sectionDesc: {
         fontSize: FontSizes.sm,

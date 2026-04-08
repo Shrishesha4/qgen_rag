@@ -1,130 +1,258 @@
-/**
- * Topic Content Screen - Shows teacher's learning content/notes for a topic
- */
-import React, { useEffect, useCallback, useState } from 'react';
-import {
-  View,
-  Text,
-  ScrollView,
-  StyleSheet,
-  RefreshControl,
-  ActivityIndicator,
-} from 'react-native';
+import React, { useEffect, useState } from 'react';
+import { View, Text, StyleSheet, ScrollView, ActivityIndicator, TouchableOpacity, useWindowDimensions, Platform } from 'react-native';
 import { useLocalSearchParams, useRouter, Stack } from 'expo-router';
 import { SafeAreaView } from 'react-native-safe-area-context';
+import Markdown, { MarkdownIt } from 'react-native-markdown-display';
 import { useColorScheme } from '@/hooks/use-color-scheme';
-import { Colors, Spacing, FontSizes, BorderRadius } from '@/constants/theme';
+import { Colors, FontSizes, Spacing, BorderRadius } from '@/constants/theme';
 import { IconSymbol } from '@/components/ui/icon-symbol';
 import learnService from '@/services/learn';
 
 export default function TopicContentScreen() {
+  const { subjectId, topicId, topicName } = useLocalSearchParams<{ subjectId: string; topicId: string; topicName: string }>();
+  const router = useRouter();
   const colorScheme = useColorScheme() ?? 'light';
   const colors = Colors[colorScheme];
-  const router = useRouter();
-  const params = useLocalSearchParams<{ subjectId: string; topicId: string; topicName: string }>();
+  const isDark = colorScheme === 'dark';
 
+  const [content, setContent] = useState<string | null>(null);
   const [loading, setLoading] = useState(true);
-  const [refreshing, setRefreshing] = useState(false);
-  const [content, setContent] = useState<string>('');
-  const [topicName, setTopicName] = useState(params.topicName || 'Topic');
-
-  const loadContent = useCallback(async () => {
-    try {
-      const topicsData = await learnService.getTopics(params.subjectId);
-      const topic = topicsData.topics.find((t: any) => t.id === params.topicId);
-      if (topic) {
-        setContent(topic.syllabus_content || '');
-        setTopicName(topic.name);
-      }
-    } catch (err) {
-      console.warn('Failed to load topic content:', err);
-    } finally {
-      setLoading(false);
-      setRefreshing(false);
-    }
-  }, [params.subjectId, params.topicId]);
+  const [error, setError] = useState<string | null>(null);
 
   useEffect(() => {
-    loadContent();
-  }, [loadContent]);
+    loadTopicContent();
+  }, [topicId]);
 
-  const onRefresh = useCallback(async () => {
-    setRefreshing(true);
-    await loadContent();
-  }, [loadContent]);
+  const loadTopicContent = async () => {
+    if (!subjectId || !topicId) return;
+    setLoading(true);
+    setError(null);
+    try {
+      const subjectResponse = await learnService.getTopics(subjectId);
+      const topic = subjectResponse.topics?.find((t: any) => t.id === topicId);
+
+      if (topic && topic.syllabus_content) {
+        setContent(topic.syllabus_content);
+      } else {
+        setError("This topic doesn't have any learning content available yet.");
+      }
+    } catch (err) {
+      console.error('Failed to load topic content:', err);
+      setError('Failed to load the learning material. Please try again later.');
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  const markdownStyles = StyleSheet.create({
+    body: {
+      color: colors.text,
+      fontSize: FontSizes.md,
+      lineHeight: 24,
+      fontFamily: Platform.OS === 'ios' ? 'System' : 'Roboto',
+    },
+    heading1: {
+      fontSize: FontSizes.xxl,
+      fontWeight: '700',
+      color: colors.text,
+      marginTop: Spacing.xl,
+      marginBottom: Spacing.md,
+      borderBottomWidth: StyleSheet.hairlineWidth,
+      borderBottomColor: colors.border,
+      paddingBottom: Spacing.sm,
+    },
+    heading2: {
+      fontSize: FontSizes.xl,
+      fontWeight: '600',
+      color: colors.text,
+      marginTop: Spacing.lg,
+      marginBottom: Spacing.sm,
+    },
+    heading3: {
+      fontSize: FontSizes.lg,
+      fontWeight: '600',
+      color: colors.text,
+      marginTop: Spacing.md,
+      marginBottom: Spacing.sm,
+    },
+    paragraph: {
+      marginTop: 0,
+      marginBottom: Spacing.md,
+    },
+    list_item: {
+      marginTop: 0,
+      marginBottom: Spacing.xs,
+    },
+    bullet_list: {
+      marginTop: 0,
+      marginBottom: Spacing.md,
+    },
+    ordered_list: {
+      marginTop: 0,
+      marginBottom: Spacing.md,
+    },
+    blockquote: {
+      backgroundColor: isDark ? 'rgba(255,255,255,0.05)' : 'rgba(0,0,0,0.03)',
+      borderLeftWidth: 4,
+      borderLeftColor: colors.primary,
+      paddingHorizontal: Spacing.md,
+      paddingVertical: Spacing.sm,
+      marginBottom: Spacing.md,
+      borderRadius: BorderRadius.sm,
+    },
+    code_inline: {
+      backgroundColor: isDark ? 'rgba(255,255,255,0.1)' : 'rgba(0,0,0,0.05)',
+      color: isDark ? '#FF9500' : '#D97706',
+      fontFamily: Platform.OS === 'ios' ? 'Courier' : 'monospace',
+      borderRadius: 4,
+      paddingHorizontal: 4,
+    },
+    fence: {
+      backgroundColor: isDark ? '#1C1C1E' : '#2D2D30',
+      color: '#D4D4D4',
+      fontFamily: Platform.OS === 'ios' ? 'Courier' : 'monospace',
+      padding: Spacing.md,
+      borderRadius: BorderRadius.md,
+      marginBottom: Spacing.md,
+      overflow: 'hidden',
+    },
+    strong: {
+      fontWeight: 'bold',
+    },
+    em: {
+      fontStyle: 'italic',
+    },
+    hr: {
+      backgroundColor: colors.border,
+      height: StyleSheet.hairlineWidth,
+      marginVertical: Spacing.lg,
+    }
+  });
+
+  if (loading) {
+    return (
+      <>
+        <Stack.Screen
+          options={{
+            headerShown: true,
+            title: topicName || 'Loading...',
+            headerBackTitle: 'Back',
+            headerShadowVisible: false,
+            headerStyle: { backgroundColor: colors.background },
+            headerTintColor: colors.primary,
+            headerTitleStyle: { color: colors.text, fontWeight: '600' },
+          }}
+        />
+        <SafeAreaView style={[styles.container, { backgroundColor: colors.background }]} edges={['bottom']}>
+          <View style={styles.centerContainer}>
+            <ActivityIndicator size="large" color={colors.primary} />
+            <Text style={[styles.loadingText, { color: colors.textSecondary }]}>Loading Content...</Text>
+          </View>
+        </SafeAreaView>
+      </>
+    );
+  }
+
+  if (error || !content) {
+    return (
+      <>
+        <Stack.Screen
+          options={{
+            headerShown: true,
+            title: 'Error',
+            headerBackTitle: 'Back',
+            headerShadowVisible: false,
+            headerStyle: { backgroundColor: colors.background },
+            headerTintColor: colors.primary,
+            headerTitleStyle: { color: colors.text, fontWeight: '600' },
+          }}
+        />
+        <SafeAreaView style={[styles.container, { backgroundColor: colors.background }]} edges={['bottom']}>
+          <View style={styles.centerContainer}>
+            <IconSymbol name="doc.text.magnifyingglass" size={48} color={colors.textTertiary} />
+            <Text style={[styles.errorText, { color: colors.textSecondary }]}>{error || 'Content not found'}</Text>
+            <TouchableOpacity style={[styles.retryButton, { backgroundColor: colors.primary }]} onPress={() => router.back()}>
+              <Text style={styles.retryButtonText}>Go Back</Text>
+            </TouchableOpacity>
+          </View>
+        </SafeAreaView>
+      </>
+    );
+  }
 
   return (
     <>
       <Stack.Screen
         options={{
-          title: topicName,
+          headerShown: true,
+          headerTransparent: true,
+          title: topicName || 'Chapter Details',
           headerBackTitle: 'Back',
+          headerShadowVisible: false,
+          headerStyle: { backgroundColor: 'transparent' },
+          headerTintColor: colors.primary,
+          headerTitleStyle: { color: colors.text, fontWeight: '600' },
         }}
       />
-      <SafeAreaView style={[styles.container, { backgroundColor: colors.background }]} edges={['bottom']}>
+      <View style={[styles.container, { backgroundColor: colors.background }]}>
         <ScrollView
-          contentContainerStyle={styles.content}
-          refreshControl={<RefreshControl refreshing={refreshing} onRefresh={onRefresh} />}
+          style={styles.scrollView}
+          contentContainerStyle={styles.scrollContent}
+          showsVerticalScrollIndicator={true}
         >
-          {loading ? (
-            <View style={styles.loadingContainer}>
-              <ActivityIndicator size="large" color={colors.primary} />
-            </View>
-          ) : !content ? (
-            <View style={styles.emptyContainer}>
-              <IconSymbol name="doc.text" size={48} color={colors.textTertiary} />
-              <Text style={[styles.emptyTitle, { color: colors.text }]}>No Content Available</Text>
-              <Text style={[styles.emptyText, { color: colors.textSecondary }]}>
-                The teacher hasn't added any learning content for this topic yet.
-              </Text>
-            </View>
-          ) : (
-            <View style={[styles.contentCard, { backgroundColor: colors.card }]}>
-              <View style={styles.headerRow}>
-                <Text style={styles.headerEmoji}>📖</Text>
-                <Text style={[styles.headerTitle, { color: colors.text }]}>{topicName}</Text>
-              </View>
-              <View style={styles.divider} />
-              <Text style={[styles.contentText, { color: colors.text }]}>{content}</Text>
-            </View>
-          )}
+          <Markdown
+            style={markdownStyles}
+          >
+            {content}
+          </Markdown>
         </ScrollView>
-      </SafeAreaView>
+      </View>
     </>
   );
 }
 
 const styles = StyleSheet.create({
-  container: { flex: 1 },
-  content: { padding: Spacing.lg, paddingBottom: 100 },
-  loadingContainer: { flex: 1, justifyContent: 'center', alignItems: 'center', paddingTop: 80 },
-  emptyContainer: { alignItems: 'center', paddingTop: 80 },
-  emptyTitle: { fontSize: FontSizes.lg, fontWeight: '700', marginTop: Spacing.md },
-  emptyText: { fontSize: FontSizes.md, marginTop: Spacing.sm, textAlign: 'center', paddingHorizontal: 40 },
-  contentCard: {
-    borderRadius: BorderRadius.lg,
+  container: {
+    flex: 1,
+  },
+  header: { display: 'none' }, // legacy, kept around just in case
+  backButton: { display: 'none' },
+  headerTitleContainer: { display: 'none' },
+  headerTitle: { display: 'none' },
+  headerSubtitle: { display: 'none' },
+  scrollView: {
+    flex: 1,
+  },
+  scrollContent: {
     padding: Spacing.lg,
-    shadowColor: '#000',
-    shadowOffset: { width: 0, height: 2 },
-    shadowOpacity: 0.08,
-    shadowRadius: 8,
-    elevation: 3,
+    paddingTop: 110,
+    paddingBottom: Spacing.xxl * 2,
   },
-  headerRow: {
-    flexDirection: 'row',
+  centerContainer: {
+    flex: 1,
+    justifyContent: 'center',
     alignItems: 'center',
-    gap: Spacing.sm,
-    marginBottom: Spacing.md,
+    padding: Spacing.xl,
   },
-  headerEmoji: { fontSize: 28 },
-  headerTitle: { fontSize: FontSizes.xl, fontWeight: '700', flex: 1 },
-  divider: {
-    height: 1,
-    backgroundColor: 'rgba(0,0,0,0.08)',
-    marginBottom: Spacing.md,
-  },
-  contentText: {
+  loadingText: {
+    marginTop: Spacing.md,
     fontSize: FontSizes.md,
-    lineHeight: 26,
+  },
+  errorText: {
+    marginTop: Spacing.md,
+    marginBottom: Spacing.lg,
+    fontSize: FontSizes.md,
+    textAlign: 'center',
+    lineHeight: 22,
+  },
+  retryButton: {
+    paddingHorizontal: Spacing.xl,
+    paddingVertical: Spacing.md,
+    borderRadius: BorderRadius.md,
+  },
+  retryButtonText: {
+    color: '#FFFFFF',
+    fontWeight: '600',
+    fontSize: FontSizes.sm,
   },
 });

@@ -81,6 +81,62 @@ def get_badges(streak_count: int) -> List[str]:
     return badges
 
 
+async def generate_tutor_feedback(
+    question_details: list, correct_count: int, total_questions: int
+) -> Optional[str]:
+    """Generate personalized AI tutor feedback using the LLM service.
+    
+    Args:
+        question_details: List of dicts with question_text, options, selected_answer, correct_answer, is_correct
+        correct_count: Number of correct answers
+        total_questions: Total number of questions
+    
+    Returns:
+        Tutor feedback string or None if LLM is unavailable
+    """
+    try:
+        from app.services.llm_service import LLMService
+        llm = LLMService()
+        
+        # Build the question summary for the prompt
+        q_summary_parts = []
+        for i, q in enumerate(question_details, 1):
+            status = "✅ Correct" if q["is_correct"] else "❌ Incorrect"
+            q_summary_parts.append(
+                f"Q{i}: {q['question_text']}\n"
+                f"  Student's answer: {q['selected_answer']}\n"
+                f"  Correct answer: {q['correct_answer']}\n"
+                f"  Result: {status}"
+            )
+        q_summary = "\n\n".join(q_summary_parts)
+        
+        system_prompt = (
+            "You are a warm, encouraging AI tutor for a college learning platform. "
+            "After a student completes a quiz, you give a brief personalized summary. "
+            "Praise specific correct concepts. For missed questions, gently explain the right answer. "
+            "Keep your response concise (3-6 sentences), conversational, and motivating. "
+            "Do not use markdown headers. Use plain text with occasional emojis."
+        )
+        
+        prompt = (
+            f"A student just scored {correct_count}/{total_questions} on a quiz.\n\n"
+            f"Here are the details:\n\n{q_summary}\n\n"
+            f"Give a short, personalized tutor response."
+        )
+        
+        feedback = await llm.generate_with_fallback(
+            prompt=prompt,
+            system_prompt=system_prompt,
+            temperature=0.7,
+            max_tokens=500,
+            fallback_response=None,
+        )
+        return feedback.strip() if feedback else None
+    except Exception as e:
+        logger.warning(f"Tutor feedback generation failed: {e}")
+        return None
+
+
 class GamificationService:
     """Service handling all gamification logic."""
 
@@ -243,15 +299,17 @@ class GamificationService:
         enrollment = result.scalar_one_or_none()
         if not enrollment:
             raise ValueError("Enrollment not found or unauthorized")
-        if enrollment.status != "pending":
-            raise ValueError(f"Enrollment is already {enrollment.status}")
+        # Allow rejecting pending requests OR revoking already-approved enrollments
+        if enrollment.status not in ("pending", "approved"):
+            raise ValueError(f"Cannot reject/revoke enrollment with status '{enrollment.status}'")
         
+        action = "revoked" if enrollment.status == "approved" else "rejected"
         enrollment.status = "rejected"
         enrollment.is_active = False
         enrollment.reviewed_at = datetime.now(timezone.utc)
         await self.db.commit()
         await self.db.refresh(enrollment)
-        logger.info(f"Enrollment {enrollment_id} rejected by teacher {teacher_id}")
+        logger.info(f"Enrollment {enrollment_id} {action} by teacher {teacher_id}")
         return enrollment
 
     # --- Available Subjects ---
@@ -477,6 +535,7 @@ class GamificationService:
         total_marks = 0
         hearts_remaining = await self.get_hearts(student_id)
         
+        question_details = []  # For AI tutor feedback
         for ans in answers:
             question = await self.db.get(Question, ans["question_id"])
             if not question:
@@ -509,6 +568,13 @@ class GamificationService:
                 "xp_earned": xp,
                 "explanation": question.explanation,
             })
+            question_details.append({
+                "question_text": question.question_text,
+                "options": question.options or [],
+                "selected_answer": ans["selected_answer"].strip(),
+                "correct_answer": question.correct_answer or "",
+                "is_correct": is_correct,
+            })
         
         total_questions = len(results)
         accuracy = (correct_count / total_questions * 100) if total_questions > 0 else 0
@@ -529,6 +595,10 @@ class GamificationService:
         mastery_change = 0.0
         new_mastery = 0.0
         if topic_id:
+            # Use upsert to handle race conditions
+            from sqlalchemy.dialects.postgresql import insert as pg_insert
+            
+            # First, try to get existing progress
             progress = await self.db.execute(
                 select(StudentProgress).where(
                     and_(
@@ -539,14 +609,37 @@ class GamificationService:
                 )
             )
             p = progress.scalar_one_or_none()
+            
             if not p:
-                p = StudentProgress(
+                # Use upsert to safely insert or update
+                stmt = pg_insert(StudentProgress).values(
                     student_id=student_id,
                     subject_id=subject_id,
                     topic_id=topic_id,
+                    topic_mastery=0.0,
+                    xp_earned=0,
+                    current_level=1,
+                    accuracy_percentage=0.0,
+                    questions_attempted=0,
+                    questions_correct=0,
+                    current_difficulty="easy",
+                ).on_conflict_do_nothing(
+                    constraint="uq_student_topic_progress"
                 )
-                self.db.add(p)
+                await self.db.execute(stmt)
                 await self.db.flush()
+                
+                # Re-fetch the record (either just inserted or already existed)
+                progress = await self.db.execute(
+                    select(StudentProgress).where(
+                        and_(
+                            StudentProgress.student_id == student_id,
+                            StudentProgress.subject_id == subject_id,
+                            StudentProgress.topic_id == topic_id,
+                        )
+                    )
+                )
+                p = progress.scalar_one()
             
             old_mastery = p.topic_mastery
             p.questions_attempted += total_questions
@@ -569,6 +662,11 @@ class GamificationService:
             
             p.current_level = new_level
         
+        # Generate AI tutor feedback
+        tutor_feedback = await generate_tutor_feedback(
+            question_details, correct_count, total_questions
+        )
+        
         # Save test history
         test = TestHistory(
             student_id=student_id,
@@ -585,6 +683,7 @@ class GamificationService:
                 {"question_id": str(r["question_id"]), "correct": r["is_correct"], "xp": r["xp_earned"]}
                 for r in results
             ],
+            tutor_feedback=tutor_feedback,
         )
         self.db.add(test)
         
@@ -624,12 +723,14 @@ class GamificationService:
             "new_level": new_level,
             "results": results,
             "accuracy": accuracy,
+            "tutor_feedback": tutor_feedback,
         }
 
     async def process_test_submission(
         self, student_id: UUID, subject_id: UUID, title: str, 
         correct_count: int, total_marks: int, total_questions: int, 
-        total_time_seconds: int, results: list
+        total_time_seconds: int, results: list,
+        question_details: Optional[list] = None,
     ) -> dict:
         """Process a teacher test submission to grant XP and update gamification state."""
         user = await self.db.get(User, student_id)
@@ -649,6 +750,13 @@ class GamificationService:
 
         user.xp_total += total_xp
 
+        # Generate AI tutor feedback
+        tutor_feedback = None
+        if question_details:
+            tutor_feedback = await generate_tutor_feedback(
+                question_details, correct_count, total_questions
+            )
+
         # Save test history so it appears in profile 
         test = TestHistory(
             student_id=student_id,
@@ -664,6 +772,7 @@ class GamificationService:
                 {"question_id": r["question_id"], "correct": r["is_correct"], "xp": 0}
                 for r in results
             ],
+            tutor_feedback=tutor_feedback,
         )
         self.db.add(test)
         
@@ -686,7 +795,7 @@ class GamificationService:
         d.time_spent_seconds += total_time_seconds or 0
         
         await self.db.commit()
-        return {"xp_earned": total_xp}
+        return {"xp_earned": total_xp, "tutor_feedback": tutor_feedback}
 
     # --- Profile ---
 
@@ -747,31 +856,31 @@ class GamificationService:
         
         if subject_id:
             # Class-wise leaderboard: only students enrolled in this subject
-            # Calculate XP from their progress in this subject
+            # Calculate XP from their test history in this subject
+            from app.models.gamification import TestHistory
             result = await self.db.execute(
-                select(User, StudentProgress)
+                select(User, TestHistory)
                 .join(Enrollment, User.id == Enrollment.student_id)
                 .outerjoin(
-                    StudentProgress,
-                    (User.id == StudentProgress.student_id) & (StudentProgress.subject_id == subject_id)
+                    TestHistory,
+                    (User.id == TestHistory.student_id) & (TestHistory.subject_id == subject_id)
                 )
                 .where(User.role == "student")
                 .where(Enrollment.subject_id == subject_id)
                 .where(Enrollment.status == "approved")
-                .distinct()
             )
             rows = result.all()
             
             # Aggregate XP per user for this subject
             user_xp: dict = {}
-            for user, progress in rows:
+            for user, history in rows:
                 if user.id not in user_xp:
                     user_xp[user.id] = {
                         "user": user,
                         "xp": 0
                     }
-                if progress:
-                    user_xp[user.id]["xp"] += progress.xp_earned
+                if history:
+                    user_xp[user.id]["xp"] += history.xp_earned
             
             # Sort by XP descending
             sorted_users = sorted(user_xp.values(), key=lambda x: x["xp"], reverse=True)[:limit]
@@ -869,6 +978,7 @@ class GamificationService:
                 "xp_earned": t.xp_earned,
                 "time_taken_seconds": t.time_taken_seconds,
                 "difficulty": t.difficulty,
+                "tutor_feedback": t.tutor_feedback,
                 "created_at": t.created_at,
             }
             for t in tests

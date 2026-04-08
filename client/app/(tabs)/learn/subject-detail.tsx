@@ -13,7 +13,7 @@ import {
   Linking,
   Platform,
 } from 'react-native';
-import { useLocalSearchParams, useRouter } from 'expo-router';
+import { useLocalSearchParams, useRouter, Stack } from 'expo-router';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { useColorScheme } from '@/hooks/use-color-scheme';
 import { Colors, Spacing, FontSizes, BorderRadius } from '@/constants/theme';
@@ -156,277 +156,336 @@ export default function SubjectDetailScreen() {
   const allMaterials = [...referenceBooks, ...templatePapers];
 
   return (
-    <SafeAreaView style={[styles.safeArea, { backgroundColor: colors.background }]}>
-      {/* Header */}
-      <View style={styles.headerRow}>
-        <TouchableOpacity onPress={() => router.back()}>
-          <Text style={[styles.backBtn, { color: colors.primary }]}>← Back</Text>
-        </TouchableOpacity>
-        <Text style={[styles.title, { color: colors.text }]} numberOfLines={1}>
-          {params.subjectName}
-        </Text>
-        <View style={{ width: 60 }} />
-      </View>
+    <>
+      <Stack.Screen
+        options={{
+          headerShown: true,
+          headerTransparent: true,
+          title: params.subjectName,
+          headerBackTitle: 'Subjects',
+          headerShadowVisible: false,
+          headerStyle: { backgroundColor: 'transparent' },
+          headerTintColor: colors.primary,
+          headerTitleStyle: { color: colors.text, fontWeight: '600' },
+        }}
+      />
+      <View style={[styles.safeArea, { backgroundColor: colors.background, paddingTop: 20}]}>
 
-      {/* Tab Bar */}
-      <View style={[styles.tabBar, { backgroundColor: colors.card, borderBottomColor: colors.border }]}>
-        {(['materials', 'practice', 'ranks'] as TabKey[]).map((tab) => (
-          <TouchableOpacity
-            key={tab}
-            style={[styles.tab, activeTab === tab && { borderBottomColor: colors.primary, borderBottomWidth: 2 }]}
-            onPress={() => {
-              setActiveTab(tab);
-              if (tab === 'ranks' && leaderboard.length === 0) loadLeaderboard();
-            }}
-          >
-            <Text style={[styles.tabText, { color: activeTab === tab ? colors.primary : colors.textSecondary }]}>
-              {tab === 'materials' ? '📚 Learn' : tab === 'practice' ? '✏️ Practice' : '🏆 Ranks'}
-            </Text>
-          </TouchableOpacity>
-        ))}
-      </View>
+        <ScrollView
+          contentContainerStyle={styles.content}
+          refreshControl={<RefreshControl refreshing={refreshing} onRefresh={onRefresh} />}
+        >
+          {/* ============ MATERIALS TAB ============ */}
+          {activeTab === 'materials' && (
+            <>
+              {loadingMaterials && loading ? (
+                <ActivityIndicator size="large" color={colors.primary} style={{ marginTop: 150 }} />
+              ) : allMaterials.length === 0 && !topics.some(t => t.hasSyllabus) ? (
+                <View style={styles.empty}>
+                  <Text style={styles.emptyEmoji}>📚</Text>
+                  <Text style={[styles.emptyTitle, { color: colors.text }]}>No Learning Materials Yet</Text>
+                  <Text style={[styles.emptyText, { color: colors.textSecondary }]}>
+                    Your teacher hasn't uploaded any reference materials or learning content for this subject yet.
+                  </Text>
+                </View>
+              ) : (
+                <>
+                  {/* Topic Learning Content - Teacher's Notes/Syllabus */}
+                  {topics.some(t => t.hasSyllabus) && (
+                    <>
+                      <Text style={[styles.sectionTitle, { color: colors.textSecondary, paddingTop: 100 }]}>LEARNING CONTENT</Text>
+                      {topics.filter(t => t.hasSyllabus).map((topic) => (
+                        <TouchableOpacity
+                          key={topic.id}
+                          style={[styles.materialCard, { backgroundColor: colors.backgroundSecondary }]}
+                          onPress={() => {
+                            // Navigate to topic content view
+                            router.push({
+                              pathname: '/(tabs)/learn/topic-content',
+                              params: {
+                                subjectId: params.subjectId,
+                                topicId: topic.id,
+                                topicName: topic.name,
+                              },
+                            });
+                          }}
+                          activeOpacity={0.7}
+                        >
+                          <Text style={styles.materialIcon}>📖</Text>
+                          <View style={styles.materialInfo}>
+                            <Text style={[styles.materialName, { color: colors.text }]} numberOfLines={2}>
+                              {topic.name}
+                            </Text>
+                            <Text style={[styles.materialMeta, { color: colors.textSecondary }]}>
+                              Teacher's notes · Tap to read
+                            </Text>
+                          </View>
+                          <View style={[styles.statusDot, { backgroundColor: '#34C759' }]} />
+                        </TouchableOpacity>
+                      ))}
+                    </>
+                  )}
 
-      <ScrollView
-        contentContainerStyle={styles.content}
-        refreshControl={<RefreshControl refreshing={refreshing} onRefresh={onRefresh} />}
-      >
-        {/* ============ MATERIALS TAB ============ */}
-        {activeTab === 'materials' && (
-          <>
-            {loadingMaterials && loading ? (
-              <ActivityIndicator size="large" color={colors.primary} style={{ marginTop: 40 }} />
-            ) : allMaterials.length === 0 && !topics.some(t => t.hasSyllabus) ? (
-              <View style={styles.empty}>
-                <Text style={styles.emptyEmoji}>📚</Text>
-                <Text style={[styles.emptyTitle, { color: colors.text }]}>No Learning Materials Yet</Text>
-                <Text style={[styles.emptyText, { color: colors.textSecondary }]}>
-                  Your teacher hasn't uploaded any reference materials or learning content for this subject yet.
-                </Text>
-              </View>
-            ) : (
-              <>
-                {/* Topic Learning Content - Teacher's Notes/Syllabus */}
-                {topics.some(t => t.hasSyllabus) && (
-                  <>
-                    <Text style={[styles.sectionTitle, { color: colors.textSecondary }]}>LEARNING CONTENT</Text>
-                    {topics.filter(t => t.hasSyllabus).map((topic) => (
-                      <TouchableOpacity
-                        key={topic.id}
-                        style={[styles.materialCard, { backgroundColor: colors.backgroundSecondary }]}
-                        onPress={() => {
-                          // Navigate to topic content view
-                          router.push({
-                            pathname: '/(tabs)/learn/topic-content',
-                            params: {
-                              subjectId: params.subjectId,
-                              topicId: topic.id,
-                              topicName: topic.name,
-                            },
-                          });
-                        }}
-                        activeOpacity={0.7}
-                      >
-                        <Text style={styles.materialIcon}>📖</Text>
-                        <View style={styles.materialInfo}>
-                          <Text style={[styles.materialName, { color: colors.text }]} numberOfLines={2}>
-                            {topic.name}
-                          </Text>
-                          <Text style={[styles.materialMeta, { color: colors.textSecondary }]}>
-                            Teacher's notes · Tap to read
-                          </Text>
-                        </View>
-                        <View style={[styles.statusDot, { backgroundColor: '#34C759' }]} />
-                      </TouchableOpacity>
-                    ))}
-                  </>
-                )}
+                  {referenceBooks.length > 0 && (
+                    <>
+                      <Text style={[styles.sectionTitle, { color: colors.textSecondary, marginTop: topics.some(t => t.hasSyllabus) ? Spacing.lg : 0 }]}>REFERENCE BOOKS</Text>
+                      {referenceBooks.map((doc) => (
+                        <TouchableOpacity
+                          key={doc.id}
+                          style={[styles.materialCard, { backgroundColor: colors.backgroundSecondary }]}
+                          onPress={() => {
+                            const url = `http://10.0.0.3:8000/api/v1/documents/${doc.id}/content`;
+                            router.push({
+                              pathname: '/(tabs)/learn/pdf-viewer',
+                              params: {
+                                url,
+                                title: doc.filename
+                              }
+                            });
+                          }}
+                          activeOpacity={0.7}
+                        >
+                          <Text style={styles.materialIcon}>{getFileIcon(doc.filename)}</Text>
+                          <View style={styles.materialInfo}>
+                            <Text style={[styles.materialName, { color: colors.text }]} numberOfLines={2}>
+                              {doc.filename}
+                            </Text>
+                            <Text style={[styles.materialMeta, { color: colors.textSecondary }]}>
+                              {formatFileSize(doc.file_size_bytes)} · Uploaded {new Date(doc.upload_timestamp).toLocaleDateString('en-US', { month: 'short', day: 'numeric' })}
+                            </Text>
+                          </View>
+                          <View style={[styles.statusDot, {
+                            backgroundColor: doc.processing_status === 'completed' ? '#34C759' : doc.processing_status === 'processing' ? '#FF9500' : '#FF3B30',
+                          }]} />
+                        </TouchableOpacity>
+                      ))}
+                    </>
+                  )}
 
-                {referenceBooks.length > 0 && (
-                  <>
-                    <Text style={[styles.sectionTitle, { color: colors.textSecondary, marginTop: topics.some(t => t.hasSyllabus) ? Spacing.lg : 0 }]}>REFERENCE BOOKS</Text>
-                    {referenceBooks.map((doc) => (
-                      <TouchableOpacity
-                        key={doc.id}
-                        style={[styles.materialCard, { backgroundColor: colors.backgroundSecondary }]}
-                        onPress={() => {
-                          // Open the document / show preview
-                        }}
-                        activeOpacity={0.7}
-                      >
-                        <Text style={styles.materialIcon}>{getFileIcon(doc.filename)}</Text>
-                        <View style={styles.materialInfo}>
-                          <Text style={[styles.materialName, { color: colors.text }]} numberOfLines={2}>
-                            {doc.filename}
-                          </Text>
-                          <Text style={[styles.materialMeta, { color: colors.textSecondary }]}>
-                            {formatFileSize(doc.file_size_bytes)} · Uploaded {new Date(doc.upload_timestamp).toLocaleDateString('en-US', { month: 'short', day: 'numeric' })}
-                          </Text>
-                        </View>
-                        <View style={[styles.statusDot, {
-                          backgroundColor: doc.processing_status === 'completed' ? '#34C759' : doc.processing_status === 'processing' ? '#FF9500' : '#FF3B30',
-                        }]} />
-                      </TouchableOpacity>
-                    ))}
-                  </>
-                )}
+                  {templatePapers.length > 0 && (
+                    <>
+                      <Text style={[styles.sectionTitle, { color: colors.textSecondary, marginTop: Spacing.lg }]}>TEMPLATE PAPERS</Text>
+                      {templatePapers.map((doc) => (
+                        <TouchableOpacity
+                          key={doc.id}
+                          style={[styles.materialCard, { backgroundColor: colors.backgroundSecondary }]}
+                          onPress={() => {
+                            const url = `http://10.0.0.3:8000/api/v1/documents/${doc.id}/content`;
+                            router.push({
+                              pathname: '/(tabs)/learn/pdf-viewer',
+                              params: {
+                                url,
+                                title: doc.filename
+                              }
+                            });
+                          }}
+                          activeOpacity={0.7}
+                        >
+                          <Text style={styles.materialIcon}>{getFileIcon(doc.filename)}</Text>
+                          <View style={styles.materialInfo}>
+                            <Text style={[styles.materialName, { color: colors.text }]} numberOfLines={2}>
+                              {doc.filename}
+                            </Text>
+                            <Text style={[styles.materialMeta, { color: colors.textSecondary }]}>
+                              {formatFileSize(doc.file_size_bytes)}
+                            </Text>
+                          </View>
+                        </TouchableOpacity>
+                      ))}
+                    </>
+                  )}
+                </>
+              )}
+            </>
+          )}
 
-                {templatePapers.length > 0 && (
-                  <>
-                    <Text style={[styles.sectionTitle, { color: colors.textSecondary, marginTop: Spacing.lg }]}>TEMPLATE PAPERS</Text>
-                    {templatePapers.map((doc) => (
-                      <TouchableOpacity
-                        key={doc.id}
-                        style={[styles.materialCard, { backgroundColor: colors.backgroundSecondary }]}
-                        onPress={() => { }}
-                        activeOpacity={0.7}
-                      >
-                        <Text style={styles.materialIcon}>{getFileIcon(doc.filename)}</Text>
-                        <View style={styles.materialInfo}>
-                          <Text style={[styles.materialName, { color: colors.text }]} numberOfLines={2}>
-                            {doc.filename}
-                          </Text>
-                          <Text style={[styles.materialMeta, { color: colors.textSecondary }]}>
-                            {formatFileSize(doc.file_size_bytes)}
-                          </Text>
-                        </View>
-                      </TouchableOpacity>
-                    ))}
-                  </>
-                )}
-              </>
-            )}
-          </>
-        )}
+          {/* ============ PRACTICE TAB ============ */}
+          {activeTab === 'practice' && (
+            <>
 
-        {/* ============ PRACTICE TAB ============ */}
-        {activeTab === 'practice' && (
-          <>
-            <TouchableOpacity
-              style={[styles.startAllButton, { backgroundColor: colors.primary }]}
-              onPress={handleStartAll}
-            >
-              <Text style={styles.startAllText}>🎯 Start Mixed Lesson</Text>
-            </TouchableOpacity>
-
-            {loading ? (
-              <ActivityIndicator size="large" color={colors.primary} style={{ marginTop: 40 }} />
-            ) : topics.length === 0 ? (
-              <View style={styles.empty}>
-                <Text style={styles.emptyEmoji}>📝</Text>
-                <Text style={[styles.emptyText, { color: colors.textSecondary }]}>
-                  No topics available yet.
-                </Text>
-              </View>
-            ) : (
-              topics.map((topic) => (
-                <TouchableOpacity
-                  key={topic.id}
-                  style={[styles.topicCard, { backgroundColor: colors.backgroundSecondary }]}
-                  onPress={() => handleStartTopic(topic.id)}
-                  activeOpacity={0.7}
-                >
-                  <View style={styles.topicLeft}>
-                    <MasteryRing mastery={topic.mastery} size={50} />
-                  </View>
-                  <View style={styles.topicInfo}>
-                    <Text style={[styles.topicName, { color: colors.text }]}>{topic.name}</Text>
-                    <Text style={[styles.topicMeta, { color: colors.textSecondary }]}>
-                      {topic.questionsAttempted > 0
+              {loading ? (
+                <ActivityIndicator size="large" color={colors.primary} style={{ marginTop: 40 }} />
+              ) : topics.length === 0 ? (
+                <View style={styles.empty}>
+                  <Text style={styles.emptyEmoji}>📝</Text>
+                  <Text style={[styles.emptyText, { color: colors.textSecondary }]}>
+                    No topics available yet.
+                  </Text>
+                </View>
+              ) : (
+                topics.map((topic) => (
+                    <View style={{ marginTop: topics.indexOf(topic) === 0 ? 100 : 0 }}>
+                    <TouchableOpacity
+                      key={topic.id}
+                      style={[styles.topicCard, { backgroundColor: colors.backgroundSecondary }]}
+                      onPress={() => handleStartTopic(topic.id)}
+                      activeOpacity={0.7}
+                    >
+                      <View style={styles.topicLeft}>
+                      <MasteryRing mastery={topic.mastery} size={50} />
+                      </View>
+                      <View style={styles.topicInfo}>
+                      <Text style={[styles.topicName, { color: colors.text }]}>{topic.name}</Text>
+                      <Text style={[styles.topicMeta, { color: colors.textSecondary }]}>
+                        {topic.questionsAttempted > 0
                         ? `${Math.round(topic.accuracy)}% accuracy · ${topic.questionsAttempted} attempted`
                         : 'Not started'}
-                    </Text>
-                    <View style={[styles.diffBadge, {
-                      backgroundColor: topic.difficulty === 'hard' ? '#FF3B3020' : topic.difficulty === 'medium' ? '#FF950020' : '#34C75920',
-                    }]}>
-                      <Text style={[styles.diffText, {
-                        color: topic.difficulty === 'hard' ? '#FF3B30' : topic.difficulty === 'medium' ? '#FF9500' : '#34C759',
-                      }]}>
-                        {topic.difficulty}
                       </Text>
+                      <View style={[styles.diffBadge, {
+                        backgroundColor: topic.difficulty === 'hard' ? '#FF3B3020' : topic.difficulty === 'medium' ? '#FF950020' : '#34C75920',
+                      }]}>
+                        <Text style={[styles.diffText, {
+                        color: topic.difficulty === 'hard' ? '#FF3B30' : topic.difficulty === 'medium' ? '#FF9500' : '#34C759',
+                        }]}>
+                        {topic.difficulty}
+                        </Text>
+                      </View>
+                      </View>
+                      <Text style={[styles.arrow, { color: colors.textSecondary }]}>›</Text>
+                    </TouchableOpacity>
                     </View>
-                  </View>
-                  <Text style={[styles.arrow, { color: colors.textSecondary }]}>›</Text>
-                </TouchableOpacity>
-              ))
-            )}
-          </>
-        )}
+                ))
+              )}
 
-        {/* ============ RANKS TAB ============ */}
-        {activeTab === 'ranks' && (
-          <>
-            {myRank && (
-              <View style={[styles.myRankCard, { backgroundColor: colors.primary }]}>
+              <TouchableOpacity
+                style={[styles.startAllButton, { backgroundColor: colors.primary }]}
+                onPress={handleStartAll}
+              >
+                <Text style={styles.startAllText}>🎯 Start Mixed Lesson</Text>
+              </TouchableOpacity>
+            </>
+          )}
+
+          {/* ============ RANKS TAB ============ */}
+            {activeTab === 'ranks' && (
+            <>
+              <View style={{ marginTop: 100 }}>
+              {myRank && (
+                <View style={[styles.myRankCard, { backgroundColor: colors.primary }]}>
                 <Text style={styles.myRankLabel}>Your Rank</Text>
                 <Text style={styles.myRankValue}>#{myRank}</Text>
-              </View>
-            )}
+                </View>
+              )}
 
-            {loadingRanks ? (
-              <ActivityIndicator size="large" color={colors.primary} style={{ marginTop: 40 }} />
-            ) : leaderboard.length === 0 ? (
-              <View style={styles.empty}>
+              {loadingRanks ? (
+                <ActivityIndicator size="large" color={colors.primary} style={{ marginTop: 40 }} />
+              ) : leaderboard.length === 0 ? (
+                <View style={styles.empty}>
                 <Text style={styles.emptyEmoji}>🏆</Text>
                 <Text style={[styles.emptyText, { color: colors.textSecondary }]}>
                   No leaderboard data yet. Start practicing to earn XP!
                 </Text>
-              </View>
-            ) : (
-              leaderboard.map((entry, idx) => (
+                </View>
+              ) : (
+                leaderboard.map((entry, idx) => (
                 <View
                   key={entry.user_id}
                   style={[styles.rankRow, {
-                    backgroundColor: idx < 3 ? (colorScheme === 'dark' ? 'rgba(255,215,0,0.08)' : 'rgba(255,215,0,0.12)') : colors.backgroundSecondary,
+                  backgroundColor: idx < 3 ? (colorScheme === 'dark' ? 'rgba(255,215,0,0.08)' : 'rgba(255,215,0,0.12)') : colors.backgroundSecondary,
                   }]}
                 >
                   <Text style={[styles.rankNum, {
-                    color: idx === 0 ? '#FFD700' : idx === 1 ? '#C0C0C0' : idx === 2 ? '#CD7F32' : colors.textSecondary,
+                  color: idx === 0 ? '#FFD700' : idx === 1 ? '#C0C0C0' : idx === 2 ? '#CD7F32' : colors.textSecondary,
                   }]}>
-                    {idx === 0 ? '🥇' : idx === 1 ? '🥈' : idx === 2 ? '🥉' : `#${entry.rank}`}
+                  {idx === 0 ? '🥇' : idx === 1 ? '🥈' : idx === 2 ? '🥉' : `#${entry.rank}`}
                   </Text>
                   <View style={styles.rankInfo}>
-                    <Text style={[styles.rankName, { color: colors.text }]}>
-                      {entry.full_name || entry.username}
-                    </Text>
-                    <Text style={[styles.rankMeta, { color: colors.textSecondary }]}>
-                      Level {entry.level} · {entry.xp_total} XP
-                    </Text>
+                  <Text style={[styles.rankName, { color: colors.text }]}>
+                    {entry.full_name || entry.username}
+                  </Text>
+                  <Text style={[styles.rankMeta, { color: colors.textSecondary }]}>
+                    Level {entry.level} · {entry.xp_total} XP
+                  </Text>
                   </View>
                   <View style={[styles.xpBadge, { backgroundColor: colors.primary + '20' }]}>
-                    <Text style={[styles.xpText, { color: colors.primary }]}>{entry.xp_total} XP</Text>
+                  <Text style={[styles.xpText, { color: colors.primary }]}>{entry.xp_total} XP</Text>
                   </View>
                 </View>
-              ))
+                ))
+              )}
+              </View>
+            </>
             )}
-          </>
-        )}
-      </ScrollView>
-    </SafeAreaView>
+        </ScrollView>
+        
+        {/* Tab Selector */}
+        <View style={[styles.tabSelector, { backgroundColor: colors.card, marginBottom: 100}]}>
+          <TouchableOpacity
+            style={[
+              styles.tabButton,
+              activeTab === 'materials' && { backgroundColor: colors.primary },
+            ]}
+            onPress={() => setActiveTab('materials')}
+          >
+            <IconSymbol
+              name="book.fill"
+              size={16}
+              color={activeTab === 'materials' ? '#FFFFFF' : colors.textSecondary}
+            />
+            <Text style={[styles.tabButtonText, { color: activeTab === 'materials' ? '#FFFFFF' : colors.textSecondary }]}>Learn</Text>
+          </TouchableOpacity>
+          <TouchableOpacity
+            style={[
+              styles.tabButton,
+              activeTab === 'practice' && { backgroundColor: colors.primary },
+            ]}
+            onPress={() => setActiveTab('practice')}
+          >
+            <IconSymbol
+              name="pencil.and.outline"
+              size={16}
+              color={activeTab === 'practice' ? '#FFFFFF' : colors.textSecondary}
+            />
+            <Text style={[styles.tabButtonText, { color: activeTab === 'practice' ? '#FFFFFF' : colors.textSecondary }]}>Practice</Text>
+          </TouchableOpacity>
+          <TouchableOpacity
+            style={[
+              styles.tabButton,
+              activeTab === 'ranks' && { backgroundColor: colors.primary },
+            ]}
+            onPress={() => {
+              setActiveTab('ranks');
+              if (leaderboard.length === 0) loadLeaderboard();
+            }}
+          >
+            <IconSymbol
+              name="rosette"
+              size={16}
+              color={activeTab === 'ranks' ? '#FFFFFF' : colors.textSecondary}
+            />
+            <Text style={[styles.tabButtonText, { color: activeTab === 'ranks' ? '#FFFFFF' : colors.textSecondary }]}>Ranks</Text>
+          </TouchableOpacity>
+        </View>
+      </View>
+    </>
   );
 }
 
 const styles = StyleSheet.create({
   safeArea: { flex: 1 },
-  headerRow: {
+  headerRow: { display: 'none' }, // legacy, kept around just in case
+  backBtn: { fontSize: FontSizes.md, fontWeight: '500' },
+  title: { fontSize: FontSizes.md, fontWeight: '600', flex: 1, textAlign: 'center' },
+  tabSelector: {
     flexDirection: 'row',
-    justifyContent: 'space-between',
-    alignItems: 'center',
-    paddingHorizontal: Spacing.lg,
-    paddingVertical: Spacing.sm,
+    marginHorizontal: Spacing.md,
+    borderRadius: BorderRadius.md,
+    padding: 4,
+    height: 50,
   },
-  backBtn: { fontSize: FontSizes.md, fontWeight: '600' },
-  title: { fontSize: FontSizes.lg, fontWeight: '700', flex: 1, textAlign: 'center' },
-  tabBar: {
-    flexDirection: 'row',
-    borderBottomWidth: 1,
-    paddingHorizontal: Spacing.md,
-  },
-  tab: {
+  tabButton: {
     flex: 1,
-    paddingVertical: Spacing.sm,
+    flexDirection: 'row',
     alignItems: 'center',
+    justifyContent: 'center',
+    paddingVertical: Spacing.sm,
+    borderRadius: BorderRadius.sm,
+    gap: Spacing.xs,
   },
-  tabText: { fontSize: FontSizes.sm, fontWeight: '600' },
+  tabButtonText: {
+    fontWeight: '600',
+    fontSize: FontSizes.sm,
+  },
   content: { padding: Spacing.lg, paddingBottom: 100 },
   // Materials
   sectionTitle: { fontSize: FontSizes.xs, fontWeight: '700', letterSpacing: 0.8, marginBottom: Spacing.sm },
@@ -447,7 +506,7 @@ const styles = StyleSheet.create({
     paddingVertical: Spacing.md,
     borderRadius: BorderRadius.lg,
     alignItems: 'center',
-    marginBottom: Spacing.lg,
+    marginTop: Spacing.lg,
   },
   startAllText: { color: '#fff', fontSize: FontSizes.md, fontWeight: '700' },
   topicCard: {
@@ -493,7 +552,7 @@ const styles = StyleSheet.create({
   xpBadge: { paddingHorizontal: Spacing.sm, paddingVertical: 4, borderRadius: BorderRadius.md },
   xpText: { fontSize: FontSizes.xs, fontWeight: '700' },
   // Empty
-  empty: { alignItems: 'center', paddingTop: 60 },
+  empty: { alignItems: 'center', paddingTop: 350 },
   emptyEmoji: { fontSize: 48 },
   emptyTitle: { fontSize: FontSizes.lg, fontWeight: '700', marginTop: Spacing.md },
   emptyText: { fontSize: FontSizes.md, marginTop: Spacing.sm, textAlign: 'center', paddingHorizontal: 40 },
