@@ -6,7 +6,7 @@ Stored in SQLite (auth.db), decoupled from PostgreSQL/pgvector.
 
 from datetime import datetime
 from typing import Optional
-from sqlalchemy import String, Boolean, DateTime, Text, ForeignKey, JSON, Integer
+from sqlalchemy import String, Boolean, DateTime, Text, ForeignKey, JSON, Integer, UniqueConstraint
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 import uuid
 
@@ -110,3 +110,69 @@ class AdminNotification(AuthBase):
 
     def __repr__(self) -> str:
         return f"<AdminNotification {self.notification_type} for {self.recipient_user_id}>"
+
+
+class UserFavorite(AuthBase):
+    """Pinned subject/group preferences stored per user in SQLite."""
+
+    __tablename__ = "user_favorites"
+    __table_args__ = (
+        UniqueConstraint("user_id", "entity_type", "entity_id", name="uq_user_favorites_entity"),
+    )
+
+    id: Mapped[str] = mapped_column(
+        String(36), primary_key=True, default=lambda: str(uuid.uuid4())
+    )
+    user_id: Mapped[str] = mapped_column(
+        String(36), ForeignKey("users.id", ondelete="CASCADE"), nullable=False, index=True
+    )
+    entity_type: Mapped[str] = mapped_column(String(20), nullable=False, index=True)
+    entity_id: Mapped[str] = mapped_column(String(36), nullable=False, index=True)
+    created_at: Mapped[Optional[datetime]] = mapped_column(DateTime, default=datetime.utcnow, index=True)
+
+    def __repr__(self) -> str:
+        return f"<UserFavorite {self.user_id} {self.entity_type}:{self.entity_id}>"
+
+
+class ActivityLog(AuthBase):
+    """Structured user activity log for admin review and filtering."""
+
+    __tablename__ = "activity_logs"
+
+    id: Mapped[str] = mapped_column(
+        String(36), primary_key=True, default=lambda: str(uuid.uuid4())
+    )
+
+    actor_user_id: Mapped[Optional[str]] = mapped_column(String(36), index=True)
+    actor_role: Mapped[Optional[str]] = mapped_column(String(20), index=True)
+    actor_name: Mapped[Optional[str]] = mapped_column(String(255), index=True)
+    actor_email: Mapped[Optional[str]] = mapped_column(String(255), index=True)
+
+    action_key: Mapped[str] = mapped_column(String(80), nullable=False, index=True)
+    action_label: Mapped[str] = mapped_column(String(255), nullable=False)
+    category: Mapped[Optional[str]] = mapped_column(String(50), index=True)
+    source_area: Mapped[Optional[str]] = mapped_column(String(50), index=True)
+
+    entity_type: Mapped[Optional[str]] = mapped_column(String(20), index=True)
+    entity_id: Mapped[Optional[str]] = mapped_column(String(36), index=True)
+    entity_name: Mapped[Optional[str]] = mapped_column(String(255), index=True)
+
+    subject_id: Mapped[Optional[str]] = mapped_column(String(36), index=True)
+    subject_name: Mapped[Optional[str]] = mapped_column(String(255), index=True)
+    topic_id: Mapped[Optional[str]] = mapped_column(String(36), index=True)
+    topic_name: Mapped[Optional[str]] = mapped_column(String(255), index=True)
+    group_id: Mapped[Optional[str]] = mapped_column(String(36), index=True)
+    group_name: Mapped[Optional[str]] = mapped_column(String(255), index=True)
+
+    ip_address: Mapped[Optional[str]] = mapped_column(String(45))
+    user_agent: Mapped[Optional[str]] = mapped_column(Text)
+    endpoint: Mapped[Optional[str]] = mapped_column(String(255))
+    http_method: Mapped[Optional[str]] = mapped_column(String(10))
+
+    details: Mapped[Optional[dict]] = mapped_column(JSON)
+    success: Mapped[bool] = mapped_column(Boolean, default=True, index=True)
+    error_message: Mapped[Optional[str]] = mapped_column(Text)
+    created_at: Mapped[Optional[datetime]] = mapped_column(DateTime, default=datetime.utcnow, index=True)
+
+    def __repr__(self) -> str:
+        return f"<ActivityLog {self.action_key} by {self.actor_user_id}>"

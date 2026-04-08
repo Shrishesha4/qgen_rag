@@ -138,6 +138,7 @@
 				{ href: '/admin/teachers', label: 'Teachers', icon: '🧑‍🏫' },
 				{ href: '/admin/vetters', label: 'Vetters', icon: '✅' },
 				{ href: '/admin/analytics', label: 'Analytics', icon: '📊' },
+				{ href: '/admin/logs', label: 'Logs', icon: '🧾' },
 				{ href: '/admin/settings', label: 'Settings', icon: '⚙️' },
 				{ href: '/admin/profile', label: 'Profile', icon: '👤' },
 			];

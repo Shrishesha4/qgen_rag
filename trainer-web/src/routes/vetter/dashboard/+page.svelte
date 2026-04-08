@@ -13,6 +13,7 @@
 	} from '$lib/api/subjects';
 	import { getBackgroundGenerationStatuses } from '$lib/api/documents';
 	import { getQuestionsForVetting } from '$lib/api/vetting';
+	import { recordActivityEvent } from '$lib/api/activity';
 	import { buildSubjectGroupMetaById, getSubjectGroupPath, matchesSubjectSearch } from '$lib/subject-group-search';
 	import {
 		createTeacherVettingLoopUrl,
@@ -475,7 +476,28 @@
 		goto(`/vetter/subjects/${targetSubjectId}${suffix}`);
 	}
 
-	function startSubjectVetting(subjectId: string, totalQuestions: number) {
+	async function logStartVetting(subjectId: string, topicId?: string, topicName?: string) {
+		const subject = subjects.find((item) => item.id === subjectId);
+		try {
+			await recordActivityEvent({
+				action_key: 'start_vetting',
+				action_label: topicId ? 'Started Topic Vetting' : 'Started Subject Vetting',
+				category: 'vetting',
+				source_area: 'vetter_dashboard',
+				entity_type: topicId ? 'topic' : 'subject',
+				entity_id: topicId ?? subjectId,
+				entity_name: topicName ?? subject?.name,
+				subject_id: subjectId,
+				subject_name: subject?.name,
+				topic_id: topicId,
+				topic_name: topicName,
+			});
+		} catch {
+			// Navigation should not be blocked by logging failures.
+		}
+	}
+
+	async function startSubjectVetting(subjectId: string, totalQuestions: number) {
 		if ((totalQuestions ?? 0) <= 0) {
 			openGenerateFirstModal(
 				subjectId,
@@ -485,11 +507,12 @@
 			);
 			return;
 		}
+		await logStartVetting(subjectId);
 		const params = new URLSearchParams({ subject: subjectId, resume: '0', auto_generate: '0' });
 		goto(`/vetter/dashboard/loop?${params.toString()}`);
 	}
 
-	function startTopicVetting(subjectId: string, topicId: string, topicName: string, totalQuestions: number) {
+	async function startTopicVetting(subjectId: string, topicId: string, topicName: string, totalQuestions: number) {
 		if ((totalQuestions ?? 0) <= 0) {
 			openGenerateFirstModal(
 				subjectId,
@@ -499,6 +522,7 @@
 			);
 			return;
 		}
+		await logStartVetting(subjectId, topicId, topicName);
 		const params = new URLSearchParams({ subject: subjectId, topic: topicId, resume: '0', auto_generate: '0' });
 		goto(`/vetter/dashboard/loop?${params.toString()}`);
 	}

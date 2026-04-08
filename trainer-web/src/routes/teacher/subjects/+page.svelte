@@ -14,6 +14,12 @@
 		type SubjectGroupTreeNode,
 		type SubjectTreeResponse
 	} from '$lib/api/subjects';
+	import {
+		listCurrentUserFavorites,
+		addCurrentUserFavorite,
+		removeCurrentUserFavorite,
+		type FavoriteSummary,
+	} from '$lib/api/activity';
 	import { getGenerationWebSocketClient, type StatsData } from '$lib/api/generation-websocket';
 	import { buildSubjectGroupMetaById, getSubjectGroupPath, matchesSubjectSearch } from '$lib/subject-group-search';
 
@@ -25,6 +31,8 @@
 	let error = $state('');
 	let treeData = $state<SubjectTreeResponse | null>(null);
 	let subjects = $state<SubjectResponse[]>([]);
+	let favorites = $state<FavoriteSummary[]>([]);
+	let favoriteBusyKeys = $state<Record<string, boolean>>({});
 	let query = $state('');
 	
 	// WebSocket for live stats updates
@@ -77,6 +85,35 @@
 	const SUBJECTS_PAGE_LIMIT = 100;
 	const SUBJECT_ROUTE_PRELOAD_LIMIT = 8;
 	const preloadedSubjectRoutes = new Set<string>();
+
+	function favoriteKey(entityType: string, entityId: string): string {
+		return `${entityType}:${entityId}`;
+	}
+
+	function collectFavoritedGroups(groups: SubjectGroupTreeNode[], favoriteIds: Set<string>): SubjectGroupTreeNode[] {
+		const results: SubjectGroupTreeNode[] = [];
+		function walk(group: SubjectGroupTreeNode) {
+			if (favoriteIds.has(group.id)) {
+				results.push(group);
+				return;
+			}
+			group.children.forEach(walk);
+		}
+		groups.forEach(walk);
+		return results;
+	}
+
+	function stripFavoritedGroups(groups: SubjectGroupTreeNode[], favoriteIds: Set<string>): SubjectGroupTreeNode[] {
+		return groups.flatMap((group) => {
+			if (favoriteIds.has(group.id)) {
+				return [];
+			}
+			return [{
+				...group,
+				children: stripFavoritedGroups(group.children, favoriteIds),
+			}];
+		});
+	}
 
 	// Custom confirmation modal state
 	let showConfirmModal = $state(false);
@@ -205,12 +242,14 @@
 		loading = true;
 		error = '';
 		try {
-			const [treeRes, listRes] = await Promise.all([
+			const [treeRes, listRes, favoriteRes] = await Promise.all([
 				getSubjectsTree(),
-				listAllSubjects()
+				listAllSubjects(),
+				listCurrentUserFavorites(),
 			]);
 			treeData = treeRes;
 			subjects = listRes;
+			favorites = favoriteRes;
 			void preloadInitialSubjectRoutes(listRes);
 		} catch (e: unknown) {
 			error = e instanceof Error ? e.message : 'Failed to load subjects';
@@ -250,6 +289,41 @@
 		}
 	}
 
+	const favoriteEntityKeys = $derived.by(() => new Set(favorites.map((favorite) => favoriteKey(favorite.entity_type, favorite.entity_id))));
+
+	function isFavorite(entityType: 'subject' | 'group', entityId: string): boolean {
+		return favoriteEntityKeys.has(favoriteKey(entityType, entityId));
+	}
+
+	async function toggleFavorite(entityType: 'subject' | 'group', entityId: string, entityName: string): Promise<void> {
+		const key = favoriteKey(entityType, entityId);
+		if (favoriteBusyKeys[key]) return;
+		favoriteBusyKeys = { ...favoriteBusyKeys, [key]: true };
+		try {
+			if (favoriteEntityKeys.has(key)) {
+				await removeCurrentUserFavorite({
+					entity_type: entityType,
+					entity_id: entityId,
+					entity_name: entityName,
+					source_area: 'teacher_subjects',
+				});
+				favorites = favorites.filter((favorite) => favoriteKey(favorite.entity_type, favorite.entity_id) !== key);
+			} else {
+				const favorite = await addCurrentUserFavorite({
+					entity_type: entityType,
+					entity_id: entityId,
+					entity_name: entityName,
+					source_area: 'teacher_subjects',
+				});
+				favorites = [...favorites, favorite];
+			}
+		} catch (e: unknown) {
+			error = e instanceof Error ? e.message : 'Failed to update favorite';
+		} finally {
+			favoriteBusyKeys = { ...favoriteBusyKeys, [key]: false };
+		}
+	}
+
 	const subjectGroupMetaById = $derived.by(() => buildSubjectGroupMetaById(treeData?.groups ?? []));
 
 	const groupedSubjects = $derived.by(() => {
@@ -265,11 +339,41 @@
 		return subjects.filter((subject) => matchesSubjectSearch(subject, search, subjectGroupMetaById));
 	});
 
+	const pinnedSubjectsView = $derived.by(() => {
+		return filteredSubjectsView.filter((subject) => favoriteEntityKeys.has(favoriteKey('subject', subject.id)));
+	});
+
+	const regularSubjectsView = $derived.by(() => {
+		return filteredSubjectsView.filter((subject) => !favoriteEntityKeys.has(favoriteKey('subject', subject.id)));
+	});
+
 	// Filtered subjects for groups view (returns null when no search to show tree)
 	const filteredGroupsView = $derived.by(() => {
 		const search = query.trim().toLowerCase();
 		if (!search) return null;
 		return groupedSubjects.filter((subject) => matchesSubjectSearch(subject, search, subjectGroupMetaById));
+	});
+
+	const pinnedGroupedSubjectResults = $derived.by(() => {
+		if (filteredGroupsView === null) return [];
+		return filteredGroupsView.filter((subject) => favoriteEntityKeys.has(favoriteKey('subject', subject.id)));
+	});
+
+	const regularGroupedSubjectResults = $derived.by(() => {
+		if (filteredGroupsView === null) return [];
+		return filteredGroupsView.filter((subject) => !favoriteEntityKeys.has(favoriteKey('subject', subject.id)));
+	});
+
+	const favoriteGroupIds = $derived.by(() => new Set(favorites.filter((favorite) => favorite.entity_type === 'group').map((favorite) => favorite.entity_id)));
+
+	const pinnedGroupsTree = $derived.by(() => {
+		if (!treeData) return [];
+		return collectFavoritedGroups(treeData.groups, favoriteGroupIds);
+	});
+
+	const visibleGroupsTree = $derived.by(() => {
+		if (!treeData) return [];
+		return stripFavoritedGroups(treeData.groups, favoriteGroupIds);
 	});
 
 	const totals = $derived.by(() => {
@@ -1007,7 +1111,7 @@
 							<td colspan="5" class="empty-cell">No subjects matched your search.</td>
 						</tr>
 					{:else}
-						{#each filteredSubjectsView as subject}
+						{#each pinnedSubjectsView as subject}
 							{@const groupPath = getSubjectGroupPath(subject.id, subjectGroupMetaById)}
 							<tr class="subject-row" role="button" tabindex="0" onclick={() => openSubject(subject.id)} onkeydown={(event) => {
 								if (event.key === 'Enter' || event.key === ' ') {
@@ -1018,6 +1122,60 @@
 								<td>
 									<div class="name-stack">
 										<div class="name-header">
+											<button
+												class="favorite-btn"
+												type="button"
+												title="Unpin subject"
+												onclick={(e) => {
+													e.stopPropagation();
+													void toggleFavorite('subject', subject.id, subject.name);
+												}}
+												disabled={favoriteBusyKeys[favoriteKey('subject', subject.id)]}
+											>
+												★
+											</button>
+											<strong>{subject.name}</strong>
+											<span class="code-chip">{subject.code}</span>
+										</div>
+										{#if hasActiveSearch && groupPath}
+											<span class="group-context">Group: {groupPath}</span>
+										{/if}
+									</div>
+								</td>
+								<td>{subject.total_questions}</td>
+								<td>{subject.total_pending ?? 0}</td>
+								<td class="green-text">{subject.total_approved ?? 0}</td>
+								<td class="red-text">{subject.total_rejected ?? 0}</td>
+							</tr>
+						{/each}
+						{#if pinnedSubjectsView.length > 0 && regularSubjectsView.length > 0}
+							<tr class="pin-divider-row">
+								<td colspan="5"><span>More Subjects</span></td>
+							</tr>
+						{/if}
+						{#each regularSubjectsView as subject}
+							{@const groupPath = getSubjectGroupPath(subject.id, subjectGroupMetaById)}
+							<tr class="subject-row" role="button" tabindex="0" onclick={() => openSubject(subject.id)} onkeydown={(event) => {
+								if (event.key === 'Enter' || event.key === ' ') {
+									event.preventDefault();
+									openSubject(subject.id);
+								}
+							}}>
+								<td>
+									<div class="name-stack">
+										<div class="name-header">
+											<button
+												class="favorite-btn"
+												type="button"
+												title="Pin subject"
+												onclick={(e) => {
+													e.stopPropagation();
+													void toggleFavorite('subject', subject.id, subject.name);
+												}}
+												disabled={favoriteBusyKeys[favoriteKey('subject', subject.id)]}
+											>
+												☆
+											</button>
 											<strong>{subject.name}</strong>
 											<span class="code-chip">{subject.code}</span>
 										</div>
@@ -1055,23 +1213,54 @@
 			{#if filteredSubjectsView.length === 0}
 				<div class="subject-mobile-card glass-panel empty-cell">No subjects matched your search.</div>
 			{:else}
-				{#each filteredSubjectsView as subject}
+				{#each pinnedSubjectsView as subject}
 					{@const groupPath = getSubjectGroupPath(subject.id, subjectGroupMetaById)}
-					<button class="subject-mobile-card glass-panel" onclick={() => openSubject(subject.id)}>
-						<div class="name-header">
-							<span class="code-chip">{subject.code}</span>
-							<strong>{subject.name}</strong>
+					<div class="subject-mobile-card glass-panel">
+						<div class="mobile-card-actions">
+							<button class="favorite-btn" type="button" title="Unpin subject" onclick={() => void toggleFavorite('subject', subject.id, subject.name)} disabled={favoriteBusyKeys[favoriteKey('subject', subject.id)]}>★</button>
 						</div>
-						{#if hasActiveSearch && groupPath}
-							<span class="group-context">Group: {groupPath}</span>
-						{/if}
-						<div class="mobile-metrics">
-							<span>Questions <strong>{subject.total_questions}</strong></span>
-							<span>Pending <strong>{subject.total_pending ?? 0}</strong></span>
-							<span class="green-text">Approved <strong>{subject.total_approved ?? 0}</strong></span>
-							<span class="red-text">Rejected <strong>{subject.total_rejected ?? 0}</strong></span>
+						<button class="card-main" onclick={() => openSubject(subject.id)}>
+							<div class="name-header">
+								<span class="code-chip">{subject.code}</span>
+								<strong>{subject.name}</strong>
+							</div>
+							{#if hasActiveSearch && groupPath}
+								<span class="group-context">Group: {groupPath}</span>
+							{/if}
+							<div class="mobile-metrics">
+								<span>Questions <strong>{subject.total_questions}</strong></span>
+								<span>Pending <strong>{subject.total_pending ?? 0}</strong></span>
+								<span class="green-text">Approved <strong>{subject.total_approved ?? 0}</strong></span>
+								<span class="red-text">Rejected <strong>{subject.total_rejected ?? 0}</strong></span>
+							</div>
+						</button>
+					</div>
+				{/each}
+				{#if pinnedSubjectsView.length > 0 && regularSubjectsView.length > 0}
+					<div class="favorites-divider">More Subjects</div>
+				{/if}
+				{#each regularSubjectsView as subject}
+					{@const groupPath = getSubjectGroupPath(subject.id, subjectGroupMetaById)}
+					<div class="subject-mobile-card glass-panel">
+						<div class="mobile-card-actions">
+							<button class="favorite-btn" type="button" title="Pin subject" onclick={() => void toggleFavorite('subject', subject.id, subject.name)} disabled={favoriteBusyKeys[favoriteKey('subject', subject.id)]}>☆</button>
 						</div>
-					</button>
+						<button class="card-main" onclick={() => openSubject(subject.id)}>
+							<div class="name-header">
+								<span class="code-chip">{subject.code}</span>
+								<strong>{subject.name}</strong>
+							</div>
+							{#if hasActiveSearch && groupPath}
+								<span class="group-context">Group: {groupPath}</span>
+							{/if}
+							<div class="mobile-metrics">
+								<span>Questions <strong>{subject.total_questions}</strong></span>
+								<span>Pending <strong>{subject.total_pending ?? 0}</strong></span>
+								<span class="green-text">Approved <strong>{subject.total_approved ?? 0}</strong></span>
+								<span class="red-text">Rejected <strong>{subject.total_rejected ?? 0}</strong></span>
+							</div>
+						</button>
+					</div>
 				{/each}
 			{/if}
 		</div>
@@ -1128,7 +1317,7 @@
 								<td colspan="6" class="empty-cell">No subjects matched your search.</td>
 							</tr>
 						{:else}
-							{#each filteredGroupsView as subject}
+							{#each pinnedGroupedSubjectResults as subject}
 								{@const groupPath = getSubjectGroupPath(subject.id, subjectGroupMetaById)}
 								<tr 
 									class="subject-row" 
@@ -1148,6 +1337,50 @@
 									<td>
 										<div class="name-stack">
 											<div class="name-header">
+												<button class="favorite-btn" type="button" title="Unpin subject" onclick={(e) => { e.stopPropagation(); void toggleFavorite('subject', subject.id, subject.name); }} disabled={favoriteBusyKeys[favoriteKey('subject', subject.id)]}>★</button>
+												<strong>{subject.name}</strong>
+												<span class="code-chip">{subject.code}</span>
+											</div>
+											{#if groupPath}
+												<span class="group-context">Group: {groupPath}</span>
+											{/if}
+										</div>
+									</td>
+									<td>{subject.total_questions}</td>
+									<td>{subject.total_pending ?? 0}</td>
+									<td class="green-text">{subject.total_approved ?? 0}</td>
+									<td class="red-text">{subject.total_rejected ?? 0}</td>
+									<td>
+										<button class="icon-btn" title="Move" onclick={(e) => { e.stopPropagation(); openMoveModal('subject', subject.id, subject.name); }}>↔</button>
+									</td>
+								</tr>
+							{/each}
+							{#if pinnedGroupedSubjectResults.length > 0 && regularGroupedSubjectResults.length > 0}
+								<tr class="pin-divider-row">
+									<td colspan="6"><span>More Results</span></td>
+								</tr>
+							{/if}
+							{#each regularGroupedSubjectResults as subject}
+								{@const groupPath = getSubjectGroupPath(subject.id, subjectGroupMetaById)}
+								<tr 
+									class="subject-row" 
+									role="button" 
+									tabindex="0" 
+									draggable="true"
+									ondragstart={(e) => handleDragStart(e, 'subject', subject.id, subject.name)}
+									ondragend={handleDragEnd}
+									onclick={() => openSubject(subject.id)} 
+									onkeydown={(event) => {
+										if (event.key === 'Enter' || event.key === ' ') {
+											event.preventDefault();
+											openSubject(subject.id);
+										}
+									}}
+								>
+									<td>
+										<div class="name-stack">
+											<div class="name-header">
+												<button class="favorite-btn" type="button" title="Pin subject" onclick={(e) => { e.stopPropagation(); void toggleFavorite('subject', subject.id, subject.name); }} disabled={favoriteBusyKeys[favoriteKey('subject', subject.id)]}>☆</button>
 												<strong>{subject.name}</strong>
 												<span class="code-chip">{subject.code}</span>
 											</div>
@@ -1184,8 +1417,18 @@
 						</tr>
 
 						<!-- Groups -->
-						{#each treeData.groups as group}
-							{@render groupRow(group, 0)}
+						{#each pinnedGroupsTree as group}
+							{@render groupRow(group, 0, true)}
+						{/each}
+
+						{#if pinnedGroupsTree.length > 0 && visibleGroupsTree.length > 0}
+							<tr class="pin-divider-row">
+								<td colspan="6"><span>Other Groups</span></td>
+							</tr>
+						{/if}
+
+						{#each visibleGroupsTree as group}
+							{@render groupRow(group, 0, false)}
 						{/each}
 
 						{#if treeData.groups.length === 0}
@@ -1217,29 +1460,66 @@
 				{#if filteredGroupsView.length === 0}
 						<div class="subject-mobile-card glass-panel empty-cell">No grouped subjects matched your search.</div>
 				{:else}
-					{#each filteredGroupsView as subject}
+					{#each pinnedGroupedSubjectResults as subject}
 						{@const groupPath = getSubjectGroupPath(subject.id, subjectGroupMetaById)}
-						<button class="subject-mobile-card glass-panel" onclick={() => openSubject(subject.id)}>
-							<div class="name-header">
-								<span class="code-chip">{subject.code}</span>
-								<strong>{subject.name}</strong>
+						<div class="subject-mobile-card glass-panel">
+							<div class="mobile-card-actions">
+								<button class="favorite-btn" type="button" title="Unpin subject" onclick={() => void toggleFavorite('subject', subject.id, subject.name)} disabled={favoriteBusyKeys[favoriteKey('subject', subject.id)]}>★</button>
 							</div>
-							{#if groupPath}
-								<span class="group-context">Group: {groupPath}</span>
-							{/if}
-							<div class="mobile-metrics">
-								<span>Questions <strong>{subject.total_questions}</strong></span>
-								<span>Pending <strong>{subject.total_pending ?? 0}</strong></span>
-								<span class="green-text">Approved <strong>{subject.total_approved ?? 0}</strong></span>
-								<span class="red-text">Rejected <strong>{subject.total_rejected ?? 0}</strong></span>
+							<button class="card-main" onclick={() => openSubject(subject.id)}>
+								<div class="name-header">
+									<span class="code-chip">{subject.code}</span>
+									<strong>{subject.name}</strong>
+								</div>
+								{#if groupPath}
+									<span class="group-context">Group: {groupPath}</span>
+								{/if}
+								<div class="mobile-metrics">
+									<span>Questions <strong>{subject.total_questions}</strong></span>
+									<span>Pending <strong>{subject.total_pending ?? 0}</strong></span>
+									<span class="green-text">Approved <strong>{subject.total_approved ?? 0}</strong></span>
+									<span class="red-text">Rejected <strong>{subject.total_rejected ?? 0}</strong></span>
+								</div>
+							</button>
+						</div>
+					{/each}
+					{#if pinnedGroupedSubjectResults.length > 0 && regularGroupedSubjectResults.length > 0}
+						<div class="favorites-divider">More Results</div>
+					{/if}
+					{#each regularGroupedSubjectResults as subject}
+						{@const groupPath = getSubjectGroupPath(subject.id, subjectGroupMetaById)}
+						<div class="subject-mobile-card glass-panel">
+							<div class="mobile-card-actions">
+								<button class="favorite-btn" type="button" title="Pin subject" onclick={() => void toggleFavorite('subject', subject.id, subject.name)} disabled={favoriteBusyKeys[favoriteKey('subject', subject.id)]}>☆</button>
 							</div>
-						</button>
+							<button class="card-main" onclick={() => openSubject(subject.id)}>
+								<div class="name-header">
+									<span class="code-chip">{subject.code}</span>
+									<strong>{subject.name}</strong>
+								</div>
+								{#if groupPath}
+									<span class="group-context">Group: {groupPath}</span>
+								{/if}
+								<div class="mobile-metrics">
+									<span>Questions <strong>{subject.total_questions}</strong></span>
+									<span>Pending <strong>{subject.total_pending ?? 0}</strong></span>
+									<span class="green-text">Approved <strong>{subject.total_approved ?? 0}</strong></span>
+									<span class="red-text">Rejected <strong>{subject.total_rejected ?? 0}</strong></span>
+								</div>
+							</button>
+						</div>
 					{/each}
 				{/if}
 			{:else}
 				<!-- Mobile Tree View -->
-				{#each treeData.groups as group}
-					{@render mobileGroupCard(group, 0)}
+				{#each pinnedGroupsTree as group}
+					{@render mobileGroupCard(group, 0, true)}
+				{/each}
+				{#if pinnedGroupsTree.length > 0 && visibleGroupsTree.length > 0}
+					<div class="favorites-divider">Other Groups</div>
+				{/if}
+				{#each visibleGroupsTree as group}
+					{@render mobileGroupCard(group, 0, false)}
 				{/each}
 					{#if treeData.groups.length === 0}
 						<div class="subject-mobile-card glass-panel empty-cell">No groups yet.</div>
@@ -1507,9 +1787,10 @@
 {/if}
 
 <!-- Snippet: Group Row (recursive) -->
-{#snippet groupRow(group: SubjectGroupTreeNode, depth: number)}
+{#snippet groupRow(group: SubjectGroupTreeNode, depth: number, pinned: boolean)}
 	<tr 
 		class="group-row" 
+		class:pinned-row={pinned}
 		class:selected={selectedGroupId === group.id}
 		class:drag-over={dragOverGroupId === group.id}
 		draggable="true"
@@ -1546,11 +1827,14 @@
 					<circle cx="14" cy="17.5" r="2" />
 				</svg>
 			</button>
+			<button class="favorite-btn inline-favorite-btn" type="button" title={isFavorite('group', group.id) ? 'Unpin group' : 'Pin group'} onclick={(e) => { e.stopPropagation(); void toggleFavorite('group', group.id, group.name); }} disabled={favoriteBusyKeys[favoriteKey('group', group.id)]}>
+				{isFavorite('group', group.id) ? '★' : '☆'}
+			</button>
 		</td>
 	</tr>
 	{#if expandedGroups.has(group.id)}
 		{#each group.children as child}
-			{@render groupRow(child, depth + 1)}
+			{@render groupRow(child, depth + 1, false)}
 		{/each}
 		{#each group.subjects as subject}
 			{@render subjectRow(subject, depth + 1)}
@@ -1601,9 +1885,10 @@
 {/snippet}
 
 <!-- Snippet: Mobile Group Card (recursive) -->
-{#snippet mobileGroupCard(group: SubjectGroupTreeNode, depth: number)}
+{#snippet mobileGroupCard(group: SubjectGroupTreeNode, depth: number, pinned: boolean)}
 	<div 
 		class="group-mobile-card glass-panel" 
+		class:pinned-row={pinned}
 		class:selected={selectedGroupId === group.id}
 		style="margin-left: {depth * 0.75}rem"
 		role="group"
@@ -1630,10 +1915,13 @@
 				<circle cx="14" cy="17.5" r="2" />
 			</svg>
 		</button>
+		<button class="favorite-btn mobile-favorite-btn" type="button" title={isFavorite('group', group.id) ? 'Unpin group' : 'Pin group'} onclick={(e) => { e.stopPropagation(); void toggleFavorite('group', group.id, group.name); }} disabled={favoriteBusyKeys[favoriteKey('group', group.id)]}>
+			{isFavorite('group', group.id) ? '★' : '☆'}
+		</button>
 	</div>
 	{#if expandedGroups.has(group.id)}
 		{#each group.children as child}
-			{@render mobileGroupCard(child, depth + 1)}
+			{@render mobileGroupCard(child, depth + 1, false)}
 		{/each}
 		{#each group.subjects as subject}
 			{@render mobileSubjectCard(subject, depth + 1)}
@@ -1842,6 +2130,7 @@
 		gap: 0.55rem;
 		text-align: left;
 		color: var(--theme-text-primary);
+		position: relative;
 	}
 
 	button.subject-mobile-card {
@@ -1859,6 +2148,11 @@
 
 	.mobile-metrics strong {
 		color: var(--theme-text-primary);
+	}
+
+	.mobile-card-actions {
+		display: flex;
+		justify-content: flex-end;
 	}
 
 	.subjects-table {
@@ -1914,6 +2208,34 @@
 		cursor: pointer;
 	}
 
+	.pin-divider-row td {
+		padding: 0.6rem 0.62rem;
+		background: transparent;
+		border-bottom: none;
+		text-align: center;
+	}
+
+	.pin-divider-row span,
+	.favorites-divider {
+		display: inline-flex;
+		align-items: center;
+		justify-content: center;
+		padding: 0.35rem 0.8rem;
+		border-radius: 999px;
+		border: 1px dashed color-mix(in srgb, var(--theme-primary) 35%, var(--theme-glass-border));
+		color: var(--theme-text-muted);
+		font-size: 0.78rem;
+		font-weight: 700;
+		letter-spacing: 0.04em;
+		text-transform: uppercase;
+	}
+
+	.favorites-divider {
+		width: fit-content;
+		justify-self: center;
+		margin: 0.1rem auto;
+	}
+
 	.subjects-table tbody tr:last-child td {
 		border-bottom: none;
 	}
@@ -1940,6 +2262,34 @@
 		font-size: 0.78rem;
 		line-height: 1.35;
 		color: var(--theme-text-muted);
+	}
+
+	.favorite-btn {
+		width: 2rem;
+		height: 2rem;
+		border-radius: 999px;
+		border: 1px solid rgba(var(--theme-primary-rgb), 0.26);
+		background: rgba(var(--theme-primary-rgb), 0.08);
+		color: var(--theme-primary);
+		font: inherit;
+		font-size: 0.92rem;
+		font-weight: 800;
+		line-height: 1;
+		cursor: pointer;
+		flex: 0 0 auto;
+	}
+
+	.favorite-btn:hover {
+		background: rgba(var(--theme-primary-rgb), 0.16);
+	}
+
+	.favorite-btn:disabled {
+		opacity: 0.55;
+		cursor: not-allowed;
+	}
+
+	.inline-favorite-btn {
+		margin-left: 0.4rem;
 	}
 
 	.code-chip {
@@ -2097,6 +2447,10 @@
 		background: rgba(var(--theme-primary-rgb), 0.04);
 	}
 
+	.pinned-row {
+		box-shadow: inset 3px 0 0 rgba(var(--theme-primary-rgb), 0.45);
+	}
+
 	.group-row:hover {
 		background: rgba(var(--theme-primary-rgb), 0.08);
 	}
@@ -2163,6 +2517,12 @@
 		top: 0.8rem;
 		right: 0.8rem;
 		padding: 0.42rem;
+	}
+
+	.mobile-favorite-btn {
+		position: absolute;
+		top: 0.8rem;
+		right: 3.25rem;
 	}
 
 	.options-icon {

@@ -8,7 +8,7 @@ import logging
 import re
 from typing import Optional, List
 
-from fastapi import APIRouter, Depends, HTTPException, status, Query, UploadFile, File, BackgroundTasks
+from fastapi import APIRouter, Depends, HTTPException, status, Query, UploadFile, File, BackgroundTasks, Request
 from sqlalchemy import select, func, case, update, delete
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import selectinload
@@ -39,6 +39,7 @@ from app.schemas.subject import (
 )
 from app.api.v1.deps import get_current_user, ensure_user_can_generate, ensure_user_can_manage_groups
 from app.services.llm_service import LLMService
+from app.services.activity_service import safe_record_activity
 
 logger = logging.getLogger(__name__)
 router = APIRouter()
@@ -48,16 +49,19 @@ router = APIRouter()
 
 @router.post("", response_model=SubjectResponse, status_code=status.HTTP_201_CREATED)
 async def create_subject(
+    request: Request,
     subject_data: SubjectCreate,
     current_user: User = Depends(get_current_user),
     db: AsyncSession = Depends(get_db),
 ):
     """Create a new subject."""
+    group = None
     if subject_data.group_id:
         group_result = await db.execute(
             select(SubjectGroup).where(SubjectGroup.id == subject_data.group_id)
         )
-        if not group_result.scalar_one_or_none():
+        group = group_result.scalar_one_or_none()
+        if not group:
             raise HTTPException(
                 status_code=status.HTTP_404_NOT_FOUND,
                 detail="Target group not found",
@@ -81,6 +85,28 @@ async def create_subject(
     db.add(subject)
     await db.commit()
     await db.refresh(subject)
+
+    await safe_record_activity(
+        user=current_user,
+        action_key="subject_created",
+        action_label="Created Subject",
+        category="subjects",
+        source_area="teacher_subjects",
+        entity_type="subject",
+        entity_id=subject.id,
+        entity_name=subject.name,
+        subject_id=subject.id,
+        subject_name=subject.name,
+        group_id=subject.group_id,
+        group_name=group.name if group else None,
+        details={
+            "code": subject.code,
+            "has_description": bool(subject.description),
+            "has_learning_outcomes": bool(subject.learning_outcomes),
+            "has_course_outcomes": bool(subject.course_outcomes),
+        },
+        request=request,
+    )
     return SubjectResponse.model_validate(subject)
 
 
@@ -313,6 +339,7 @@ async def get_subjects_tree(
 
 @router.post("/groups", response_model=SubjectGroupResponse, status_code=status.HTTP_201_CREATED)
 async def create_group(
+    request: Request,
     group_data: SubjectGroupCreate,
     current_user: User = Depends(get_current_user),
     db: AsyncSession = Depends(get_db),
@@ -344,6 +371,29 @@ async def create_group(
     db.add(group)
     await db.commit()
     await db.refresh(group)
+
+    parent_name = None
+    if group.parent_id:
+        parent_result = await db.execute(select(SubjectGroup.name).where(SubjectGroup.id == group.parent_id))
+        parent_name = parent_result.scalar_one_or_none()
+
+    await safe_record_activity(
+        user=current_user,
+        action_key="group_created",
+        action_label="Created Group",
+        category="subjects",
+        source_area="teacher_subjects",
+        entity_type="group",
+        entity_id=group.id,
+        entity_name=group.name,
+        group_id=group.id,
+        group_name=group.name,
+        details={
+            "parent_group_id": group.parent_id,
+            "parent_group_name": parent_name,
+        },
+        request=request,
+    )
     
     return SubjectGroupResponse.model_validate(group)
 
@@ -385,6 +435,7 @@ async def get_group(
 @router.put("/groups/{group_id}", response_model=SubjectGroupResponse)
 async def update_group(
     group_id: str,
+    request: Request,
     group_data: SubjectGroupUpdate,
     current_user: User = Depends(get_current_user),
     db: AsyncSession = Depends(get_db),
@@ -425,17 +476,44 @@ async def update_group(
                 current_parent_id = parent_result.scalar_one_or_none()
     
     update_data = group_data.model_dump(exclude_unset=True)
+    changed_fields = {}
+    previous_name = group.name
+    previous_parent_id = group.parent_id
     for field, value in update_data.items():
+        old_value = getattr(group, field)
+        if old_value != value:
+            changed_fields[field] = {"old": old_value, "new": value}
         setattr(group, field, value)
     
     await db.commit()
     await db.refresh(group)
+
+    if changed_fields:
+        await safe_record_activity(
+            user=current_user,
+            action_key="group_updated",
+            action_label="Updated Group",
+            category="subjects",
+            source_area="teacher_subjects",
+            entity_type="group",
+            entity_id=group.id,
+            entity_name=group.name,
+            group_id=group.id,
+            group_name=group.name,
+            details={
+                "changes": changed_fields,
+                "previous_name": previous_name,
+                "previous_parent_id": previous_parent_id,
+            },
+            request=request,
+        )
     return SubjectGroupResponse.model_validate(group)
 
 
 @router.delete("/groups/{group_id}", status_code=status.HTTP_204_NO_CONTENT)
 async def delete_group(
     group_id: str,
+    request: Request,
     move_subjects_to_root: bool = Query(True, description="Move direct subjects one level up instead of relying on DB nulling"),
     current_user: User = Depends(get_current_user),
     db: AsyncSession = Depends(get_db),
@@ -455,6 +533,7 @@ async def delete_group(
         )
     
     parent_group_id = group.parent_id
+    deleted_group_name = group.name
 
     # Re-parent direct child groups to the deleted group's parent so hierarchy is lifted by one level.
     children_result = await db.execute(
@@ -491,10 +570,30 @@ async def delete_group(
     await db.execute(delete(SubjectGroup).where(SubjectGroup.id == group_id))
     await db.commit()
 
+    await safe_record_activity(
+        user=current_user,
+        action_key="group_deleted",
+        action_label="Deleted Group",
+        category="subjects",
+        source_area="teacher_subjects",
+        entity_type="group",
+        entity_id=group_id,
+        entity_name=deleted_group_name,
+        group_id=group_id,
+        group_name=deleted_group_name,
+        details={
+            "move_subjects_to_root": move_subjects_to_root,
+            "parent_group_id": parent_group_id,
+            "moved_child_groups": len(direct_children),
+        },
+        request=request,
+    )
+
 
 @router.post("/groups/{group_id}/move", response_model=SubjectGroupResponse)
 async def move_group(
     group_id: str,
+    request: Request,
     new_parent_id: Optional[str] = Query(None, description="New parent group ID, or null for root"),
     current_user: User = Depends(get_current_user),
     db: AsyncSession = Depends(get_db),
@@ -513,6 +612,14 @@ async def move_group(
             detail="Group not found",
         )
     
+    previous_parent_id = group.parent_id
+    previous_parent_name = None
+    if previous_parent_id:
+        previous_parent_result = await db.execute(select(SubjectGroup.name).where(SubjectGroup.id == previous_parent_id))
+        previous_parent_name = previous_parent_result.scalar_one_or_none()
+
+    new_parent_name = None
+
     # Validate new parent
     if new_parent_id:
         if new_parent_id == group_id:
@@ -524,11 +631,13 @@ async def move_group(
         parent_result = await db.execute(
             select(SubjectGroup).where(SubjectGroup.id == new_parent_id)
         )
-        if not parent_result.scalar_one_or_none():
+        parent_group = parent_result.scalar_one_or_none()
+        if not parent_group:
             raise HTTPException(
                 status_code=status.HTTP_404_NOT_FOUND,
                 detail="New parent group not found",
             )
+        new_parent_name = parent_group.name
         
         # Check for circular reference
         current_parent_id = new_parent_id
@@ -555,6 +664,26 @@ async def move_group(
     
     await db.commit()
     await db.refresh(group)
+
+    await safe_record_activity(
+        user=current_user,
+        action_key="group_moved",
+        action_label="Moved Group",
+        category="subjects",
+        source_area="teacher_subjects",
+        entity_type="group",
+        entity_id=group.id,
+        entity_name=group.name,
+        group_id=group.id,
+        group_name=group.name,
+        details={
+            "previous_parent_id": previous_parent_id,
+            "previous_parent_name": previous_parent_name,
+            "new_parent_id": new_parent_id,
+            "new_parent_name": new_parent_name,
+        },
+        request=request,
+    )
     return SubjectGroupResponse.model_validate(group)
 
 
@@ -693,6 +822,7 @@ async def delete_subject(
 @router.post("/{subject_id}/topics", response_model=TopicResponse, status_code=status.HTTP_201_CREATED)
 async def create_topic(
     subject_id: str,
+    request: Request,
     topic_data: TopicCreate,
     background_tasks: BackgroundTasks,
     current_user: User = Depends(get_current_user),
@@ -731,6 +861,26 @@ async def create_topic(
     if getattr(topic_data, 'syllabus_content', None):
         background_tasks.add_task(_bg_generate_los, subject_id=subject_id, user_id=current_user.id)
         background_tasks.add_task(_bg_generate_cos, subject_id=subject_id, user_id=current_user.id)
+
+    await safe_record_activity(
+        user=current_user,
+        action_key="topic_created",
+        action_label="Created Topic",
+        category="topics",
+        source_area="teacher_subjects",
+        entity_type="topic",
+        entity_id=topic.id,
+        entity_name=topic.name,
+        subject_id=subject.id,
+        subject_name=subject.name,
+        topic_id=topic.id,
+        topic_name=topic.name,
+        details={
+            "order_index": topic.order_index,
+            "has_syllabus": bool(topic.has_syllabus),
+        },
+        request=request,
+    )
 
     return TopicResponse.model_validate(topic)
 
@@ -804,6 +954,7 @@ async def list_topics(
 async def update_topic(
     subject_id: str,
     topic_id: str,
+    request: Request,
     topic_data: TopicUpdate,
     current_user: User = Depends(get_current_user),
     db: AsyncSession = Depends(get_db),
@@ -813,7 +964,8 @@ async def update_topic(
     result = await db.execute(
         select(Subject).where(Subject.id == subject_id)
     )
-    if not result.scalar_one_or_none():
+    subject = result.scalar_one_or_none()
+    if not subject:
         raise HTTPException(
             status_code=status.HTTP_404_NOT_FOUND,
             detail="Subject not found",
@@ -834,6 +986,7 @@ async def update_topic(
         )
     
     update_data = topic_data.model_dump(exclude_unset=True)
+    changed_fields = {}
     
     # Record audit entries for each changed field
     user_name = current_user.full_name or current_user.username or "Unknown"
@@ -849,6 +1002,7 @@ async def update_topic(
             new_val = value
             # Only log if the value actually changed
             if str(old_val or "") != str(new_val or ""):
+                changed_fields[field] = {"old": old_val, "new": new_val}
                 db.add(TopicAuditLog(
                     topic_id=topic_id,
                     user_id=current_user.id,
@@ -862,6 +1016,24 @@ async def update_topic(
     
     await db.commit()
     await db.refresh(topic)
+
+    if changed_fields:
+        await safe_record_activity(
+            user=current_user,
+            action_key="topic_updated",
+            action_label="Updated Topic",
+            category="topics",
+            source_area="teacher_subjects",
+            entity_type="topic",
+            entity_id=topic.id,
+            entity_name=topic.name,
+            subject_id=subject.id,
+            subject_name=subject.name,
+            topic_id=topic.id,
+            topic_name=topic.name,
+            details={"changes": changed_fields},
+            request=request,
+        )
     return TopicResponse.model_validate(topic)
 
 
@@ -966,6 +1138,7 @@ async def delete_topic(
 async def upload_topic_syllabus(
     subject_id: str,
     topic_id: str,
+    request: Request,
     file: UploadFile = File(...),
     background_tasks: BackgroundTasks = BackgroundTasks(),
     current_user: User = Depends(get_current_user),
@@ -1065,6 +1238,27 @@ async def upload_topic_syllabus(
     # Trigger LO and CO generation in the background so upload response is instant
     background_tasks.add_task(_bg_generate_los, subject_id=subject_id, user_id=current_user.id)
     background_tasks.add_task(_bg_generate_cos, subject_id=subject_id, user_id=current_user.id)
+
+    await safe_record_activity(
+        user=current_user,
+        action_key="topic_syllabus_uploaded",
+        action_label="Uploaded Topic Syllabus",
+        category="topics",
+        source_area="teacher_subjects",
+        entity_type="topic",
+        entity_id=topic.id,
+        entity_name=topic.name,
+        subject_id=subject.id,
+        subject_name=subject.name,
+        topic_id=topic.id,
+        topic_name=topic.name,
+        details={
+            "filename": filename,
+            "file_extension": ext,
+            "bytes": len(content),
+        },
+        request=request,
+    )
 
     return TopicResponse.model_validate(topic)
 
@@ -1714,6 +1908,7 @@ async def generate_learning_outcomes(
 @router.put("/{subject_id}/move", response_model=SubjectResponse)
 async def move_subject(
     subject_id: str,
+    request: Request,
     group_id: Optional[str] = Query(None, description="Target group ID, or null for root"),
     current_user: User = Depends(get_current_user),
     db: AsyncSession = Depends(get_db),
@@ -1732,18 +1927,50 @@ async def move_subject(
             detail="Subject not found",
         )
     
+    previous_group_id = subject.group_id
+    previous_group_name = None
+    if previous_group_id:
+        previous_group_result = await db.execute(select(SubjectGroup.name).where(SubjectGroup.id == previous_group_id))
+        previous_group_name = previous_group_result.scalar_one_or_none()
+
+    target_group_name = None
+
     # Validate target group if provided
     if group_id:
         group_result = await db.execute(
             select(SubjectGroup).where(SubjectGroup.id == group_id)
         )
-        if not group_result.scalar_one_or_none():
+        target_group = group_result.scalar_one_or_none()
+        if not target_group:
             raise HTTPException(
                 status_code=status.HTTP_404_NOT_FOUND,
                 detail="Target group not found",
             )
+        target_group_name = target_group.name
     
     subject.group_id = group_id
     await db.commit()
     await db.refresh(subject)
+
+    await safe_record_activity(
+        user=current_user,
+        action_key="subject_moved",
+        action_label="Moved Subject",
+        category="subjects",
+        source_area="teacher_subjects",
+        entity_type="subject",
+        entity_id=subject.id,
+        entity_name=subject.name,
+        subject_id=subject.id,
+        subject_name=subject.name,
+        group_id=group_id,
+        group_name=target_group_name,
+        details={
+            "previous_group_id": previous_group_id,
+            "previous_group_name": previous_group_name,
+            "new_group_id": group_id,
+            "new_group_name": target_group_name,
+        },
+        request=request,
+    )
     return SubjectResponse.model_validate(subject)

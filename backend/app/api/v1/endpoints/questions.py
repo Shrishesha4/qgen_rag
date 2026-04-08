@@ -41,6 +41,7 @@ from app.models.document import Document
 from app.models.subject import Subject, Topic
 from app.models.generation_run import GenerationRun
 from app.services.generation_status_service import GenerationStatusService, broadcast_generation_update
+from app.services.activity_service import safe_record_activity
 
 
 # MIME type mapping for allowed extensions
@@ -1597,6 +1598,7 @@ async def estimate_question_capacity(
 
 @router.post("/schedule-background-generation")
 async def schedule_background_generation(
+    request: Request,
     subject_id: str = Form(..., description="Subject ID to generate questions for"),
     count: int = Form(default=10, ge=1, le=200, description="Target number of questions"),
     types: str = Form(default="mcq", description="Comma-separated question types"),
@@ -1672,6 +1674,15 @@ async def schedule_background_generation(
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Use either topic_id or topic_ids, not both")
 
     no_reference_fallback = allow_without_reference
+    all_topic_ids = ([parsed_topic_id] if parsed_topic_id else []) + parsed_topic_ids
+    topic_name_rows = []
+    if all_topic_ids:
+        topic_name_result = await db.execute(
+            select(Topic.id, Topic.name).where(Topic.id.in_(all_topic_ids))
+        )
+        topic_name_rows = topic_name_result.all()
+    topic_name_map = {topic_row[0]: topic_row[1] for topic_row in topic_name_rows}
+    topic_names = [topic_name_map[topic_value] for topic_value in all_topic_ids if topic_value in topic_name_map]
 
     task_key = _bg_gen_task_key(current_user.id, parsed_subject_id)
     existing_task = _BACKGROUND_GENERATION_TASKS.get(task_key)
@@ -1727,6 +1738,32 @@ async def schedule_background_generation(
             "message": f"Queued for background generation (position {queue_position})",
             "updated_at": datetime.now(timezone.utc).isoformat(),
         }
+
+        await safe_record_activity(
+            user=current_user,
+            action_key="generation_started",
+            action_label="Started Generation",
+            category="generation",
+            source_area="teacher_subjects",
+            entity_type="subject",
+            entity_id=subject.id,
+            entity_name=subject.name,
+            subject_id=subject.id,
+            subject_name=subject.name,
+            topic_id=parsed_topic_id,
+            topic_name=topic_names[0] if len(topic_names) == 1 else None,
+            details={
+                "count": count,
+                "types": type_list,
+                "difficulty": difficulty,
+                "status": "queued",
+                "queue_position": queue_position,
+                "topic_ids": all_topic_ids or None,
+                "topic_names": topic_names or None,
+                "allow_without_reference": no_reference_fallback,
+            },
+            request=request,
+        )
         
         return {
             "status": "queued",
@@ -1769,6 +1806,32 @@ async def schedule_background_generation(
         )
     )
     _BACKGROUND_GENERATION_TASKS[task_key] = task
+
+    await safe_record_activity(
+        user=current_user,
+        action_key="generation_started",
+        action_label="Started Generation",
+        category="generation",
+        source_area="teacher_subjects",
+        entity_type="subject",
+        entity_id=subject.id,
+        entity_name=subject.name,
+        subject_id=subject.id,
+        subject_name=subject.name,
+        topic_id=parsed_topic_id,
+        topic_name=topic_names[0] if len(topic_names) == 1 else None,
+        details={
+            "count": count,
+            "types": type_list,
+            "difficulty": difficulty,
+            "status": "scheduled",
+            "run_id": run_id,
+            "topic_ids": all_topic_ids or None,
+            "topic_names": topic_names or None,
+            "allow_without_reference": no_reference_fallback,
+        },
+        request=request,
+    )
     
     # Process queue after task completes (this will be handled in the finally block of _run_background_subject_generation)
 

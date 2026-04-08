@@ -6,8 +6,9 @@ import asyncio
 import os
 from typing import Optional, Literal
 
-from fastapi import APIRouter, Depends, HTTPException, status, UploadFile, File, Query, Form
+from fastapi import APIRouter, Depends, HTTPException, status, UploadFile, File, Query, Form, Request
 from fastapi.responses import FileResponse
+from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.database import get_db
@@ -21,6 +22,8 @@ from app.schemas.document import (
 )
 from app.services.document_service import DocumentService
 from app.api.v1.deps import get_current_user, rate_limit
+from app.services.activity_service import safe_record_activity
+from app.models.subject import Subject, Topic
 from app.models.user import User
 
 
@@ -572,6 +575,7 @@ async def _process_pdf_reference_questions(
 
 @router.post("/reference/upload", response_model=DocumentUploadResponse, status_code=status.HTTP_201_CREATED)
 async def upload_reference_document(
+    request: Request,
     file: UploadFile = File(..., description="Reference book PDF, template paper PDF, or reference questions PDF/Excel/CSV"),
     subject_id: str = Form(..., description="Subject ID to associate the document with"),
     index_type: Literal["primary", "reference_book", "template_paper", "reference_questions"] = Form(..., description="Type of reference material"),
@@ -626,6 +630,35 @@ async def upload_reference_document(
             subject_id=subject_id,
             index_type=index_type,
             topic_id=topic_id,
+        )
+        subject_result = await db.execute(select(Subject.name).where(Subject.id == subject_id))
+        subject_name = subject_result.scalar_one_or_none()
+        topic_name = None
+        if topic_id:
+            topic_result = await db.execute(select(Topic.name).where(Topic.id == topic_id))
+            topic_name = topic_result.scalar_one_or_none()
+
+        await safe_record_activity(
+            user=current_user,
+            action_key="topic_reference_uploaded" if topic_id else "subject_reference_uploaded",
+            action_label="Uploaded Topic PDF" if topic_id else "Uploaded Subject Reference",
+            category="documents",
+            source_area="teacher_subjects",
+            entity_type="topic" if topic_id else "subject",
+            entity_id=topic_id or subject_id,
+            entity_name=topic_name or subject_name or filename,
+            subject_id=subject_id,
+            subject_name=subject_name,
+            topic_id=topic_id,
+            topic_name=topic_name,
+            details={
+                "filename": filename,
+                "index_type": index_type,
+                "file_extension": ext,
+                "bytes": len(content),
+                "processing_status": document.processing_status,
+            },
+            request=request,
         )
         linked_from = (document.document_metadata or {}).get("linked_from_document_id")
         if linked_from:

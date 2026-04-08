@@ -65,7 +65,7 @@ AuthBase = declarative_base()
 async def init_auth_db():
     """Initialize SQLite auth database and create tables."""
     from app.models.user import User  # noqa: F401
-    from app.models.auth import RefreshToken, AuditLog, AdminNotification  # noqa: F401
+    from app.models.auth import RefreshToken, AuditLog, AdminNotification, UserFavorite, ActivityLog  # noqa: F401
     from app.models.system_settings import SystemSettings  # noqa: F401
     from app.models.custom_theme import CustomTheme  # noqa: F401
 

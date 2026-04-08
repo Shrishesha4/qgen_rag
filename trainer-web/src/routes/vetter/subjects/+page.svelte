@@ -4,6 +4,13 @@
 	import { session } from '$lib/session';
 	import { getSubjectsTree, type SubjectTreeResponse } from '$lib/api/subjects';
 	import { getVetterSubjects, type VetterSubjectSummary } from '$lib/api/vetting';
+	import {
+		listCurrentUserFavorites,
+		addCurrentUserFavorite,
+		removeCurrentUserFavorite,
+		recordActivityEvent,
+		type FavoriteSummary,
+	} from '$lib/api/activity';
 	import { buildSubjectGroupMetaById, getSubjectGroupPath, matchesSubjectSearch } from '$lib/subject-group-search';
 
 	onMount(() => {
@@ -16,6 +23,8 @@
 
 	let subjects = $state<VetterSubjectSummary[]>([]);
 	let subjectTree = $state<SubjectTreeResponse | null>(null);
+	let favorites = $state<FavoriteSummary[]>([]);
+	let favoriteBusyKeys = $state<Record<string, boolean>>({});
 	let loading = $state(true);
 	let error = $state('');
 	let searchQuery = $state('');
@@ -25,9 +34,10 @@
 		loading = true;
 		error = '';
 		try {
-			const [subjectList, tree] = await Promise.all([getVetterSubjects(), getSubjectsTree()]);
+			const [subjectList, tree, favoriteList] = await Promise.all([getVetterSubjects(), getSubjectsTree(), listCurrentUserFavorites()]);
 			subjects = subjectList;
 			subjectTree = tree;
+			favorites = favoriteList;
 		} catch (e: unknown) {
 			error = e instanceof Error ? e.message : 'Failed to load subjects';
 		} finally {
@@ -35,11 +45,57 @@
 		}
 	}
 
+	function favoriteKey(entityType: string, entityId: string): string {
+		return `${entityType}:${entityId}`;
+	}
+
+	const favoriteEntityKeys = $derived.by(() => new Set(favorites.map((favorite) => favoriteKey(favorite.entity_type, favorite.entity_id))));
+
+	async function toggleFavorite(subject: VetterSubjectSummary): Promise<void> {
+		const key = favoriteKey('subject', subject.id);
+		if (favoriteBusyKeys[key]) return;
+		favoriteBusyKeys = { ...favoriteBusyKeys, [key]: true };
+		try {
+			if (favoriteEntityKeys.has(key)) {
+				await removeCurrentUserFavorite({
+					entity_type: 'subject',
+					entity_id: subject.id,
+					entity_name: subject.name,
+					source_area: 'vetter_subjects',
+				});
+				favorites = favorites.filter((favorite) => favoriteKey(favorite.entity_type, favorite.entity_id) !== key);
+			} else {
+				const favorite = await addCurrentUserFavorite({
+					entity_type: 'subject',
+					entity_id: subject.id,
+					entity_name: subject.name,
+					source_area: 'vetter_subjects',
+				});
+				favorites = [...favorites, favorite];
+			}
+		} catch (e: unknown) {
+			error = e instanceof Error ? e.message : 'Failed to update favorite';
+		} finally {
+			favoriteBusyKeys = { ...favoriteBusyKeys, [key]: false };
+		}
+	}
+
 	function openSubject(id: string) {
 		goto(`/vetter/subjects/${id}`);
 	}
 
-	function startAllVetting() {
+	async function startAllVetting() {
+		try {
+			await recordActivityEvent({
+				action_key: 'start_all_vetting',
+				action_label: 'Started All Vetting',
+				category: 'vetting',
+				source_area: 'vetter_subjects',
+				details: { subject_count: filteredSubjects.length },
+			});
+		} catch {
+			// Keep navigation responsive even if logging fails.
+		}
 		goto('/vetter/dashboard/loop');
 	}
 
@@ -61,6 +117,9 @@
 			return subject.topics.some((topic) => topic.name.toLowerCase().includes(q));
 		});
 	});
+
+	const pinnedSubjects = $derived.by(() => filteredSubjects.filter((subject) => favoriteEntityKeys.has(favoriteKey('subject', subject.id))));
+	const regularSubjects = $derived.by(() => filteredSubjects.filter((subject) => !favoriteEntityKeys.has(favoriteKey('subject', subject.id))));
 </script>
 
 <svelte:head>
@@ -120,29 +179,66 @@
 			{#if filteredSubjects.length === 0}
 				<div class="empty-filter">No subjects match your current search/filter.</div>
 			{/if}
-			{#each filteredSubjects as s}
+			{#each pinnedSubjects as s}
 				{@const groupPath = getSubjectGroupPath(s.id, subjectGroupMetaById)}
-				<button class="subject-card glass" onclick={() => openSubject(s.id)}>
-					<div class="sc-top">
-						<span class="sc-code">{s.code}</span>
-						{#if s.pending_count > 0}
-							<span class="sc-pending">{s.pending_count} pending</span>
-						{:else}
-							<span class="sc-done">✓ All reviewed</span>
+				<div class="subject-card glass pinned-card">
+					<div class="card-actions-row">
+						<button class="favorite-btn" type="button" title="Unpin subject" onclick={() => void toggleFavorite(s)} disabled={favoriteBusyKeys[favoriteKey('subject', s.id)]}>★</button>
+					</div>
+					<button class="card-main" onclick={() => openSubject(s.id)}>
+						<div class="sc-top">
+							<span class="sc-code">{s.code}</span>
+							{#if s.pending_count > 0}
+								<span class="sc-pending">{s.pending_count} pending</span>
+							{:else}
+								<span class="sc-done">✓ All reviewed</span>
+							{/if}
+						</div>
+						<h2 class="sc-name">{s.name}</h2>
+						{#if hasSearchQuery && groupPath}
+							<p class="sc-group">Group: {groupPath}</p>
 						{/if}
+						{#if s.description}
+							<p class="sc-desc">{s.description}</p>
+						{/if}
+						<div class="sc-stats">
+							<span class="sc-stat">📝 {s.pending_count + s.approved_count + s.rejected_count} questions</span>
+							<span class="sc-stat">📚 {s.topics.length} topics</span>
+						</div>
+					</button>
+				</div>
+			{/each}
+			{#if pinnedSubjects.length > 0 && regularSubjects.length > 0}
+				<div class="favorites-divider">More Subjects</div>
+			{/if}
+			{#each regularSubjects as s}
+				{@const groupPath = getSubjectGroupPath(s.id, subjectGroupMetaById)}
+				<div class="subject-card glass">
+					<div class="card-actions-row">
+						<button class="favorite-btn" type="button" title="Pin subject" onclick={() => void toggleFavorite(s)} disabled={favoriteBusyKeys[favoriteKey('subject', s.id)]}>☆</button>
 					</div>
-					<h2 class="sc-name">{s.name}</h2>
-					{#if hasSearchQuery && groupPath}
-						<p class="sc-group">Group: {groupPath}</p>
-					{/if}
-					{#if s.description}
-						<p class="sc-desc">{s.description}</p>
-					{/if}
-					<div class="sc-stats">
-						<span class="sc-stat">📝 {s.pending_count + s.approved_count + s.rejected_count} questions</span>
-						<span class="sc-stat">📚 {s.topics.length} topics</span>
-					</div>
-				</button>
+					<button class="card-main" onclick={() => openSubject(s.id)}>
+						<div class="sc-top">
+							<span class="sc-code">{s.code}</span>
+							{#if s.pending_count > 0}
+								<span class="sc-pending">{s.pending_count} pending</span>
+							{:else}
+								<span class="sc-done">✓ All reviewed</span>
+							{/if}
+						</div>
+						<h2 class="sc-name">{s.name}</h2>
+						{#if hasSearchQuery && groupPath}
+							<p class="sc-group">Group: {groupPath}</p>
+						{/if}
+						{#if s.description}
+							<p class="sc-desc">{s.description}</p>
+						{/if}
+						<div class="sc-stats">
+							<span class="sc-stat">📝 {s.pending_count + s.approved_count + s.rejected_count} questions</span>
+							<span class="sc-stat">📚 {s.topics.length} topics</span>
+						</div>
+					</button>
+				</div>
 			{/each}
 		</div>
 	{/if}
@@ -338,8 +434,11 @@
 	}
 
 	.subject-card {
+		position: relative;
+		display: flex;
+		flex-direction: column;
+		gap: 0.45rem;
 		text-align: left;
-		cursor: pointer;
 		padding: 1.25rem 1.5rem;
 		border-radius: 1rem;
 		background: transparent;
@@ -356,6 +455,15 @@
 			rgba(255,255,255,0.025) 100%
 		) !important;
 		box-shadow:
+			0 8px 40px rgba(0, 0, 0, 0.25),
+			inset 0 1px 1px rgba(255, 255, 255, 0.25),
+			inset 0 -1px 1px rgba(255, 255, 255, 0.08),
+			0 0 0 1px rgba(255, 255, 255, 0.12) !important;
+	}
+
+	.pinned-card {
+		box-shadow:
+			inset 3px 0 0 rgba(var(--theme-primary-rgb), 0.55),
 			0 8px 40px rgba(0, 0, 0, 0.25),
 			inset 0 1px 1px rgba(255, 255, 255, 0.25),
 			inset 0 -1px 1px rgba(255, 255, 255, 0.08),
@@ -379,6 +487,25 @@
 		/* Maintain blur on hover - force override */
 		backdrop-filter: blur(10px) saturate(150%) brightness(1.02) !important;
 		-webkit-backdrop-filter: blur(10px) saturate(150%) brightness(1.02) !important;
+	}
+
+	.card-actions-row {
+		display: flex;
+		justify-content: flex-end;
+	}
+
+	.card-main {
+		background: transparent;
+		border: none;
+		padding: 0;
+		margin: 0;
+		font: inherit;
+		color: inherit;
+		text-align: left;
+		cursor: pointer;
+		display: flex;
+		flex-direction: column;
+		gap: 0.45rem;
 	}
 
 	.sc-top {
@@ -444,6 +571,45 @@
 	.sc-stat {
 		font-size: 0.75rem;
 		color: var(--theme-text-muted);
+	}
+
+	.favorite-btn {
+		width: 2rem;
+		height: 2rem;
+		border-radius: 999px;
+		border: 1px solid rgba(var(--theme-primary-rgb), 0.26);
+		background: rgba(var(--theme-primary-rgb), 0.08);
+		color: var(--theme-primary);
+		font: inherit;
+		font-size: 0.92rem;
+		font-weight: 800;
+		line-height: 1;
+		cursor: pointer;
+	}
+
+	.favorite-btn:hover {
+		background: rgba(var(--theme-primary-rgb), 0.16);
+	}
+
+	.favorite-btn:disabled {
+		opacity: 0.55;
+		cursor: not-allowed;
+	}
+
+	.favorites-divider {
+		display: inline-flex;
+		align-items: center;
+		justify-content: center;
+		width: fit-content;
+		margin: 0 auto;
+		padding: 0.35rem 0.8rem;
+		border-radius: 999px;
+		border: 1px dashed rgba(var(--theme-primary-rgb), 0.32);
+		color: var(--theme-text-muted);
+		font-size: 0.78rem;
+		font-weight: 700;
+		letter-spacing: 0.04em;
+		text-transform: uppercase;
 	}
 
 	@media (max-width: 768px) {

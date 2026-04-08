@@ -4,7 +4,7 @@ API v1 Router - combines all endpoint routers.
 
 from fastapi import APIRouter
 
-from app.api.v1.endpoints import auth, documents, questions, subjects, rubrics, vetter, training, models, admin, websocket, settings, themes, analytics
+from app.api.v1.endpoints import auth, documents, questions, subjects, rubrics, vetter, training, models, admin, websocket, settings, themes, analytics, activity
 
 api_router = APIRouter()
 
@@ -21,3 +21,4 @@ api_router.include_router(websocket.router, prefix="/ws", tags=["WebSocket"])
 api_router.include_router(settings.router, prefix="/settings", tags=["Settings"])
 api_router.include_router(themes.router, prefix="/themes", tags=["Themes"])
 api_router.include_router(analytics.router, prefix="/analytics", tags=["Analytics"])
+api_router.include_router(activity.router, prefix="/activity", tags=["Activity"])

@@ -1386,14 +1386,14 @@
 		</div>
 	{:else if questions.length === 0}
 		<div class="empty-state">
-			<span class="empty-icon">📭</span>
-			<p>No questions to review</p>
-			{#if subjectId}
+			<span class="empty-icon">✔︎</span>
+			<p>Thank You</p>
+			<!-- {#if subjectId}
 				<p class="sub-text">Generate a new batch of questions from this subject's documents</p>
 				<button class="glass-btn" onclick={openGenerateChoiceModal}>🔄 Generate Questions</button>
 			{:else}
 				<p class="sub-text">Generate questions first using the new topic wizard</p>
-			{/if}
+			{/if} -->
 			<button class="glass-btn secondary-btn" onclick={() => goto('/teacher/train')}>
 				Go Back
 			</button>
