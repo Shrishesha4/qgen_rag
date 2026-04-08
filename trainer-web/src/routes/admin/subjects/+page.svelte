@@ -204,20 +204,21 @@
 			<table class="data-table">
 				<thead>
 					<tr>
+						<th>S.No</th>
 						<th>Subject</th>
 						<th>Teacher</th>
-						<th>Topics</th>
-						<th>Questions</th>
-						<th>Approved</th>
-						<th>Rejected</th>
-						<th>Pending</th>
+						<th>T</th>
+						<th>Q</th>
+						<th>Q</th>
+						<th>R</th>
+						<th>P</th>
 						<th>Created</th>
-						<th></th>
 					</tr>
 				</thead>
 				<tbody>
-					{#each filteredSubjects as subject}
+					{#each filteredSubjects as subject, index}
 						<tr>
+							<td class="num">{index + 1}</td>
 							<td>
 								{#if editingSubjectId === subject.id}
 									<div class="subject-cell editing-row">

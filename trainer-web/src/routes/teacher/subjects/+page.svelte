@@ -74,6 +74,7 @@
 	let contextMenuPosition = $state<{ x: number; y: number } | null>(null);
 	let contextMenuElement = $state<HTMLDivElement | null>(null);
 	let contextMenuOverlayElement = $state<HTMLDivElement | null>(null);
+	const SUBJECTS_PAGE_LIMIT = 100;
 	const SUBJECT_ROUTE_PRELOAD_LIMIT = 8;
 	const preloadedSubjectRoutes = new Set<string>();
 
@@ -185,17 +186,32 @@
 		wsUnsubscribers.push(subjectUnsub);
 	}
 
+	async function listAllSubjects(): Promise<SubjectResponse[]> {
+		let page = 1;
+		let totalPages = 1;
+		const allSubjects: SubjectResponse[] = [];
+
+		do {
+			const response = await listSubjects(page, SUBJECTS_PAGE_LIMIT);
+			allSubjects.push(...response.subjects);
+			totalPages = Math.max(response.pagination.total_pages, 1);
+			page += 1;
+		} while (page <= totalPages);
+
+		return allSubjects;
+	}
+
 	async function loadData() {
 		loading = true;
 		error = '';
 		try {
 			const [treeRes, listRes] = await Promise.all([
 				getSubjectsTree(),
-				listSubjects(1, 100)
+				listAllSubjects()
 			]);
 			treeData = treeRes;
-			subjects = listRes.subjects;
-			void preloadInitialSubjectRoutes(listRes.subjects);
+			subjects = listRes;
+			void preloadInitialSubjectRoutes(listRes);
 		} catch (e: unknown) {
 			error = e instanceof Error ? e.message : 'Failed to load subjects';
 		} finally {
@@ -228,8 +244,7 @@
 
 	async function loadSubjects() {
 		try {
-			const response = await listSubjects(1, 100);
-			subjects = response.subjects;
+			subjects = await listAllSubjects();
 		} catch (e: unknown) {
 			error = e instanceof Error ? e.message : 'Failed to load subjects';
 		}

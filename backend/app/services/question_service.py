@@ -627,7 +627,7 @@ class QuestionGenerationService:
                 
                 # Rerank using cross-encoder if available
                 if self.reranker_service and len(candidates) > num_chunks:
-                    selected = self.reranker_service.rerank(
+                    selected = await self.reranker_service.rerank_async(
                         query=topic_query,
                         chunks=candidates,
                         top_k=num_chunks,
@@ -650,7 +650,7 @@ class QuestionGenerationService:
                 
                 # Rerank using cross-encoder if available
                 if self.reranker_service and len(candidates) > num_chunks:
-                    selected = self.reranker_service.rerank(
+                    selected = await self.reranker_service.rerank_async(
                         query=topic_query,
                         chunks=candidates,
                         top_k=num_chunks,
@@ -675,7 +675,7 @@ class QuestionGenerationService:
             
             # Rerank using cross-encoder if available
             if self.reranker_service and len(candidates) > num_chunks:
-                selected = self.reranker_service.rerank(
+                selected = await self.reranker_service.rerank_async(
                     query=topic_query,
                     chunks=candidates,
                     top_k=num_chunks,
@@ -820,7 +820,7 @@ Output JSON only, no explanation."""
         
         # Rerank if available
         if self.reranker_service and len(candidates) > num_chunks:
-            return self.reranker_service.rerank(
+            return await self.reranker_service.rerank_async(
                 query=context,  # Use original context for reranking
                 chunks=candidates,
                 top_k=num_chunks,
@@ -2807,7 +2807,7 @@ Output valid JSON only."""
 
             # Rerank the whole pool once with the main query
             if self.reranker_service and len(chunk_pool) > 5:
-                chunk_pool = self.reranker_service.rerank(
+                chunk_pool = await self.reranker_service.rerank_async(
                     query=context,
                     chunks=chunk_pool,
                     top_k=min(20, len(chunk_pool)),
@@ -3614,7 +3614,7 @@ Output valid JSON only."""
                         subj_chunk_pool.append(c)
 
             if self.reranker_service and len(subj_chunk_pool) > 5:
-                subj_chunk_pool = self.reranker_service.rerank(
+                subj_chunk_pool = await self.reranker_service.rerank_async(
                     query=generation_context,
                     chunks=subj_chunk_pool,
                     top_k=min(20, len(subj_chunk_pool)),
@@ -4510,7 +4510,7 @@ Tasks:
                         )
                         
                         if self.reranker_service and len(candidates) > 3:
-                            selected_chunks = self.reranker_service.rerank(
+                            selected_chunks = await self.reranker_service.rerank_async(
                                 query=context,
                                 chunks=candidates,
                                 top_k=3,

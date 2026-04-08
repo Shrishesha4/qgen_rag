@@ -217,6 +217,50 @@ class RerankerService:
         """
         self._ensure_model_loaded()
 
+    # ============================================================================
+    # Async Methods (run in thread pool to avoid blocking event loop)
+    # ============================================================================
+
+    async def rerank_async(
+        self,
+        query: str,
+        chunks: List[DocumentChunk],
+        top_k: Optional[int] = None,
+    ) -> List[DocumentChunk]:
+        """
+        Async version of rerank() - runs in thread pool to avoid blocking.
+        
+        Args:
+            query: The search query or context
+            chunks: List of document chunks to rerank
+            top_k: Number of top results to return (None = return all)
+        
+        Returns:
+            List of chunks sorted by relevance (highest first)
+        """
+        import asyncio
+        return await asyncio.to_thread(self.rerank, query, chunks, top_k)
+
+    async def rerank_with_scores_async(
+        self,
+        query: str,
+        chunks: List[DocumentChunk],
+        top_k: Optional[int] = None,
+    ) -> List[Tuple[DocumentChunk, float]]:
+        """
+        Async version of rerank_with_scores() - runs in thread pool to avoid blocking.
+        
+        Args:
+            query: The search query or context
+            chunks: List of document chunks to rerank
+            top_k: Number of top results to return (None = return all)
+        
+        Returns:
+            List of (chunk, score) tuples sorted by relevance
+        """
+        import asyncio
+        return await asyncio.to_thread(self.rerank_with_scores, query, chunks, top_k)
+
 
 # Module-level function for easy import
 def warmup_reranker_service() -> None:
