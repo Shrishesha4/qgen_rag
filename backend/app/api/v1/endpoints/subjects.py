@@ -802,7 +802,6 @@ async def delete_subject(
     result = await db.execute(
         select(Subject).where(
             Subject.id == subject_id,
-            Subject.user_id == current_user.id,
         )
     )
     subject = result.scalar_one_or_none()
