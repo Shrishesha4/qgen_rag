@@ -39,6 +39,7 @@ from app.schemas.subject import (
 )
 from app.api.v1.deps import get_current_user, ensure_user_can_generate, ensure_user_can_manage_groups
 from app.services.llm_service import LLMService
+from app.services.provider_service import get_provider_service
 from app.services.activity_service import safe_record_activity
 
 logger = logging.getLogger(__name__)
@@ -1378,7 +1379,18 @@ _GENERIC_COS = [
 
 async def _generate_cos_with_llm(subject_name: str, subject_code: str, syllabus_text: str) -> list:
     """Use LLM to derive 4-6 Course Outcomes from aggregated syllabus content; falls back to generic COs."""
-    llm_service = LLMService()
+    # Use the active AI provider from database instead of environment variable
+    provider_svc = get_provider_service()
+    try:
+        enabled_providers = await provider_svc.get_enabled_providers()
+        if not enabled_providers:
+            logger.warning("No enabled providers configured, falling back to generic COs")
+            return _GENERIC_COS
+        llm_service, _ = provider_svc.create_llm_service(enabled_providers[0])
+    except Exception as e:
+        logger.error(f"Failed to create LLM service for CO generation: {e}")
+        return _GENERIC_COS
+    
     truncated = syllabus_text[:12000]
 
     system_prompt = (
@@ -1778,7 +1790,18 @@ _GENERIC_LOS = [
 
 async def _generate_los_with_llm(subject_name: str, subject_code: str, syllabus_text: str) -> list:
     """Use LLM to derive 5-7 LOs from aggregated syllabus content; falls back to generic LOs."""
-    llm_service = LLMService()
+    # Use the active AI provider from database instead of environment variable
+    provider_svc = get_provider_service()
+    try:
+        enabled_providers = await provider_svc.get_enabled_providers()
+        if not enabled_providers:
+            logger.warning("No enabled providers configured, falling back to generic LOs")
+            return _GENERIC_LOS
+        llm_service, _ = provider_svc.create_llm_service(enabled_providers[0])
+    except Exception as e:
+        logger.error(f"Failed to create LLM service for LO generation: {e}")
+        return _GENERIC_LOS
+    
     truncated = syllabus_text[:12000]
 
     system_prompt = (

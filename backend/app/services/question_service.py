@@ -4288,6 +4288,7 @@ Output valid JSON only."""
                         response=response,
                         prompt=prompt,
                         question_type=question_type,
+                        llm_service_override=llm_service_override,
                     )
 
                 if settings.GENERATION_SCHEMA_ENFORCEMENT and not self._validate_generation_schema(response, question_type):
@@ -4336,6 +4337,7 @@ Output valid JSON only."""
         response: Dict[str, Any],
         prompt: str,
         question_type: str,
+        llm_service_override: Optional[LLMProvider] = None,
     ) -> Dict[str, Any]:
         """Second-pass self-critique and repair to improve schema and quality compliance."""
         critique_prompt = f"""You are validating a generated {question_type} question.
@@ -4352,7 +4354,8 @@ Tasks:
 2. Remove ambiguity and fix factual or formatting issues
 3. Keep question intent intact
 """
-        repaired = await self.llm_service.generate_json(
+        _llm = llm_service_override or self.llm_service
+        repaired = await _llm.generate_json(
             prompt=critique_prompt,
             system_prompt="You are a strict JSON repair assistant for exam question generation.",
             temperature=0.2,

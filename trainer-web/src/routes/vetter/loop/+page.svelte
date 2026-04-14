@@ -173,7 +173,7 @@
 		if (voiceAction.kind === 'reject') return 'rose';
 		return voiceAction.level === 'easy' ? 'emerald' : voiceAction.level === 'medium' ? 'amber' : 'rose';
 	});
-	let voiceRecorderSubmitLabel = $derived(voiceAction?.kind === 'reject' ? 'Reject & Regenerate' : 'Approve & Next');
+	let voiceRecorderSubmitLabel = $derived(voiceAction?.kind === 'reject' ? 'Reject' : 'Approve & Next');
 
 	function currentProgressKey(): string {
 		return buildVetterProgressKey({
@@ -965,9 +965,9 @@
 		title={voiceRecorderTitle}
 		accent={voiceRecorderAccent}
 		submitLabel={voiceRecorderSubmitLabel}
-		secondaryActionLabel={voiceAction?.kind === 'reject' ? 'Just Reject' : ''}
-		onSecondaryAction={voiceAction?.kind === 'reject' ? submitRejectOnly : undefined}
-		onSubmit={handleVoiceRecorderSubmit}
+		secondaryActionLabel=''
+		onSecondaryAction={undefined}
+		onSubmit={voiceAction?.kind === 'reject' ? () => submitRejectOnly() : handleVoiceRecorderSubmit}
 		onCancel={closeVoiceRecorder}
 	/>
 {/if}

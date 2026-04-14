@@ -1451,7 +1451,7 @@ async def quick_generate_from_subject(
     marks_by_type = {"mcq": marks_mcq, "short_answer": marks_short, "long_answer": marks_long}
 
     async def event_generator():
-        question_service = QuestionGenerationService(db)
+        question_service = await _build_provider_aware_question_service(db)
 
         yield f"data: {QuickGenerateProgress(status='processing', progress=5, message='Searching subject content...').model_dump_json()}\n\n"
 
