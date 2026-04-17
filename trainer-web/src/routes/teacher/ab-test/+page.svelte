@@ -102,7 +102,8 @@
 
 	function formatDate(iso: string | null): string {
 		if (!iso) return '—';
-		return new Date(iso).toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' });
+		const normalized = /[Zz]$|[+-]\d{2}:\d{2}$/.test(iso) ? iso : iso + 'Z';
+		return new Date(normalized).toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' });
 	}
 
 	function formatMetric(val: unknown): string {

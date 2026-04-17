@@ -784,6 +784,10 @@ async def _run_background_subject_generation(
                 "updated_at": datetime.now(timezone.utc).isoformat(),
             }
             await task_db.commit()
+    except asyncio.CancelledError:
+        error_occurred = True
+        error_message = "Task cancelled (server shutdown or restart)"
+        logger.info(f"Background generation task cancelled for task_key={task_key}")
     except Exception as exc:
         error_occurred = True
         error_message = str(exc)

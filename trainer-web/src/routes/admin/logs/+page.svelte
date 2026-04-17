@@ -122,7 +122,9 @@
 
 	function formatDate(value: string | null): string {
 		if (!value) return 'Unknown time';
-		return new Date(value).toLocaleString();
+		// Backend sends naive UTC strings (no timezone suffix); append Z so JS parses as UTC
+		const normalized = /[Zz]$|[+-]\d{2}:\d{2}$/.test(value) ? value : value + 'Z';
+		return new Date(normalized).toLocaleString();
 	}
 
 	function formatValue(value: string | null | undefined): string {

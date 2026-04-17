@@ -75,7 +75,8 @@
 	}
 
 	function formatDateTime(iso: string): string {
-		const ts = Date.parse(iso);
+		const normalized = /[Zz]$|[+-]\d{2}:\d{2}$/.test(iso) ? iso : iso + 'Z';
+		const ts = Date.parse(normalized);
 		if (!Number.isFinite(ts)) return 'Unknown';
 		return new Date(ts).toLocaleString();
 	}

@@ -114,7 +114,8 @@
 
 	function formatDate(value: string | null): string {
 		if (!value) return 'Unknown';
-		return new Date(value).toLocaleString();
+		const normalized = /[Zz]$|[+-]\d{2}:\d{2}$/.test(value) ? value : value + 'Z';
+		return new Date(normalized).toLocaleString();
 	}
 </script>
 

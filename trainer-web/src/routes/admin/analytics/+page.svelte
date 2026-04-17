@@ -298,7 +298,8 @@
 	}
 
 	function formatTime(isoString: string): string {
-		return new Date(isoString).toLocaleTimeString();
+		const normalized = /[Zz]$|[+-]\d{2}:\d{2}$/.test(isoString) ? isoString : isoString + 'Z';
+		return new Date(normalized).toLocaleTimeString();
 	}
 
 	function activityClass(activity: string): string {

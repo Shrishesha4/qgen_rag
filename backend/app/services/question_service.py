@@ -2901,13 +2901,20 @@ Output valid JSON only."""
             parallel_workers = max(1, min(count, int(settings.QUICK_GENERATE_PARALLEL_WORKERS or 1)))
             llm_provider = (getattr(settings, "LLM_PROVIDER", "") or "").lower()
             ollama_model = (getattr(settings, "OLLAMA_MODEL", "") or "").lower()
+            _SLOW_OLLAMA_MODELS = ("deepseek", "qwen", "llama3.1", "llama3.2", "mistral-large", "mixtral", "gemma2")
+            _is_slow_ollama = llm_provider == "ollama" and any(k in ollama_model for k in _SLOW_OLLAMA_MODELS)
             if llm_provider == "ollama":
                 # Local Ollama models can saturate quickly with many concurrent calls.
                 parallel_workers = min(parallel_workers, 2)
-                if "qwen" in ollama_model:
-                    # Reasoning-heavy Qwen models are especially sensitive to parallel load.
+                if _is_slow_ollama:
+                    # Large/reasoning models need serial execution to avoid OOM + timeout cascade
                     parallel_workers = 1
-            worker_timeout_seconds = 180 if llm_provider == "ollama" else 90
+            if llm_provider != "ollama":
+                worker_timeout_seconds = 90
+            elif _is_slow_ollama:
+                worker_timeout_seconds = 420  # large models (deepseek, qwen, etc.) can take 6-7 min
+            else:
+                worker_timeout_seconds = 240
             max_attempts_per_slot = 4
             slot_queue = []
             slot_id_seq = 0
@@ -3729,11 +3736,18 @@ Output valid JSON only."""
             parallel_workers = max(1, min(count, int(settings.QUICK_GENERATE_PARALLEL_WORKERS or 1)))
             llm_provider = (getattr(settings, "LLM_PROVIDER", "") or "").lower()
             ollama_model = (getattr(settings, "OLLAMA_MODEL", "") or "").lower()
+            _SLOW_OLLAMA_MODELS = ("deepseek", "qwen", "llama3.1", "llama3.2", "mistral-large", "mixtral", "gemma2")
+            _is_slow_ollama = llm_provider == "ollama" and any(k in ollama_model for k in _SLOW_OLLAMA_MODELS)
             if llm_provider == "ollama":
                 parallel_workers = min(parallel_workers, 2)
-                if "qwen" in ollama_model:
+                if _is_slow_ollama:
                     parallel_workers = 1
-            worker_timeout_seconds = 180 if llm_provider == "ollama" else 90
+            if llm_provider != "ollama":
+                worker_timeout_seconds = 90
+            elif _is_slow_ollama:
+                worker_timeout_seconds = 420
+            else:
+                worker_timeout_seconds = 240
             max_attempts_per_slot = 4
             slot_queue = []
             slot_id_seq = 0
@@ -4435,12 +4449,13 @@ Output valid JSON only."""
         if question_type == "mcq":
             options = payload.get("options")
             answer = payload.get("correct_answer")
-            if not isinstance(options, list) or len(options) < 3:
+            if not isinstance(options, list) or len(options) < 2:
                 return False
             if not isinstance(answer, str) or len(answer.strip()) == 0:
                 return False
+            # explanation is desirable but not a hard requirement; auto-fill if missing
             if "explanation" not in payload:
-                return False
+                payload["explanation"] = ""
 
         if question_type == "short_answer":
             if not (payload.get("expected_answer") or payload.get("correct_answer")):
@@ -4448,7 +4463,7 @@ Output valid JSON only."""
 
         if question_type == "long_answer":
             key_points = payload.get("key_points")
-            if not isinstance(key_points, list) or len(key_points) < 2:
+            if not isinstance(key_points, list) or len(key_points) < 1:
                 return False
 
         return True

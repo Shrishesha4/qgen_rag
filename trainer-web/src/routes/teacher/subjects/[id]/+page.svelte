@@ -146,7 +146,7 @@
 		previewLoading = true;
 		previewError = '';
 		showPreviewModal = true;
-		
+
 		try {
 			const s = getStoredSession();
 			const res = await fetch(apiUrl(`/documents/${docId}/download`), {
@@ -198,7 +198,7 @@
 	let generationPollingTopicId = $state<string | null>(null);
 	let generationPollingRunId = $state<string | null>(null);
 	let generationPollMisses = 0;
-	
+
 	// WebSocket client for real-time generation updates
 	let wsClient = $state<GenerationWebSocketClient | null>(null);
 	let wsUnsubscribe = $state<(() => void) | null>(null);
@@ -429,7 +429,7 @@
 						[generationPollingTopicId]: true,
 					};
 				}
-				
+
 				// Clear stored topic ID since generation is complete
 				if (subjectId) {
 					sessionStorage.removeItem(`gen_topic_${subjectId}`);
@@ -487,15 +487,15 @@
 
 	async function checkForInProgressGeneration() {
 		if (!subjectId || !subject) return;
-		
+
 		try {
 			// Get all topic IDs for this subject
 			const topicIds = subject.topics.map(t => t.id);
 			if (!topicIds.length) return;
-			
+
 			// Query the database for any active generation runs (cross-device visibility)
 			const statusRes = await getTopicGenerationStatuses(topicIds);
-			
+
 			// Process any active runs
 			for (const [topicId, status] of Object.entries(statusRes.statuses)) {
 				if (status.in_progress) {
@@ -505,15 +505,15 @@
 					const total = status.total_questions || generationBatchSize;
 					const current = status.current_question || 0;
 					topicGenerationProgressById = { ...topicGenerationProgressById, [topicId]: `${current}/${total}` };
-					
+
 					// Store topic ID for this session
 					sessionStorage.setItem(`gen_topic_${subjectId}`, topicId);
-					
+
 					// Start polling for this topic
 					startGenerationPolling(topicId, status.run_id);
 				}
 			}
-			
+
 			// Set up WebSocket for real-time updates
 			setupWebSocket();
 		} catch {
@@ -522,10 +522,10 @@
 			try {
 				const statusRes = await getBackgroundGenerationStatuses([subjectId]);
 				const status = statusRes.statuses[subjectId];
-				
+
 				if (status && status.in_progress) {
 					const storedTopicId = sessionStorage.getItem(`gen_topic_${subjectId}`);
-					
+
 					if (storedTopicId && subject?.topics.some(t => t.id === storedTopicId)) {
 						clearQueuedTopicGeneration(storedTopicId);
 						topicGeneratingById = { ...topicGeneratingById, [storedTopicId]: true };
@@ -540,24 +540,24 @@
 			}
 		}
 	}
-	
+
 	function setupWebSocket() {
 		if (!subjectId) return;
-		
+
 		// Get or create WebSocket client
 		wsClient = getGenerationWebSocketClient();
 		wsClient.connect();
-		
+
 		// Subscribe to this subject's updates
 		wsClient.subscribeSubject(subjectId);
-		
+
 		// Handle real-time status updates
 		wsUnsubscribe = wsClient.onStatusUpdate((status: TopicGenerationStatusItem) => {
 			// Only process updates for topics in this subject
 			if (status.subject_id !== subjectId) return;
-			
+
 			const topicId = status.topic_id;
-			
+
 			if (status.in_progress) {
 				clearQueuedTopicGeneration(topicId);
 				// Update generating state
@@ -570,14 +570,14 @@
 				const next = { ...topicGeneratingById };
 				delete next[topicId];
 				topicGeneratingById = next;
-				
+
 				const nextProgress = { ...topicGenerationProgressById };
 				delete nextProgress[topicId];
 				topicGenerationProgressById = nextProgress;
-				
+
 				// Clear stored topic ID
 				sessionStorage.removeItem(`gen_topic_${subjectId}`);
-				
+
 				// Show completion hold if successful
 				if (status.status === 'completed' && status.current_question > 0) {
 					completedGenerationHoldByTopicId = {
@@ -585,7 +585,7 @@
 						[topicId]: true,
 					};
 				}
-				
+
 				// Reload subject to get updated question counts and start any queued topic.
 				void (async () => {
 					await loadSubject();
@@ -593,11 +593,11 @@
 				})();
 			}
 		});
-		
+
 		// Handle subject stats updates
 		const subjectStatsUnsub = wsClient.onSubjectStats((sid: string, statsData) => {
 			if (sid !== subjectId || !subject) return;
-			
+
 			// Update subject stats
 			subject = {
 				...subject,
@@ -606,7 +606,7 @@
 				total_rejected: statsData.total_rejected ?? subject.total_rejected,
 				total_pending: statsData.total_pending ?? subject.total_pending,
 			};
-			
+
 			// Update review stats
 			subjectReviewStats = {
 				...subjectReviewStats,
@@ -618,11 +618,11 @@
 				approvalRate: statsData.approval_rate ?? subjectReviewStats.approvalRate,
 			};
 		});
-		
+
 		// Handle topic stats updates
 		const topicStatsUnsub = wsClient.onTopicStats((sid: string, tid: string, statsData) => {
 			if (sid !== subjectId) return;
-			
+
 			const prevPending = topicReviewStats[tid]?.pending ?? null;
 
 			// Update topic review stats
@@ -637,7 +637,7 @@
 					approvalRate: statsData.approval_rate ?? topicReviewStats[tid]?.approvalRate ?? 0,
 				}
 			};
-			
+
 			// Update topic in subject.topics array
 			if (subject) {
 				subject = {
@@ -660,7 +660,7 @@
 				void autoFillTopicsIfNeeded();
 			}
 		});
-		
+
 		// Store additional unsubscribers - we'll clean them up in onDestroy
 		const originalUnsub = wsUnsubscribe;
 		wsUnsubscribe = () => {
@@ -1154,7 +1154,7 @@
 			if (storedSession?.access_token) {
 				xhr.setRequestHeader('Authorization', `Bearer ${storedSession.access_token}`);
 			}
-			
+
 			xhr.send(form);
 		});
 	}
@@ -1581,13 +1581,13 @@
 				});
 
 				xhr.open('POST', apiUrl('/documents/reference/upload'));
-				
+
 				// Add authorization header
 				const storedSession = getStoredSession();
 				if (storedSession?.access_token) {
 					xhr.setRequestHeader('Authorization', `Bearer ${storedSession.access_token}`);
 				}
-				
+
 				xhr.send(form);
 			});
 
@@ -2261,11 +2261,6 @@
 		margin: 0;
 		font-size: 1.2rem;
 		color: var(--theme-text-primary);
-	}
-
-	.section-subtitle {
-		margin: 0.35rem 0 0;
-		color: var(--theme-text-muted);
 	}
 
 	.topic-count {

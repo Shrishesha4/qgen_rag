@@ -124,7 +124,8 @@
 	}
 
 	function formatDate(value: string) {
-		return new Date(value).toLocaleDateString();
+		const normalized = /[Zz]$|[+-]\d{2}:\d{2}$/.test(value) ? value : value + 'Z';
+		return new Date(normalized).toLocaleDateString();
 	}
 
 	function updateEditableName(event: Event) {

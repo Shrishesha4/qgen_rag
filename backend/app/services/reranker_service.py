@@ -229,17 +229,19 @@ class RerankerService:
     ) -> List[DocumentChunk]:
         """
         Async version of rerank() - runs in thread pool to avoid blocking.
-        
-        Args:
-            query: The search query or context
-            chunks: List of document chunks to rerank
-            top_k: Number of top results to return (None = return all)
-        
-        Returns:
-            List of chunks sorted by relevance (highest first)
+        Falls back to returning chunks unsorted if the executor is shutting down.
         """
         import asyncio
-        return await asyncio.to_thread(self.rerank, query, chunks, top_k)
+        try:
+            return await asyncio.to_thread(self.rerank, query, chunks, top_k)
+        except RuntimeError as e:
+            if "executor" in str(e).lower() or "shutdown" in str(e).lower():
+                # Server is shutting down — return chunks truncated but unsorted
+                result = list(chunks)
+                if top_k is not None:
+                    result = result[:top_k]
+                return result
+            raise
 
     async def rerank_with_scores_async(
         self,
@@ -249,17 +251,18 @@ class RerankerService:
     ) -> List[Tuple[DocumentChunk, float]]:
         """
         Async version of rerank_with_scores() - runs in thread pool to avoid blocking.
-        
-        Args:
-            query: The search query or context
-            chunks: List of document chunks to rerank
-            top_k: Number of top results to return (None = return all)
-        
-        Returns:
-            List of (chunk, score) tuples sorted by relevance
+        Falls back to returning chunks with score 0.0 if the executor is shutting down.
         """
         import asyncio
-        return await asyncio.to_thread(self.rerank_with_scores, query, chunks, top_k)
+        try:
+            return await asyncio.to_thread(self.rerank_with_scores, query, chunks, top_k)
+        except RuntimeError as e:
+            if "executor" in str(e).lower() or "shutdown" in str(e).lower():
+                result = [(c, 0.0) for c in chunks]
+                if top_k is not None:
+                    result = result[:top_k]
+                return result
+            raise
 
 
 # Module-level function for easy import

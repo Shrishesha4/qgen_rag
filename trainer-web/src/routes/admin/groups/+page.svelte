@@ -115,17 +115,6 @@
 </svelte:head>
 
 <div class="page">
-	<div class="hero animate-fade-in">
-		<div class="hero-intro">
-			<p class="eyebrow">Admin Console</p>
-			<h1 class="title">Groups</h1>
-			<p class="subtitle">Browse subject groups using the same nested group view used by teachers, with admin access to open any subject.</p>
-		</div>
-		<div class="hero-actions">
-			<button class="refresh-btn" type="button" onclick={loadGroups}>Refresh</button>
-		</div>
-	</div>
-
 	<div class="toolbar animate-slide-up">
 		<input class="search-input" bind:value={query} placeholder="Search by subject, code, description, or group" />
 	</div>
@@ -398,56 +387,10 @@
 		gap: 1rem;
 	}
 
-	.hero {
-		display: flex;
-		justify-content: space-between;
-		gap: 1rem;
-		align-items: flex-start;
-	}
-
-	.hero-intro {
-		display: flex;
-		flex-direction: column;
-		gap: 0.35rem;
-	}
-
-	.eyebrow {
-		margin: 0;
-		font-size: 0.78rem;
-		font-weight: 700;
-		letter-spacing: 0.08em;
-		text-transform: uppercase;
-		color: #fbbf24;
-	}
-
-	.title {
-		margin: 0;
-		font-size: 2rem;
-		font-weight: 800;
-		color: var(--theme-text);
-	}
-
-	.subtitle {
-		margin: 0;
-		max-width: 44rem;
-		color: var(--theme-text-muted);
-		line-height: 1.55;
-	}
-
-	.refresh-btn {
-		padding: 0.85rem 1rem;
-		border-radius: 0.85rem;
-		border: 1px solid color-mix(in srgb, var(--theme-primary) 45%, var(--theme-glass-border));
-		background: color-mix(in srgb, var(--theme-primary) 16%, var(--theme-input-bg));
-		color: var(--theme-text);
-		font: inherit;
-		font-weight: 700;
-		cursor: pointer;
-	}
-
 	.toolbar {
 		display: flex;
 		gap: 0.75rem;
+		border-radius: 1rem;
 	}
 
 	.search-input {
@@ -695,10 +638,6 @@
 			padding: 1.35rem 0.95rem 1.85rem;
 		}
 
-		.hero {
-			flex-direction: column;
-		}
-
 		.stats-row {
 			grid-template-columns: repeat(2, minmax(0, 1fr));
 		}
@@ -718,7 +657,6 @@
 	}
 
 	:global([data-color-mode='light']) .search-input,
-	:global([data-color-mode='light']) .refresh-btn,
 	:global([data-color-mode='light']) .table-shell,
 	:global([data-color-mode='light']) .group-mobile-card,
 	:global([data-color-mode='light']) .subject-mobile-card,
@@ -737,7 +675,6 @@
 		background: rgba(248, 250, 252, 0.95);
 	}
 
-	:global([data-color-mode='light']) .refresh-btn,
 	:global([data-color-mode='light']) .search-input {
 		color: #0f172a;
 	}
