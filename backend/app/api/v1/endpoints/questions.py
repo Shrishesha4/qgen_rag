@@ -183,19 +183,25 @@ async def _process_queue():
         
         logger.info(f"Processing queue item: user_id={next_item['user_id']}, subject_id={next_item['subject_id']}, attempt={next_item.get('retry_count', 0) + 1}")
         
-        # Start the queued generation
+        # Start the queued generation — wrap in a task so _BACKGROUND_GENERATION_TASKS has an entry
+        # (prevents "in-progress without task entry" warnings during polling)
+        q_task_key = _bg_gen_task_key(next_item["user_id"], next_item["subject_id"])
         try:
-            await _run_background_subject_generation(
-                user_id=next_item["user_id"],
-                subject_id=next_item["subject_id"],
-                count=next_item["count"],
-                types=next_item["request_data"]["types"],
-                difficulty=next_item["request_data"]["difficulty"],
-                run_id=next_item["run_id"],
-                topic_id=next_item["request_data"].get("topic_id"),
-                topic_ids=next_item["request_data"].get("topic_ids"),
-                allow_without_reference=next_item["request_data"].get("allow_without_reference", False),
+            q_task = asyncio.create_task(
+                _run_background_subject_generation(
+                    user_id=next_item["user_id"],
+                    subject_id=next_item["subject_id"],
+                    count=next_item["count"],
+                    types=next_item["request_data"]["types"],
+                    difficulty=next_item["request_data"]["difficulty"],
+                    run_id=next_item["run_id"],
+                    topic_id=next_item["request_data"].get("topic_id"),
+                    topic_ids=next_item["request_data"].get("topic_ids"),
+                    allow_without_reference=next_item["request_data"].get("allow_without_reference", False),
+                )
             )
+            _BACKGROUND_GENERATION_TASKS[q_task_key] = q_task
+            await q_task
             logger.info(f"Successfully started queued generation for user_id={next_item['user_id']}, subject_id={next_item['subject_id']}")
         except Exception as e:
             logger.error(f"Error processing queued generation for user_id={next_item['user_id']}, subject_id={next_item['subject_id']}: {e}")
@@ -1904,16 +1910,58 @@ async def get_background_generation_statuses(
                 "updated_at": status_payload.get("updated_at"),
             }
             if not task:
-                _bg_status_logger.warning(
-                    "Returning in-progress payload without task entry",
-                    extra={
-                        "user_id": str(current_user.id),
-                        "subject_id": str(parsed_subject_id),
-                        "task_key": task_key,
-                        "status": status_payload.get("status"),
-                        "progress": status_payload.get("progress"),
-                    },
-                )
+                payload_status = status_payload.get("status", "")
+                in_queue = _get_queue_position(str(current_user.id), str(parsed_subject_id)) > 0
+                if payload_status == "queued" or in_queue:
+                    # Expected: queued items have no task entry yet
+                    pass
+                else:
+                    # Potentially orphaned — check staleness (no update in >5 min)
+                    _ORPHAN_STALE_SECONDS = 300
+                    updated_at_str = status_payload.get("updated_at")
+                    is_stale = False
+                    if updated_at_str:
+                        try:
+                            updated_at_dt = datetime.fromisoformat(updated_at_str)
+                            if not updated_at_dt.tzinfo:
+                                updated_at_dt = updated_at_dt.replace(tzinfo=timezone.utc)
+                            age = (datetime.now(timezone.utc) - updated_at_dt).total_seconds()
+                            is_stale = age > _ORPHAN_STALE_SECONDS
+                        except Exception:
+                            is_stale = True
+                    else:
+                        is_stale = True
+
+                    if is_stale:
+                        _bg_status_logger.warning(
+                            "Stale orphaned in-progress generation detected — resetting to failed",
+                            extra={"task_key": task_key, "payload_status": payload_status},
+                        )
+                        _BACKGROUND_GENERATION_STATUS[task_key] = {
+                            **status_payload,
+                            "in_progress": False,
+                            "status": "failed",
+                            "message": "Generation interrupted — no active task (server may have restarted). Will retry automatically.",
+                            "updated_at": datetime.now(timezone.utc).isoformat(),
+                        }
+                        # Overwrite the response entry with terminal status so frontend stops polling
+                        statuses[str(parsed_subject_id)] = {
+                            **statuses[str(parsed_subject_id)],
+                            "in_progress": False,
+                            "status": "failed",
+                            "message": "Generation interrupted — no active task. Will retry automatically.",
+                        }
+                    else:
+                        _bg_status_logger.warning(
+                            "Returning in-progress payload without task entry",
+                            extra={
+                                "user_id": str(current_user.id),
+                                "subject_id": str(parsed_subject_id),
+                                "task_key": task_key,
+                                "status": payload_status,
+                                "progress": status_payload.get("progress"),
+                            },
+                        )
             continue
 
         if not task:
