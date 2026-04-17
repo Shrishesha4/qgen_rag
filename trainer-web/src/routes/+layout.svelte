@@ -135,6 +135,7 @@
 				{ href: '/admin/notifications', label: 'Notifications', icon: '🔔' },
 				{ href: '/admin/users', label: 'User Management', icon: '👥' },
 				{ href: '/admin/subjects', label: 'Subjects', icon: '🧾' },
+				{ href: '/admin/groups', label: 'Groups', icon: '🏘️' },
 				{ href: '/admin/teachers', label: 'Teachers', icon: '🧑‍🏫' },
 				{ href: '/admin/vetters', label: 'Vetters', icon: '✅' },
 				{ href: '/admin/analytics', label: 'Analytics', icon: '📊' },

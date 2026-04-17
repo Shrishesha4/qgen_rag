@@ -16,6 +16,7 @@
 		deleteDocumentById,
 		getDocumentStatus,
 		getBackgroundGenerationStatuses,
+		getGenerationLimits,
 		getTopicGenerationStatuses,
 		listReferenceDocuments,
 		scheduleBackgroundGeneration,
@@ -25,12 +26,14 @@
 	} from '$lib/api/documents';
 	import { getQuestionsForVetting } from '$lib/api/vetting';
 	import { getGenerationWebSocketClient, type GenerationWebSocketClient } from '$lib/api/generation-websocket';
+	import MultiPdfUpload, { type PdfFileProgress } from '$lib/components/MultiPdfUpload.svelte';
 
 	let loading = $state(true);
 	let error = $state('');
 	let subjectId = $state('');
 	let subject = $state<SubjectDetailResponse | null>(null);
 	let statsLoading = $state(false);
+	let generationBatchSize = $state(30);
 
 	type ReviewStats = {
 		generated: number;
@@ -56,10 +59,8 @@
 	let addTopicName = $state('');
 	let addTopicDescription = $state('');
 	let addTopicSyllabus = $state('');
-	let addTopicBookPdf = $state<File | null>(null);
-	let addTopicQuestionPdf = $state<File | null>(null);
-	let addTopicUploadProgress = $state<Record<string, number>>({});
-	let addTopicUploadProgressDetail = $state<Record<string, string>>({});
+	let addTopicPdfs = $state<File[]>([]);
+	let addTopicUploadProgress = $state<Record<string, PdfFileProgress>>({});
 	let addTopicUploadingFiles = $state<Record<string, boolean>>({});
 
 	let showEditTopicModal = $state(false);
@@ -129,6 +130,10 @@
 	let referenceError = $state<string>('');
 	let deletingRefId = $state<string | null>(null);
 
+	let editTopicPdfs = $state<File[]>([]);
+	let editTopicUploadProgress = $state<Record<string, PdfFileProgress>>({});
+	let editTopicUploadingFiles = $state<Record<string, boolean>>({});
+
 	// PDF Preview Modal
 	let showPreviewModal = $state(false);
 	let previewLoading = $state(false);
@@ -172,9 +177,15 @@
 	let referenceProgressByDoc = $state<Record<string, number>>({});
 	let referenceProgressDetailByDoc = $state<Record<string, string>>({});
 	let referencePollTimer: ReturnType<typeof setInterval> | null = null;
+	let topicPdfProcessingCountById = $state<Record<string, number>>({}); // per-topic in-progress PDF uploads
 	let topicGeneratingById = $state<Record<string, boolean>>({});
 	let topicGenerationProgressById = $state<Record<string, string>>({});
 	let completedGenerationHoldByTopicId = $state<Record<string, boolean>>({});
+	let queuedTopicGenerationIds = $state<string[]>([]);
+	let queuedTopicGenerationPositions = $state<Record<string, number>>({});
+	// Maps topicId → exact count to generate when its queued slot starts
+	let queuedTopicGenerationCounts = $state<Record<string, number>>({});
+	let startingTopicGenerationId = $state<string | null>(null);
 	let showGenerationNoticeModal = $state(false);
 	let generationNoticeMessage = $state('');
 	let showMissingSyllabusModal = $state(false);
@@ -194,12 +205,23 @@
 
 	const PROCESSING_DOC_STATUSES = new Set(['pending', 'processing']);
 
+	async function loadGenerationBatchSize() {
+		try {
+			const limits = await getGenerationLimits();
+			generationBatchSize = Math.max(1, Number(limits.max_batch_size || 30));
+		} catch {
+			generationBatchSize = Math.max(1, generationBatchSize || 30);
+		}
+	}
+
 	onMount(() => {
 		const unsub = session.subscribe((s) => {
 			if (!s || s.user.role !== 'teacher') {
 				goto('/teacher/login');
 			}
 		});
+
+		void loadGenerationBatchSize();
 
 		const unsubPage = page.subscribe((p) => {
 			subjectId = p.params.id ?? '';
@@ -233,6 +255,109 @@
 		generationPollingTopicId = null;
 		generationPollingRunId = null;
 		generationPollMisses = 0;
+	}
+
+	function getQueuedTopicGenerationStorageKey() {
+		return subjectId ? `queued_topic_generations_${subjectId}` : '';
+	}
+
+	function persistQueuedTopicGenerationIds() {
+		if (!subjectId || typeof sessionStorage === 'undefined') return;
+		const storageKey = getQueuedTopicGenerationStorageKey();
+		if (!storageKey) return;
+		if (queuedTopicGenerationIds.length === 0) {
+			sessionStorage.removeItem(storageKey);
+			return;
+		}
+		sessionStorage.setItem(storageKey, JSON.stringify(queuedTopicGenerationIds));
+	}
+
+	function setQueuedTopicGenerationIds(nextIds: string[]) {
+		queuedTopicGenerationIds = Array.from(new Set(nextIds.filter(Boolean)));
+		persistQueuedTopicGenerationIds();
+	}
+
+	function syncQueuedTopicGenerationsWithSubject() {
+		if (!subject || typeof sessionStorage === 'undefined') {
+			return;
+		}
+		const storageKey = getQueuedTopicGenerationStorageKey();
+		if (!storageKey) return;
+
+		let storedIds: string[] = [];
+		try {
+			const raw = sessionStorage.getItem(storageKey);
+			const parsed = raw ? JSON.parse(raw) : [];
+			if (Array.isArray(parsed)) {
+				storedIds = parsed.filter((value): value is string => typeof value === 'string' && value.length > 0);
+			}
+		} catch {
+			storedIds = [];
+		}
+
+		const validTopicIds = new Set(subject.topics.map((topic) => topic.id));
+		const nextIds = storedIds.filter((topicId) => validTopicIds.has(topicId));
+		setQueuedTopicGenerationIds(nextIds);
+
+		const nextPositions: Record<string, number> = {};
+		for (const [topicId, position] of Object.entries(queuedTopicGenerationPositions)) {
+			if (validTopicIds.has(topicId)) {
+				nextPositions[topicId] = position;
+			}
+		}
+		queuedTopicGenerationPositions = nextPositions;
+	}
+
+	function clearQueuedTopicGeneration(topicId: string) {
+		if (!topicId) return;
+		if (queuedTopicGenerationIds.includes(topicId)) {
+			setQueuedTopicGenerationIds(queuedTopicGenerationIds.filter((id) => id !== topicId));
+		}
+		if (queuedTopicGenerationPositions[topicId] !== undefined) {
+			const nextPositions = { ...queuedTopicGenerationPositions };
+			delete nextPositions[topicId];
+			queuedTopicGenerationPositions = nextPositions;
+		}
+	}
+
+	function queueTopicGeneration(topicId: string, queuePosition?: number | null) {
+		if (!queuedTopicGenerationIds.includes(topicId)) {
+			setQueuedTopicGenerationIds([...queuedTopicGenerationIds, topicId]);
+		}
+		if (typeof queuePosition === 'number' && queuePosition > 0) {
+			queuedTopicGenerationPositions = {
+				...queuedTopicGenerationPositions,
+				[topicId]: queuePosition,
+			};
+		}
+	}
+
+	function isTopicQueued(topicId: string): boolean {
+		return queuedTopicGenerationIds.includes(topicId);
+	}
+
+	function getTopicQueuePosition(topicId: string): number | null {
+		if (queuedTopicGenerationPositions[topicId]) {
+			return queuedTopicGenerationPositions[topicId];
+		}
+		const index = queuedTopicGenerationIds.indexOf(topicId);
+		return index >= 0 ? index + 1 : null;
+	}
+
+	function hasActiveTopicGeneration(): boolean {
+		return !!startingTopicGenerationId || Object.keys(topicGeneratingById).length > 0 || !!generationPollingTopicId;
+	}
+
+	async function maybeStartQueuedTopicGeneration() {
+		if (!subjectId || !queuedTopicGenerationIds.length || hasActiveTopicGeneration()) return;
+		const nextTopicId = queuedTopicGenerationIds[0];
+		if (!nextTopicId || queuedTopicGenerationPositions[nextTopicId]) return;
+		const storedCount = queuedTopicGenerationCounts[nextTopicId];
+		await startTopicGeneration(nextTopicId, {
+			showNotice: false,
+			fromQueue: true,
+			...(storedCount ? { count: storedCount } : {}),
+		});
 	}
 
 	async function syncBackgroundGenerationState() {
@@ -348,9 +473,11 @@
 		error = '';
 		try {
 			subject = await getSubject(subjectId);
+			syncQueuedTopicGenerationsWithSubject();
 			await loadReviewStats();
 			// Check for any in-progress generation after loading subject
 			await checkForInProgressGeneration();
+			await maybeStartQueuedTopicGeneration();
 		} catch (e: unknown) {
 			error = e instanceof Error ? e.message : 'Failed to load subject';
 		} finally {
@@ -372,9 +499,10 @@
 			// Process any active runs
 			for (const [topicId, status] of Object.entries(statusRes.statuses)) {
 				if (status.in_progress) {
+					clearQueuedTopicGeneration(topicId);
 					// There's an active generation for this topic
 					topicGeneratingById = { ...topicGeneratingById, [topicId]: true };
-					const total = status.total_questions || 30;
+					const total = status.total_questions || generationBatchSize;
 					const current = status.current_question || 0;
 					topicGenerationProgressById = { ...topicGenerationProgressById, [topicId]: `${current}/${total}` };
 					
@@ -399,8 +527,9 @@
 					const storedTopicId = sessionStorage.getItem(`gen_topic_${subjectId}`);
 					
 					if (storedTopicId && subject?.topics.some(t => t.id === storedTopicId)) {
+						clearQueuedTopicGeneration(storedTopicId);
 						topicGeneratingById = { ...topicGeneratingById, [storedTopicId]: true };
-						const total = status.total_questions || 30;
+						const total = status.total_questions || generationBatchSize;
 						const current = status.current_question || 0;
 						topicGenerationProgressById = { ...topicGenerationProgressById, [storedTopicId]: `${current}/${total}` };
 						startGenerationPolling(storedTopicId, status.run_id);
@@ -430,9 +559,10 @@
 			const topicId = status.topic_id;
 			
 			if (status.in_progress) {
+				clearQueuedTopicGeneration(topicId);
 				// Update generating state
 				topicGeneratingById = { ...topicGeneratingById, [topicId]: true };
-				const total = status.total_questions || 30;
+				const total = status.total_questions || generationBatchSize;
 				const current = status.current_question || 0;
 				topicGenerationProgressById = { ...topicGenerationProgressById, [topicId]: `${current}/${total}` };
 			} else {
@@ -456,8 +586,11 @@
 					};
 				}
 				
-				// Reload subject to get updated question counts
-				void loadSubject();
+				// Reload subject to get updated question counts and start any queued topic.
+				void (async () => {
+					await loadSubject();
+					await maybeStartQueuedTopicGeneration();
+				})();
 			}
 		});
 		
@@ -490,6 +623,8 @@
 		const topicStatsUnsub = wsClient.onTopicStats((sid: string, tid: string, statsData) => {
 			if (sid !== subjectId) return;
 			
+			const prevPending = topicReviewStats[tid]?.pending ?? null;
+
 			// Update topic review stats
 			topicReviewStats = {
 				...topicReviewStats,
@@ -517,6 +652,12 @@
 						return t;
 					})
 				};
+			}
+
+			// If pending just dropped (e.g. last question vetted), trigger auto-fill check
+			const newPending = statsData.pending ?? prevPending;
+			if (prevPending !== null && newPending !== null && newPending < prevPending) {
+				void autoFillTopicsIfNeeded();
 			}
 		});
 		
@@ -644,6 +785,9 @@
 				}
 				completedGenerationHoldByTopicId = nextHold;
 			}
+
+			// Auto-fill any topics that are not at a 30-multiple after stats are fresh
+			void autoFillTopicsIfNeeded();
 		} catch {
 			if (subject) {
 				subjectReviewStats = {
@@ -672,23 +816,32 @@
 		generateBeforeVettingTopicName = '';
 	}
 
-	function generateFromVettingModal() {
-		const topicId = generateBeforeVettingTopicId;
-		closeGenerateBeforeVettingModal();
-		if (!topicId) return;
-		void generateTopic(topicId);
-	}
-
 	function vetTopic(topicId: string) {
 		if (!subjectId) return;
 		const topic = subject?.topics.find((item) => item.id === topicId);
 		const generatedCount = topicReviewStats[topicId]?.generated ?? topic?.total_questions ?? 0;
+		const pendingCount = topicReviewStats[topicId]?.pending ?? topic?.total_questions ?? 0;
 		if (generatedCount <= 0) {
 			openGenerateBeforeVettingModal(topicId, topic?.name ?? 'This topic');
 			return;
 		}
+		if (pendingCount <= 0) {
+			return;
+		}
 		const params = new URLSearchParams({ subject: subjectId, topic: topicId, resume: '0' });
 		goto(`/teacher/train/loop?${params.toString()}`);
+	}
+
+	function hasPendingTopicQuestions(topicId: string, fallbackPending: number, fallbackGenerated: number): boolean {
+		const generatedCount = topicReviewStats[topicId]?.generated ?? fallbackGenerated;
+		const pendingCount = topicReviewStats[topicId]?.pending ?? fallbackPending;
+		return generatedCount > 0 && pendingCount > 0;
+	}
+
+	function isTopicFullyVetted(topicId: string, fallbackPending: number, fallbackGenerated: number): boolean {
+		const generatedCount = topicReviewStats[topicId]?.generated ?? fallbackGenerated;
+		const pendingCount = topicReviewStats[topicId]?.pending ?? fallbackPending;
+		return generatedCount > 0 && pendingCount <= 0;
 	}
 
 	function closeGenerationNoticeModal() {
@@ -718,35 +871,24 @@
 		if (topic) openEditTopicModal(topic);
 	}
 
-	async function generateTopic(topicId: string) {
-		if (!subjectId || topicGeneratingById[topicId] || !!generationPollingTopicId) return;
+	type StartTopicGenerationOptions = {
+		showNotice?: boolean;
+		fromQueue?: boolean;
+		/** Exact number of questions to generate (overrides generationBatchSize). */
+		count?: number;
+		/** If true, skip the missing-syllabus modal and return silently. */
+		silent?: boolean;
+	};
+
+	async function startTopicGeneration(topicId: string, options: StartTopicGenerationOptions = {}) {
+		if (!subjectId || topicGeneratingById[topicId] || startingTopicGenerationId === topicId) return;
 
 		const topic = subject?.topics.find((item) => item.id === topicId);
 		const topicName = topic?.name ?? 'this topic';
 		const syllabusContent = topic?.syllabus_content?.trim() ?? '';
-		if (!syllabusContent) {
-			openMissingSyllabusModal(topicId, topicName);
-			return;
-		}
-
-		generationNoticeMessage = `Question generation for "${topicName}" has started in the background. This may take a few minutes. You can navigate away and come back later to vet the generated questions.`;
-		showGenerationNoticeModal = true;
-		
-		// Store topic ID for resuming on page reload
-		sessionStorage.setItem(`gen_topic_${subjectId}`, topicId);
-		
-		const nextHold = { ...completedGenerationHoldByTopicId };
-		delete nextHold[topicId];
-		completedGenerationHoldByTopicId = nextHold;
-		topicGeneratingById = {
-			...topicGeneratingById,
-			[topicId]: true,
-		};
-		topicGenerationProgressById = {
-			...topicGenerationProgressById,
-			[topicId]: '0/30',
-		};
-		error = '';
+		// Exact count: options > queued store > batch size
+		const resolvedCount =
+			options.count ?? queuedTopicGenerationCounts[topicId] ?? generationBatchSize;
 		try {
 			const references = await listReferenceDocuments(subjectId, topicId);
 			const topicPdfCount = [
@@ -754,17 +896,56 @@
 				...(references.template_papers ?? []),
 			].filter((doc) => doc.topic_id === topicId).length;
 			const allowWithoutReference = topicPdfCount === 0;
+			const hasGenerationContent = Boolean(syllabusContent) || topicPdfCount > 0;
+			if (!hasGenerationContent) {
+				if (!options.silent) openMissingSyllabusModal(topicId, topicName);
+				return;
+			}
+
+			startingTopicGenerationId = topicId;
+			if (options.showNotice) {
+				generationNoticeMessage = `Question generation for "${topicName}" has started in the background. This may take a few minutes. You can navigate away and come back later to vet the generated questions.`;
+				showGenerationNoticeModal = true;
+			}
+
+			// Store topic ID for resuming on page reload
+			sessionStorage.setItem(`gen_topic_${subjectId}`, topicId);
+
+			const nextHold = { ...completedGenerationHoldByTopicId };
+			delete nextHold[topicId];
+			completedGenerationHoldByTopicId = nextHold;
+			// Clear per-topic count now that we're starting
+			const nextCounts = { ...queuedTopicGenerationCounts };
+			delete nextCounts[topicId];
+			queuedTopicGenerationCounts = nextCounts;
+			error = '';
 
 			const scheduled = await scheduleBackgroundGeneration({
 				subjectId,
-				count: 30,
+				count: resolvedCount,
 				types: 'mcq',
 				difficulty: 'medium',
 				topicId,
 				allowWithoutReference,
 			});
 
-			const total = Math.max(1, scheduled.count || 30);
+			if (scheduled.status === 'already_running') {
+				queueTopicGeneration(topicId);
+				return;
+			}
+
+			if (scheduled.status === 'queued') {
+				queueTopicGeneration(topicId, scheduled.queue_position ?? null);
+				return;
+			}
+
+			clearQueuedTopicGeneration(topicId);
+			topicGeneratingById = {
+				...topicGeneratingById,
+				[topicId]: true,
+			};
+
+			const total = Math.max(1, scheduled.count || generationBatchSize);
 			topicGenerationProgressById = {
 				...topicGenerationProgressById,
 				[topicId]: `0/${total}`,
@@ -781,6 +962,58 @@
 			const nextProgress = { ...topicGenerationProgressById };
 			delete nextProgress[topicId];
 			topicGenerationProgressById = nextProgress;
+		} finally {
+			if (startingTopicGenerationId === topicId) {
+				startingTopicGenerationId = null;
+			}
+		}
+	}
+
+	async function queueTopicGenerationForStart(topicId: string, count?: number) {
+		if (!topicId || isTopicGenerating(topicId) || isTopicQueued(topicId)) return;
+		if (count && count !== generationBatchSize) {
+			queuedTopicGenerationCounts = { ...queuedTopicGenerationCounts, [topicId]: count };
+		}
+		queueTopicGeneration(topicId);
+		await maybeStartQueuedTopicGeneration();
+	}
+
+	/**
+	 * Automatically fill every topic so its total generated question count is an
+	 * exact multiple of `generationBatchSize` (30, 60, 90…).
+	 *
+	 * Rules:
+	 *  - `generated % BATCH !== 0` → fill exactly `nextMultiple - generated` (incomplete batch)
+	 *  - `generated % BATCH === 0 && pending === 0 && generated > 0` → start next full batch
+	 *
+	 * Called as a hook after stats load and after WS topic-stats updates.
+	 * Guards (isTopicGenerating / isTopicQueued) prevent duplicate triggers.
+	 */
+	async function autoFillTopicsIfNeeded() {
+		if (!subject || !subjectId) return;
+		const BATCH = generationBatchSize;
+		for (const topic of subject.topics) {
+			if (isTopicGenerating(topic.id) || isTopicQueued(topic.id)) continue;
+			const stats = topicReviewStats[topic.id];
+			const generated = stats?.generated ?? 0;
+			const pending = stats?.pending ?? 0;
+
+			let neededCount = 0;
+
+			if (generated === 0) {
+				// No questions yet — auto-start first batch
+				neededCount = BATCH;
+			} else if (generated % BATCH !== 0) {
+				// Incomplete batch — fill exactly to next multiple
+				neededCount = Math.ceil(generated / BATCH) * BATCH - generated;
+			} else if (pending === 0) {
+				// All questions vetted at a clean multiple — auto-start next full batch
+				neededCount = BATCH;
+			}
+
+			if (neededCount > 0) {
+				await queueTopicGenerationForStart(topic.id, neededCount === BATCH ? undefined : neededCount);
+			}
 		}
 	}
 
@@ -795,17 +1028,15 @@
 
 	// Check if topic is currently generating (show status even when questions > 0)
 	function isTopicGenerating(topicId: string): boolean {
-		return !!topicGeneratingById[topicId] || generationPollingTopicId === topicId;
+		return !!topicGeneratingById[topicId] || generationPollingTopicId === topicId || startingTopicGenerationId === topicId;
 	}
 
 	function openAddTopicModal() {
 		addTopicName = '';
 		addTopicDescription = '';
 		addTopicSyllabus = '';
-		addTopicBookPdf = null;
-		addTopicQuestionPdf = null;
+		addTopicPdfs = [];
 		addTopicUploadProgress = {};
-		addTopicUploadProgressDetail = {};
 		addTopicUploadingFiles = {};
 		showAddTopicModal = true;
 	}
@@ -816,6 +1047,20 @@
 	}
 
 	async function uploadWithProgress(file: File, subjectId: string, indexType: string, topicId: string, progressKey: string): Promise<void> {
+		// Track topic-level processing for the topic row indicator
+		topicPdfProcessingCountById = {
+			...topicPdfProcessingCountById,
+			[topicId]: (topicPdfProcessingCountById[topicId] ?? 0) + 1,
+		};
+
+		const decrementTopicCount = () => {
+			const next = { ...topicPdfProcessingCountById };
+			const c = (next[topicId] ?? 1) - 1;
+			if (c <= 0) delete next[topicId];
+			else next[topicId] = c;
+			topicPdfProcessingCountById = next;
+		};
+
 		return new Promise((resolve, reject) => {
 			const xhr = new XMLHttpRequest();
 			const form = new FormData();
@@ -824,26 +1069,22 @@
 			form.append('index_type', indexType);
 			form.append('topic_id', topicId);
 
-			// Track if upload portion is complete
-			let uploadComplete = false;
-
 			xhr.upload.addEventListener('progress', (e) => {
 				if (e.lengthComputable) {
-					// Upload progress is 0-50% of total progress
 					const uploadPercent = Math.round((e.loaded / e.total) * 50);
-					addTopicUploadProgress = { ...addTopicUploadProgress, [progressKey]: uploadPercent };
-					addTopicUploadProgressDetail = { ...addTopicUploadProgressDetail, [progressKey]: 'Uploading file...' };
+					addTopicUploadProgress = {
+						...addTopicUploadProgress,
+						[progressKey]: { percent: uploadPercent, detail: 'Uploading...' },
+					};
 				}
 			});
 
 			xhr.addEventListener('load', async () => {
 				if (xhr.status >= 200 && xhr.status < 300) {
-					uploadComplete = true;
 					const response = JSON.parse(xhr.responseText);
 					const documentId = response.document_id;
 
 					if (documentId) {
-						// Start polling backend for processing status
 						let processingDone = false;
 						const pollInterval = setInterval(async () => {
 							if (processingDone) {
@@ -853,45 +1094,49 @@
 
 							try {
 								const status = await getDocumentStatus(documentId);
-								// Overall progress: upload 50% + processing 50%
 								const processingProgress = (status.processing_progress ?? 0);
 								const overallProgress = 50 + Math.round(processingProgress * 0.5);
-								addTopicUploadProgress = { ...addTopicUploadProgress, [progressKey]: overallProgress };
-								addTopicUploadProgressDetail = { ...addTopicUploadProgressDetail, [progressKey]: status.processing_detail || status.processing_step || 'Processing...' };
+								addTopicUploadProgress = {
+									...addTopicUploadProgress,
+									[progressKey]: {
+										percent: overallProgress,
+										detail: status.processing_detail || status.processing_step || 'Processing...',
+									},
+								};
 
-								// Check if processing is complete
 								if (status.status === 'completed') {
 									processingDone = true;
-									addTopicUploadProgress = { ...addTopicUploadProgress, [progressKey]: 100 };
-									addTopicUploadProgressDetail = { ...addTopicUploadProgressDetail, [progressKey]: 'Completed' };
 									clearInterval(pollInterval);
 									const next = { ...addTopicUploadingFiles };
 									delete next[progressKey];
 									addTopicUploadingFiles = next;
+									decrementTopicCount();
 									resolve();
 								}
 							} catch (e) {
-								// Polling failed, but upload succeeded - still resolve
 								if (!processingDone) {
 									processingDone = true;
 									clearInterval(pollInterval);
 									const next = { ...addTopicUploadingFiles };
 									delete next[progressKey];
 									addTopicUploadingFiles = next;
+									decrementTopicCount();
 									resolve();
 								}
 							}
-						}, 1000); // Poll every 1 second
+						}, 1000);
 					} else {
 						const next = { ...addTopicUploadingFiles };
 						delete next[progressKey];
 						addTopicUploadingFiles = next;
+						decrementTopicCount();
 						resolve();
 					}
 				} else {
 					const next = { ...addTopicUploadingFiles };
 					delete next[progressKey];
 					addTopicUploadingFiles = next;
+					decrementTopicCount();
 					reject(new Error(`Upload failed with status ${xhr.status}`));
 				}
 			});
@@ -900,11 +1145,11 @@
 				const next = { ...addTopicUploadingFiles };
 				delete next[progressKey];
 				addTopicUploadingFiles = next;
+				decrementTopicCount();
 				reject(new Error('Upload error'));
 			});
 
 			xhr.open('POST', apiUrl('/documents/reference/upload'));
-			// Add authorization header
 			const storedSession = getStoredSession();
 			if (storedSession?.access_token) {
 				xhr.setRequestHeader('Authorization', `Bearer ${storedSession.access_token}`);
@@ -914,11 +1159,26 @@
 		});
 	}
 
+	async function refreshSubjectSilent() {
+		if (!subjectId) return;
+		try {
+			subject = await getSubject(subjectId);
+			syncQueuedTopicGenerationsWithSubject();
+			await loadReviewStats();
+			await checkForInProgressGeneration();
+			await maybeStartQueuedTopicGeneration();
+		} catch (e: unknown) {
+			error = e instanceof Error ? e.message : 'Failed to refresh subject';
+		}
+	}
+
 	async function submitAddTopic() {
 		if (!subjectId || !addTopicName.trim() || addingTopic) return;
 		addingTopic = true;
 		error = '';
 		let createdTopic: TopicResponse | null = null;
+		const shouldAutoGenerateFromSyllabus = addTopicSyllabus.trim().length > 0;
+		const hasPdfs = addTopicPdfs.length > 0;
 		try {
 			createdTopic = await createTopic(subjectId, {
 				subject_id: subjectId,
@@ -927,39 +1187,30 @@
 				syllabus_content: addTopicSyllabus.trim() || undefined,
 			});
 
-			const uploadTasks: Promise<unknown>[] = [];
-			if (addTopicBookPdf) {
-				const bookKey = 'book_pdf';
-				addTopicUploadingFiles = { ...addTopicUploadingFiles, [bookKey]: true };
-				uploadTasks.push(
-					uploadWithProgress(addTopicBookPdf, subjectId, 'reference_book', createdTopic.id, bookKey)
-				);
-			}
-			if (addTopicQuestionPdf) {
-				const questionKey = 'question_pdf';
-				addTopicUploadingFiles = { ...addTopicUploadingFiles, [questionKey]: true };
-				uploadTasks.push(
-					uploadWithProgress(addTopicQuestionPdf, subjectId, 'reference_questions', createdTopic.id, questionKey)
-				);
-			}
-			if (uploadTasks.length > 0) {
-				await Promise.all(uploadTasks);
+			// Fire-and-forget uploads — topic row shows circular progress
+			for (const file of addTopicPdfs) {
+				void uploadWithProgress(file, subjectId, 'reference_book', createdTopic.id, file.name);
 			}
 
 			showAddTopicModal = false;
-			await loadSubject();
+			await refreshSubjectSilent();
+			if (createdTopic && (shouldAutoGenerateFromSyllabus || !hasPdfs)) {
+				await queueTopicGenerationForStart(createdTopic.id);
+			}
 		} catch (e: unknown) {
 			const message = e instanceof Error ? e.message : 'Failed to add topic';
 			if (createdTopic) {
 				showAddTopicModal = false;
-				await loadSubject();
-				error = `Topic was added, but one or more PDF uploads failed: ${message}`;
+				await refreshSubjectSilent();
+				if (shouldAutoGenerateFromSyllabus || !hasPdfs) {
+					await queueTopicGenerationForStart(createdTopic.id);
+				}
+				error = `Topic was added, but PDF upload failed: ${message}`;
 			} else {
 				error = message;
 			}
 		} finally {
 			addingTopic = false;
-			addTopicUploadingFiles = {};
 		}
 	}
 
@@ -973,12 +1224,15 @@
 		editModalTab = 'edit';
 		auditEntries = [];
 		auditError = '';
+		editTopicPdfs = [];
+		editTopicUploadProgress = {};
+		editTopicUploadingFiles = {};
 		showEditTopicModal = true;
 		void loadReferenceMaterials();
 	}
 
 	function closeEditTopicModal() {
-		if (editingTopic) return;
+		if (editingTopic || Object.keys(editTopicUploadingFiles).length > 0) return;
 		clearReferencePolling();
 		referenceError = '';
 		referenceBooks = [];
@@ -986,6 +1240,9 @@
 		referenceQuestions = [];
 		referenceProgressByDoc = {};
 		referenceProgressDetailByDoc = {};
+		editTopicPdfs = [];
+		editTopicUploadProgress = {};
+		editTopicUploadingFiles = {};
 		showEditTopicModal = false;
 	}
 
@@ -1000,13 +1257,135 @@
 				syllabus_content: editTopicSyllabus.trim() || undefined,
 				has_syllabus: editTopicSyllabus.trim().length > 0,
 			});
+			// Uploads are already in-flight (started on file selection); just close modal
 			showEditTopicModal = false;
-			await loadSubject();
+			await refreshSubjectSilent();
 		} catch (e: unknown) {
 			error = e instanceof Error ? e.message : 'Failed to update topic';
 		} finally {
 			editingTopic = false;
 		}
+	}
+
+	function onEditTopicPdfsChange(files: File[]) {
+		const existing = new Set(editTopicPdfs.map((f) => f.name));
+		const fresh = files.filter((f) => !existing.has(f.name));
+		editTopicPdfs = files;
+		// Start uploading new files immediately
+		for (const file of fresh) {
+			editTopicUploadingFiles = { ...editTopicUploadingFiles, [file.name]: true };
+			void uploadEditPdf(file, file.name);
+		}
+	}
+
+	async function uploadEditPdf(file: File, progressKey: string): Promise<void> {
+		const topicId = editTopicId;
+		topicPdfProcessingCountById = {
+			...topicPdfProcessingCountById,
+			[topicId]: (topicPdfProcessingCountById[topicId] ?? 0) + 1,
+		};
+		const decrementTopicCount = () => {
+			const next = { ...topicPdfProcessingCountById };
+			const c = (next[topicId] ?? 1) - 1;
+			if (c <= 0) delete next[topicId];
+			else next[topicId] = c;
+			topicPdfProcessingCountById = next;
+		};
+
+		return new Promise((resolve, reject) => {
+			const xhr = new XMLHttpRequest();
+			const form = new FormData();
+			form.append('file', file);
+			form.append('subject_id', subjectId);
+			form.append('index_type', 'reference_book');
+			form.append('topic_id', topicId);
+
+			xhr.upload.addEventListener('progress', (e) => {
+				if (e.lengthComputable) {
+					const pct = Math.round((e.loaded / e.total) * 50);
+					editTopicUploadProgress = {
+						...editTopicUploadProgress,
+						[progressKey]: { percent: pct, detail: 'Uploading...' },
+					};
+				}
+			});
+
+			xhr.addEventListener('load', async () => {
+				if (xhr.status >= 200 && xhr.status < 300) {
+					const response = JSON.parse(xhr.responseText);
+					const documentId = response.document_id;
+					if (documentId) {
+						let done = false;
+						const poll = setInterval(async () => {
+							if (done) { clearInterval(poll); return; }
+							try {
+								const status = await getDocumentStatus(documentId);
+								const pct = 50 + Math.round((status.processing_progress ?? 0) * 0.5);
+								editTopicUploadProgress = {
+									...editTopicUploadProgress,
+									[progressKey]: {
+										percent: pct,
+										detail: status.processing_detail || status.processing_step || 'Processing...',
+									},
+								};
+								if (status.status === 'completed') {
+									done = true;
+									clearInterval(poll);
+									const next = { ...editTopicUploadingFiles };
+									delete next[progressKey];
+									editTopicUploadingFiles = next;
+									decrementTopicCount();
+									resolve();
+								} else if (status.status === 'failed') {
+									done = true;
+									clearInterval(poll);
+									const next = { ...editTopicUploadingFiles };
+									delete next[progressKey];
+									editTopicUploadingFiles = next;
+									decrementTopicCount();
+									reject(new Error(status.error || 'Processing failed'));
+								}
+							} catch {
+								done = true;
+								clearInterval(poll);
+								const next = { ...editTopicUploadingFiles };
+								delete next[progressKey];
+								editTopicUploadingFiles = next;
+								decrementTopicCount();
+								resolve();
+							}
+						}, 1000);
+					} else {
+						const next = { ...editTopicUploadingFiles };
+						delete next[progressKey];
+						editTopicUploadingFiles = next;
+						decrementTopicCount();
+						resolve();
+					}
+				} else {
+					const next = { ...editTopicUploadingFiles };
+					delete next[progressKey];
+					editTopicUploadingFiles = next;
+					decrementTopicCount();
+					reject(new Error(`Upload failed with status ${xhr.status}`));
+				}
+			});
+
+			xhr.addEventListener('error', () => {
+				const next = { ...editTopicUploadingFiles };
+				delete next[progressKey];
+				editTopicUploadingFiles = next;
+				decrementTopicCount();
+				reject(new Error('Upload error'));
+			});
+
+			xhr.open('POST', apiUrl('/documents/reference/upload'));
+			const storedSession = getStoredSession();
+			if (storedSession?.access_token) {
+				xhr.setRequestHeader('Authorization', `Bearer ${storedSession.access_token}`);
+			}
+			xhr.send(form);
+		});
 	}
 
 	function allReferenceDocs() {
@@ -1329,7 +1708,6 @@
 			<div class="section-head">
 				<div>
 					<h2 class="section-title">Topics</h2>
-					<p class="section-subtitle">Generate or vet directly from each topic.</p>
 				</div>
 				<div class="section-head-actions">
 					<span class="topic-count">{subject.topics.length}</span>
@@ -1389,21 +1767,35 @@
 									<td class="violet-text">{topicReviewStats[topic.id]?.approvalRate ?? 0}%</td>
 									<td class="action-cell">
 										<div class="topic-inline-actions">
+											{#if topicPdfProcessingCountById[topic.id]}
+												<span class="pdf-processing-badge" title="Processing PDFs…">
+													<span class="pdf-ring-spinner"></span>
+													PDF
+												</span>
+											{/if}
 											{#if isTopicGenerating(topic.id)}
 												<button class="action-btn action-generate generating" disabled>
 													<span class="btn-spinner" aria-hidden="true"></span>
 													<span>Generating {topicGenerationProgressById[topic.id] || ''}</span>
 												</button>
-											{:else if canGenerateTopic(
+											{:else if isTopicQueued(topic.id)}
+												<button class="action-btn action-generate generating" disabled>
+													<span>Queued{#if getTopicQueuePosition(topic.id)} #{getTopicQueuePosition(topic.id)}{/if}</span>
+												</button>
+											{/if}
+											{#if hasPendingTopicQuestions(
 												topic.id,
 												topicReviewStats[topic.id]?.pending ?? topic.total_questions,
 												topicReviewStats[topic.id]?.generated ?? topic.total_questions
 											)}
-												<button class="action-btn action-generate" onclick={() => generateTopic(topic.id)} disabled={!!generationPollingTopicId}>
-													<span>Generate</span>
-												</button>
+												<button class="action-btn action-vet" onclick={() => vetTopic(topic.id)}>Vet</button>
+											{:else if isTopicFullyVetted(
+												topic.id,
+												topicReviewStats[topic.id]?.pending ?? topic.total_questions,
+												topicReviewStats[topic.id]?.generated ?? topic.total_questions
+											)}
+												<button class="action-btn action-vet" disabled>Reviewed</button>
 											{/if}
-											<button class="action-btn action-vet" onclick={() => vetTopic(topic.id)}>Vet</button>
 										</div>
 									</td>
 								</tr>
@@ -1435,21 +1827,35 @@
 								<span class="violet-text">AR <strong>{topicReviewStats[topic.id]?.approvalRate ?? 0}%</strong></span>
 							</div>
 							<div class="topic-inline-actions">
+								{#if topicPdfProcessingCountById[topic.id]}
+									<span class="pdf-processing-badge" title="Processing PDFs…">
+										<span class="pdf-ring-spinner"></span>
+										PDF
+									</span>
+								{/if}
 								{#if isTopicGenerating(topic.id)}
 									<button class="action-btn action-generate generating" disabled>
 										<span class="btn-spinner" aria-hidden="true"></span>
 										<span>Generating {topicGenerationProgressById[topic.id] || ''}</span>
 									</button>
-								{:else if canGenerateTopic(
+								{:else if isTopicQueued(topic.id)}
+									<button class="action-btn action-generate generating" disabled>
+										<span>Queued{#if getTopicQueuePosition(topic.id)} #{getTopicQueuePosition(topic.id)}{/if}</span>
+									</button>
+								{/if}
+								{#if hasPendingTopicQuestions(
 									topic.id,
 									topicReviewStats[topic.id]?.pending ?? topic.total_questions,
 									topicReviewStats[topic.id]?.generated ?? topic.total_questions
 								)}
-									<button class="action-btn action-generate" onclick={() => generateTopic(topic.id)} disabled={!!generationPollingTopicId}>
-										<span>Generate</span>
-									</button>
+									<button class="action-btn action-vet" onclick={() => vetTopic(topic.id)}>Vet</button>
+								{:else if isTopicFullyVetted(
+									topic.id,
+									topicReviewStats[topic.id]?.pending ?? topic.total_questions,
+									topicReviewStats[topic.id]?.generated ?? topic.total_questions
+								)}
+									<button class="action-btn action-vet" disabled>Reviewed</button>
 								{/if}
-								<button class="action-btn action-vet" onclick={() => vetTopic(topic.id)}>Vet</button>
 							</div>
 						</div>
 					{/each}
@@ -1489,12 +1895,11 @@
 			</div>
 			<div class="modal-body">
 				<p class="generation-notice-message">
-					{generateBeforeVettingTopicName} has no generated questions yet. Generate first, then start vetting.
+					{generateBeforeVettingTopicName} has no generated questions yet. Questions now start automatically after topic setup when syllabus content or a book PDF is added.
 				</p>
 			</div>
 			<div class="modal-actions">
-				<button class="action-btn action-muted" onclick={closeGenerateBeforeVettingModal}>Cancel</button>
-				<button class="action-btn action-add-topic" onclick={generateFromVettingModal}>Generate First</button>
+				<button class="action-btn action-muted" onclick={closeGenerateBeforeVettingModal}>Close</button>
 			</div>
 		</div>
 	</div>
@@ -1506,12 +1911,12 @@
 		<!-- svelte-ignore a11y_click_events_have_key_events a11y_no_static_element_interactions -->
 		<div class="modal-card" role="dialog" aria-modal="true" tabindex="-1" onclick={(e) => e.stopPropagation()}>
 			<div class="modal-head">
-				<h3>Add Syllabus Content First</h3>
+				<h3>Add Topic Content First</h3>
 				<button class="modal-close" onclick={closeMissingSyllabusModal} aria-label="Close">✕</button>
 			</div>
 			<div class="modal-body">
 				<p class="generation-notice-message">
-					{missingSyllabusTopicName} has no syllabus content yet. Add some syllabus content to this topic before generating a question batch.
+					{missingSyllabusTopicName} needs syllabus content or a book PDF before automatic question generation can begin.
 				</p>
 			</div>
 			<div class="modal-actions">
@@ -1535,61 +1940,18 @@
 				<input class="input" placeholder="Topic name" bind:value={addTopicName} />
 				<input class="input" placeholder="Description (optional)" bind:value={addTopicDescription} />
 				<textarea class="input textarea" rows="4" placeholder="Syllabus content" bind:value={addTopicSyllabus}></textarea>
-				<div class="file-input-group">
-					<label class="file-label" for="bookPdf">Book PDF</label>
-					<input
-						id="bookPdf"
-						class="file-input"
-						type="file"
-						accept=".pdf,application/pdf"
-						disabled={addTopicUploadingFiles['book_pdf']}
-						onchange={(e) => {
-							const target = e.currentTarget as HTMLInputElement;
-							addTopicBookPdf = target.files?.[0] ?? null;
-						}}
-					/>
-					{#if addTopicUploadingFiles['book_pdf']}
-						<div class="upload-progress">
-							<div class="progress-bar-track">
-								<div class="progress-bar-fill" style={`width: ${addTopicUploadProgress['book_pdf'] ?? 0}%`}></div>
-							</div>
-							<span class="progress-text">{addTopicUploadProgress['book_pdf'] ?? 0}%</span>
-							{#if addTopicUploadProgressDetail['book_pdf']}
-								<div class="progress-detail">{addTopicUploadProgressDetail['book_pdf']}</div>
-							{/if}
-						</div>
-					{/if}
-				</div>
-				<div class="file-input-group">
-					<label class="file-label" for="questionPdf">Question PDF (optional)</label>
-					<input
-						id="questionPdf"
-						class="file-input"
-						type="file"
-						accept=".pdf,application/pdf"
-						disabled={addTopicUploadingFiles['question_pdf']}
-						onchange={(e) => {
-							const target = e.currentTarget as HTMLInputElement;
-							addTopicQuestionPdf = target.files?.[0] ?? null;
-						}}
-					/>
-					{#if addTopicUploadingFiles['question_pdf']}
-						<div class="upload-progress">
-							<div class="progress-bar-track">
-								<div class="progress-bar-fill" style={`width: ${addTopicUploadProgress['question_pdf'] ?? 0}%`}></div>
-							</div>
-							<span class="progress-text">{addTopicUploadProgress['question_pdf'] ?? 0}%</span>
-							{#if addTopicUploadProgressDetail['question_pdf']}
-								<div class="progress-detail">{addTopicUploadProgressDetail['question_pdf']}</div>
-							{/if}
-						</div>
-					{/if}
-				</div>
+				<MultiPdfUpload
+					files={addTopicPdfs}
+					onchange={(f) => (addTopicPdfs = f)}
+					disabled={addingTopic || Object.keys(addTopicUploadingFiles).length > 0}
+					progress={addTopicUploadProgress}
+					label="Reference PDFs"
+				/>
 			</div>
 			<div class="modal-actions">
 				<button class="action-btn action-muted" onclick={closeAddTopicModal}>Cancel</button>
 				<button class="action-btn action-add-topic" onclick={submitAddTopic} disabled={addingTopic || !addTopicName.trim()}>
-					{addingTopic ? 'Adding...' : 'Add Topic'}
+					{addingTopic ? 'Saving...' : 'Save Changes'}
 				</button>
 			</div>
 		</div>
@@ -1627,28 +1989,13 @@
 				{#if referenceLoading}
 					<div class="topics-loading"><div class="spinner-sm"></div><span>Loading materials…</span></div>
 				{:else}
-					<div class="file-input-group">
-						<label class="file-label" for="editBookPdf">Book/Template PDF</label>
-						<input
-							id="editBookPdf"
-							class="file-input"
-							type="file"
-							accept=".pdf,.doc,.docx,.txt"
-							oninput={(e) => uploadTopicPdf(e, pdfUploadType)}
-							disabled={referenceUploading}
-						/>
-						{#if referenceProgressByDoc[`edit_${pdfUploadType}`] !== undefined}
-							<div class="upload-progress">
-								<div class="progress-bar-track">
-									<div class="progress-bar-fill" style={`width: ${referenceProgressByDoc[`edit_${pdfUploadType}`] ?? 0}%`}></div>
-								</div>
-								<span class="progress-text">{referenceProgressByDoc[`edit_${pdfUploadType}`] ?? 0}%</span>
-								{#if referenceProgressDetailByDoc[`edit_${pdfUploadType}`]}
-									<div class="progress-detail">{referenceProgressDetailByDoc[`edit_${pdfUploadType}`]}</div>
-								{/if}
-							</div>
-						{/if}
-					</div>
+					<MultiPdfUpload
+						files={editTopicPdfs}
+						onchange={onEditTopicPdfsChange}
+						disabled={editingTopic}
+						progress={editTopicUploadProgress}
+						label="Add Reference PDFs"
+					/>
 					<div class="doc-list topic-doc-list">
 						{#if editTopicReferenceDocs.length}
 							{#each editTopicReferenceDocs as doc}
@@ -1677,30 +2024,9 @@
 						{/if}
 					</div>
 
-					<div class="file-input-group">
-						<label class="file-label" for="editQuestionPdf">Question PDF (optional)</label>
-						<input
-							id="editQuestionPdf"
-							class="file-input"
-							type="file"
-							accept=".pdf,.xlsx,.csv"
-							oninput={(e) => uploadTopicPdf(e, 'reference_questions')}
-							disabled={referenceUploading}
-						/>
-						{#if referenceProgressByDoc['edit_reference_questions'] !== undefined}
-							<div class="upload-progress">
-								<div class="progress-bar-track">
-									<div class="progress-bar-fill" style={`width: ${referenceProgressByDoc['edit_reference_questions'] ?? 0}%`}></div>
-								</div>
-								<span class="progress-text">{referenceProgressByDoc['edit_reference_questions'] ?? 0}%</span>
-								{#if referenceProgressDetailByDoc['edit_reference_questions']}
-									<div class="progress-detail">{referenceProgressDetailByDoc['edit_reference_questions']}</div>
-								{/if}
-							</div>
-						{/if}
-					</div>
 					<div class="doc-list topic-doc-list">
 						{#if editTopicQuestionDocs.length}
+							<p class="file-label" style="margin-bottom: 0.25rem;">Question PDFs</p>
 							{#each editTopicQuestionDocs as doc}
 								<div class="doc-row">
 									<div class="doc-main">
@@ -1730,8 +2056,6 @@
 									</button>
 								</div>
 							{/each}
-						{:else}
-							<p class="topics-empty">No reference question files uploaded yet.</p>
 						{/if}
 					</div>
 				{/if}
@@ -2180,6 +2504,31 @@
 		}
 	}
 
+	.pdf-processing-badge {
+		display: inline-flex;
+		align-items: center;
+		gap: 0.35rem;
+		padding: 0.2rem 0.55rem;
+		border-radius: 999px;
+		background: rgba(var(--theme-primary-rgb, 99, 102, 241), 0.12);
+		border: 1.5px solid rgba(var(--theme-primary-rgb, 99, 102, 241), 0.3);
+		color: var(--theme-primary, #6366f1);
+		font-size: 0.72rem;
+		font-weight: 600;
+		letter-spacing: 0.04em;
+		white-space: nowrap;
+	}
+
+	.pdf-ring-spinner {
+		width: 0.78rem;
+		height: 0.78rem;
+		border-radius: 50%;
+		border: 2px solid rgba(var(--theme-primary-rgb, 99, 102, 241), 0.25);
+		border-top-color: var(--theme-primary, #6366f1);
+		animation: btn-spin 0.9s linear infinite;
+		flex-shrink: 0;
+	}
+
 	.action-vet {
 		background: rgba(var(--theme-primary-rgb), 0.14);
 		border-color: rgba(var(--theme-primary-rgb), 0.38);
@@ -2292,8 +2641,7 @@
 		box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.28);
 	}
 
-	.input:focus,
-	.file-input:focus {
+	.input:focus {
 		outline: none;
 		border-color: rgba(var(--theme-primary-rgb), 0.55);
 		box-shadow: 0 0 0 2px rgba(var(--theme-primary-rgb), 0.18);
@@ -2304,64 +2652,10 @@
 		min-height: 120px;
 	}
 
-	.file-input-group {
-		display: flex;
-		flex-direction: column;
-		gap: 0.4rem;
-	}
-
 	.file-label {
 		font-size: 0.8rem;
 		font-weight: 700;
 		color: var(--theme-text-secondary);
-	}
-
-	.file-input {
-		width: 100%;
-		padding: 0.68rem 0.8rem;
-		border-radius: 0.9rem;
-		border: 1px solid color-mix(in srgb, var(--theme-glass-border) 72%, rgba(255, 255, 255, 0.5));
-		background: color-mix(in srgb, var(--theme-input-bg) 88%, var(--theme-surface));
-		color: var(--theme-text-primary);
-		font: inherit;
-		box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.28);
-	}
-
-	.upload-progress {
-		display: flex;
-		align-items: center;
-		gap: 0.55rem;
-		margin-top: 0.3rem;
-	}
-
-	.progress-bar-track {
-		flex: 1;
-		height: 6px;
-		border-radius: 999px;
-		overflow: hidden;
-		background: rgba(var(--theme-primary-rgb), 0.2);
-	}
-
-	.progress-bar-fill {
-		height: 100%;
-		background: linear-gradient(90deg, var(--theme-primary), var(--theme-primary-hover));
-		transition: width 0.2s ease;
-	}
-
-	.progress-text {
-		font-size: 0.75rem;
-		font-weight: 700;
-		color: var(--theme-text-secondary);
-		min-width: 30px;
-		text-align: right;
-	}
-
-	.progress-detail {
-		width: 100%;
-		font-size: 0.7rem;
-		color: var(--theme-text-secondary);
-		margin-top: 0.3rem;
-		font-style: italic;
 	}
 
 	.modal-actions {
@@ -2480,7 +2774,6 @@
 	}
 
 	:global([data-color-mode='dark']) .input,
-	:global([data-color-mode='dark']) .file-input,
 	:global([data-color-mode='dark']) .doc-row {
 		box-shadow: none;
 	}
@@ -2513,8 +2806,7 @@
 		border-bottom-color: rgba(148, 163, 184, 0.38);
 	}
 
-	:global([data-color-mode='light']) .input,
-	:global([data-color-mode='light']) .file-input {
+	:global([data-color-mode='light']) .input {
 		background: rgba(255, 255, 255, 0.96);
 		border-color: rgba(148, 163, 184, 0.46);
 		color: var(--theme-text-primary);

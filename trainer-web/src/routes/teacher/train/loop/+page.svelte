@@ -16,6 +16,7 @@
 		generateFromSubject,
 		generateChapter,
 		cancelGeneration,
+		getGenerationLimits,
 		listReferenceDocuments,
 		scheduleBackgroundGeneration,
 		type GenerationEvent,
@@ -35,21 +36,24 @@
 	const FAILED_DOC_STATUSES = new Set(['failed', 'error']);
 	const WAIT_POLL_MS = 1500;
 	const WAIT_DOCS_TIMEOUT_MS = 3 * 60 * 1000;
-	const BATCH_SIZE_UNIT = 30;
-	const DEFAULT_BATCH_SIZE = 30;
-	const MIN_BATCH_SIZE = 30;
-	const MAX_BATCH_SIZE = 300;
+	const DEFAULT_BATCH_SIZE = 10;
+	const MIN_BATCH_SIZE = 1;
+	const MAX_BATCH_SIZE = 1000;
 	const GENERATION_INTERPOLATION_TICK_MS = 300;
 	const GENERATION_INTERPOLATION_MIN_DURATION_MS = 12000;
 	const GENERATION_INTERPOLATION_PER_QUESTION_MS = 1600;
 	const GENERATION_INTERPOLATION_MAX_PROGRESS = 97;
 
-	function parseBatchSizeParam(raw: string | null) {
-		if (raw == null || raw.trim() === '') return DEFAULT_BATCH_SIZE;
+	function clampBatchSize(value: number) {
+		if (!Number.isFinite(value) || value <= 0) return DEFAULT_BATCH_SIZE;
+		return Math.max(MIN_BATCH_SIZE, Math.min(MAX_BATCH_SIZE, Math.trunc(value) || DEFAULT_BATCH_SIZE));
+	}
+
+	function parseBatchSizeParam(raw: string | null, fallback = DEFAULT_BATCH_SIZE) {
+		if (raw == null || raw.trim() === '') return clampBatchSize(fallback);
 		const parsed = Number(raw);
-		if (!Number.isFinite(parsed) || parsed <= 0) return DEFAULT_BATCH_SIZE;
-		const normalized = Math.trunc(parsed / BATCH_SIZE_UNIT) * BATCH_SIZE_UNIT;
-		return Math.max(MIN_BATCH_SIZE, Math.min(MAX_BATCH_SIZE, normalized || DEFAULT_BATCH_SIZE));
+		if (!Number.isFinite(parsed) || parsed <= 0) return clampBatchSize(fallback);
+		return clampBatchSize(parsed);
 	}
 
 	let subjectId = $state('');
@@ -58,7 +62,27 @@
 	let provisionalSubject = $state(false);
 	let allowNoPdfGeneration = $state(false);
 	let firstQuestionGenerated = $state(false);
+	let configuredGenerationBatchSize = $state(DEFAULT_BATCH_SIZE);
 	let generationBatchSize = $state(DEFAULT_BATCH_SIZE);
+
+	async function loadGenerationBatchSize() {
+		try {
+			const limits = await getGenerationLimits();
+			configuredGenerationBatchSize = clampBatchSize(Number(limits.max_batch_size || DEFAULT_BATCH_SIZE));
+		} catch {
+			configuredGenerationBatchSize = clampBatchSize(configuredGenerationBatchSize || DEFAULT_BATCH_SIZE);
+		}
+
+		if (browser) {
+			const countParam = pageSnapshotCountParam();
+			generationBatchSize = parseBatchSizeParam(countParam, configuredGenerationBatchSize);
+		}
+	}
+
+	function pageSnapshotCountParam() {
+		if (!browser) return null;
+		return new URL(window.location.href).searchParams.get('count');
+	}
 	
 	// Navigation from verify page
 	let targetQuestionId = $state('');
@@ -120,7 +144,10 @@
 				.filter(Boolean);
 			const nextProvisionalSubject = p.url.searchParams.get('provisional') === '1';
 			const nextAllowNoPdfGeneration = p.url.searchParams.get('noPdf') === '1';
-			const nextGenerationBatchSize = parseBatchSizeParam(p.url.searchParams.get('count'));
+			const nextGenerationBatchSize = parseBatchSizeParam(
+				p.url.searchParams.get('count'),
+				configuredGenerationBatchSize
+			);
 			const nextTargetQuestionId = p.url.searchParams.get('question_id') ?? '';
 			const nextTargetStartIndex = parseInt(p.url.searchParams.get('start_index') ?? '0', 10);
 			const resumeParam = p.url.searchParams.get('resume');
@@ -151,7 +178,10 @@
 			verifyMode = nextVerifyMode;
 			allowAutoGeneration = nextAllowAutoGeneration;
 		});
-		loadAndStream();
+		void (async () => {
+			await loadGenerationBatchSize();
+			await loadAndStream();
+		})();
 
 		// Block browser reload / tab close during active work
 		function handleBeforeUnload(e: BeforeUnloadEvent) {
@@ -615,6 +645,7 @@
 						count,
 						types: 'mcq',
 						difficulty: 'medium',
+						allowWithoutReference: allowNoPdfGeneration,
 						signal: abort.signal,
 				  })
 				: generateFromSubject({
@@ -856,8 +887,57 @@
 		}
 	}
 
+	async function inferAllowNoPdfGenerationFromContext(): Promise<boolean> {
+		if (!subjectId) return allowNoPdfGeneration;
+		if (allowNoPdfGeneration) return true;
+
+		if (!subjectDetail) {
+			try {
+				subjectDetail = await getSubject(subjectId);
+			} catch {
+				return false;
+			}
+		}
+
+		let refs;
+		try {
+			refs = await listReferenceDocuments(subjectId);
+		} catch {
+			return false;
+		}
+
+		const referenceDocs = [
+			...(refs.reference_books ?? []),
+			...(refs.template_papers ?? []),
+		];
+
+		const relevantTopics = (subjectDetail?.topics ?? []).filter((topic) => {
+			if (topicId) return topic.id === topicId;
+			if (mixedTopicsMode && selectedMixedTopicIds.length > 0) return selectedMixedTopicIds.includes(topic.id);
+			return true;
+		});
+
+		const hasSyllabusContext = relevantTopics.some((topic) => Boolean(topic.syllabus_content?.trim()));
+		if (!hasSyllabusContext) return false;
+
+		const hasReferenceDocuments = referenceDocs.some((doc) => {
+			if (topicId) return doc.topic_id === topicId;
+			if (mixedTopicsMode && selectedMixedTopicIds.length > 0) return doc.topic_id ? selectedMixedTopicIds.includes(doc.topic_id) : true;
+			return true;
+		});
+
+		if (!hasReferenceDocuments) {
+			allowNoPdfGeneration = true;
+			return true;
+		}
+
+		return false;
+	}
+
 	async function ensureDocumentsReadyForGeneration() {
 		if (!subjectId) return;
+
+		const canGenerateWithoutReference = await inferAllowNoPdfGenerationFromContext();
 
 		const startedAt = Date.now();
 		while (!batchComplete && Date.now() - startedAt < WAIT_DOCS_TIMEOUT_MS) {
@@ -869,7 +949,7 @@
 			];
 
 			if (docs.length === 0) {
-				if (allowNoPdfGeneration) {
+				if (canGenerateWithoutReference || allowNoPdfGeneration) {
 					resetDocumentProcessingState();
 					return;
 				}
@@ -892,6 +972,10 @@
 			}
 
 			if (failedCount === docs.length) {
+				if (canGenerateWithoutReference || allowNoPdfGeneration) {
+					resetDocumentProcessingState();
+					return;
+				}
 				throw new Error('All uploaded documents failed processing. Please re-upload a PDF and try again.');
 			}
 
@@ -952,13 +1036,21 @@
 				}
 			}
 			skipNextLeaveConfirm = true;
-			history.back();
+			await navigateBackFromLoop();
 			return;
 		}
 
 		showBatchCompleteNotice = true;
 		batchComplete = true;
 		completingBatch = false;
+	}
+
+	async function navigateBackFromLoop() {
+		if (browser && window.history.length > 1) {
+			history.back();
+			return;
+		}
+		await goto('/teacher/train');
 	}
 
 	function openNavigationConfirm(title: string, message: string, onConfirm: () => void | Promise<void>) {
@@ -1333,10 +1425,11 @@
 				count: generationBatchSize,
 				types: 'mcq',
 				difficulty: 'medium',
+				topicId: topicId || undefined,
 				allowWithoutReference: allowNoPdfGeneration,
 			});
 			skipNextLeaveConfirm = true;
-			goto('/teacher/subjects');
+			await navigateBackFromLoop();
 		} catch (e: unknown) {
 			batchComplete = false;
 			error = e instanceof Error ? e.message : 'Failed to move generation to background';
@@ -1619,7 +1712,7 @@
 			<span class="empty-icon">📭</span>
 			<p>No questions to review in this batch</p>
 			{#if subjectId}
-				<button class="glass-btn" onclick={openGenerateChoiceModal}>🔄 Generate Questions</button>
+				<p class="sub-text">Question batches are started automatically from topic setup.</p>
 			{/if}
 			<button class="glass-btn secondary-btn" onclick={() => goto('/teacher/dashboard')}>
 				Back to Home

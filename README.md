@@ -217,6 +217,28 @@ npm run dev
 
 ### Authentication
 
+#### Initial Admin Setup
+
+When setting up the system for the first time, create the initial admin account:
+
+```bash
+# Create the first admin (only works when no admins exist)
+curl -X POST http://localhost:8000/api/v1/auth/setup-initial-admin \
+  -H "Content-Type: application/json" \
+  -d '{
+    "email": "admin@example.com",
+    "username": "admin",
+    "password": "SecurePassword123!",
+    "full_name": "System Administrator",
+    "security_question": "What is your favorite color?",
+    "security_answer": "blue"
+  }'
+```
+
+For detailed setup instructions, see [INITIAL_ADMIN_SETUP.md](./INITIAL_ADMIN_SETUP.md).
+
+#### Register & Login
+
 ```bash
 # Register new user
 curl -X POST http://localhost:8000/api/v1/auth/register \

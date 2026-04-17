@@ -5,11 +5,13 @@ Authentication API endpoints.
 import logging
 import os
 import uuid as uuid_lib
-from datetime import timedelta
+from datetime import timedelta, datetime, timezone
+from typing import Optional
 from fastapi import APIRouter, Depends, HTTPException, status, Request, UploadFile, File
 from fastapi.responses import FileResponse
-from sqlalchemy import select
+from sqlalchemy import select, func
 from sqlalchemy.ext.asyncio import AsyncSession
+from pydantic import BaseModel
 
 from app.core.auth_database import get_auth_db
 from app.core.config import settings
@@ -30,13 +32,19 @@ from app.schemas.auth import (
     LogoutRequest,
     LogoutAllResponse,
 )
-from app.core.security import create_password_reset_token, decode_token, password_token_version
+from app.core.security import (
+    create_password_reset_token,
+    decode_token,
+    password_token_version,
+    hash_password,
+    hash_security_answer,
+)
 from app.services.admin_notification_service import AdminNotificationService
 from app.services.user_service import UserService
 from app.services.email_service import EmailService
 from app.services.system_settings_service import get_password_reset_settings
 from app.api.v1.deps import get_current_user, get_client_info
-from app.models.user import User
+from app.models.user import User, ROLE_ADMIN
 from app.models.system_settings import (
     DEFAULT_SETTINGS,
     PASSWORD_RESET_METHOD_SECURITY_QUESTION,
@@ -49,6 +57,22 @@ from app.models.system_settings import (
 
 router = APIRouter()
 logger = logging.getLogger(__name__)
+
+
+# ============== Schemas ==============
+
+
+class InitialAdminSetupRequest(BaseModel):
+    """Request to create the initial admin account (only allowed on empty database)."""
+    email: str
+    username: str
+    password: str
+    full_name: Optional[str] = None
+    security_question: str
+    security_answer: str
+
+
+# ============== Helper Functions ==============
 
 
 async def is_signup_enabled(db: AsyncSession) -> bool:
@@ -99,6 +123,89 @@ async def check_email_domain_allowed(db: AsyncSession, email: str) -> tuple[bool
             return True, allowed_domains
 
     return False, allowed_domains
+
+
+@router.post("/setup-initial-admin", response_model=UserResponse, status_code=status.HTTP_201_CREATED)
+async def setup_initial_admin(
+    request: Request,
+    payload: InitialAdminSetupRequest,
+    db: AsyncSession = Depends(get_auth_db),
+):
+    """
+    Create the initial admin account (only allowed when no admin users exist).
+    This endpoint enables initial setup on a fresh database.
+    Once an admin exists, use POST /admin/users to create additional admins.
+    """
+    # Check if any admin users already exist
+    admin_count = await db.execute(select(func.count(User.id)).where(User.role == ROLE_ADMIN))
+    count = admin_count.scalar()
+    
+    if count and count > 0:
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="Admin accounts already exist. Use POST /admin/users to create additional admins.",
+        )
+    
+    # Validate password length
+    if len(payload.password) < 8:
+        raise HTTPException(
+            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+            detail="Password must be at least 8 characters",
+        )
+    
+    # Validate security question and answer
+    security_question = " ".join((payload.security_question or "").strip().split())
+    security_answer = str(payload.security_answer or "").strip()
+    if not security_question or not security_answer:
+        raise HTTPException(
+            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+            detail="Security question and answer are required",
+        )
+    
+    # Check if email already exists
+    existing_email = await db.execute(select(User.id).where(User.email == payload.email.lower()))
+    if existing_email.scalar_one_or_none():
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail="Email already registered",
+        )
+    
+    # Check if username already exists
+    username = payload.username.strip().lower()
+    existing_username = await db.execute(select(User.id).where(User.username == username))
+    if existing_username.scalar_one_or_none():
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail="Username already taken",
+        )
+    
+    # Create the initial admin user
+    user = User(
+        id=str(uuid_lib.uuid4()),
+        email=payload.email.lower(),
+        username=username,
+        password_hash=hash_password(payload.password),
+        full_name=payload.full_name,
+        security_question=security_question,
+        security_answer_hash=hash_security_answer(security_answer),
+        role=ROLE_ADMIN,
+        is_active=True,
+        is_approved=True,
+        is_superuser=True,  # First admin is superuser
+        approved_at=datetime.now(timezone.utc),
+        approved_by=None,  # No approver for initial admin
+        can_manage_groups=True,
+        can_generate=True,
+        can_vet=True,
+    )
+    
+    db.add(user)
+    await db.commit()
+    await db.refresh(user)
+    
+    logger.info(f"✅ Initial admin account created: {user.email}")
+    
+    return UserResponse.model_validate(user)
 
 
 @router.post("/register", response_model=MessageResponse, status_code=status.HTTP_201_CREATED)

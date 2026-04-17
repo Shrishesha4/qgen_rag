@@ -164,6 +164,9 @@
 
 	<div class="toolbar glass-panel animate-slide-up">
 		<input class="search-input" bind:value={query} placeholder="Search by subject, code, teacher, or email" />
+		<div class="toolbar-actions">
+			<a class="nav-btn" href="/admin/groups">Groups</a>
+		</div>
 		<!-- <button class="refresh-btn" onclick={loadSubjects}>Refresh</button> -->
 	</div>
 
@@ -410,6 +413,11 @@
 		border-radius: 1rem;
 	}
 
+	.toolbar-actions {
+		display: flex;
+		gap: 0.75rem;
+	}
+
 	.search-input {
 		flex: 1;
 		padding: 0.85rem 1rem;
@@ -422,6 +430,20 @@
 
 	.search-input::placeholder {
 		color: var(--theme-text-muted);
+	}
+
+	.nav-btn {
+		display: inline-flex;
+		align-items: center;
+		justify-content: center;
+		padding: 0.85rem 1rem;
+		border-radius: 0.85rem;
+		border: 1px solid color-mix(in srgb, var(--theme-primary) 45%, var(--theme-glass-border));
+		background: color-mix(in srgb, var(--theme-primary) 16%, var(--theme-input-bg));
+		color: var(--theme-text);
+		font: inherit;
+		font-weight: 700;
+		text-decoration: none;
 	}
 
 	/* .refresh-btn {
@@ -722,6 +744,14 @@
 			flex-direction: column;
 		}
 
+		.toolbar-actions {
+			width: 100%;
+		}
+
+		.nav-btn {
+			width: 100%;
+		}
+
 		.desktop-only {
 			display: none;
 		}
@@ -749,6 +779,10 @@
 	:global([data-color-mode='light']) .search-input {
 		background: #ffffff;
 		border-color: rgba(148, 163, 184, 0.42);
+		color: #0f172a;
+	}
+
+	:global([data-color-mode='light']) .nav-btn {
 		color: #0f172a;
 	}
 

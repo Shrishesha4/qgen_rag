@@ -503,12 +503,12 @@
 				subjectId,
 				null,
 				'No questions available',
-				'This subject has no generated questions yet. Generate first, then start vetting.'
+				'This subject has no generated questions yet. Questions are started automatically from topic setup, so wait for the queued batch to finish before vetting.'
 			);
 			return;
 		}
 		await logStartVetting(subjectId);
-		const params = new URLSearchParams({ subject: subjectId, resume: '0', auto_generate: '0' });
+		const params = new URLSearchParams({ subject: subjectId, resume: '0', auto_generate: '1' });
 		goto(`/teacher/train/loop?${params.toString()}`);
 	}
 
@@ -518,12 +518,12 @@
 				subjectId,
 				topicId,
 				'No questions in this topic',
-				`${topicName} has no generated questions yet. Generate first, then start vetting.`
+				`${topicName} has no generated questions yet. Questions are started automatically from topic setup, so wait for the queued batch to finish before vetting.`
 			);
 			return;
 		}
 		await logStartVetting(subjectId, topicId, topicName);
-		const params = new URLSearchParams({ subject: subjectId, topic: topicId, resume: '0', auto_generate: '0' });
+		const params = new URLSearchParams({ subject: subjectId, topic: topicId, resume: '0', auto_generate: '1' });
 		goto(`/teacher/train/loop?${params.toString()}`);
 	}
 

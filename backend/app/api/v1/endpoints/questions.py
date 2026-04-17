@@ -230,7 +230,7 @@ async def _wait_for_subject_docs_ready(
     user_id: str,
     subject_id: str,
     timeout_seconds: int = 30 * 60,
-    poll_interval_seconds: float = 3.0,
+    poll_interval_seconds: float = 0.5,
 ) -> bool:
     """Wait until subject reference docs are no longer processing and at least one is ready."""
     ready_statuses = {"completed", "complete", "processed", "ready", "indexed"}
@@ -247,8 +247,8 @@ async def _wait_for_subject_docs_ready(
         statuses = [(s or "").lower() for s in res.scalars().all()]
 
         if not statuses:
-            await asyncio.sleep(poll_interval_seconds)
-            continue
+            # No reference docs at all — don't wait forever; exit immediately
+            return False
 
         processing_count = sum(1 for s in statuses if s in {"pending", "processing"})
         ready_count = sum(1 for s in statuses if s in ready_statuses)
@@ -5050,6 +5050,7 @@ class ChapterGenerationRequest(BaseModel):
     lo_filter: Optional[List[str]] = None  # restrict to these LO ids, e.g. ["LO1", "LO2"]
     lo_distribution: Optional[dict] = None  # {"LO1": 25, "LO2": 25, ...} percentage weights
     count_override: Optional[int] = None  # If set, stop after this many questions (for retry-failed)
+    allow_without_reference: bool = False
 
 
 @router.post("/generate-chapter")
@@ -5276,7 +5277,7 @@ async def generate_chapter(
             ref_count = len(ref_chunk_pool)
 
             # Resolve a stable document_id for all generated questions in this chapter session.
-            # Some deployments enforce questions.document_id as NOT NULL at the DB level.
+            # When no-reference generation is explicitly allowed, questions.document_id may stay null.
             chapter_question_document_id = None
             try:
                 if ref_chunk_pool:
@@ -5303,7 +5304,7 @@ async def generate_chapter(
             except Exception as e:
                 logger.warning(f"[{request_id}] Failed to resolve chapter document_id: {e}")
 
-            if not chapter_question_document_id:
+            if not chapter_question_document_id and not request.allow_without_reference:
                 yield f"data: {json.dumps({'status': 'error', 'progress': 0, 'message': 'No processed document found for this subject. Upload at least one processed document before chapter generation.'})}\n\n"
                 return
 
@@ -5356,6 +5357,9 @@ async def generate_chapter(
                     "generation_reasoning": f"Question generated from chapter '{topic_name}' syllabus content with reference material support",
                     "content_coverage": f"Chapter-based question covering {topic_name} concepts",
                 }
+
+            if request.allow_without_reference and not ref_chunk_pool:
+                yield f"data: {json.dumps({'status': 'processing', 'progress': 10, 'message': 'No PDFs found. Generating from chapter syllabus content only.'})}\n\n"
 
 
             yield f"data: {json.dumps({'status': 'processing', 'progress': 10, 'message': f'Prepared {len(syllabus_chunks)} content sections + {ref_count} reference excerpts'})}\n\n"

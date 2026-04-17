@@ -2371,6 +2371,57 @@ Output valid JSON only."""
         
         return distribution
 
+    @staticmethod
+    def _parse_syllabus_into_concepts(syllabus_text: str, fallback_context: str = "") -> List[str]:
+        """
+        Parse syllabus/topic content into a list of distinct concept strings.
+        Used to build a coverage checklist so questions are evenly distributed
+        across all concepts in the syllabus.
+
+        Priority: numbered items > bullets > semicolons > sentences.
+        Returns at least one concept (falls back to fallback_context).
+        """
+        import re
+
+        concepts: List[str] = []
+
+        if syllabus_text.strip():
+            text = syllabus_text.strip()
+
+            # 1. Numbered items: "1. ...", "1) ...", "i. ..."
+            numbered = re.split(r'\n\s*(?:\d+|[ivxIVX]+)[\.\)]\s+', text)
+            if len(numbered) > 2:
+                concepts = [c.strip() for c in numbered if c.strip() and len(c.strip()) > 10]
+
+            # 2. Bullet points: "- ...", "* ...", "• ..."
+            if not concepts:
+                bullets = re.split(r'\n\s*[-•*]\s+', text)
+                if len(bullets) > 2:
+                    concepts = [c.strip() for c in bullets if c.strip() and len(c.strip()) > 10]
+
+            # 3. Semicolons (compact one-liner syllabi)
+            if not concepts and ';' in text:
+                concepts = [c.strip() for c in text.split(';') if c.strip() and len(c.strip()) > 10]
+
+            # 4. Comma-separated items (if many commas, likely a list)
+            if not concepts and text.count(',') >= 3:
+                parts = [c.strip() for c in text.split(',') if c.strip() and len(c.strip()) > 8]
+                if len(parts) >= 3:
+                    concepts = parts
+
+            # 5. Sentence split (last resort)
+            if not concepts:
+                sentences = re.split(r'(?<=[.!?])\s+', text)
+                concepts = [s.strip() for s in sentences if s.strip() and len(s.strip()) > 15]
+
+        # Truncate each concept to 300 chars, cap total at 20, require min 10 chars
+        concepts = [c[:300] for c in concepts if len(c) >= 10][:20]
+
+        if not concepts:
+            concepts = [fallback_context] if fallback_context.strip() else ["general concepts"]
+
+        return concepts
+
     async def get_questions(
         self,
         user_id: str,
@@ -2856,7 +2907,7 @@ Output valid JSON only."""
                 if "qwen" in ollama_model:
                     # Reasoning-heavy Qwen models are especially sensitive to parallel load.
                     parallel_workers = 1
-            worker_timeout_seconds = 180 if (llm_provider == "ollama" and "qwen" in ollama_model) else 90
+            worker_timeout_seconds = 180 if llm_provider == "ollama" else 90
             max_attempts_per_slot = 4
             slot_queue = []
             slot_id_seq = 0
@@ -3584,7 +3635,7 @@ Output valid JSON only."""
 
             # ── Pre-fetch chunk pool (once, before the loop) ──────────────
             # All embed + search tasks run in parallel via asyncio.gather.
-            subj_pool_variants = query_aspects[:min(4, len(query_aspects))]
+            subj_pool_variants = query_aspects[:min(2, len(query_aspects))]
 
             async def _subj_embed_and_search(q_variant: str):
                 try:
@@ -3682,7 +3733,7 @@ Output valid JSON only."""
                 parallel_workers = min(parallel_workers, 2)
                 if "qwen" in ollama_model:
                     parallel_workers = 1
-            worker_timeout_seconds = 180 if (llm_provider == "ollama" and "qwen" in ollama_model) else 90
+            worker_timeout_seconds = 180 if llm_provider == "ollama" else 90
             max_attempts_per_slot = 4
             slot_queue = []
             slot_id_seq = 0
@@ -3712,6 +3763,46 @@ Output valid JSON only."""
                         slot_queue.append({"id": slot_id_seq, "q_type": q_type, "attempts": 0, "provider_key": None})
                         slot_id_seq += 1
 
+            # ── Syllabus coverage checklist + even distribution within batch ──
+            # Parse topic syllabus into distinct concepts, then assign each slot
+            # a specific concept round-robin so all N questions in this batch
+            # cover different parts of the syllabus evenly.
+            topic_syllabus_text = ""
+            if topic_id:
+                try:
+                    _topic_res = await self.db.execute(
+                        select(Topic).where(Topic.id == topic_id)
+                    )
+                    _topic_obj = _topic_res.scalar_one_or_none()
+                    if _topic_obj and (_topic_obj.syllabus_content or "").strip():
+                        topic_syllabus_text = _topic_obj.syllabus_content.strip()
+                except Exception:
+                    pass
+
+            concept_checklist = self._parse_syllabus_into_concepts(
+                topic_syllabus_text, fallback_context=generation_context
+            )
+            logger.info(
+                f"quick_generate_from_subject: coverage checklist — "
+                f"{len(concept_checklist)} concepts from syllabus"
+            )
+
+            # Assign concepts to slots so the batch is evenly distributed.
+            # Within the batch: slot i gets concept_checklist[i % len(checklist)]
+            for i, slot in enumerate(slot_queue):
+                slot["focus_concept"] = concept_checklist[i % len(concept_checklist)]
+
+            # Build a BM25 index over all_chunks once; reused per slot for fast
+            # concept-targeted chunk retrieval without extra embedding calls.
+            all_chunks_bm25 = None
+            if all_chunks:
+                try:
+                    from rank_bm25 import BM25Okapi
+                    _tokenized_all = [c.chunk_text.lower().split() for c in all_chunks]
+                    all_chunks_bm25 = BM25Okapi(_tokenized_all)
+                except Exception as _bm25_err:
+                    logger.warning(f"quick_generate_from_subject: BM25 index build failed: {_bm25_err}")
+
             if parallel_workers > 1:
                 yield QuickGenerateProgress(
                     status="generating",
@@ -3725,17 +3816,33 @@ Output valid JSON only."""
             async def _build_candidate(slot: dict, attempt_index: int, exclusion_snapshot: List[str]) -> dict:
                 q_type = slot["q_type"]
                 slot_provider_key = slot.get("provider_key")
+                focus_concept = slot.get("focus_concept", "")
                 # Pick the provider-specific LLM service for this slot
                 if slot_provider_key and slot_provider_key in provider_llm_services:
                     slot_llm_svc, _ = provider_llm_services[slot_provider_key]
                 else:
                     slot_llm_svc = self.llm_service
                 try:
-                    pool_size = len(subj_chunk_pool)
-                    pool_offset = (attempt_index * 3) % max(1, pool_size - 2)
-                    selected_chunks = subj_chunk_pool[pool_offset:pool_offset + 3]
-                    if len(selected_chunks) < 3 and pool_size >= 3:
-                        selected_chunks = subj_chunk_pool[:3]
+                    # Select chunks: BM25-targeted to the slot's focus concept when available,
+                    # falling back to the pre-fetched pool if BM25 can't help.
+                    selected_chunks = []
+                    if focus_concept and all_chunks_bm25 and all_chunks:
+                        try:
+                            _tokens = focus_concept.lower().split()
+                            _scores = all_chunks_bm25.get_scores(_tokens)
+                            _top_idxs = sorted(
+                                range(len(_scores)), key=lambda i: _scores[i], reverse=True
+                            )[:4]
+                            selected_chunks = [all_chunks[i] for i in _top_idxs if _scores[i] > 0]
+                        except Exception:
+                            pass
+
+                    if not selected_chunks:
+                        pool_size = len(subj_chunk_pool)
+                        pool_offset = (attempt_index * 3) % max(1, pool_size - 2)
+                        selected_chunks = subj_chunk_pool[pool_offset:pool_offset + 3]
+                        if len(selected_chunks) < 3 and pool_size >= 3:
+                            selected_chunks = subj_chunk_pool[:3]
                     if not selected_chunks:
                         import random
                         selected_chunks = random.sample(all_chunks, min(3, len(all_chunks)))
@@ -3745,6 +3852,7 @@ Output valid JSON only."""
                         question_type=q_type,
                         difficulty=difficulty,
                         context=generation_context,
+                        focus_concept=focus_concept or None,
                         previous_questions=exclusion_snapshot,
                         question_index=attempt_index,
                         reference_questions=reference_questions,
@@ -4092,6 +4200,7 @@ Output valid JSON only."""
         question_index: int = 0,
         reference_questions: Optional[List[Dict[str, Any]]] = None,
         learning_outcome: Optional[str] = None,
+        focus_concept: Optional[str] = None,
         subject_id: Optional[str] = None,
         topic_id: Optional[str] = None,
         rejection_guidance_override: Optional[str] = None,
@@ -4109,6 +4218,7 @@ Output valid JSON only."""
             question_index: Index for diversity hints
             reference_questions: Sample questions to match style/standard
             learning_outcome: Specific LO description to target
+            focus_concept: Specific syllabus concept this question must cover (for even distribution)
         """
         import logging
         logger = logging.getLogger(__name__)
@@ -4204,14 +4314,25 @@ Output valid JSON only."""
             except Exception as rp_err:
                 logger.warning(f"Could not load rejection patterns: {rp_err}")
 
+        # Build focus concept section for even syllabus coverage
+        focus_section = ""
+        if focus_concept:
+            focus_section = (
+                f"\n\nSYLLABUS CONCEPT TO COVER (MANDATORY):\n"
+                f"This question MUST specifically test knowledge of: \"{focus_concept}\"\n"
+                f"Do NOT generate a question about other aspects of the topic — focus solely on this concept. "
+                f"The chunks above were selected for relevance to this concept."
+            )
+
         # Build enhanced prompt with user context
         prompt = f"""Topic/Context: {context}
 
 Reference material:
-{doc_content}{reference_section}{lo_section}
+{doc_content}{reference_section}{lo_section}{focus_section}
 
 Generate a {question_type.replace('_', ' ')} question with the following requirements:
 - The question should be relevant to the topic: "{context}"
+{f'- SPECIFIC CONCEPT: "{focus_concept}" — this question must test this concept' if focus_concept else ''}
 - Difficulty: {difficulty}
 - Bloom's Taxonomy Level: {bloom_level}
 - {hint}

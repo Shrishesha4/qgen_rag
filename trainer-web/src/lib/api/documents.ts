@@ -156,6 +156,10 @@ export interface BackgroundGenerationStatusesResponse {
 	statuses: Record<string, BackgroundGenerationStatusItem>;
 }
 
+export interface GenerationLimitsResponse {
+	max_batch_size: number;
+}
+
 export async function scheduleBackgroundGeneration(opts: {
 	subjectId: string;
 	count: number;
@@ -190,6 +194,10 @@ export async function getBackgroundGenerationStatuses(subjectIds: string[]): Pro
 	if (!subjectIds.length) return { statuses: {} };
 	const params = new URLSearchParams({ subject_ids: subjectIds.join(',') });
 	return apiFetch<BackgroundGenerationStatusesResponse>(`/questions/background-generation-statuses?${params.toString()}`);
+}
+
+export async function getGenerationLimits(): Promise<GenerationLimitsResponse> {
+	return apiFetch<GenerationLimitsResponse>('/settings/generation-limits');
 }
 
 export interface TopicGenerationStatusItem {
@@ -238,6 +246,7 @@ export async function* generateChapter(opts: {
 	count?: number;
 	types?: string;
 	difficulty?: string;
+	allowWithoutReference?: boolean;
 	signal?: AbortSignal;
 }): AsyncGenerator<GenerationEvent> {
 	const { getStoredSession } = await import('./client');
@@ -257,6 +266,7 @@ export async function* generateChapter(opts: {
 		topic_id: opts.topicId,
 		question_types: questionTypes,
 		difficulty: opts.difficulty ?? 'medium',
+		allow_without_reference: Boolean(opts.allowWithoutReference),
 	});
 
 	const res = await fetch(apiUrl('/questions/generate-chapter'), {

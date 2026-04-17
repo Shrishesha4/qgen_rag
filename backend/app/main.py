@@ -73,6 +73,33 @@ async def lifespan(app: FastAPI):
             logger.info(f"🧹 Cleaned up {deleted} stale generation locks")
     except Exception as e:
         logger.warning(f"⚠️ Failed to clean stale locks: {e}")
+
+    # Reset stale in-progress generation runs left over from previous server instance.
+    # Redis locks are cleaned above; now reset the DB records so the frontend
+    # no longer shows a permanent "Generating..." spinner for these topics.
+    try:
+        from datetime import datetime, timezone as tz
+        from sqlalchemy import update as sa_update
+        from app.core.database import AsyncSessionLocal
+        from app.models.generation_run import GenerationRun
+
+        async with AsyncSessionLocal() as _db:
+            result = await _db.execute(
+                sa_update(GenerationRun)
+                .where(GenerationRun.in_progress == True)  # noqa: E712
+                .values(
+                    in_progress=False,
+                    status="failed",
+                    error_message="Server restarted — generation was interrupted",
+                    completed_at=datetime.now(tz.utc),
+                )
+            )
+            await _db.commit()
+            rows = result.rowcount
+        if rows:
+            logger.info(f"🧹 Reset {rows} stale in-progress generation run(s)")
+    except Exception as e:
+        logger.warning(f"⚠️ Failed to reset stale generation runs: {e}")
     
     logger.info("✅ All services ready")
     yield
