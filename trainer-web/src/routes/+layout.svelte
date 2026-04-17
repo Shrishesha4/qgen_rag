@@ -639,6 +639,8 @@
 			flex-direction: column;
 			gap: 0.35rem;
 			flex: 1;
+			overflow-y: auto;
+			min-height: 0;
 		}
 
 		.sidebar-link {
@@ -747,6 +749,7 @@
 		.sidebar-footer {
 			padding-top: 0.75rem;
 			border-top: 1px solid rgba(255, 255, 255, 0.35);
+			flex-shrink: 0;
 		}
 
 		.theme-row {
