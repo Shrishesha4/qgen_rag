@@ -48,6 +48,9 @@ class AnalyticsWebSocketManager:
         self._active_users: Dict[str, ActiveUser] = {}
         # Lock for thread-safe operations
         self._lock = asyncio.Lock()
+        # Coalesce bursty live refresh requests into a single broadcast loop.
+        self._broadcast_task: Optional[asyncio.Task] = None
+        self._broadcast_requested = False
     
     async def connect(self, websocket: WebSocket, connection_id: str, user_id: str, is_admin: bool = False) -> None:
         """Accept a new analytics WebSocket connection."""
@@ -100,8 +103,7 @@ class AnalyticsWebSocketManager:
                 last_heartbeat=now,
             )
         
-        # Broadcast update to all analytics viewers (non-blocking)
-        asyncio.create_task(self._broadcast_activity_update())
+        self.request_live_refresh()
     
     async def update_heartbeat(self, user_id: str) -> None:
         """Update the last heartbeat time for a user."""
@@ -115,8 +117,31 @@ class AnalyticsWebSocketManager:
             if user_id in self._active_users:
                 del self._active_users[user_id]
         
-        # Broadcast update to all analytics viewers (non-blocking)
-        asyncio.create_task(self._broadcast_activity_update())
+        self.request_live_refresh()
+
+    def request_live_refresh(self) -> None:
+        """Schedule a coalesced live analytics refresh for all connected viewers."""
+        if not self._connections:
+            return
+        self._broadcast_requested = True
+        try:
+            loop = asyncio.get_running_loop()
+        except RuntimeError:
+            return
+
+        if self._broadcast_task and not self._broadcast_task.done():
+            return
+
+        self._broadcast_task = loop.create_task(self._drain_live_refresh_requests())
+
+    async def _drain_live_refresh_requests(self) -> None:
+        """Process queued refresh requests without flooding the analytics WebSocket."""
+        while True:
+            self._broadcast_requested = False
+            await self._broadcast_activity_update()
+            await asyncio.sleep(0.1)
+            if not self._broadcast_requested:
+                break
     
     async def get_active_users(self) -> list[dict]:
         """Get all currently active users."""
@@ -163,18 +188,29 @@ class AnalyticsWebSocketManager:
     
     async def _broadcast_activity_update(self) -> None:
         """Broadcast activity update to all connected analytics viewers."""
-        active_users = await self.get_active_users()
-        vetting_users = [user for user in active_users if user["activity"] == "vetting"]
-        generating_count, queued_count = self._get_background_generation_counts()
-        message = {
-            "type": "activity_update",
-            "data": {
+        try:
+            from app.api.v1.endpoints.analytics import _build_live_activity_response, _dump_model
+
+            snapshot = await _build_live_activity_response()
+            payload = _dump_model(snapshot)
+        except Exception as exc:
+            logger.warning("Falling back to minimal analytics snapshot broadcast: %s", exc)
+            active_users = await self.get_active_users()
+            vetting_users = [user for user in active_users if user["activity"] == "vetting"]
+            generating_count, queued_count = self._get_background_generation_counts()
+            payload = {
                 "active_users": vetting_users,
                 "vetting_count": len(vetting_users),
                 "generating_count": generating_count,
                 "queued_count": queued_count,
+                "generating_items": [],
+                "queued_items": [],
                 "timestamp": datetime.now(timezone.utc).isoformat(),
             }
+
+        message = {
+            "type": "activity_update",
+            "data": payload,
         }
         
         async with self._lock:

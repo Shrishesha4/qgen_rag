@@ -6,7 +6,7 @@ import uuid
 import logging
 from datetime import datetime, timedelta, timezone
 from fastapi import APIRouter, WebSocket, WebSocketDisconnect, Query, Depends, HTTPException, status
-from pydantic import BaseModel
+from pydantic import BaseModel, Field
 from sqlalchemy import select, func, and_, or_
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -14,6 +14,7 @@ from app.core.database import AsyncSessionLocal
 from app.core.auth_database import get_auth_db
 from app.api.v1.deps import get_current_user
 from app.models.user import User, ROLE_ADMIN
+from app.models.subject import Subject, Topic
 from app.models.training import VettingLog
 from app.models.generation_run import GenerationRun
 from app.services.analytics_websocket_manager import analytics_ws_manager
@@ -39,7 +40,26 @@ class ActiveUsersResponse(BaseModel):
     vetting_count: int
     generating_count: int
     queued_count: int
+    generating_items: list["GenerationWorkItem"]
+    queued_items: list["GenerationWorkItem"]
     timestamp: str
+
+
+class GenerationWorkItem(BaseModel):
+    run_id: str
+    subject_id: str
+    subject_name: str | None
+    topic_id: str | None = None
+    topic_name: str | None = None
+    topic_ids: list[str] = Field(default_factory=list)
+    topic_names: list[str] = Field(default_factory=list)
+    current_question: int
+    total_questions: int
+    progress: int
+    status: str
+    queue_position: int | None = None
+    updated_at: str | None = None
+    message: str | None = None
 
 
 class HistoricalActivityItem(BaseModel):
@@ -85,25 +105,151 @@ def _ensure_admin(current_user: User) -> None:
         )
 
 
-def _get_background_generation_counts() -> tuple[int, int]:
+def _dedupe_string_values(values: list[object]) -> list[str]:
+    deduped: list[str] = []
+    for value in values:
+        if value is None:
+            continue
+        normalized = str(value).strip()
+        if normalized and normalized not in deduped:
+            deduped.append(normalized)
+    return deduped
+
+
+def _extract_topic_ids(topic_id: object, topic_ids: object) -> list[str]:
+    return _dedupe_string_values(
+        ([topic_id] if topic_id else []) + list(topic_ids or [])
+    )
+
+
+def _coerce_iso_timestamp(value: object) -> str | None:
+    if value is None:
+        return None
+    if isinstance(value, str):
+        return value
+    isoformat = getattr(value, "isoformat", None)
+    if callable(isoformat):
+        return isoformat()
+    return None
+
+
+async def _build_background_generation_work_items() -> tuple[list[GenerationWorkItem], list[GenerationWorkItem]]:
     from app.api.v1.endpoints.questions import (
         _BACKGROUND_GENERATION_QUEUE,
+        _BACKGROUND_GENERATION_STATUS,
+        _BACKGROUND_GENERATION_TASKS,
         _get_current_running_count,
     )
 
-    return _get_current_running_count(), len(_BACKGROUND_GENERATION_QUEUE)
+    _get_current_running_count()
+    queued_snapshot = list(_BACKGROUND_GENERATION_QUEUE)
+    running_snapshot: list[tuple[str, dict]] = []
+    for task_key, task in list(_BACKGROUND_GENERATION_TASKS.items()):
+        if task.done():
+            continue
+        status = _BACKGROUND_GENERATION_STATUS.get(task_key) or {}
+        if not status or status.get("in_progress") is False or status.get("status") == "queued":
+            continue
+        running_snapshot.append((task_key, status))
+
+    subject_ids: set[str] = set()
+    topic_ids: set[str] = set()
+
+    for queue_item in queued_snapshot:
+        subject_id = str(queue_item.get("subject_id") or "").strip()
+        if subject_id:
+            subject_ids.add(subject_id)
+        request_data = queue_item.get("request_data") or {}
+        topic_ids.update(_extract_topic_ids(request_data.get("topic_id"), request_data.get("topic_ids")))
+
+    for task_key, status in running_snapshot:
+        _, _, derived_subject_id = task_key.partition(":")
+        subject_id = str(status.get("subject_id") or derived_subject_id or "").strip()
+        if subject_id:
+            subject_ids.add(subject_id)
+        topic_ids.update(_extract_topic_ids(status.get("topic_id"), status.get("topic_ids")))
+
+    subject_name_map: dict[str, str] = {}
+    topic_name_map: dict[str, str] = {}
+    if subject_ids or topic_ids:
+        async with AsyncSessionLocal() as db:
+            if subject_ids:
+                subject_rows = await db.execute(
+                    select(Subject.id, Subject.name).where(Subject.id.in_(subject_ids))
+                )
+                subject_name_map = {str(subject_id): name for subject_id, name in subject_rows.all() if subject_id and name}
+            if topic_ids:
+                topic_rows = await db.execute(
+                    select(Topic.id, Topic.name).where(Topic.id.in_(topic_ids))
+                )
+                topic_name_map = {str(topic_id): name for topic_id, name in topic_rows.all() if topic_id and name}
+
+    generating_items: list[GenerationWorkItem] = []
+    for task_key, status in running_snapshot:
+        _, _, derived_subject_id = task_key.partition(":")
+        subject_id = str(status.get("subject_id") or derived_subject_id or "").strip()
+        resolved_topic_ids = _extract_topic_ids(status.get("topic_id"), status.get("topic_ids"))
+        resolved_topic_names = _dedupe_string_values(status.get("topic_names") or [])
+        if not resolved_topic_names:
+            resolved_topic_names = [topic_name_map[topic_id] for topic_id in resolved_topic_ids if topic_id in topic_name_map]
+
+        generating_items.append(GenerationWorkItem(
+            run_id=str(status.get("run_id") or task_key),
+            subject_id=subject_id,
+            subject_name=str(status.get("subject_name") or subject_name_map.get(subject_id) or "") or None,
+            topic_id=str(status.get("topic_id") or "").strip() or (resolved_topic_ids[0] if len(resolved_topic_ids) == 1 else None),
+            topic_name=resolved_topic_names[0] if len(resolved_topic_names) == 1 else None,
+            topic_ids=resolved_topic_ids,
+            topic_names=resolved_topic_names,
+            current_question=int(status.get("current_question") or 0),
+            total_questions=int(status.get("total_questions") or 0),
+            progress=int(status.get("progress") or 0),
+            status=str(status.get("status") or "generating"),
+            updated_at=_coerce_iso_timestamp(status.get("updated_at")),
+            message=str(status.get("message") or "") or None,
+        ))
+
+    generating_items.sort(key=lambda item: (item.updated_at or "", item.subject_name or ""), reverse=True)
+
+    queued_items: list[GenerationWorkItem] = []
+    for position, queue_item in enumerate(queued_snapshot, start=1):
+        request_data = queue_item.get("request_data") or {}
+        subject_id = str(queue_item.get("subject_id") or "").strip()
+        resolved_topic_ids = _extract_topic_ids(request_data.get("topic_id"), request_data.get("topic_ids"))
+        resolved_topic_names = [topic_name_map[topic_id] for topic_id in resolved_topic_ids if topic_id in topic_name_map]
+
+        queued_items.append(GenerationWorkItem(
+            run_id=str(queue_item.get("run_id") or f"queued-{position}"),
+            subject_id=subject_id,
+            subject_name=subject_name_map.get(subject_id),
+            topic_id=str(request_data.get("topic_id") or "").strip() or (resolved_topic_ids[0] if len(resolved_topic_ids) == 1 else None),
+            topic_name=resolved_topic_names[0] if len(resolved_topic_names) == 1 else None,
+            topic_ids=resolved_topic_ids,
+            topic_names=resolved_topic_names,
+            current_question=0,
+            total_questions=int(queue_item.get("count") or 0),
+            progress=0,
+            status="queued",
+            queue_position=position,
+            updated_at=_coerce_iso_timestamp(queue_item.get("added_at")),
+            message=f"Waiting for capacity in queue position {position}",
+        ))
+
+    return generating_items, queued_items
 
 
 async def _build_live_activity_response() -> ActiveUsersResponse:
     all_active_users = await analytics_ws_manager.get_active_users()
     active_users = [user for user in all_active_users if user["activity"] == "vetting"]
-    generating_count, queued_count = _get_background_generation_counts()
+    generating_items, queued_items = await _build_background_generation_work_items()
 
     return ActiveUsersResponse(
         active_users=[ActivityItem(**u) for u in active_users],
         vetting_count=len(active_users),
-        generating_count=generating_count,
-        queued_count=queued_count,
+        generating_count=len(generating_items),
+        queued_count=len(queued_items),
+        generating_items=generating_items,
+        queued_items=queued_items,
         timestamp=datetime.now(timezone.utc).isoformat(),
     )
 

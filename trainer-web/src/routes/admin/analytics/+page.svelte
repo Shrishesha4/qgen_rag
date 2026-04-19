@@ -16,11 +16,30 @@
 		duration_seconds: number;
 	}
 
+	interface GenerationWorkItem {
+		run_id: string;
+		subject_id: string;
+		subject_name: string | null;
+		topic_id: string | null;
+		topic_name: string | null;
+		topic_ids: string[];
+		topic_names: string[];
+		current_question: number;
+		total_questions: number;
+		progress: number;
+		status: string;
+		queue_position: number | null;
+		updated_at: string | null;
+		message: string | null;
+	}
+
 	interface LiveAnalyticsSnapshot {
 		active_users: ActiveUser[];
 		vetting_count: number;
 		generating_count: number;
 		queued_count: number;
+		generating_items: GenerationWorkItem[];
+		queued_items: GenerationWorkItem[];
 		timestamp: string;
 	}
 
@@ -50,10 +69,13 @@
 	let vettingCount = $state(0);
 	let generatingCount = $state(0);
 	let queuedCount = $state(0);
+	let generatingItems = $state<GenerationWorkItem[]>([]);
+	let queuedItems = $state<GenerationWorkItem[]>([]);
 	let lastUpdate = $state('');
 	let historicalData = $state<HistoricalData | null>(null);
 	let historicalLoading = $state(false);
 	let liveNowMs = $state(Date.now());
+	let generationDialogKind = $state<'running' | 'queued' | null>(null);
 
 	// Date range filters
 	let fromDate = $state<string>('');
@@ -111,6 +133,12 @@
 	function applyLiveSnapshot(snapshot: Partial<LiveAnalyticsSnapshot>) {
 		if (Array.isArray(snapshot.active_users)) {
 			activeUsers = snapshot.active_users;
+		}
+		if (Array.isArray(snapshot.generating_items)) {
+			generatingItems = snapshot.generating_items;
+		}
+		if (Array.isArray(snapshot.queued_items)) {
+			queuedItems = snapshot.queued_items;
 		}
 		if (typeof snapshot.vetting_count === 'number') {
 			vettingCount = snapshot.vetting_count;
@@ -360,6 +388,68 @@
 				return 'activity-idle';
 		}
 	}
+
+	function openGenerationDialog(kind: 'running' | 'queued') {
+		generationDialogKind = kind;
+	}
+
+	function closeGenerationDialog() {
+		generationDialogKind = null;
+	}
+
+	function handleGenerationDialogKeydown(event: KeyboardEvent) {
+		if (event.key === 'Escape') {
+			closeGenerationDialog();
+		}
+	}
+
+	function generationDialogItems(): GenerationWorkItem[] {
+		if (generationDialogKind === 'running') return generatingItems;
+		if (generationDialogKind === 'queued') return queuedItems;
+		return [];
+	}
+
+	function generationDialogTitle(): string {
+		if (generationDialogKind === 'running') return 'Currently Generating';
+		if (generationDialogKind === 'queued') return 'Queued Generations';
+		return '';
+	}
+
+	function generationDialogDescription(): string {
+		if (generationDialogKind === 'running') {
+			return 'Live background generation runs and their current progress.';
+		}
+		if (generationDialogKind === 'queued') {
+			return 'Jobs waiting for a free generation worker slot.';
+		}
+		return '';
+	}
+
+	function formatGenerationStatus(status: string): string {
+		return status
+			.split('_')
+			.filter(Boolean)
+			.map((part) => part.charAt(0).toUpperCase() + part.slice(1))
+			.join(' ');
+	}
+
+	function generationTopicSummary(item: GenerationWorkItem): string {
+		if (item.topic_name) return item.topic_name;
+		if (item.topic_names.length === 1) return item.topic_names[0];
+		if (item.topic_names.length > 1 && item.topic_names.length <= 3) return item.topic_names.join(', ');
+		if (item.topic_names.length > 3) return `${item.topic_names.length} topics`;
+		if (item.topic_ids.length > 1) return `${item.topic_ids.length} topics`;
+		return 'All topics';
+	}
+
+	function generationProgressSummary(item: GenerationWorkItem): string {
+		return `${item.current_question} out of ${item.total_questions}`;
+	}
+
+	function generationProgressWidth(item: GenerationWorkItem): string {
+		const progress = Number.isFinite(item.progress) ? item.progress : 0;
+		return `${Math.max(0, Math.min(100, progress))}%`;
+	}
 </script>
 
 <svelte:head>
@@ -377,9 +467,9 @@
 				<span class="ws-dot"></span>
 				{wsConnected ? 'Live' : 'Disconnected'}
 			</span> -->
-			{#if lastUpdate}
+			<!-- {#if lastUpdate}
 				<span class="last-update">Updated: {formatTime(lastUpdate)}</span>
-			{/if}
+			{/if} -->
 		</div>
 	</header>
 
@@ -402,21 +492,86 @@
 					<span class="stat-label">Vetting Now</span>
 				</div>
 			</div>
-			<div class="stat-card glass-panel">
+			<button class="stat-card stat-card-button glass-panel" type="button" onclick={() => openGenerationDialog('running')}>
 				<div class="stat-icon generating-icon">⚡</div>
 				<div class="stat-content">
 					<span class="stat-value">{generatingCount}</span>
 					<span class="stat-label">Currently Generating</span>
+					<span class="stat-action">View runs</span>
 				</div>
-			</div>
-			<div class="stat-card glass-panel">
+			</button>
+			<button class="stat-card stat-card-button glass-panel" type="button" onclick={() => openGenerationDialog('queued')}>
 				<div class="stat-icon queue-icon">⏳</div>
 				<div class="stat-content">
 					<span class="stat-value">{queuedCount}</span>
 					<span class="stat-label">In Queue</span>
+					<span class="stat-action">View queue</span>
+				</div>
+			</button>
+		</div>
+
+		{#if generationDialogKind}
+			<div class="modal-backdrop" role="presentation" onclick={() => closeGenerationDialog()}>
+				<div
+					class="generation-dialog glass-panel"
+					role="dialog"
+					aria-modal="true"
+					aria-labelledby="generation-dialog-title"
+					tabindex="-1"
+					onclick={(event) => event.stopPropagation()}
+					onkeydown={handleGenerationDialogKeydown}
+				>
+					<div class="generation-dialog-header">
+						<div>
+							<h2 id="generation-dialog-title">{generationDialogTitle()}</h2>
+							<p>{generationDialogDescription()}</p>
+						</div>
+						<button class="dialog-close" type="button" onclick={() => closeGenerationDialog()}>Close</button>
+					</div>
+
+					{#if generationDialogItems().length === 0}
+						<div class="empty-state compact-empty-state">
+							<p>{generationDialogKind === 'running' ? 'No generation is active right now.' : 'Nothing is waiting in the queue right now.'}</p>
+						</div>
+					{:else}
+						<div class="generation-list">
+							{#each generationDialogItems() as item}
+								<article class="generation-item">
+									<div class="generation-item-header">
+										<div class="generation-title-block">
+											<h3>{item.subject_name || 'Unknown subject'}</h3>
+											<p>{generationTopicSummary(item)}</p>
+										</div>
+										<span class={`generation-status status-${item.status}`}>{formatGenerationStatus(item.status)}</span>
+									</div>
+
+									<div class="generation-metrics-row">
+										<span class="generation-metric strong-metric">{generationProgressSummary(item)}</span>
+										<span class="generation-metric">{item.progress}%</span>
+									</div>
+									<div class="generation-progress-bar" aria-hidden="true">
+										<span style={`width: ${generationProgressWidth(item)}`}></span>
+									</div>
+
+									<div class="generation-meta-row">
+										{#if item.queue_position}
+											<span>Queue position #{item.queue_position}</span>
+										{/if}
+										<!-- {#if item.updated_at}
+											<span>Updated {formatTime(item.updated_at)}</span>
+										{/if} -->
+									</div>
+
+									{#if item.message}
+										<p class="generation-message">{item.message}</p>
+									{/if}
+								</article>
+							{/each}
+						</div>
+					{/if}
 				</div>
 			</div>
-		</div>
+		{/if}
 
 		<!-- Active Users List -->
 		<section class="glass-panel section">
@@ -694,6 +849,27 @@
 		border-radius: 0.9rem;
 	}
 
+	.stat-card-button {
+		width: 100%;
+		border: 1px solid var(--theme-glass-border);
+		background: var(--theme-glass-bg);
+		color: inherit;
+		text-align: left;
+		cursor: pointer;
+		transition: transform 0.18s ease, border-color 0.18s ease, background 0.18s ease;
+	}
+
+	.stat-card-button:hover {
+		transform: translateY(-1px);
+		border-color: color-mix(in srgb, var(--theme-primary) 35%, var(--theme-glass-border));
+		background: color-mix(in srgb, var(--theme-primary) 8%, var(--theme-glass-bg));
+	}
+
+	.stat-card-button:focus-visible {
+		outline: 2px solid var(--theme-primary);
+		outline-offset: 2px;
+	}
+
 	.stat-icon {
 		width: 3rem;
 		height: 3rem;
@@ -734,6 +910,12 @@
 	.stat-label {
 		font-size: 0.82rem;
 		color: var(--theme-text-muted);
+	}
+
+	.stat-action {
+		font-size: 0.75rem;
+		font-weight: 700;
+		color: var(--theme-primary);
 	}
 
 	.section {
@@ -1012,6 +1194,162 @@
 		padding: 1.5rem;
 	}
 
+	.modal-backdrop {
+		position: fixed;
+		inset: 0;
+		z-index: 50;
+		padding: 1.25rem;
+		display: flex;
+		align-items: center;
+		justify-content: center;
+		background: rgba(15, 23, 42, 0.5);
+		backdrop-filter: blur(10px);
+	}
+
+	.generation-dialog {
+		width: min(720px, 100%);
+		max-height: min(80vh, 760px);
+		overflow: auto;
+		padding: 1.25rem;
+		border-radius: 1rem;
+	}
+
+	.generation-dialog-header {
+		display: flex;
+		align-items: flex-start;
+		justify-content: space-between;
+		gap: 1rem;
+		margin-bottom: 1rem;
+	}
+
+	.generation-dialog-header h2 {
+		margin: 0;
+		font-size: 1.2rem;
+		font-weight: 800;
+	}
+
+	.generation-dialog-header p {
+		margin: 0.25rem 0 0;
+		font-size: 0.84rem;
+		color: var(--theme-text-muted);
+	}
+
+	.dialog-close {
+		border: 1px solid var(--theme-glass-border);
+		background: var(--theme-input-bg);
+		color: var(--theme-text);
+		padding: 0.55rem 0.85rem;
+		border-radius: 0.6rem;
+		font-size: 0.82rem;
+		font-weight: 700;
+		cursor: pointer;
+	}
+
+	.generation-list {
+		display: grid;
+		gap: 0.85rem;
+	}
+
+	.generation-item {
+		padding: 1rem;
+		border: 1px solid var(--theme-glass-border);
+		border-radius: 0.85rem;
+		background: color-mix(in srgb, var(--theme-surface) 55%, transparent);
+		display: grid;
+		gap: 0.7rem;
+	}
+
+	.generation-item-header {
+		display: flex;
+		justify-content: space-between;
+		gap: 1rem;
+		align-items: flex-start;
+	}
+
+	.generation-title-block h3 {
+		margin: 0;
+		font-size: 1rem;
+		font-weight: 800;
+	}
+
+	.generation-title-block p {
+		margin: 0.22rem 0 0;
+		font-size: 0.82rem;
+		color: var(--theme-text-muted);
+	}
+
+	.generation-status {
+		display: inline-flex;
+		align-items: center;
+		padding: 0.28rem 0.65rem;
+		border-radius: 999px;
+		font-size: 0.74rem;
+		font-weight: 800;
+		white-space: nowrap;
+		background: rgba(148, 163, 184, 0.16);
+		color: var(--theme-text-muted);
+	}
+
+	.generation-status.status-generating,
+	.generation-status.status-refilling {
+		background: rgba(99, 102, 241, 0.18);
+		color: #818cf8;
+	}
+
+	.generation-status.status-waiting_for_documents,
+	.generation-status.status-scheduled {
+		background: rgba(14, 165, 233, 0.18);
+		color: #38bdf8;
+	}
+
+	.generation-status.status-queued {
+		background: rgba(245, 158, 11, 0.18);
+		color: #fbbf24;
+	}
+
+	.generation-metrics-row,
+	.generation-meta-row {
+		display: flex;
+		justify-content: space-between;
+		gap: 0.75rem;
+		flex-wrap: wrap;
+	}
+
+	.generation-metric,
+	.generation-meta-row span {
+		font-size: 0.8rem;
+		color: var(--theme-text-muted);
+	}
+
+	.strong-metric {
+		color: var(--theme-text);
+		font-weight: 700;
+	}
+
+	.generation-progress-bar {
+		height: 0.5rem;
+		border-radius: 999px;
+		overflow: hidden;
+		background: rgba(148, 163, 184, 0.18);
+	}
+
+	.generation-progress-bar span {
+		display: block;
+		height: 100%;
+		border-radius: inherit;
+		background: linear-gradient(90deg, #38bdf8 0%, #818cf8 100%);
+	}
+
+	.generation-message {
+		margin: 0;
+		font-size: 0.82rem;
+		color: var(--theme-text-muted);
+	}
+
+	.compact-empty-state {
+		padding: 1.5rem 1rem;
+	}
+
 	@keyframes spin {
 		to {
 			transform: rotate(360deg);
@@ -1049,6 +1387,14 @@
 
 		.apply-btn {
 			align-self: stretch;
+		}
+
+		.generation-dialog-header,
+		.generation-item-header,
+		.generation-metrics-row,
+		.generation-meta-row {
+			flex-direction: column;
+			align-items: flex-start;
 		}
 	}
 </style>
