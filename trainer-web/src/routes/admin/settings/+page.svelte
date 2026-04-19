@@ -1716,30 +1716,6 @@
 		font-size: 1.15rem;
 	}
 
-	.pref-pill {
-		display: inline-flex;
-		align-items: center;
-		padding: 0.2rem 0.45rem;
-		border-radius: 999px;
-		font-size: 0.68rem;
-		font-weight: 700;
-		text-transform: uppercase;
-	}
-
-	.pill-preferred {
-		background: rgba(16, 185, 129, 0.18);
-		color: #34d399;
-	}
-
-	.pill-neutral {
-		background: rgba(245, 158, 11, 0.16);
-		color: #f59e0b;
-	}
-
-	.pill-avoid {
-		background: rgba(239, 68, 68, 0.16);
-		color: #f87171;
-	}
 
 	.settings-error {
 		background: rgba(220, 38, 38, 0.14);
