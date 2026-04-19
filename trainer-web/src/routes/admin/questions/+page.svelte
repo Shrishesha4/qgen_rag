@@ -2248,13 +2248,13 @@
 		text-transform: uppercase;
 	}
 
-	.identifier-block code {
+	/* .identifier-block code {
 		color: var(--theme-text);
 		font-size: 0.72rem;
 		letter-spacing: 0;
 		text-transform: none;
 		overflow-wrap: anywhere;
-	}
+	} */
 
 	.question-text {
 		margin: 0;

@@ -174,8 +174,9 @@ export class GenerationWebSocketClient {
 	 * Subscribe to generation status updates for a subject.
 	 */
 	subscribeSubject(subjectId: string): void {
+		const wasSubscribed = this.subscribedSubjects.has(subjectId);
 		this.subscribedSubjects.add(subjectId);
-		if (this.ws?.readyState === WebSocket.OPEN) {
+		if (!wasSubscribed && this.ws?.readyState === WebSocket.OPEN) {
 			this.sendMessage({ action: 'subscribe_subject', subject_id: subjectId });
 		}
 	}
@@ -184,8 +185,8 @@ export class GenerationWebSocketClient {
 	 * Unsubscribe from a subject.
 	 */
 	unsubscribeSubject(subjectId: string): void {
-		this.subscribedSubjects.delete(subjectId);
-		if (this.ws?.readyState === WebSocket.OPEN) {
+		const wasSubscribed = this.subscribedSubjects.delete(subjectId);
+		if (wasSubscribed && this.ws?.readyState === WebSocket.OPEN) {
 			this.sendMessage({ action: 'unsubscribe_subject', subject_id: subjectId });
 		}
 	}

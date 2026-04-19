@@ -340,7 +340,7 @@
 		};
 
 		transcriptionReady = true;
-		transcriptionStatus = 'Using built-in browser speech recognition.';
+		transcriptionStatus = ' ';
 	}
 
 	function startSpeechRecognition() {
@@ -585,7 +585,7 @@
 		recorderError = '';
 		speechNetworkRetryCount = 0;
 		transcriptionStatus = transcriptionReady
-			? 'Using built-in browser speech recognition.'
+			? ' '
 			: 'Built-in speech recognition is unavailable. Type feedback manually.';
 	}
 
@@ -685,7 +685,7 @@
 		if (!isRecording) return 'Tap the mic to start recording. Your speech stays on this device.';
 		if (!transcriptionReady) return transcriptionStatus;
 		if (recorderError) return recorderError;
-		return 'Recording audio in English using built-in browser speech recognition.';
+		return 'Recording audio in English.';
 	});
 </script>
 

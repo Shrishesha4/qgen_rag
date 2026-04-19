@@ -202,6 +202,7 @@
 	// WebSocket client for real-time generation updates
 	let wsClient = $state<GenerationWebSocketClient | null>(null);
 	let wsUnsubscribe = $state<(() => void) | null>(null);
+	let wsSubscribedSubjectId = $state<string | null>(null);
 
 	const PROCESSING_DOC_STATUSES = new Set(['pending', 'processing']);
 
@@ -224,7 +225,12 @@
 		void loadGenerationBatchSize();
 
 		const unsubPage = page.subscribe((p) => {
-			subjectId = p.params.id ?? '';
+			const nextSubjectId = p.params.id ?? '';
+			if (nextSubjectId === subjectId) return;
+			if (wsSubscribedSubjectId && wsSubscribedSubjectId !== nextSubjectId) {
+				teardownWebSocketSubscription();
+			}
+			subjectId = nextSubjectId;
 			void loadSubject();
 		});
 
@@ -237,15 +243,19 @@
 	onDestroy(() => {
 		clearReferencePolling();
 		clearGenerationPolling();
-		// Clean up WebSocket
-		if (wsClient && subjectId) {
-			wsClient.unsubscribeSubject(subjectId);
-		}
+		teardownWebSocketSubscription();
+	});
+
+	function teardownWebSocketSubscription() {
 		if (wsUnsubscribe) {
 			wsUnsubscribe();
 			wsUnsubscribe = null;
 		}
-	});
+		if (wsClient && wsSubscribedSubjectId) {
+			wsClient.unsubscribeSubject(wsSubscribedSubjectId);
+		}
+		wsSubscribedSubjectId = null;
+	}
 
 	function clearGenerationPolling() {
 		if (generationPollTimer) {
@@ -384,7 +394,7 @@
 					}
 
 					clearGenerationPolling();
-					await loadSubject();
+					await refreshSubjectSilent();
 				}
 				return;
 			}
@@ -437,7 +447,7 @@
 			}
 
 			clearGenerationPolling();
-			await loadSubject();
+			await refreshSubjectSilent();
 		} catch {
 			// Keep polling; transient status failures should not interrupt active generation UI.
 		}
@@ -467,21 +477,28 @@
 		}
 	}
 
-	async function loadSubject() {
+	async function loadSubject(options: { background?: boolean; skipGenerationStatusCheck?: boolean } = {}) {
 		if (!subjectId) return;
-		loading = true;
-		error = '';
+		const background = options.background ?? false;
+		if (!background) {
+			loading = true;
+			error = '';
+		}
 		try {
 			subject = await getSubject(subjectId);
 			syncQueuedTopicGenerationsWithSubject();
 			await loadReviewStats();
-			// Check for any in-progress generation after loading subject
-			await checkForInProgressGeneration();
+			if (!options.skipGenerationStatusCheck) {
+				// Check for any in-progress generation after loading subject
+				await checkForInProgressGeneration();
+			}
 			await maybeStartQueuedTopicGeneration();
 		} catch (e: unknown) {
 			error = e instanceof Error ? e.message : 'Failed to load subject';
 		} finally {
-			loading = false;
+			if (!background) {
+				loading = false;
+			}
 		}
 	}
 
@@ -543,6 +560,10 @@
 
 	function setupWebSocket() {
 		if (!subjectId) return;
+		if (wsSubscribedSubjectId === subjectId && wsUnsubscribe) return;
+		if (wsSubscribedSubjectId && wsSubscribedSubjectId !== subjectId) {
+			teardownWebSocketSubscription();
+		}
 
 		// Get or create WebSocket client
 		wsClient = getGenerationWebSocketClient();
@@ -550,6 +571,7 @@
 
 		// Subscribe to this subject's updates
 		wsClient.subscribeSubject(subjectId);
+		wsSubscribedSubjectId = subjectId;
 
 		// Handle real-time status updates
 		wsUnsubscribe = wsClient.onStatusUpdate((status: TopicGenerationStatusItem) => {
@@ -588,8 +610,7 @@
 
 				// Reload subject to get updated question counts and start any queued topic.
 				void (async () => {
-					await loadSubject();
-					await maybeStartQueuedTopicGeneration();
+					await refreshSubjectSilent();
 				})();
 			}
 		});
@@ -1116,11 +1137,7 @@
 	async function refreshSubjectSilent() {
 		if (!subjectId) return;
 		try {
-			subject = await getSubject(subjectId);
-			syncQueuedTopicGenerationsWithSubject();
-			await loadReviewStats();
-			await checkForInProgressGeneration();
-			await maybeStartQueuedTopicGeneration();
+			await loadSubject({ background: true, skipGenerationStatusCheck: true });
 		} catch (e: unknown) {
 			error = e instanceof Error ? e.message : 'Failed to refresh subject';
 		}
