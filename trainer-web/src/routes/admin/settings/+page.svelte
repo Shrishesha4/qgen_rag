@@ -1178,10 +1178,10 @@
 								<tr>
 									<th>Service</th>
 									<th>Generations</th>
+									<th>Vetted</th>
 									<th>Calls</th>
 									<th>Avg/Call</th>
 									<th>Rejected</th>
-									<th>Vetted</th>
 								</tr>
 							</thead>
 							<tbody>
@@ -1189,10 +1189,10 @@
 									<tr>
 										<td>{metric.provider_key}</td>
 										<td>{metric.total_generated}</td>
+										<td>{metric.total_vetted}</td>
 										<td>{metric.api_calls}</td>
 										<td>{metric.avg_questions_per_call}</td>
 										<td>{metric.total_rejected}</td>
-										<td>{metric.total_vetted}</td>
 									</tr>
 								{/each}
 							</tbody>
