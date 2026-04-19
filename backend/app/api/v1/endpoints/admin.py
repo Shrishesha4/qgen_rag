@@ -46,6 +46,7 @@ class ProviderMetric(BaseModel):
     avg_questions_per_call: float
     total_rejected: int
     total_regenerated: int
+    total_vetted: int
     rejection_rate: float
     regeneration_rate: float
     inferred_preference: str
@@ -1270,6 +1271,24 @@ async def get_provider_metrics(
         for row in rejected_rows
     }
 
+    vetted_rows = (
+        await db.execute(
+            select(
+                provider_expr,
+                func.count(Question.id).label("vetted"),
+            )
+            .where(
+                Question.vetting_status == "approved",
+                Question.generated_at >= since,
+            )
+            .group_by(provider_expr)
+        )
+    ).all()
+    vetted_map = {
+        str(row.provider_key or "unknown"): int(row.vetted or 0)
+        for row in vetted_rows
+    }
+
     regenerated_rows = (
         await db.execute(
             select(
@@ -1317,7 +1336,7 @@ async def get_provider_metrics(
                 if reason:
                     bucket[str(reason)] += 1
 
-    provider_keys = set(generated_map) | set(rejected_map) | set(regenerated_map)
+    provider_keys = set(generated_map) | set(rejected_map) | set(regenerated_map) | set(vetted_map)
     provider_metrics_list: List[ProviderMetric] = []
     total_generated = 0
     total_rejected = 0
@@ -1328,6 +1347,7 @@ async def get_provider_metrics(
         api_calls = generated_map.get(pk, {}).get("api_calls", 0)
         rejected = rejected_map.get(pk, 0)
         regenerated = regenerated_map.get(pk, 0)
+        vetted = vetted_map.get(pk, 0)
 
         total_generated += generated
         total_rejected += rejected
@@ -1354,6 +1374,7 @@ async def get_provider_metrics(
                 avg_questions_per_call=round((generated / api_calls) if api_calls else 0.0, 2),
                 total_rejected=rejected,
                 total_regenerated=regenerated,
+                total_vetted=vetted,
                 rejection_rate=round(rejection_rate, 4),
                 regeneration_rate=round(regeneration_rate, 4),
                 inferred_preference=inferred_preference,
