@@ -2363,8 +2363,7 @@
 	}
 
 	.question-meta strong,
-	.score-card strong,
-	.detail-grid strong {
+	.score-card strong {
 		display: block;
 		font-size: 0.82rem;
 		color: var(--theme-text);
@@ -2373,8 +2372,7 @@
 	}
 
 	.meta-label,
-	.score-card span,
-	.detail-grid span {
+	.score-card span {
 		font-size: 0.66rem;
 		letter-spacing: 0.12em;
 		text-transform: uppercase;

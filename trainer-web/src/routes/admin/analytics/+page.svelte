@@ -38,11 +38,15 @@
 		vetting_count: number;
 		generating_count: number;
 		queued_count: number;
+		pending_generation_threshold: number;
 		eligible_topics_count: number;
 		generated_questions_total: number;
 		target_questions_total: number;
 		remaining_questions: number;
 		topics_below_target_count: number;
+		schedulable_questions_total: number;
+		blocked_topics_count: number;
+		blocked_questions_total: number;
 		topic_backlog_questions_total: number;
 		surplus_questions_total: number;
 		generating_items: GenerationWorkItem[];
@@ -76,11 +80,15 @@
 	let vettingCount = $state(0);
 	let generatingCount = $state(0);
 	let queuedCount = $state(0);
+	let pendingGenerationThreshold = $state(0);
 	let eligibleTopicsCount = $state(0);
 	let generatedQuestionsTotal = $state(0);
 	let targetQuestionsTotal = $state(0);
 	let remainingQuestions = $state(0);
 	let topicsBelowTargetCount = $state(0);
+	let schedulableQuestionsTotal = $state(0);
+	let blockedTopicsCount = $state(0);
+	let blockedQuestionsTotal = $state(0);
 	let topicBacklogQuestionsTotal = $state(0);
 	let surplusQuestionsTotal = $state(0);
 	let generatingItems = $state<GenerationWorkItem[]>([]);
@@ -163,6 +171,9 @@
 		if (typeof snapshot.queued_count === 'number') {
 			queuedCount = snapshot.queued_count;
 		}
+		if (typeof snapshot.pending_generation_threshold === 'number') {
+			pendingGenerationThreshold = snapshot.pending_generation_threshold;
+		}
 		if (typeof snapshot.eligible_topics_count === 'number') {
 			eligibleTopicsCount = snapshot.eligible_topics_count;
 		}
@@ -177,6 +188,15 @@
 		}
 		if (typeof snapshot.topics_below_target_count === 'number') {
 			topicsBelowTargetCount = snapshot.topics_below_target_count;
+		}
+		if (typeof snapshot.schedulable_questions_total === 'number') {
+			schedulableQuestionsTotal = snapshot.schedulable_questions_total;
+		}
+		if (typeof snapshot.blocked_topics_count === 'number') {
+			blockedTopicsCount = snapshot.blocked_topics_count;
+		}
+		if (typeof snapshot.blocked_questions_total === 'number') {
+			blockedQuestionsTotal = snapshot.blocked_questions_total;
 		}
 		if (typeof snapshot.topic_backlog_questions_total === 'number') {
 			topicBacklogQuestionsTotal = snapshot.topic_backlog_questions_total;
@@ -455,10 +475,12 @@
 			return 'Live background generation runs and their current progress.';
 		}
 		if (generationDialogKind === 'queued') {
-			if (surplusQuestionsTotal > 0) {
-				return `${formatNumber(remainingQuestions)} questions remain to reach the global target of ${formatNumber(targetQuestionsTotal)}. Topic-level deficits add up to ${formatNumber(topicBacklogQuestionsTotal)}, offset by ${formatNumber(surplusQuestionsTotal)} extra questions already present on over-target topics.`;
+			const baseline = `${formatNumber(remainingQuestions)} questions remain to reach the 30-question baseline across eligible topics.`;
+			const schedulable = `${formatNumber(schedulableQuestionsTotal)} can be scheduled right now.`;
+			if (blockedQuestionsTotal > 0) {
+				return `${baseline} ${schedulable} ${formatNumber(blockedQuestionsTotal)} are paused because ${blockedTopicsCount} topics exceed the pending threshold of ${pendingGenerationThreshold}.`;
 			}
-			return `Topics that still need generation, calculated from database state. ${formatNumber(remainingQuestions)} questions remain to reach the current global target.`;
+			return `${baseline} ${schedulable}`;
 		}
 		return '';
 	}
@@ -496,7 +518,8 @@
 	function remainingTopicsLabel(): string {
 		const topicCount = topicsBelowTargetCount || queuedItems.length;
 		if (targetQuestionsTotal > 0) {
-			return `${topicCount} ${topicCount === 1 ? 'topic' : 'topics'} below target | ${formatNumber(generatedQuestionsTotal)} / ${formatNumber(targetQuestionsTotal)}`;
+			const blockedSegment = blockedTopicsCount > 0 ? ` | ${blockedTopicsCount} blocked` : '';
+			return `${topicCount} ${topicCount === 1 ? 'topic' : 'topics'} below target | ${formatNumber(remainingQuestions)} baseline gap | ${formatNumber(schedulableQuestionsTotal)} schedulable now${blockedSegment}`;
 		}
 		return `${topicCount} ${topicCount === 1 ? 'topic' : 'topics'} below target`;
 	}
@@ -553,9 +576,9 @@
 			<button class="stat-card stat-card-button glass-panel" type="button" onclick={() => openGenerationDialog('queued')}>
 				<div class="stat-icon queue-icon">⏳</div>
 				<div class="stat-content">
-					<span class="stat-value">{formatNumber(remainingQuestions)}</span>
-					<span class="stat-label">Remaining To Generate</span>
-					<span class="stat-action">View topics</span>
+					<span class="stat-value">{formatNumber(schedulableQuestionsTotal)}</span>
+					<span class="stat-label">Schedulable To Target</span>
+					<span class="stat-action">View backlog</span>
 					<span class="stat-meta">{remainingTopicsLabel()}</span>
 				</div>
 			</button>
@@ -1361,6 +1384,11 @@
 	.generation-status.status-queued {
 		background: rgba(245, 158, 11, 0.18);
 		color: #fbbf24;
+	}
+
+	.generation-status.status-blocked {
+		background: rgba(239, 68, 68, 0.18);
+		color: #fca5a5;
 	}
 
 	.generation-metrics-row,

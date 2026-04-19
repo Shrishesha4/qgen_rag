@@ -174,6 +174,7 @@ class Settings(BaseSettings):
     ENABLE_TWO_PASS_GENERATION: bool = Field(default=False)
     GENERATION_SCHEMA_ENFORCEMENT: bool = Field(default=True)
     QUICK_GENERATE_PARALLEL_WORKERS: int = Field(default=6)
+    AUTO_GENERATION_PENDING_THRESHOLD: int = Field(default=5)
     QUESTION_DEDUPE_SIMILARITY_THRESHOLD: float = Field(default=0.987)
     QUESTION_OPTION_SIMILARITY_THRESHOLD: float = Field(default=0.877)
 

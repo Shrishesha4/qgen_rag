@@ -296,8 +296,12 @@ def _calculate_reconciliation_count(
     pending_count: int,
     batch_size: int,
 ) -> int:
-    """Apply the same topic auto-fill rules previously implemented on the subject page."""
+    """Gate auto-generation by pending backlog, then top up to the next batch boundary."""
     if batch_size <= 0:
+        return 0
+
+    pending_threshold = max(0, int(settings.AUTO_GENERATION_PENDING_THRESHOLD or 0))
+    if pending_count > pending_threshold:
         return 0
 
     if generated_count <= 0:

@@ -12,6 +12,7 @@ from sqlalchemy import select, func, and_, or_
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import selectinload
 
+from app.core.config import settings
 from app.core.database import AsyncSessionLocal
 from app.core.auth_database import get_auth_db
 from app.api.v1.deps import get_current_user
@@ -49,11 +50,15 @@ class ActiveUsersResponse(BaseModel):
     vetting_count: int
     generating_count: int
     queued_count: int
+    pending_generation_threshold: int
     eligible_topics_count: int
     generated_questions_total: int
     target_questions_total: int
     remaining_questions: int
     topics_below_target_count: int
+    schedulable_questions_total: int
+    blocked_topics_count: int
+    blocked_questions_total: int
     topic_backlog_questions_total: int
     surplus_questions_total: int
     generating_items: list["GenerationWorkItem"]
@@ -315,20 +320,28 @@ async def _get_pending_reconciliation_backlog_summary() -> dict[str, object]:
         summary["items"] = [dict(item) for item in list(summary.get("items") or [])]
         return summary
 
-    from app.api.v1.endpoints.questions import _topic_has_generation_content
+    from app.api.v1.endpoints.questions import (
+        _calculate_reconciliation_count,
+        _topic_has_generation_content,
+    )
     from app.services.provider_service import get_provider_service
 
     provider_service = get_provider_service()
     provider_config = await provider_service.get_config()
     batch_size = int(provider_config.generation_batch_size or 0)
+    pending_threshold = max(0, int(settings.AUTO_GENERATION_PENDING_THRESHOLD or 0))
     if batch_size <= 0:
         summary = {
             "items": [],
+            "pending_generation_threshold": pending_threshold,
             "eligible_topics_count": 0,
             "generated_questions_total": 0,
             "target_questions_total": 0,
             "remaining_questions_total": 0,
             "topics_below_target_count": 0,
+            "schedulable_questions_total": 0,
+            "blocked_topics_count": 0,
+            "blocked_questions_total": 0,
             "topic_backlog_questions_total": 0,
             "surplus_questions_total": 0,
         }
@@ -345,11 +358,15 @@ async def _get_pending_reconciliation_backlog_summary() -> dict[str, object]:
         if not subjects:
             summary = {
                 "items": [],
+                "pending_generation_threshold": pending_threshold,
                 "eligible_topics_count": 0,
                 "generated_questions_total": 0,
                 "target_questions_total": 0,
                 "remaining_questions_total": 0,
                 "topics_below_target_count": 0,
+                "schedulable_questions_total": 0,
+                "blocked_topics_count": 0,
+                "blocked_questions_total": 0,
                 "topic_backlog_questions_total": 0,
                 "surplus_questions_total": 0,
             }
@@ -421,6 +438,9 @@ async def _get_pending_reconciliation_backlog_summary() -> dict[str, object]:
         pending_items: list[dict[str, object]] = []
         eligible_topics_count = 0
         generated_questions_total = 0
+        schedulable_questions_total = 0
+        blocked_topics_count = 0
+        blocked_questions_total = 0
         topic_backlog_questions_total = 0
         surplus_questions_total = 0
         for subject in subjects:
@@ -435,10 +455,27 @@ async def _get_pending_reconciliation_backlog_summary() -> dict[str, object]:
                 eligible_topics_count += 1
                 stats = topic_stats[subject_id].get(topic_id, {"generated": 0, "pending": 0})
                 generated_questions = int(stats["generated"] or 0)
+                pending_questions = int(stats["pending"] or 0)
                 generated_questions_total += generated_questions
                 remaining_questions = max(batch_size - generated_questions, 0)
+                scheduled_questions = max(
+                    0,
+                    int(
+                        _calculate_reconciliation_count(
+                            generated_count=generated_questions,
+                            pending_count=pending_questions,
+                            batch_size=batch_size,
+                        )
+                        or 0
+                    ),
+                )
                 topic_backlog_questions_total += remaining_questions
                 surplus_questions_total += max(generated_questions - batch_size, 0)
+                if remaining_questions > 0 and scheduled_questions > 0:
+                    schedulable_questions_total += min(remaining_questions, scheduled_questions)
+                if remaining_questions > 0 and pending_questions > pending_threshold and scheduled_questions <= 0:
+                    blocked_topics_count += 1
+                    blocked_questions_total += remaining_questions
                 if remaining_questions <= 0:
                     continue
 
@@ -449,19 +486,26 @@ async def _get_pending_reconciliation_backlog_summary() -> dict[str, object]:
                         "topic_id": topic_id,
                         "topic_name": topic.name,
                         "generated_questions": generated_questions,
+                        "pending_questions": pending_questions,
                         "total_questions": batch_size,
                         "remaining_questions": remaining_questions,
+                        "scheduled_questions": min(remaining_questions, scheduled_questions),
+                        "is_blocked": pending_questions > pending_threshold and scheduled_questions <= 0,
                         "progress": int((generated_questions / max(1, batch_size)) * 100),
                     }
                 )
 
     summary = {
         "items": [dict(item) for item in pending_items],
+        "pending_generation_threshold": pending_threshold,
         "eligible_topics_count": eligible_topics_count,
         "generated_questions_total": generated_questions_total,
         "target_questions_total": eligible_topics_count * batch_size,
         "remaining_questions_total": max((eligible_topics_count * batch_size) - generated_questions_total, 0),
         "topics_below_target_count": len(pending_items),
+        "schedulable_questions_total": schedulable_questions_total,
+        "blocked_topics_count": blocked_topics_count,
+        "blocked_questions_total": blocked_questions_total,
         "topic_backlog_questions_total": topic_backlog_questions_total,
         "surplus_questions_total": surplus_questions_total,
     }
@@ -613,6 +657,10 @@ async def _build_background_generation_work_items() -> tuple[list[GenerationWork
         remaining_questions = int(pending_item.get("remaining_questions") or 0)
         target_questions = int(pending_item.get("total_questions") or 0)
         generated_questions = int(pending_item.get("generated_questions") or 0)
+        pending_questions = int(pending_item.get("pending_questions") or 0)
+        scheduled_questions = int(pending_item.get("scheduled_questions") or 0)
+        is_blocked = bool(pending_item.get("is_blocked"))
+        pending_threshold = int(backlog_summary.get("pending_generation_threshold") or 0)
         queued_items.append(
             GenerationWorkItem(
                 run_id=f"pending:{subject_id}:{topic_id}",
@@ -625,13 +673,17 @@ async def _build_background_generation_work_items() -> tuple[list[GenerationWork
                 current_question=generated_questions,
                 total_questions=target_questions,
                 progress=int(pending_item.get("progress") or 0),
-                status="queued",
+                status="blocked" if is_blocked else "queued",
                 queue_position=None,
                 updated_at=None,
                 message=(
-                    f"{remaining_questions} more questions needed to reach {target_questions}; waiting for the current subject generation to finish"
-                    if subject_is_already_busy
-                    else f"{remaining_questions} more questions needed to reach {target_questions}; waiting for generation capacity"
+                    f"{remaining_questions} more questions needed to reach {target_questions}; paused because {pending_questions} pending questions exceed the threshold of {pending_threshold}"
+                    if is_blocked
+                    else (
+                        f"{scheduled_questions} questions can be generated now to reach {target_questions}; waiting for the current subject generation to finish"
+                        if subject_is_already_busy
+                        else f"{scheduled_questions} questions can be generated now to reach {target_questions}; waiting for generation capacity"
+                    )
                 ),
             )
         )
@@ -657,11 +709,15 @@ async def _build_live_activity_response() -> ActiveUsersResponse:
         vetting_count=len(active_users),
         generating_count=len(generating_items),
         queued_count=len(queued_items),
+        pending_generation_threshold=int(backlog_summary.get("pending_generation_threshold") or 0),
         eligible_topics_count=int(backlog_summary.get("eligible_topics_count") or 0),
         generated_questions_total=int(backlog_summary.get("generated_questions_total") or 0),
         target_questions_total=int(backlog_summary.get("target_questions_total") or 0),
         remaining_questions=int(backlog_summary.get("remaining_questions_total") or 0),
         topics_below_target_count=int(backlog_summary.get("topics_below_target_count") or 0),
+        schedulable_questions_total=int(backlog_summary.get("schedulable_questions_total") or 0),
+        blocked_topics_count=int(backlog_summary.get("blocked_topics_count") or 0),
+        blocked_questions_total=int(backlog_summary.get("blocked_questions_total") or 0),
         topic_backlog_questions_total=int(backlog_summary.get("topic_backlog_questions_total") or 0),
         surplus_questions_total=int(backlog_summary.get("surplus_questions_total") or 0),
         generating_items=generating_items,
