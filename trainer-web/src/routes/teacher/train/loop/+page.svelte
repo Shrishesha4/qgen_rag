@@ -8,8 +8,10 @@
 	import VoiceRecorder from '$lib/components/VoiceRecorder.svelte';
 	import {
 		getQuestionsForVetting,
+		sendVettingStopKeepalive,
 		submitVetting,
 		rejectWithFeedback,
+		syncVettingActivity,
 		type QuestionForVetting,
 	} from '$lib/api/vetting';
 	import {
@@ -93,6 +95,8 @@
 	let progressSaveTimer: ReturnType<typeof setTimeout> | null = null;
 	let remoteSaveTimer: ReturnType<typeof setTimeout> | null = null;
 	let isSavingProgress = false;
+	let vettingActivityTimer: ReturnType<typeof setInterval> | null = null;
+	let vettingActivityKey = '';
 	let verifyMode = $state(false);
 	let allowAutoGeneration = $state(true);
 	let navigationConfirmOpen = $state(false);
@@ -100,6 +104,7 @@
 	let navigationConfirmMessage = $state('');
 	let navigationConfirmAction = $state<null | (() => void | Promise<void>)>(null);
 	let skipNextLeaveConfirm = false;
+	const VETTING_ACTIVITY_HEARTBEAT_MS = 30000;
 
 	// Confirm + cleanup before any SvelteKit navigation
 	beforeNavigate(({ cancel, to }) => {
@@ -185,11 +190,21 @@
 
 		// Block browser reload / tab close during active work
 		function handleBeforeUnload(e: BeforeUnloadEvent) {
-			if (verifyMode) return; // Skip progress handling in verify mode
+			if (verifyMode) {
+				const payload = buildVettingActivityPayload();
+				if (payload) {
+					sendVettingStopKeepalive(payload);
+				}
+				return;
+			}
 			const hasProgress = questions.length > 0 && (totalReviewed > 0 || currentIndex > 0 || batchComplete);
 			if (generating || submitting || hasProgress) {
 				e.preventDefault();
 				persistProgressNow(true);
+				const payload = buildVettingActivityPayload();
+				if (payload) {
+					sendVettingStopKeepalive(payload);
+				}
 			}
 		}
 		window.addEventListener('beforeunload', handleBeforeUnload);
@@ -253,6 +268,7 @@
 		return () => {
 			unsub();
 			unsubPage();
+			stopVettingActivityHeartbeat();
 			clearGenerationInterpolationTimer();
 			window.removeEventListener('beforeunload', handleBeforeUnload);
 			window.removeEventListener('mousemove', handlePointerMove);
@@ -270,6 +286,7 @@
 				clearTimeout(remoteSaveTimer);
 				remoteSaveTimer = null;
 			}
+			void stopVettingActivityTracking();
 			if (!verifyMode) {
 				persistProgressNow(true);
 			}
@@ -404,6 +421,85 @@
 	});
 	let voiceRecorderSubmitLabel = $derived(voiceAction?.kind === 'reject' ? 'Reject' : 'Approve & Next');
 
+	function buildVettingActivityPayload(): { subject_id?: string; topic_id?: string } | null {
+		const referenceQuestion = currentQuestion ?? questions[currentIndex] ?? questions[0];
+		const payload = {
+			subject_id: subjectId || referenceQuestion?.subject_id || undefined,
+			topic_id: topicId || referenceQuestion?.topic_id || undefined,
+		};
+
+		if (!payload.subject_id && !payload.topic_id) {
+			return null;
+		}
+
+		return payload;
+	}
+
+	function stopVettingActivityHeartbeat() {
+		if (vettingActivityTimer) {
+			clearInterval(vettingActivityTimer);
+			vettingActivityTimer = null;
+		}
+	}
+
+	async function stopVettingActivityTracking(useKeepalive = false) {
+		const payload = buildVettingActivityPayload();
+		stopVettingActivityHeartbeat();
+		vettingActivityKey = '';
+
+		if (!payload) {
+			return;
+		}
+
+		if (useKeepalive) {
+			sendVettingStopKeepalive(payload);
+			return;
+		}
+
+		try {
+			await syncVettingActivity({ action: 'stop', ...payload });
+		} catch {
+			// Ignore transient activity-sync failures; stale cleanup is the fallback.
+		}
+	}
+
+	async function ensureVettingActivityTracking() {
+		const payload = buildVettingActivityPayload();
+		const shouldTrack = !loading && questions.length > 0 && totalReviewed < questions.length && !showBatchCompletePanel;
+		const nextKey = payload ? `${payload.subject_id ?? ''}:${payload.topic_id ?? ''}` : '';
+
+		if (!shouldTrack || !payload || !nextKey) {
+			await stopVettingActivityTracking();
+			return;
+		}
+
+		if (vettingActivityTimer && vettingActivityKey === nextKey) {
+			return;
+		}
+
+		stopVettingActivityHeartbeat();
+		vettingActivityKey = nextKey;
+
+		try {
+			await syncVettingActivity({ action: 'start', ...payload });
+		} catch {
+			return;
+		}
+
+		if (vettingActivityKey !== nextKey) {
+			return;
+		}
+
+		vettingActivityTimer = setInterval(() => {
+			const heartbeatPayload = buildVettingActivityPayload();
+			if (!heartbeatPayload) {
+				return;
+			}
+
+			void syncVettingActivity({ action: 'heartbeat', ...heartbeatPayload }).catch(() => undefined);
+		}, VETTING_ACTIVITY_HEARTBEAT_MS);
+	}
+
 	function currentProgressKey(): string {
 		if (!subjectId) return '';
 		return buildTeacherVettingProgressKey({
@@ -526,6 +622,17 @@
 		mixedTopicsMode;
 		selectedMixedTopicIds;
 		queueProgressSave();
+	});
+
+	$effect(() => {
+		loading;
+		questions.length;
+		currentIndex;
+		totalReviewed;
+		subjectId;
+		topicId;
+		showBatchCompletePanel;
+		void ensureVettingActivityTracking();
 	});
 
 	// Load existing pending questions, then start background generation

@@ -830,14 +830,14 @@
 				</select>
 			</label>
 
-			<label class="field">
+			<!-- <label class="field">
 				<span>Generation Result</span>
 				<select bind:value={selectedGenerationStatus} onchange={() => void handleAdvancedFilterChange()}>
 					{#each GENERATION_STATUS_OPTIONS as option}
 						<option value={option.value}>{option.label}</option>
 					{/each}
 				</select>
-			</label>
+			</label> -->
 
 			<label class="field">
 				<span>Source Basis</span>
@@ -1046,7 +1046,7 @@
 
 					<div class="question-body">
 						<div class="question-main">
-							<div class="question-identifiers">
+							<!-- <div class="question-identifiers">
 								<div class="identifier-block">
 									<span>ID</span>
 									<code>{question.id}</code>
@@ -1063,7 +1063,7 @@
 										<code>{question.session_id}</code>
 									</div>
 								{/if}
-							</div>
+							</div> -->
 
 							<p class="question-text">{question.question_text}</p>
 
@@ -1139,14 +1139,14 @@
 									<span>Novelty</span>
 									<strong>{formatScore(question.novelty_score)}</strong>
 								</div>
-								<div class="score-card">
+								<!-- <div class="score-card">
 									<span>Max Similarity</span>
 									<strong>{formatScore(question.max_similarity)}</strong>
 								</div>
 								<div class="score-card">
 									<span>Similarity Source</span>
 									<strong>{formatOptionalText(question.similarity_source, '—')}</strong>
-								</div>
+								</div> -->
 							</div>
 						</div>
 					</div>
@@ -1176,7 +1176,7 @@
 								</div>
 							{/if}
 
-							<div class="detail-grid">
+							<!-- <div class="detail-grid">
 								<div>
 									<span>Generation attempts</span>
 									<strong>{question.generation_attempt_count}</strong>
@@ -1189,7 +1189,7 @@
 									<span>Replaced by</span>
 									<strong>{formatOptionalText(question.replaced_by_id, 'None')}</strong>
 								</div>
-							</div>
+							</div> -->
 						</details>
 					{/if}
 				</article>

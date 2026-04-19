@@ -1,5 +1,5 @@
 /** Vetting API — fetch questions for review, submit decisions. */
-import { apiFetch } from './client';
+import { apiFetch, apiUrl, getStoredSession } from './client';
 import { session } from '../session';
 import { get } from 'svelte/store';
 
@@ -62,6 +62,12 @@ export interface QuestionListResult {
 	page: number;
 	limit: number;
 	pages: number;
+}
+
+export interface VettingActivityPayload {
+	action: 'start' | 'heartbeat' | 'stop';
+	subject_id?: string;
+	topic_id?: string;
 }
 
 export interface VetSubmission {
@@ -288,6 +294,36 @@ export async function getQuestionsForVetting(opts: {
 	if (opts.topic_id) params.set('topic_id', opts.topic_id);
 	if (opts.search) params.set('search', opts.search);
 	return apiFetch<QuestionListResult>(`/vetter/questions?${params}`);
+}
+
+export async function syncVettingActivity(payload: VettingActivityPayload): Promise<void> {
+	await apiFetch<void>('/vetter/activity', {
+		method: 'POST',
+		body: JSON.stringify(payload),
+	});
+}
+
+export function sendVettingStopKeepalive(payload: {
+	subject_id?: string;
+	topic_id?: string;
+}): void {
+	if (typeof window === 'undefined') return;
+	if (!payload.subject_id && !payload.topic_id) return;
+
+	const currentSession = getStoredSession();
+	if (!currentSession?.access_token) return;
+
+	const headers = new Headers({
+		Authorization: `Bearer ${currentSession.access_token}`,
+		'Content-Type': 'application/json',
+	});
+
+	void fetch(apiUrl('/vetter/activity'), {
+		method: 'POST',
+		headers,
+		body: JSON.stringify({ action: 'stop', ...payload }),
+		keepalive: true,
+	}).catch(() => undefined);
 }
 
 export async function submitVetting(data: VetSubmission): Promise<{

@@ -38,6 +38,7 @@ class ActiveUsersResponse(BaseModel):
     active_users: list[ActivityItem]
     vetting_count: int
     generating_count: int
+    queued_count: int
     timestamp: str
 
 
@@ -84,22 +85,41 @@ def _ensure_admin(current_user: User) -> None:
         )
 
 
+def _get_background_generation_counts() -> tuple[int, int]:
+    from app.api.v1.endpoints.questions import (
+        _BACKGROUND_GENERATION_QUEUE,
+        _get_current_running_count,
+    )
+
+    return _get_current_running_count(), len(_BACKGROUND_GENERATION_QUEUE)
+
+
+async def _build_live_activity_response() -> ActiveUsersResponse:
+    all_active_users = await analytics_ws_manager.get_active_users()
+    active_users = [user for user in all_active_users if user["activity"] == "vetting"]
+    generating_count, queued_count = _get_background_generation_counts()
+
+    return ActiveUsersResponse(
+        active_users=[ActivityItem(**u) for u in active_users],
+        vetting_count=len(active_users),
+        generating_count=generating_count,
+        queued_count=queued_count,
+        timestamp=datetime.now(timezone.utc).isoformat(),
+    )
+
+
+def _dump_model(model: BaseModel) -> dict:
+    return model.model_dump() if hasattr(model, "model_dump") else model.dict()
+
+
 @router.get("/active", response_model=ActiveUsersResponse)
 async def get_active_users(
     current_user: User = Depends(get_current_user),
 ):
-    """Get currently active users (who are vetting or generating)."""
+    """Get live vetting sessions and automatic generation queue counts."""
     _ensure_admin(current_user)
-    
-    active_users = await analytics_ws_manager.get_active_users()
-    now = datetime.now(timezone.utc).isoformat()
-    
-    return ActiveUsersResponse(
-        active_users=[ActivityItem(**u) for u in active_users],
-        vetting_count=len([u for u in active_users if u["activity"] == "vetting"]),
-        generating_count=len([u for u in active_users if u["activity"] == "generating"]),
-        timestamp=now,
-    )
+
+    return await _build_live_activity_response()
 
 
 @router.get("/historical", response_model=HistoricalResponse)
@@ -256,19 +276,14 @@ async def analytics_websocket(
         await analytics_ws_manager.connect(websocket, connection_id, user_id, is_admin)
         
         # Send initial state
-        active_users = await analytics_ws_manager.get_active_users()
+        live_snapshot = await _build_live_activity_response()
         await websocket.send_json({
             "type": "connected",
             "connection_id": connection_id,
         })
         await websocket.send_json({
             "type": "activity_update",
-            "data": {
-                "active_users": active_users,
-                "vetting_count": len([u for u in active_users if u["activity"] == "vetting"]),
-                "generating_count": len([u for u in active_users if u["activity"] == "generating"]),
-                "timestamp": datetime.now(timezone.utc).isoformat(),
-            }
+            "data": _dump_model(live_snapshot),
         })
         
         while True:
@@ -278,6 +293,10 @@ async def analytics_websocket(
                 
                 if action == "ping":
                     await websocket.send_json({"type": "pong"})
+                    await websocket.send_json({
+                        "type": "activity_update",
+                        "data": _dump_model(await _build_live_activity_response()),
+                    })
                 else:
                     await websocket.send_json({
                         "type": "error",

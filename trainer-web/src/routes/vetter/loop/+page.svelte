@@ -8,8 +8,10 @@
 	import VoiceRecorder from '$lib/components/VoiceRecorder.svelte';
 	import {
 		getQuestionsForVetting,
+		sendVettingStopKeepalive,
 		submitVetting,
 		rejectWithFeedback,
+		syncVettingActivity,
 		type QuestionForVetting,
 	} from '$lib/api/vetting';
 	import {
@@ -44,6 +46,9 @@
 	let progressSaveTimer: ReturnType<typeof setTimeout> | null = null;
 	let remoteSaveTimer: ReturnType<typeof setTimeout> | null = null;
 	let isSavingProgress = false;
+	let vettingActivityTimer: ReturnType<typeof setInterval> | null = null;
+	let vettingActivityKey = '';
+	const VETTING_ACTIVITY_HEARTBEAT_MS = 30000;
 
 	// Confirm before navigating away with unfinished work
 	beforeNavigate(({ cancel, to }) => {
@@ -81,6 +86,10 @@
 		function handleBeforeUnload(e: BeforeUnloadEvent) {
 			if (submitting || hasVettingProgress()) {
 				void persistProgressNow(true);
+				const payload = buildVettingActivityPayload();
+				if (payload) {
+					sendVettingStopKeepalive(payload);
+				}
 				e.preventDefault();
 			}
 		}
@@ -93,6 +102,10 @@
 
 		function handlePageHide() {
 			void persistProgressNow(true);
+			const payload = buildVettingActivityPayload();
+			if (payload) {
+				sendVettingStopKeepalive(payload);
+			}
 		}
 
 		window.addEventListener('beforeunload', handleBeforeUnload);
@@ -109,6 +122,7 @@
 	});
 
 	onDestroy(() => {
+		stopVettingActivityHeartbeat();
 		if (progressSaveTimer) {
 			clearTimeout(progressSaveTimer);
 			progressSaveTimer = null;
@@ -117,6 +131,7 @@
 			clearTimeout(remoteSaveTimer);
 			remoteSaveTimer = null;
 		}
+		void stopVettingActivityTracking();
 		void persistProgressNow(true);
 	});
 
@@ -184,6 +199,85 @@
 
 	function hasVettingProgress(): boolean {
 		return questions.length > 0 && (currentIndex > 0 || approved.size > 0 || rejected.size > 0) && totalReviewed < questions.length;
+	}
+
+	function buildVettingActivityPayload(): { subject_id?: string; topic_id?: string } | null {
+		const referenceQuestion = currentQuestion ?? questions[currentIndex] ?? questions[0];
+		const payload = {
+			subject_id: subjectId || referenceQuestion?.subject_id || undefined,
+			topic_id: topicId || referenceQuestion?.topic_id || undefined,
+		};
+
+		if (!payload.subject_id && !payload.topic_id) {
+			return null;
+		}
+
+		return payload;
+	}
+
+	function stopVettingActivityHeartbeat() {
+		if (vettingActivityTimer) {
+			clearInterval(vettingActivityTimer);
+			vettingActivityTimer = null;
+		}
+	}
+
+	async function stopVettingActivityTracking(useKeepalive = false) {
+		const payload = buildVettingActivityPayload();
+		stopVettingActivityHeartbeat();
+		vettingActivityKey = '';
+
+		if (!payload) {
+			return;
+		}
+
+		if (useKeepalive) {
+			sendVettingStopKeepalive(payload);
+			return;
+		}
+
+		try {
+			await syncVettingActivity({ action: 'stop', ...payload });
+		} catch {
+			// Ignore transient activity-sync failures; the admin view will fall back to stale cleanup.
+		}
+	}
+
+	async function ensureVettingActivityTracking() {
+		const payload = buildVettingActivityPayload();
+		const shouldTrack = !loading && questions.length > 0 && totalReviewed < questions.length;
+		const nextKey = payload ? `${payload.subject_id ?? ''}:${payload.topic_id ?? ''}` : '';
+
+		if (!shouldTrack || !payload || !nextKey) {
+			await stopVettingActivityTracking();
+			return;
+		}
+
+		if (vettingActivityTimer && vettingActivityKey === nextKey) {
+			return;
+		}
+
+		stopVettingActivityHeartbeat();
+		vettingActivityKey = nextKey;
+
+		try {
+			await syncVettingActivity({ action: 'start', ...payload });
+		} catch {
+			return;
+		}
+
+		if (vettingActivityKey !== nextKey) {
+			return;
+		}
+
+		vettingActivityTimer = setInterval(() => {
+			const heartbeatPayload = buildVettingActivityPayload();
+			if (!heartbeatPayload) {
+				return;
+			}
+
+			void syncVettingActivity({ action: 'heartbeat', ...heartbeatPayload }).catch(() => undefined);
+		}, VETTING_ACTIVITY_HEARTBEAT_MS);
 	}
 
 	async function persistProgressNow(remote = false) {
@@ -291,6 +385,16 @@
 		if (!loading) {
 			queueProgressSave();
 		}
+	});
+
+	$effect(() => {
+		loading;
+		questions.length;
+		currentIndex;
+		totalReviewed;
+		subjectId;
+		topicId;
+		void ensureVettingActivityTracking();
 	});
 
 	async function loadQuestions() {

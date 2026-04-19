@@ -16,6 +16,14 @@
 		duration_seconds: number;
 	}
 
+	interface LiveAnalyticsSnapshot {
+		active_users: ActiveUser[];
+		vetting_count: number;
+		generating_count: number;
+		queued_count: number;
+		timestamp: string;
+	}
+
 	interface HistoricalItem {
 		date: string;
 		hour: number | null;
@@ -41,9 +49,11 @@
 	let activeUsers = $state<ActiveUser[]>([]);
 	let vettingCount = $state(0);
 	let generatingCount = $state(0);
+	let queuedCount = $state(0);
 	let lastUpdate = $state('');
 	let historicalData = $state<HistoricalData | null>(null);
 	let historicalLoading = $state(false);
+	let liveNowMs = $state(Date.now());
 
 	// Date range filters
 	let fromDate = $state<string>('');
@@ -60,6 +70,8 @@
 	let reconnectAttempts = 0;
 	const maxReconnectAttempts = 5;
 	let pingTimer: ReturnType<typeof setInterval> | null = null;
+	let durationTimer: ReturnType<typeof setInterval> | null = null;
+	const ANALYTICS_PING_INTERVAL_MS = 10000;
 
 	// Initialize date range (last 7 days by default)
 	function initializeDateRange() {
@@ -82,11 +94,13 @@
 
 	onMount(() => {
 		initializeDateRange();
-		loadInitialData();
+		startDurationTicker();
+		void loadInitialData();
 		connectWebSocket();
 	});
 
 	onDestroy(() => {
+		stopDurationTicker();
 		stopPingInterval();
 		if (ws) {
 			ws.close();
@@ -94,18 +108,33 @@
 		}
 	});
 
+	function applyLiveSnapshot(snapshot: Partial<LiveAnalyticsSnapshot>) {
+		if (Array.isArray(snapshot.active_users)) {
+			activeUsers = snapshot.active_users;
+		}
+		if (typeof snapshot.vetting_count === 'number') {
+			vettingCount = snapshot.vetting_count;
+		}
+		if (typeof snapshot.generating_count === 'number') {
+			generatingCount = snapshot.generating_count;
+		}
+		if (typeof snapshot.queued_count === 'number') {
+			queuedCount = snapshot.queued_count;
+		}
+		if (typeof snapshot.timestamp === 'string' && snapshot.timestamp) {
+			lastUpdate = snapshot.timestamp;
+		}
+	}
+
 	async function loadInitialData() {
 		loading = true;
 		error = '';
 		try {
 			const [active, historical] = await Promise.all([
-				apiFetch<{ active_users: ActiveUser[]; vetting_count: number; generating_count: number; timestamp: string }>('/analytics/active'),
+				apiFetch<LiveAnalyticsSnapshot>('/analytics/active'),
 				loadHistoricalData()
 			]);
-			activeUsers = active.active_users;
-			vettingCount = active.vetting_count;
-			generatingCount = active.generating_count;
-			lastUpdate = active.timestamp;
+			applyLiveSnapshot(active);
 			historicalData = historical;
 		} catch (e: unknown) {
 			error = e instanceof Error ? e.message : 'Failed to load analytics data';
@@ -209,7 +238,21 @@
 			if (ws && ws.readyState === WebSocket.OPEN) {
 				ws.send(JSON.stringify({ action: 'ping' }));
 			}
-		}, 30000); // Ping every 30 seconds
+		}, ANALYTICS_PING_INTERVAL_MS);
+	}
+
+	function startDurationTicker() {
+		stopDurationTicker();
+		durationTimer = setInterval(() => {
+			liveNowMs = Date.now();
+		}, 1000);
+	}
+
+	function stopDurationTicker() {
+		if (durationTimer) {
+			clearInterval(durationTimer);
+			durationTimer = null;
+		}
 	}
 
 	function stopPingInterval() {
@@ -273,10 +316,7 @@
 				break;
 			case 'activity_update':
 				if (data.data) {
-					activeUsers = (data.data.active_users as ActiveUser[]) || [];
-					vettingCount = (data.data.vetting_count as number) || 0;
-					generatingCount = (data.data.generating_count as number) || 0;
-					lastUpdate = (data.data.timestamp as string) || new Date().toISOString();
+					applyLiveSnapshot(data.data as Partial<LiveAnalyticsSnapshot>);
 				}
 				break;
 			case 'pong':
@@ -285,6 +325,14 @@
 				console.error('WebSocket error:', data.message);
 				break;
 		}
+	}
+
+	function getLiveDurationSeconds(user: ActiveUser): number {
+		const startedAtMs = Date.parse(user.started_at);
+		if (!Number.isFinite(startedAtMs)) {
+			return user.duration_seconds;
+		}
+		return Math.max(user.duration_seconds, Math.floor((liveNowMs - startedAtMs) / 1000));
 	}
 
 	function formatDuration(seconds: number): string {
@@ -358,24 +406,24 @@
 				<div class="stat-icon generating-icon">⚡</div>
 				<div class="stat-content">
 					<span class="stat-value">{generatingCount}</span>
-					<span class="stat-label">Generating Now</span>
+					<span class="stat-label">Currently Generating</span>
 				</div>
 			</div>
 			<div class="stat-card glass-panel">
-				<div class="stat-icon total-icon">👥</div>
+				<div class="stat-icon queue-icon">⏳</div>
 				<div class="stat-content">
-					<span class="stat-value">{activeUsers.length}</span>
-					<span class="stat-label">Total Active</span>
+					<span class="stat-value">{queuedCount}</span>
+					<span class="stat-label">In Queue</span>
 				</div>
 			</div>
 		</div>
 
 		<!-- Active Users List -->
 		<section class="glass-panel section">
-			<h2 class="section-title">Active Users</h2>
+			<h2 class="section-title">Active Vetters</h2>
 			{#if activeUsers.length === 0}
 				<div class="empty-state">
-					<p>No active users at the moment</p>
+					<p>No one is vetting right now</p>
 				</div>
 			{:else}
 				<div class="table-wrap">
@@ -413,7 +461,7 @@
 										{/if}
 									</td>
 									<td>{formatTime(user.started_at)}</td>
-									<td><span class="duration">{formatDuration(user.duration_seconds)}</span></td>
+									<td><span class="duration">{formatDuration(getLiveDurationSeconds(user))}</span></td>
 								</tr>
 							{/each}
 						</tbody>
@@ -666,7 +714,7 @@
 		color: #818cf8;
 	}
 
-	.total-icon {
+	.queue-icon {
 		background: rgba(245, 158, 11, 0.2);
 		color: #fbbf24;
 	}

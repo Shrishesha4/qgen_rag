@@ -8,7 +8,7 @@ filtered by subject and topic.
 
 import uuid
 import re
-from typing import Optional, List
+from typing import Literal, Optional, List
 from datetime import datetime, timezone
 
 from fastapi import APIRouter, Depends, HTTPException, status, Query
@@ -141,6 +141,12 @@ class QuestionForVetting(BaseModel):
     replaced_by_id: Optional[str] = None
 
     model_config = {"from_attributes": True}
+
+
+class VetterActivityRequest(BaseModel):
+    action: Literal["start", "heartbeat", "stop"]
+    subject_id: Optional[str] = None
+    topic_id: Optional[str] = None
 
 
 class VetQuestionRequest(BaseModel):
@@ -927,21 +933,6 @@ async def get_questions_for_vetting(
     result = await db.execute(query)
     questions = result.scalars().all()
     
-    # Register vetting activity for analytics tracking
-    if questions and status == "pending":
-        # Get subject and topic names for the first question to show context
-        subject_name = questions[0].subject.name if questions[0].subject else None
-        topic_name = questions[0].topic.name if questions[0].topic else None
-        
-        await analytics_ws_manager.register_activity(
-            user_id=str(current_user.id),
-            username=current_user.username,
-            email=current_user.email,
-            activity="vetting",
-            subject_name=subject_name,
-            topic_name=topic_name,
-        )
-    
     # Build response
     question_responses = []
     for q in questions:
@@ -1007,6 +998,61 @@ async def get_questions_for_vetting(
         "limit": limit,
         "pages": (total + limit - 1) // limit,
     }
+
+
+async def _resolve_vetting_activity_context(
+    db: AsyncSession,
+    subject_id: Optional[str],
+    topic_id: Optional[str],
+) -> tuple[Optional[str], Optional[str]]:
+    subject_name = None
+    topic_name = None
+
+    if topic_id:
+        topic_result = await db.execute(
+            select(Topic.name, Subject.name)
+            .join(Subject, Topic.subject_id == Subject.id)
+            .where(Topic.id == topic_id)
+        )
+        topic_row = topic_result.first()
+        if topic_row:
+            topic_name, subject_name = topic_row
+
+    if subject_id and subject_name is None:
+        subject_result = await db.execute(
+            select(Subject.name).where(Subject.id == subject_id)
+        )
+        subject_name = subject_result.scalar_one_or_none()
+
+    return subject_name, topic_name
+
+
+@router.post("/activity")
+async def sync_vetting_activity(
+    payload: VetterActivityRequest,
+    current_user: User = Depends(get_current_vetter),
+    db: AsyncSession = Depends(get_db),
+):
+    """Update the live analytics state for an active vetting session."""
+    if payload.action == "stop":
+        await analytics_ws_manager.clear_activity(str(current_user.id))
+        return {"message": "Vetting activity cleared"}
+
+    subject_name, topic_name = await _resolve_vetting_activity_context(
+        db,
+        payload.subject_id,
+        payload.topic_id,
+    )
+
+    await analytics_ws_manager.register_activity(
+        user_id=str(current_user.id),
+        username=current_user.username,
+        email=current_user.email,
+        activity="vetting",
+        subject_name=subject_name,
+        topic_name=topic_name,
+    )
+    return {"message": "Vetting activity updated"}
 
 
 # ============== Vet Question ==============

@@ -11,6 +11,7 @@ from dataclasses import dataclass, field
 from fastapi import WebSocket
 
 logger = logging.getLogger(__name__)
+STALE_ACTIVITY_SECONDS = 90
 
 
 @dataclass
@@ -76,14 +77,27 @@ class AnalyticsWebSocketManager:
         topic_name: Optional[str] = None,
     ) -> None:
         """Register a user's activity (vetting or generating)."""
+        now = datetime.now(timezone.utc)
         async with self._lock:
+            existing = self._active_users.get(user_id)
+            keep_existing_session = bool(existing and existing.activity == activity)
             self._active_users[user_id] = ActiveUser(
                 user_id=user_id,
                 username=username,
                 email=email,
                 activity=activity,
-                subject_name=subject_name,
-                topic_name=topic_name,
+                subject_name=(
+                    subject_name
+                    if subject_name is not None
+                    else existing.subject_name if keep_existing_session and existing else None
+                ),
+                topic_name=(
+                    topic_name
+                    if topic_name is not None
+                    else existing.topic_name if keep_existing_session and existing else None
+                ),
+                started_at=existing.started_at if keep_existing_session and existing else now,
+                last_heartbeat=now,
             )
         
         # Broadcast update to all analytics viewers (non-blocking)
@@ -108,13 +122,13 @@ class AnalyticsWebSocketManager:
         """Get all currently active users."""
         async with self._lock:
             now = datetime.now(timezone.utc)
-            # Filter out stale entries (no heartbeat in 5 minutes)
+            # Filter out stale entries so stopped vetting sessions clear quickly.
             active = []
             stale_ids = []
             
             for user_id, user in self._active_users.items():
                 age = (now - user.last_heartbeat).total_seconds()
-                if age < 300:  # 5 minutes
+                if age < STALE_ACTIVITY_SECONDS:
                     active.append({
                         "user_id": user.user_id,
                         "username": user.username,
@@ -133,16 +147,32 @@ class AnalyticsWebSocketManager:
                 del self._active_users[uid]
             
             return active
+
+    def _get_background_generation_counts(self) -> tuple[int, int]:
+        """Return the currently running and queued automatic generation counts."""
+        try:
+            from app.api.v1.endpoints.questions import (
+                _BACKGROUND_GENERATION_QUEUE,
+                _get_current_running_count,
+            )
+
+            return _get_current_running_count(), len(_BACKGROUND_GENERATION_QUEUE)
+        except Exception as exc:
+            logger.debug("Could not load background generation counts: %s", exc)
+            return 0, 0
     
     async def _broadcast_activity_update(self) -> None:
         """Broadcast activity update to all connected analytics viewers."""
         active_users = await self.get_active_users()
+        vetting_users = [user for user in active_users if user["activity"] == "vetting"]
+        generating_count, queued_count = self._get_background_generation_counts()
         message = {
             "type": "activity_update",
             "data": {
-                "active_users": active_users,
-                "vetting_count": len([u for u in active_users if u["activity"] == "vetting"]),
-                "generating_count": len([u for u in active_users if u["activity"] == "generating"]),
+                "active_users": vetting_users,
+                "vetting_count": len(vetting_users),
+                "generating_count": generating_count,
+                "queued_count": queued_count,
                 "timestamp": datetime.now(timezone.utc).isoformat(),
             }
         }
