@@ -82,12 +82,16 @@ _BACKGROUND_GENERATION_TASKS: dict[str, asyncio.Task] = {}
 _BACKGROUND_GENERATION_STATUS: dict[str, dict] = {}
 _BACKGROUND_GENERATION_QUEUE: list[dict] = []  # Global queue for all users
 _QUEUE_PROCESSING_LOCK = asyncio.Lock()  # Prevent race conditions in queue processing
+_RECONCILIATION_LOCK = asyncio.Lock()
 _MAX_CONCURRENT_GENERATIONS = 2  # Max concurrent generations across all users
+_MAX_RECONCILIATION_BACKLOG = 10  # Avoid flooding startup with too many queued auto-reconciliation jobs
 _TASK_CLEANUP_INTERVAL = 300  # Clean up completed tasks every 5 minutes
 _QUEUE_PROCESSING_INTERVAL = 10  # Process queue every 10 seconds
+_AUTO_RECONCILIATION_INTERVAL = 60  # Reconcile topic generation gaps every minute
 _MAX_RETRY_ATTEMPTS = 3  # Max retry attempts for failed queue items
 _GENERATION_REFILL_MAX_ROUNDS = 4  # Top-up passes if generation ends below target
 _GENERATION_REFILL_ATTEMPT_MULTIPLIER = 4  # Attempts per missing question in each refill round
+_ORPHAN_STALE_SECONDS = 300
 
 # Configure logging
 logger = logging.getLogger(__name__)
@@ -106,8 +110,8 @@ def _get_queue_position(user_id: str, subject_id: str) -> int:
     return 0
 
 
-def _add_to_queue(user_id: str, subject_id: str, count: int, request_data: dict) -> int:
-    """Add to queue and return position (1-based)"""
+def _add_to_queue(user_id: str, subject_id: str, count: int, request_data: dict) -> tuple[int, str]:
+    """Add to queue and return (position, run_id)."""
     queue_item = {
         "user_id": user_id,
         "subject_id": subject_id,
@@ -119,7 +123,7 @@ def _add_to_queue(user_id: str, subject_id: str, count: int, request_data: dict)
     }
     _BACKGROUND_GENERATION_QUEUE.append(queue_item)
     logger.info(f"Added to queue: user_id={user_id}, subject_id={subject_id}, position={len(_BACKGROUND_GENERATION_QUEUE)}")
-    return len(_BACKGROUND_GENERATION_QUEUE)
+    return len(_BACKGROUND_GENERATION_QUEUE), queue_item["run_id"]
 
 
 def _get_next_from_queue() -> dict | None:
@@ -225,6 +229,404 @@ async def _process_queue():
             
             # Continue processing queue if there are more items
             asyncio.create_task(_process_queue())
+
+
+def _calculate_reconciliation_count(
+    generated_count: int,
+    pending_count: int,
+    batch_size: int,
+) -> int:
+    """Apply the same topic auto-fill rules previously implemented on the subject page."""
+    if batch_size <= 0:
+        return 0
+
+    if generated_count <= 0:
+        return batch_size
+
+    remainder = generated_count % batch_size
+    if remainder:
+        return batch_size - remainder
+
+    if pending_count <= 0:
+        return batch_size
+
+    return 0
+
+
+def _topic_has_generation_content(topic: Topic, reference_doc_count: int) -> bool:
+    syllabus_content = (topic.syllabus_content or "").strip()
+    return bool(syllabus_content) or reference_doc_count > 0
+
+
+async def _mark_generation_runs_failed(
+    db: AsyncSession,
+    runs: list[GenerationRun],
+    reason: str,
+) -> None:
+    """Mark orphaned DB runs as failed so they can be rescheduled from current DB state."""
+    if not runs:
+        return
+
+    now = datetime.now(timezone.utc)
+    for run in runs:
+        run.in_progress = False
+        run.status = "failed"
+        run.message = reason
+        run.error_message = reason
+        run.completed_at = now
+        run.updated_at = now
+
+    await db.commit()
+
+    for run in runs:
+        await broadcast_generation_update(run.subject_id, run.topic_id, run.to_status_dict())
+
+
+async def _schedule_background_generation_internal(
+    *,
+    db: AsyncSession,
+    subject: Subject,
+    user_id: str,
+    count: int,
+    type_list: list[str],
+    difficulty: str,
+    topic_id: Optional[str] = None,
+    topic_ids: Optional[list[str]] = None,
+    allow_without_reference: bool = False,
+    activity_user: Optional[User] = None,
+    activity_request: Optional[Request] = None,
+    activity_source_area: str = "teacher_subjects",
+) -> dict:
+    """Shared scheduler used by both the HTTP endpoint and backend reconciliation."""
+    start_periodic_cleanup()
+
+    parsed_subject_id = str(subject.id)
+    normalized_topic_ids = topic_ids or []
+    all_topic_ids = ([topic_id] if topic_id else []) + normalized_topic_ids
+    topic_name_rows = []
+    if all_topic_ids:
+        topic_name_result = await db.execute(
+            select(Topic.id, Topic.name).where(Topic.id.in_(all_topic_ids))
+        )
+        topic_name_rows = topic_name_result.all()
+    topic_name_map = {topic_row[0]: topic_row[1] for topic_row in topic_name_rows}
+    topic_names = [topic_name_map[topic_value] for topic_value in all_topic_ids if topic_value in topic_name_map]
+
+    task_key = _bg_gen_task_key(user_id, parsed_subject_id)
+    existing_task = _BACKGROUND_GENERATION_TASKS.get(task_key)
+    if existing_task and not existing_task.done():
+        existing_status = _BACKGROUND_GENERATION_STATUS.get(task_key, {})
+        return {
+            "status": "already_running",
+            "message": "Background generation is already running for this subject",
+            "subject_id": parsed_subject_id,
+            "run_id": existing_status.get("run_id"),
+            "count": count,
+            "progress": existing_status.get("progress", 0),
+            "current_question": existing_status.get("current_question", 0),
+            "total_questions": existing_status.get("total_questions", count),
+        }
+
+    queue_position = _get_queue_position(user_id, parsed_subject_id)
+    if queue_position > 0:
+        return {
+            "status": "queued",
+            "message": f"Background generation is queued for this subject (position {queue_position})",
+            "subject_id": parsed_subject_id,
+            "queue_position": queue_position,
+            "count": count,
+        }
+
+    current_running = _get_current_running_count()
+    request_data = {
+        "types": type_list,
+        "difficulty": difficulty,
+        "topic_id": topic_id,
+        "topic_ids": normalized_topic_ids or None,
+        "allow_without_reference": allow_without_reference,
+    }
+    started_total_questions = int(subject.total_questions or 0)
+
+    if current_running >= _MAX_CONCURRENT_GENERATIONS:
+        queue_position, run_id = _add_to_queue(user_id, parsed_subject_id, count, request_data)
+
+        _BACKGROUND_GENERATION_STATUS[task_key] = {
+            "in_progress": True,
+            "run_id": run_id,
+            "status": "queued",
+            "progress": 0,
+            "current_question": 0,
+            "total_questions": count,
+            "started_total_questions": started_total_questions,
+            "target_total_questions": started_total_questions + count,
+            "message": f"Queued for background generation (position {queue_position})",
+            "updated_at": datetime.now(timezone.utc).isoformat(),
+        }
+
+        if activity_user is not None:
+            await safe_record_activity(
+                user=activity_user,
+                action_key="generation_started",
+                action_label="Started Generation",
+                category="generation",
+                source_area=activity_source_area,
+                entity_type="subject",
+                entity_id=subject.id,
+                entity_name=subject.name,
+                subject_id=subject.id,
+                subject_name=subject.name,
+                topic_id=topic_id,
+                topic_name=topic_names[0] if len(topic_names) == 1 else None,
+                details={
+                    "count": count,
+                    "types": type_list,
+                    "difficulty": difficulty,
+                    "status": "queued",
+                    "queue_position": queue_position,
+                    "topic_ids": all_topic_ids or None,
+                    "topic_names": topic_names or None,
+                    "allow_without_reference": allow_without_reference,
+                },
+                request=activity_request,
+            )
+
+        return {
+            "status": "queued",
+            "message": "Background generation queued due to high demand",
+            "subject_id": parsed_subject_id,
+            "run_id": run_id,
+            "queue_position": queue_position,
+            "count": count,
+            "types": type_list,
+            "difficulty": difficulty,
+        }
+
+    run_id = str(uuid.uuid4())
+    _BACKGROUND_GENERATION_STATUS[task_key] = {
+        "in_progress": True,
+        "run_id": run_id,
+        "status": "scheduled",
+        "progress": 0,
+        "current_question": 0,
+        "total_questions": count,
+        "started_total_questions": started_total_questions,
+        "target_total_questions": started_total_questions + count,
+        "message": "Background generation scheduled",
+        "updated_at": datetime.now(timezone.utc).isoformat(),
+    }
+
+    task = asyncio.create_task(
+        _run_background_subject_generation(
+            user_id=user_id,
+            subject_id=parsed_subject_id,
+            count=count,
+            types=type_list,
+            difficulty=difficulty,
+            run_id=run_id,
+            topic_id=topic_id,
+            topic_ids=normalized_topic_ids or None,
+            allow_without_reference=allow_without_reference,
+        )
+    )
+    _BACKGROUND_GENERATION_TASKS[task_key] = task
+
+    if activity_user is not None:
+        await safe_record_activity(
+            user=activity_user,
+            action_key="generation_started",
+            action_label="Started Generation",
+            category="generation",
+            source_area=activity_source_area,
+            entity_type="subject",
+            entity_id=subject.id,
+            entity_name=subject.name,
+            subject_id=subject.id,
+            subject_name=subject.name,
+            topic_id=topic_id,
+            topic_name=topic_names[0] if len(topic_names) == 1 else None,
+            details={
+                "count": count,
+                "types": type_list,
+                "difficulty": difficulty,
+                "status": "scheduled",
+                "run_id": run_id,
+                "topic_ids": all_topic_ids or None,
+                "topic_names": topic_names or None,
+                "allow_without_reference": allow_without_reference,
+            },
+            request=activity_request,
+        )
+
+    return {
+        "status": "scheduled",
+        "message": (
+            "Background generation scheduled (no PDF fallback enabled)"
+            if allow_without_reference
+            else "Background generation scheduled"
+        ),
+        "subject_id": parsed_subject_id,
+        "run_id": run_id,
+        "count": count,
+        "types": type_list,
+        "difficulty": difficulty,
+        "topic_id": topic_id,
+        "topic_ids": normalized_topic_ids or None,
+    }
+
+
+async def reconcile_background_generation(reason: str = "periodic") -> int:
+    """Reconcile topics that need automatic generation without relying on the subject page."""
+    async with _RECONCILIATION_LOCK:
+        provider_service = get_provider_service()
+        provider_config = await provider_service.get_config()
+        batch_size = int(provider_config.generation_batch_size or 0)
+        if batch_size <= 0:
+            logger.warning("Skipping background generation reconciliation: no enabled providers configured")
+            return 0
+
+        scheduled_topics = 0
+        async with AsyncSessionLocal() as db:
+            subject_result = await db.execute(
+                select(Subject)
+                .options(selectinload(Subject.topics))
+                .where(Subject.user_id.isnot(None))
+            )
+            subjects = list(subject_result.scalars().all())
+
+            for subject in subjects:
+                if _get_current_running_count() + len(_BACKGROUND_GENERATION_QUEUE) >= _MAX_RECONCILIATION_BACKLOG:
+                    break
+
+                if not subject.topics or not subject.user_id:
+                    continue
+
+                owner_user_id = str(subject.user_id)
+                subject_id = str(subject.id)
+                task_key = _bg_gen_task_key(owner_user_id, subject_id)
+
+                existing_task = _BACKGROUND_GENERATION_TASKS.get(task_key)
+                if existing_task and not existing_task.done():
+                    continue
+                if _get_queue_position(owner_user_id, subject_id) > 0:
+                    continue
+
+                generation_status_service = GenerationStatusService(db)
+                active_runs = await generation_status_service.get_active_runs_for_subject(subject_id)
+                if active_runs:
+                    now = datetime.now(timezone.utc)
+                    stale_runs = []
+                    for run in active_runs:
+                        updated_at = run.updated_at or run.started_at
+                        if updated_at is None:
+                            stale_runs.append(run)
+                            continue
+                        if updated_at.tzinfo is None:
+                            updated_at = updated_at.replace(tzinfo=timezone.utc)
+                        if (now - updated_at).total_seconds() > _ORPHAN_STALE_SECONDS:
+                            stale_runs.append(run)
+
+                    if stale_runs:
+                        await _mark_generation_runs_failed(
+                            db,
+                            stale_runs,
+                            "Generation interrupted — rescheduled automatically from database reconciliation.",
+                        )
+
+                    if len(stale_runs) != len(active_runs):
+                        continue
+
+                question_rows = await db.execute(
+                    select(Question.topic_id, Question.vetting_status, func.count(Question.id))
+                    .where(
+                        Question.subject_id == subject_id,
+                        Question.is_archived == False,
+                        Question.is_latest == True,
+                    )
+                    .group_by(Question.topic_id, Question.vetting_status)
+                )
+
+                topic_stats = {
+                    str(topic.id): {"generated": 0, "pending": 0}
+                    for topic in subject.topics
+                }
+                orphan_generated = 0
+                orphan_pending = 0
+                for topic_key, vetting_status, question_count in question_rows.all():
+                    count_value = int(question_count or 0)
+                    normalized_topic_id = str(topic_key) if topic_key else None
+                    if normalized_topic_id and normalized_topic_id in topic_stats:
+                        topic_stats[normalized_topic_id]["generated"] += count_value
+                        if (vetting_status or "pending") == "pending":
+                            topic_stats[normalized_topic_id]["pending"] += count_value
+                        continue
+
+                    orphan_generated += count_value
+                    if (vetting_status or "pending") == "pending":
+                        orphan_pending += count_value
+
+                if len(subject.topics) == 1:
+                    only_topic_id = str(subject.topics[0].id)
+                    topic_stats[only_topic_id]["generated"] += orphan_generated
+                    topic_stats[only_topic_id]["pending"] += orphan_pending
+
+                reference_doc_rows = await db.execute(
+                    select(Document.topic_id, func.count(Document.id))
+                    .where(
+                        Document.subject_id == subject_id,
+                        Document.topic_id.isnot(None),
+                        Document.index_type.in_(("reference_book", "template_paper")),
+                    )
+                    .group_by(Document.topic_id)
+                )
+                reference_doc_counts = {
+                    str(topic_key): int(doc_count or 0)
+                    for topic_key, doc_count in reference_doc_rows.all()
+                    if topic_key
+                }
+
+                sorted_topics = sorted(subject.topics, key=lambda topic: topic.order_index or 0)
+                for topic in sorted_topics:
+                    topic_id = str(topic.id)
+                    reference_doc_count = reference_doc_counts.get(topic_id, 0)
+                    if not _topic_has_generation_content(topic, reference_doc_count):
+                        continue
+
+                    topic_generated = topic_stats[topic_id]["generated"]
+                    topic_pending = topic_stats[topic_id]["pending"]
+                    needed_count = _calculate_reconciliation_count(
+                        generated_count=topic_generated,
+                        pending_count=topic_pending,
+                        batch_size=batch_size,
+                    )
+                    if needed_count <= 0:
+                        continue
+
+                    schedule_result = await _schedule_background_generation_internal(
+                        db=db,
+                        subject=subject,
+                        user_id=owner_user_id,
+                        count=needed_count,
+                        type_list=["mcq"],
+                        difficulty="medium",
+                        topic_id=topic_id,
+                        allow_without_reference=reference_doc_count == 0,
+                    )
+                    if schedule_result.get("status") in {"scheduled", "queued"}:
+                        scheduled_topics += 1
+                        logger.info(
+                            "Reconciled topic generation gap",
+                            extra={
+                                "reason": reason,
+                                "subject_id": subject_id,
+                                "topic_id": topic_id,
+                                "needed_count": needed_count,
+                                "generated": topic_generated,
+                                "pending": topic_pending,
+                            },
+                        )
+                    break
+
+        return scheduled_topics
 
 
 async def _wait_for_subject_docs_ready(
@@ -862,19 +1264,30 @@ async def _run_background_subject_generation(
 
 async def _periodic_cleanup():
     """Periodic cleanup of completed tasks and queue processing"""
+    last_cleanup_at = 0.0
+    last_reconciliation_at = 0.0
+
     while True:
         try:
-            # Clean up completed tasks
-            _cleanup_completed_tasks()
-            
-            # Process queue if there's capacity
+            loop_time = asyncio.get_running_loop().time()
+
+            if loop_time - last_cleanup_at >= _TASK_CLEANUP_INTERVAL:
+                _cleanup_completed_tasks()
+                last_cleanup_at = loop_time
+
             await _process_queue()
+
+            if loop_time - last_reconciliation_at >= _AUTO_RECONCILIATION_INTERVAL:
+                scheduled_count = await reconcile_background_generation(reason="periodic")
+                if scheduled_count:
+                    logger.info("Background generation reconciliation scheduled %s topic(s)", scheduled_count)
+                last_reconciliation_at = loop_time
             
             logger.debug("Periodic cleanup completed")
         except Exception as e:
             logger.error(f"Error in periodic cleanup: {e}")
         
-        await asyncio.sleep(_TASK_CLEANUP_INTERVAL)
+        await asyncio.sleep(_QUEUE_PROCESSING_INTERVAL)
 
 
 # Start periodic cleanup when the module is loaded
@@ -1678,183 +2091,20 @@ async def schedule_background_generation(
     if parsed_topic_id and parsed_topic_ids:
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Use either topic_id or topic_ids, not both")
 
-    no_reference_fallback = allow_without_reference
-    all_topic_ids = ([parsed_topic_id] if parsed_topic_id else []) + parsed_topic_ids
-    topic_name_rows = []
-    if all_topic_ids:
-        topic_name_result = await db.execute(
-            select(Topic.id, Topic.name).where(Topic.id.in_(all_topic_ids))
-        )
-        topic_name_rows = topic_name_result.all()
-    topic_name_map = {topic_row[0]: topic_row[1] for topic_row in topic_name_rows}
-    topic_names = [topic_name_map[topic_value] for topic_value in all_topic_ids if topic_value in topic_name_map]
-
-    task_key = _bg_gen_task_key(current_user.id, parsed_subject_id)
-    existing_task = _BACKGROUND_GENERATION_TASKS.get(task_key)
-    if existing_task and not existing_task.done():
-        existing_status = _BACKGROUND_GENERATION_STATUS.get(task_key, {})
-        return {
-            "status": "already_running",
-            "message": "Background generation is already running for this subject",
-            "subject_id": str(parsed_subject_id),
-            "run_id": existing_status.get("run_id"),
-            "count": count,
-            "progress": existing_status.get("progress", 0),
-            "current_question": existing_status.get("current_question", 0),
-            "total_questions": existing_status.get("total_questions", count),
-        }
-
-    # Check if already queued
-    queue_position = _get_queue_position(current_user.id, parsed_subject_id)
-    if queue_position > 0:
-        return {
-            "status": "queued",
-            "message": f"Background generation is queued for this subject (position {queue_position})",
-            "subject_id": str(parsed_subject_id),
-            "queue_position": queue_position,
-            "count": count,
-        }
-
-    # Check if we have capacity to run immediately or need to queue
-    current_running = _get_current_running_count()
-    request_data = {
-        "types": type_list,
-        "difficulty": difficulty,
-        "topic_id": parsed_topic_id,
-        "topic_ids": parsed_topic_ids or None,
-        "allow_without_reference": no_reference_fallback,
-    }
-
-    if current_running >= _MAX_CONCURRENT_GENERATIONS:
-        # Queue the request
-        queue_position = _add_to_queue(current_user.id, parsed_subject_id, count, request_data)
-        run_id = str(uuid.uuid4())
-        
-        # Set queued status
-        _BACKGROUND_GENERATION_STATUS[task_key] = {
-            "in_progress": True,
-            "run_id": run_id,
-            "status": "queued",
-            "progress": 0,
-            "current_question": 0,
-            "total_questions": count,
-            "started_total_questions": int(subject.total_questions or 0),
-            "target_total_questions": int(subject.total_questions or 0) + count,
-            "message": f"Queued for background generation (position {queue_position})",
-            "updated_at": datetime.now(timezone.utc).isoformat(),
-        }
-
-        await safe_record_activity(
-            user=current_user,
-            action_key="generation_started",
-            action_label="Started Generation",
-            category="generation",
-            source_area="teacher_subjects",
-            entity_type="subject",
-            entity_id=subject.id,
-            entity_name=subject.name,
-            subject_id=subject.id,
-            subject_name=subject.name,
-            topic_id=parsed_topic_id,
-            topic_name=topic_names[0] if len(topic_names) == 1 else None,
-            details={
-                "count": count,
-                "types": type_list,
-                "difficulty": difficulty,
-                "status": "queued",
-                "queue_position": queue_position,
-                "topic_ids": all_topic_ids or None,
-                "topic_names": topic_names or None,
-                "allow_without_reference": no_reference_fallback,
-            },
-            request=request,
-        )
-        
-        return {
-            "status": "queued",
-            "message": f"Background generation queued (position {queue_position}) due to high demand",
-            "subject_id": str(parsed_subject_id),
-            "run_id": run_id,
-            "queue_position": queue_position,
-            "count": count,
-            "types": type_list,
-            "difficulty": difficulty,
-        }
-
-    # Run immediately
-    run_id = str(uuid.uuid4())
-
-    _BACKGROUND_GENERATION_STATUS[task_key] = {
-        "in_progress": True,
-        "run_id": run_id,
-        "status": "scheduled",
-        "progress": 0,
-        "current_question": 0,
-        "total_questions": count,
-        "started_total_questions": int(subject.total_questions or 0),
-        "target_total_questions": int(subject.total_questions or 0) + count,
-        "message": "Background generation scheduled",
-        "updated_at": datetime.now(timezone.utc).isoformat(),
-    }
-
-    task = asyncio.create_task(
-        _run_background_subject_generation(
-            user_id=current_user.id,
-            subject_id=parsed_subject_id,
-            count=count,
-            types=type_list,
-            difficulty=difficulty,
-            run_id=run_id,
-            topic_id=parsed_topic_id,
-            topic_ids=parsed_topic_ids or None,
-            allow_without_reference=no_reference_fallback,
-        )
-    )
-    _BACKGROUND_GENERATION_TASKS[task_key] = task
-
-    await safe_record_activity(
-        user=current_user,
-        action_key="generation_started",
-        action_label="Started Generation",
-        category="generation",
-        source_area="teacher_subjects",
-        entity_type="subject",
-        entity_id=subject.id,
-        entity_name=subject.name,
-        subject_id=subject.id,
-        subject_name=subject.name,
+    return await _schedule_background_generation_internal(
+        db=db,
+        subject=subject,
+        user_id=str(current_user.id),
+        count=count,
+        type_list=type_list,
+        difficulty=difficulty,
         topic_id=parsed_topic_id,
-        topic_name=topic_names[0] if len(topic_names) == 1 else None,
-        details={
-            "count": count,
-            "types": type_list,
-            "difficulty": difficulty,
-            "status": "scheduled",
-            "run_id": run_id,
-            "topic_ids": all_topic_ids or None,
-            "topic_names": topic_names or None,
-            "allow_without_reference": no_reference_fallback,
-        },
-        request=request,
+        topic_ids=parsed_topic_ids or None,
+        allow_without_reference=allow_without_reference,
+        activity_user=current_user,
+        activity_request=request,
+        activity_source_area="teacher_subjects",
     )
-    
-    # Process queue after task completes (this will be handled in the finally block of _run_background_subject_generation)
-
-    return {
-        "status": "scheduled",
-        "message": (
-            "Background generation scheduled (no PDF fallback enabled)"
-            if no_reference_fallback
-            else "Background generation scheduled"
-        ),
-        "subject_id": str(parsed_subject_id),
-        "run_id": run_id,
-        "count": count,
-        "types": type_list,
-        "difficulty": difficulty,
-        "topic_id": str(parsed_topic_id) if parsed_topic_id else None,
-        "topic_ids": [str(item) for item in parsed_topic_ids] if parsed_topic_ids else None,
-    }
 
 
 @router.get("/background-generation-statuses")
@@ -1916,7 +2166,6 @@ async def get_background_generation_statuses(
                     pass
                 else:
                     # Potentially orphaned — check staleness (no update in >5 min)
-                    _ORPHAN_STALE_SECONDS = 300
                     updated_at_str = status_payload.get("updated_at")
                     is_stale = False
                     if updated_at_str:
@@ -1940,15 +2189,16 @@ async def get_background_generation_statuses(
                             **status_payload,
                             "in_progress": False,
                             "status": "failed",
-                            "message": "Generation interrupted — no active task (server may have restarted). Will retry automatically.",
+                            "message": "Generation interrupted — no active task (server may have restarted). Rescheduling automatically.",
                             "updated_at": datetime.now(timezone.utc).isoformat(),
                         }
+                        asyncio.create_task(reconcile_background_generation(reason="status_poll"))
                         # Overwrite the response entry with terminal status so frontend stops polling
                         statuses[str(parsed_subject_id)] = {
                             **statuses[str(parsed_subject_id)],
                             "in_progress": False,
                             "status": "failed",
-                            "message": "Generation interrupted — no active task. Will retry automatically.",
+                            "message": "Generation interrupted — rescheduling automatically.",
                         }
                     else:
                         _bg_status_logger.warning(

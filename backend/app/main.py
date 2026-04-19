@@ -74,9 +74,8 @@ async def lifespan(app: FastAPI):
     except Exception as e:
         logger.warning(f"⚠️ Failed to clean stale locks: {e}")
 
-    # Reset stale in-progress generation runs left over from previous server instance.
-    # Redis locks are cleaned above; now reset the DB records so the frontend
-    # no longer shows a permanent "Generating..." spinner for these topics.
+    # Reset stale in-progress generation runs left over from the previous server instance.
+    # They will be rescheduled from current DB state by background reconciliation below.
     try:
         from datetime import datetime, timezone as tz
         from sqlalchemy import update as sa_update
@@ -90,16 +89,30 @@ async def lifespan(app: FastAPI):
                 .values(
                     in_progress=False,
                     status="failed",
-                    error_message="Server restarted — generation was interrupted",
+                    message="Generation interrupted during server restart — rescheduling automatically",
+                    error_message="Server restarted — generation was interrupted and will be rescheduled automatically",
                     completed_at=datetime.now(tz.utc),
                 )
             )
             await _db.commit()
             rows = result.rowcount
         if rows:
-            logger.info(f"🧹 Reset {rows} stale in-progress generation run(s)")
+            logger.info(f"🧹 Reset {rows} stale in-progress generation run(s) for automatic reconciliation")
     except Exception as e:
         logger.warning(f"⚠️ Failed to reset stale generation runs: {e}")
+
+    try:
+        from app.api.v1.endpoints.questions import (
+            reconcile_background_generation,
+            start_periodic_cleanup,
+        )
+
+        reconciled = await reconcile_background_generation(reason="startup")
+        start_periodic_cleanup()
+        if reconciled:
+            logger.info(f"🔄 Reconciled background generation for {reconciled} topic(s) on startup")
+    except Exception as e:
+        logger.warning(f"⚠️ Failed to start background generation reconciliation: {e}")
     
     logger.info("✅ All services ready")
     yield

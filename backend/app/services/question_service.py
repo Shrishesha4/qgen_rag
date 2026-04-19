@@ -9,6 +9,7 @@ This service implements:
 """
 
 import json
+import re
 from datetime import datetime, timezone
 from typing import Optional, List, Dict, Any, Tuple, AsyncGenerator
 import uuid
@@ -891,6 +892,8 @@ Output valid JSON only."""
                 temperature=0.7,
             )
 
+            response = self._normalize_generation_payload(response, question_type)
+
             if settings.GENERATION_SCHEMA_ENFORCEMENT and not self._validate_generation_schema(response, question_type):
                 return None
             
@@ -1734,10 +1737,54 @@ Return JSON only:
         else:
             return "Covers core concepts from the source text"
     
-    def _normalize_options(self, options: List[Any]) -> List[str]:
+    def _split_option_blob(self, option_blob: str) -> List[str]:
+        """Split stringified MCQ options into a list."""
+        text = str(option_blob or "").strip()
+        if not text:
+            return []
+
+        labeled_matches = re.findall(
+            r"(?:^|[\n\r;])\s*(?:[A-F]|\d+)[).:\-]\s*(.+?)(?=(?:[\n\r;]\s*(?:[A-F]|\d+)[).:\-]\s*)|$)",
+            text,
+            flags=re.IGNORECASE | re.DOTALL,
+        )
+        if labeled_matches:
+            return [match.strip() for match in labeled_matches if match.strip()]
+
+        plain_lines = [
+            line.strip(" -\t")
+            for line in re.split(r"[\n\r;]+", text)
+            if line.strip(" -\t")
+        ]
+        if len(plain_lines) > 1:
+            return plain_lines
+
+        return [text]
+
+    def _normalize_options(self, options: Any) -> List[str]:
         """Normalize options to list of strings in format 'A) text'."""
         if not options:
             return []
+
+        if isinstance(options, str):
+            options = self._split_option_blob(options)
+        elif isinstance(options, dict):
+            ordered_values = []
+            for label in ['A', 'B', 'C', 'D', 'E', 'F']:
+                for key in (
+                    label,
+                    label.lower(),
+                    f"option_{label.lower()}",
+                    f"choice_{label.lower()}",
+                ):
+                    if key in options and options[key]:
+                        ordered_values.append(options[key])
+                        break
+            options = ordered_values or [value for value in options.values() if value]
+        elif isinstance(options, (tuple, set)):
+            options = list(options)
+        elif not isinstance(options, list):
+            options = [options]
         
         normalized = []
         labels = ['A', 'B', 'C', 'D', 'E', 'F']
@@ -4426,8 +4473,16 @@ Output valid JSON only."""
                         llm_service_override=llm_service_override,
                     )
 
-                if settings.GENERATION_SCHEMA_ENFORCEMENT and not self._validate_generation_schema(response, question_type):
-                    raise ValueError("Generated response failed schema validation")
+                response = self._normalize_generation_payload(response, question_type)
+
+                if settings.GENERATION_SCHEMA_ENFORCEMENT:
+                    validation_error = self._get_generation_schema_error(
+                        response, question_type
+                    )
+                    if validation_error:
+                        raise ValueError(
+                            f"Generated response failed schema validation: {validation_error}"
+                        )
 
                 return response
             except Exception as e:
@@ -4438,35 +4493,127 @@ Output valid JSON only."""
         logger.error(f"All {max_retries} attempts failed for {question_type}: {last_error}")
         return None
 
-    def _validate_generation_schema(self, payload: Dict[str, Any], question_type: str) -> bool:
-        """Validate generated payload against strict question-type schema."""
+    def _normalize_generation_payload(
+        self,
+        payload: Dict[str, Any],
+        question_type: str,
+    ) -> Dict[str, Any]:
+        """Coerce common LLM output variants into the expected question schema."""
         if not isinstance(payload, dict):
-            return False
+            return payload
 
-        if not payload.get("question_text"):
-            return False
+        if "question_text" not in payload:
+            for alias in ("question", "text", "prompt"):
+                if payload.get(alias):
+                    payload["question_text"] = payload.get(alias)
+                    break
+
+        topic_tags = payload.get("topic_tags")
+        if isinstance(topic_tags, str):
+            split_tags = [tag.strip() for tag in topic_tags.split(",") if tag.strip()]
+            payload["topic_tags"] = split_tags or [topic_tags.strip()]
+
+        if question_type == "mcq":
+            normalized_options = self._normalize_options(payload.get("options"))
+
+            if not normalized_options:
+                extracted_options = []
+                for label in ("A", "B", "C", "D", "E", "F"):
+                    for key in (
+                        label,
+                        label.lower(),
+                        f"option_{label.lower()}",
+                        f"choice_{label.lower()}",
+                    ):
+                        value = payload.get(key)
+                        if value:
+                            extracted_options.append(value)
+                            break
+                normalized_options = self._normalize_options(extracted_options)
+
+            if normalized_options:
+                payload["options"] = normalized_options
+                normalized_answer = self._normalize_mcq_correct_answer(
+                    payload, normalized_options
+                )
+                if not normalized_answer:
+                    normalized_answer = self._extract_label_from_explanation(
+                        str(payload.get("explanation") or ""),
+                        len(normalized_options),
+                    )
+                if normalized_answer:
+                    payload["correct_answer"] = normalized_answer
+
+            payload.setdefault("explanation", "")
+
+        elif question_type == "short_answer":
+            if not payload.get("expected_answer"):
+                answer_value = payload.get("correct_answer") or payload.get("answer")
+                if answer_value:
+                    payload["expected_answer"] = answer_value
+
+        elif question_type == "long_answer":
+            if not payload.get("expected_answer"):
+                answer_value = payload.get("correct_answer") or payload.get("answer")
+                if answer_value:
+                    payload["expected_answer"] = answer_value
+
+            key_points = payload.get("key_points")
+            if isinstance(key_points, str):
+                split_points = [
+                    point.strip(" -\t")
+                    for point in re.split(r"[\n\r;]+", key_points)
+                    if point.strip(" -\t")
+                ]
+                if not split_points:
+                    split_points = [
+                        point.strip()
+                        for point in key_points.split(",")
+                        if point.strip()
+                    ]
+                if split_points:
+                    payload["key_points"] = split_points
+
+        return payload
+
+    def _get_generation_schema_error(
+        self,
+        payload: Dict[str, Any],
+        question_type: str,
+    ) -> Optional[str]:
+        """Return a human-readable schema mismatch reason, if any."""
+        if not isinstance(payload, dict):
+            return f"payload is {type(payload).__name__}, expected object"
+
+        question_text = str(payload.get("question_text") or "").strip()
+        if not question_text:
+            return "missing question_text"
 
         if question_type == "mcq":
             options = payload.get("options")
+            option_count = len(options) if isinstance(options, list) else 0
+            if not isinstance(options, list) or option_count < 3:
+                return f"invalid options payload (type={type(options).__name__}, count={option_count})"
+
             answer = payload.get("correct_answer")
-            if not isinstance(options, list) or len(options) < 2:
-                return False
             if not isinstance(answer, str) or len(answer.strip()) == 0:
-                return False
-            # explanation is desirable but not a hard requirement; auto-fill if missing
-            if "explanation" not in payload:
-                payload["explanation"] = ""
+                return f"invalid correct_answer ({answer!r})"
 
         if question_type == "short_answer":
             if not (payload.get("expected_answer") or payload.get("correct_answer")):
-                return False
+                return "missing expected_answer"
 
         if question_type == "long_answer":
             key_points = payload.get("key_points")
             if not isinstance(key_points, list) or len(key_points) < 1:
-                return False
+                return "missing key_points"
 
-        return True
+        return None
+
+    def _validate_generation_schema(self, payload: Dict[str, Any], question_type: str) -> bool:
+        """Validate generated payload against strict question-type schema."""
+        payload = self._normalize_generation_payload(payload, question_type)
+        return self._get_generation_schema_error(payload, question_type) is None
 
     async def _repair_with_self_critique(
         self,

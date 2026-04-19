@@ -654,11 +654,6 @@
 				};
 			}
 
-			// If pending just dropped (e.g. last question vetted), trigger auto-fill check
-			const newPending = statsData.pending ?? prevPending;
-			if (prevPending !== null && newPending !== null && newPending < prevPending) {
-				void autoFillTopicsIfNeeded();
-			}
 		});
 
 		// Store additional unsubscribers - we'll clean them up in onDestroy
@@ -786,8 +781,6 @@
 				completedGenerationHoldByTopicId = nextHold;
 			}
 
-			// Auto-fill any topics that are not at a 30-multiple after stats are fresh
-			void autoFillTopicsIfNeeded();
 		} catch {
 			if (subject) {
 				subjectReviewStats = {
@@ -976,45 +969,6 @@
 		}
 		queueTopicGeneration(topicId);
 		await maybeStartQueuedTopicGeneration();
-	}
-
-	/**
-	 * Automatically fill every topic so its total generated question count is an
-	 * exact multiple of `generationBatchSize` (30, 60, 90…).
-	 *
-	 * Rules:
-	 *  - `generated % BATCH !== 0` → fill exactly `nextMultiple - generated` (incomplete batch)
-	 *  - `generated % BATCH === 0 && pending === 0 && generated > 0` → start next full batch
-	 *
-	 * Called as a hook after stats load and after WS topic-stats updates.
-	 * Guards (isTopicGenerating / isTopicQueued) prevent duplicate triggers.
-	 */
-	async function autoFillTopicsIfNeeded() {
-		if (!subject || !subjectId) return;
-		const BATCH = generationBatchSize;
-		for (const topic of subject.topics) {
-			if (isTopicGenerating(topic.id) || isTopicQueued(topic.id)) continue;
-			const stats = topicReviewStats[topic.id];
-			const generated = stats?.generated ?? 0;
-			const pending = stats?.pending ?? 0;
-
-			let neededCount = 0;
-
-			if (generated === 0) {
-				// No questions yet — auto-start first batch
-				neededCount = BATCH;
-			} else if (generated % BATCH !== 0) {
-				// Incomplete batch — fill exactly to next multiple
-				neededCount = Math.ceil(generated / BATCH) * BATCH - generated;
-			} else if (pending === 0) {
-				// All questions vetted at a clean multiple — auto-start next full batch
-				neededCount = BATCH;
-			}
-
-			if (neededCount > 0) {
-				await queueTopicGenerationForStart(topic.id, neededCount === BATCH ? undefined : neededCount);
-			}
-		}
 	}
 
 	function canGenerateTopic(topicId: string, fallbackPending: number, fallbackGenerated: number) {
