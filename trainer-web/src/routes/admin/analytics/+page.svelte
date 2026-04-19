@@ -38,6 +38,13 @@
 		vetting_count: number;
 		generating_count: number;
 		queued_count: number;
+		eligible_topics_count: number;
+		generated_questions_total: number;
+		target_questions_total: number;
+		remaining_questions: number;
+		topics_below_target_count: number;
+		topic_backlog_questions_total: number;
+		surplus_questions_total: number;
 		generating_items: GenerationWorkItem[];
 		queued_items: GenerationWorkItem[];
 		timestamp: string;
@@ -69,6 +76,13 @@
 	let vettingCount = $state(0);
 	let generatingCount = $state(0);
 	let queuedCount = $state(0);
+	let eligibleTopicsCount = $state(0);
+	let generatedQuestionsTotal = $state(0);
+	let targetQuestionsTotal = $state(0);
+	let remainingQuestions = $state(0);
+	let topicsBelowTargetCount = $state(0);
+	let topicBacklogQuestionsTotal = $state(0);
+	let surplusQuestionsTotal = $state(0);
 	let generatingItems = $state<GenerationWorkItem[]>([]);
 	let queuedItems = $state<GenerationWorkItem[]>([]);
 	let lastUpdate = $state('');
@@ -148,6 +162,27 @@
 		}
 		if (typeof snapshot.queued_count === 'number') {
 			queuedCount = snapshot.queued_count;
+		}
+		if (typeof snapshot.eligible_topics_count === 'number') {
+			eligibleTopicsCount = snapshot.eligible_topics_count;
+		}
+		if (typeof snapshot.generated_questions_total === 'number') {
+			generatedQuestionsTotal = snapshot.generated_questions_total;
+		}
+		if (typeof snapshot.target_questions_total === 'number') {
+			targetQuestionsTotal = snapshot.target_questions_total;
+		}
+		if (typeof snapshot.remaining_questions === 'number') {
+			remainingQuestions = snapshot.remaining_questions;
+		}
+		if (typeof snapshot.topics_below_target_count === 'number') {
+			topicsBelowTargetCount = snapshot.topics_below_target_count;
+		}
+		if (typeof snapshot.topic_backlog_questions_total === 'number') {
+			topicBacklogQuestionsTotal = snapshot.topic_backlog_questions_total;
+		}
+		if (typeof snapshot.surplus_questions_total === 'number') {
+			surplusQuestionsTotal = snapshot.surplus_questions_total;
 		}
 		if (typeof snapshot.timestamp === 'string' && snapshot.timestamp) {
 			lastUpdate = snapshot.timestamp;
@@ -411,7 +446,7 @@
 
 	function generationDialogTitle(): string {
 		if (generationDialogKind === 'running') return 'Currently Generating';
-		if (generationDialogKind === 'queued') return 'Queued Generations';
+		if (generationDialogKind === 'queued') return 'Generation Backlog';
 		return '';
 	}
 
@@ -420,9 +455,16 @@
 			return 'Live background generation runs and their current progress.';
 		}
 		if (generationDialogKind === 'queued') {
-			return 'Jobs waiting for a free generation worker slot.';
+			if (surplusQuestionsTotal > 0) {
+				return `${formatNumber(remainingQuestions)} questions remain to reach the global target of ${formatNumber(targetQuestionsTotal)}. Topic-level deficits add up to ${formatNumber(topicBacklogQuestionsTotal)}, offset by ${formatNumber(surplusQuestionsTotal)} extra questions already present on over-target topics.`;
+			}
+			return `Topics that still need generation, calculated from database state. ${formatNumber(remainingQuestions)} questions remain to reach the current global target.`;
 		}
 		return '';
+	}
+
+	function formatNumber(value: number): string {
+		return new Intl.NumberFormat().format(value);
 	}
 
 	function formatGenerationStatus(status: string): string {
@@ -449,6 +491,14 @@
 	function generationProgressWidth(item: GenerationWorkItem): string {
 		const progress = Number.isFinite(item.progress) ? item.progress : 0;
 		return `${Math.max(0, Math.min(100, progress))}%`;
+	}
+
+	function remainingTopicsLabel(): string {
+		const topicCount = topicsBelowTargetCount || queuedItems.length;
+		if (targetQuestionsTotal > 0) {
+			return `${topicCount} ${topicCount === 1 ? 'topic' : 'topics'} below target | ${formatNumber(generatedQuestionsTotal)} / ${formatNumber(targetQuestionsTotal)}`;
+		}
+		return `${topicCount} ${topicCount === 1 ? 'topic' : 'topics'} below target`;
 	}
 </script>
 
@@ -503,9 +553,10 @@
 			<button class="stat-card stat-card-button glass-panel" type="button" onclick={() => openGenerationDialog('queued')}>
 				<div class="stat-icon queue-icon">⏳</div>
 				<div class="stat-content">
-					<span class="stat-value">{queuedCount}</span>
-					<span class="stat-label">In Queue</span>
-					<span class="stat-action">View queue</span>
+					<span class="stat-value">{formatNumber(remainingQuestions)}</span>
+					<span class="stat-label">Remaining To Generate</span>
+					<span class="stat-action">View topics</span>
+					<span class="stat-meta">{remainingTopicsLabel()}</span>
 				</div>
 			</button>
 		</div>
@@ -531,7 +582,7 @@
 
 					{#if generationDialogItems().length === 0}
 						<div class="empty-state compact-empty-state">
-							<p>{generationDialogKind === 'running' ? 'No generation is active right now.' : 'Nothing is waiting in the queue right now.'}</p>
+							<p>{generationDialogKind === 'running' ? 'No generation is active right now.' : 'No topics are below the current generation target right now.'}</p>
 						</div>
 					{:else}
 						<div class="generation-list">
@@ -916,6 +967,11 @@
 		font-size: 0.75rem;
 		font-weight: 700;
 		color: var(--theme-primary);
+	}
+
+	.stat-meta {
+		font-size: 0.72rem;
+		color: var(--theme-text-muted);
 	}
 
 	.section {
