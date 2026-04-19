@@ -34,6 +34,7 @@
 		avg_questions_per_call: number;
 		total_rejected: number;
 		total_regenerated: number;
+		total_vetted: number;
 		rejection_rate: number;
 		regeneration_rate: number;
 		inferred_preference: string;
@@ -45,6 +46,7 @@
 		total_generated: number;
 		total_rejected: number;
 		total_regenerated: number;
+		total_vetted: number;
 		providers: ProviderMetric[];
 	}
 
@@ -145,7 +147,8 @@
 		label: '',
 		icon: '🎨',
 		bgImage: '',
-		wallpaperOverlay: 'linear-gradient(180deg, rgba(0,0,0,0.1) 0%, rgba(0,0,0,0.05) 50%, rgba(0,0,0,0.15) 100%)',
+		wallpaperOverlay:
+			'linear-gradient(180deg, rgba(0,0,0,0.1) 0%, rgba(0,0,0,0.05) 50%, rgba(0,0,0,0.15) 100%)',
 		bg: 'linear-gradient(175deg, #1a1a2e 0%, #16213e 50%, #0f3460 100%)',
 		bgColor: '#1a1a2e',
 		primary: '#6366f1',
@@ -205,7 +208,11 @@
 		passwordResetMessage = '';
 		try {
 			const [signup, providerSettings, passwordResetResponse] = await Promise.all([
-				apiFetch<{ signup_enabled: boolean; domain_restriction_enabled: boolean; allowed_domains: string[] }>('/settings/signup'),
+				apiFetch<{
+					signup_enabled: boolean;
+					domain_restriction_enabled: boolean;
+					allowed_domains: string[];
+				}>('/settings/signup'),
 				apiFetch<ProviderSettingsResponse>('/settings/providers-generation'),
 				apiFetch<PasswordResetSettingsResponse>('/settings/password-reset/admin')
 			]);
@@ -225,7 +232,9 @@
 	async function loadMetrics() {
 		metricsLoading = true;
 		try {
-			providerMetrics = await apiFetch<ProviderMetricsResponse>(`/admin/provider-metrics?days=${metricsWindowDays}&usage_type=vquest`);
+			providerMetrics = await apiFetch<ProviderMetricsResponse>(
+				`/admin/provider-metrics?days=${metricsWindowDays}&usage_type=vquest`
+			);
 		} catch (e: unknown) {
 			pageError = e instanceof Error ? e.message : 'Failed to load provider metrics';
 		} finally {
@@ -256,8 +265,14 @@
 		providers = providers.filter((_, i) => i !== index);
 	}
 
-	function updateProviderField(index: number, field: keyof ProviderConfig, value: string | number | boolean) {
-		providers = providers.map((provider, i) => (i === index ? { ...provider, [field]: value } : provider));
+	function updateProviderField(
+		index: number,
+		field: keyof ProviderConfig,
+		value: string | number | boolean
+	) {
+		providers = providers.map((provider, i) =>
+			i === index ? { ...provider, [field]: value } : provider
+		);
 	}
 
 	function totalQuestionsPerBatch(): number {
@@ -287,7 +302,9 @@
 			const payload = {
 				providers: providers.map((provider) => ({
 					...provider,
-					key: String(provider.key ?? '').trim().toLowerCase(),
+					key: String(provider.key ?? '')
+						.trim()
+						.toLowerCase(),
 					name: String(provider.name ?? '').trim(),
 					base_url: String(provider.base_url ?? '').trim(),
 					model: String(provider.model ?? '').trim(),
@@ -310,12 +327,16 @@
 		}
 	}
 
-async function toggleSignup() {
+	async function toggleSignup() {
 		signupLoading = true;
 		signupError = '';
 		signupSaved = false;
 		try {
-			const res = await apiFetch<{ signup_enabled: boolean; domain_restriction_enabled: boolean; allowed_domains: string[] }>('/settings/signup', {
+			const res = await apiFetch<{
+				signup_enabled: boolean;
+				domain_restriction_enabled: boolean;
+				allowed_domains: string[];
+			}>('/settings/signup', {
 				method: 'PUT',
 				body: JSON.stringify({ signup_enabled: !signupEnabled })
 			});
@@ -336,7 +357,11 @@ async function toggleSignup() {
 		signupError = '';
 		signupSaved = false;
 		try {
-			const res = await apiFetch<{ signup_enabled: boolean; domain_restriction_enabled: boolean; allowed_domains: string[] }>('/settings/signup', {
+			const res = await apiFetch<{
+				signup_enabled: boolean;
+				domain_restriction_enabled: boolean;
+				allowed_domains: string[];
+			}>('/settings/signup', {
 				method: 'PUT',
 				body: JSON.stringify({
 					domain_restriction_enabled: domainRestrictionEnabled,
@@ -421,7 +446,7 @@ async function toggleSignup() {
 
 	async function saveTheme() {
 		if (!editingTheme) return;
-		
+
 		themesLoading = true;
 		themesError = '';
 		themesSaved = false;
@@ -506,16 +531,20 @@ async function toggleSignup() {
 					password_reset_url_template: smtpSettings.password_reset_url_template.trim()
 				}
 			};
-			const response = await apiFetch<PasswordResetSettingsResponse>('/settings/password-reset/admin', {
-				method: 'PUT',
-				body: JSON.stringify(payload)
-			});
+			const response = await apiFetch<PasswordResetSettingsResponse>(
+				'/settings/password-reset/admin',
+				{
+					method: 'PUT',
+					body: JSON.stringify(payload)
+				}
+			);
 			applyPasswordResetSettings(response);
 			passwordResetMessage = 'Password reset settings saved.';
 			passwordResetSaved = true;
 			setTimeout(() => (passwordResetSaved = false), 1800);
 		} catch (e: unknown) {
-			passwordResetError = e instanceof Error ? e.message : 'Failed to save password reset settings';
+			passwordResetError =
+				e instanceof Error ? e.message : 'Failed to save password reset settings';
 		} finally {
 			passwordResetLoading = false;
 		}
@@ -557,9 +586,21 @@ async function toggleSignup() {
 	</header> -->
 
 	<div class="tabs" role="tablist" aria-label="Settings tabs">
-		<button class="tab-btn" class:active={activeSettingsTab === 'general'} onclick={() => (activeSettingsTab = 'general')}>General</button>
-		<button class="tab-btn" class:active={activeSettingsTab === 'ai'} onclick={() => (activeSettingsTab = 'ai')}>AI</button>
-		<button class="tab-btn" class:active={activeSettingsTab === 'themes'} onclick={() => (activeSettingsTab = 'themes')}>Themes</button>
+		<button
+			class="tab-btn"
+			class:active={activeSettingsTab === 'general'}
+			onclick={() => (activeSettingsTab = 'general')}>General</button
+		>
+		<button
+			class="tab-btn"
+			class:active={activeSettingsTab === 'ai'}
+			onclick={() => (activeSettingsTab = 'ai')}>AI</button
+		>
+		<button
+			class="tab-btn"
+			class:active={activeSettingsTab === 'themes'}
+			onclick={() => (activeSettingsTab = 'themes')}>Themes</button
+		>
 	</div>
 
 	{#if pageError}
@@ -581,10 +622,18 @@ async function toggleSignup() {
 				<div class="setting-item">
 					<div class="setting-info">
 						<span class="setting-label">User Registration</span>
-						<span class="setting-desc">Allow new users to submit registrations. New accounts still require admin approval before the first login.</span>
+						<span class="setting-desc"
+							>Allow new users to submit registrations. New accounts still require admin approval
+							before the first login.</span
+						>
 					</div>
 					<div class="setting-control">
-						<button class="toggle-btn" class:enabled={signupEnabled} onclick={toggleSignup} disabled={signupLoading}>
+						<button
+							class="toggle-btn"
+							class:enabled={signupEnabled}
+							onclick={toggleSignup}
+							disabled={signupLoading}
+						>
 							{#if signupLoading}
 								<span class="toggle-spinner"></span>
 							{:else}
@@ -603,10 +652,20 @@ async function toggleSignup() {
 				<div class="setting-item domain-restriction-item">
 					<div class="setting-info">
 						<span class="setting-label">Email Domain Restriction</span>
-						<span class="setting-desc">Only allow registrations from specific email domains. When enabled, users must register with an email from one of the allowed domains.</span>
+						<span class="setting-desc"
+							>Only allow registrations from specific email domains. When enabled, users must
+							register with an email from one of the allowed domains.</span
+						>
 					</div>
 					<div class="setting-control">
-						<button class="toggle-btn" class:enabled={domainRestrictionEnabled} onclick={() => { domainRestrictionEnabled = !domainRestrictionEnabled; }} disabled={signupLoading}>
+						<button
+							class="toggle-btn"
+							class:enabled={domainRestrictionEnabled}
+							onclick={() => {
+								domainRestrictionEnabled = !domainRestrictionEnabled;
+							}}
+							disabled={signupLoading}
+						>
 							<span class="toggle-track">
 								<span class="toggle-thumb"></span>
 							</span>
@@ -623,21 +682,34 @@ async function toggleSignup() {
 								class="cell-input domain-input"
 								placeholder="e.g. saveetha.com"
 								bind:value={newDomain}
-								onkeydown={(e) => { if (e.key === 'Enter') { e.preventDefault(); addDomain(); } }}
+								onkeydown={(e) => {
+									if (e.key === 'Enter') {
+										e.preventDefault();
+										addDomain();
+									}
+								}}
 							/>
-							<button class="secondary-btn" onclick={addDomain} disabled={!newDomain.trim()}>Add Domain</button>
+							<button class="secondary-btn" onclick={addDomain} disabled={!newDomain.trim()}
+								>Add Domain</button
+							>
 						</div>
 						{#if allowedDomains.length > 0}
 							<div class="domain-tags">
 								{#each allowedDomains as domain}
 									<span class="domain-tag">
 										@{domain}
-										<button class="domain-remove" onclick={() => removeDomain(domain)} title="Remove domain">×</button>
+										<button
+											class="domain-remove"
+											onclick={() => removeDomain(domain)}
+											title="Remove domain">×</button
+										>
 									</span>
 								{/each}
 							</div>
 						{:else}
-							<p class="domain-empty-msg">No domains configured. Add at least one domain to restrict registrations.</p>
+							<p class="domain-empty-msg">
+								No domains configured. Add at least one domain to restrict registrations.
+							</p>
 						{/if}
 						<div class="domain-save-row">
 							<button class="primary-btn" onclick={saveDomainRestriction} disabled={signupLoading}>
@@ -653,10 +725,18 @@ async function toggleSignup() {
 			<div class="section-heading">
 				<div>
 					<h2 class="section-title">Password Reset</h2>
-					<p class="section-copy">Choose the active reset flow and maintain the SMTP configuration used for email-based recovery.</p>
+					<p class="section-copy">
+						Choose the active reset flow and maintain the SMTP configuration used for email-based
+						recovery.
+					</p>
 				</div>
 				<div class="save-group">
-					<button class="save-btn" type="button" onclick={savePasswordResetSettings} disabled={passwordResetLoading}>
+					<button
+						class="save-btn"
+						type="button"
+						onclick={savePasswordResetSettings}
+						disabled={passwordResetLoading}
+					>
 						{passwordResetLoading ? 'Saving...' : 'Save Reset Settings'}
 					</button>
 					{#if passwordResetSaved}
@@ -680,10 +760,14 @@ async function toggleSignup() {
 						class:selected={passwordResetSelfServiceEnabled}
 						role="tab"
 						aria-selected={passwordResetSelfServiceEnabled}
-						onclick={() => { passwordResetSelfServiceEnabled = true; }}
+						onclick={() => {
+							passwordResetSelfServiceEnabled = true;
+						}}
 					>
 						<span class="method-tab-label">Self-Service</span>
-						<span class="method-tab-copy">Users finish the reset flow themselves using the method below.</span>
+						<span class="method-tab-copy"
+							>Users finish the reset flow themselves using the method below.</span
+						>
 					</button>
 					<button
 						type="button"
@@ -691,17 +775,22 @@ async function toggleSignup() {
 						class:selected={!passwordResetSelfServiceEnabled}
 						role="tab"
 						aria-selected={!passwordResetSelfServiceEnabled}
-						onclick={() => { passwordResetSelfServiceEnabled = false; }}
+						onclick={() => {
+							passwordResetSelfServiceEnabled = false;
+						}}
 					>
 						<span class="method-tab-label">Admin Approval</span>
-						<span class="method-tab-copy">Users only send a reset alert. Admins set the new password.</span>
+						<span class="method-tab-copy"
+							>Users only send a reset alert. Admins set the new password.</span
+						>
 					</button>
 				</div>
 			</div>
 
 			{#if !passwordResetSelfServiceEnabled}
 				<div class="settings-note" role="status">
-					Public forgot-password requests will only create admin notifications. Users will not receive reset links or security-question access.
+					Public forgot-password requests will only create admin notifications. Users will not
+					receive reset links or security-question access.
 				</div>
 			{/if}
 
@@ -715,7 +804,9 @@ async function toggleSignup() {
 						role="tab"
 						aria-selected={passwordResetMethod === 'security_question'}
 						aria-controls="password-reset-security-panel"
-						onclick={() => { passwordResetMethod = 'security_question'; }}
+						onclick={() => {
+							passwordResetMethod = 'security_question';
+						}}
 					>
 						<span class="method-tab-label">Security Question</span>
 						<span class="method-tab-copy">Profile-based recovery</span>
@@ -728,7 +819,9 @@ async function toggleSignup() {
 						role="tab"
 						aria-selected={passwordResetMethod === 'smtp'}
 						aria-controls="password-reset-smtp-panel"
-						onclick={() => { passwordResetMethod = 'smtp'; }}
+						onclick={() => {
+							passwordResetMethod = 'smtp';
+						}}
 					>
 						<span class="method-tab-label">SMTP Email</span>
 						<span class="method-tab-copy">Signed email reset links</span>
@@ -741,7 +834,12 @@ async function toggleSignup() {
 					Users answer their profile security question to verify identity and set a new password.
 				</div>
 			{:else}
-				<div class="method-panel" id="password-reset-smtp-panel" role="tabpanel" aria-labelledby="password-reset-smtp-tab">
+				<div
+					class="method-panel"
+					id="password-reset-smtp-panel"
+					role="tabpanel"
+					aria-labelledby="password-reset-smtp-tab"
+				>
 					<div class="method-summary">
 						<div>
 							<span class="method-summary-label">SMTP Email</span>
@@ -752,14 +850,19 @@ async function toggleSignup() {
 									: 'This self-service method is configured but currently on standby because admin approval is required.'}
 							</p>
 						</div>
-						<span class="method-badge">{passwordResetSelfServiceEnabled ? 'Active' : 'Standby'}</span>
+						<span class="method-badge"
+							>{passwordResetSelfServiceEnabled ? 'Active' : 'Standby'}</span
+						>
 					</div>
 
 					<div class="smtp-panel">
 						<div class="smtp-header">
 							<div>
 								<h3>SMTP Configuration</h3>
-								<p>These values are saved in admin settings and are used for password reset emails and test sends.</p>
+								<p>
+									These values are saved in admin settings and are used for password reset emails
+									and test sends.
+								</p>
 							</div>
 							{#if smtpPasswordSet}
 								<span class="secret-indicator">SMTP password is already stored</span>
@@ -777,15 +880,29 @@ async function toggleSignup() {
 							</label>
 							<label class="field">
 								<span>SMTP username</span>
-								<input bind:value={smtpSettings.username} type="text" placeholder="mailer@example.com" />
+								<input
+									bind:value={smtpSettings.username}
+									type="text"
+									placeholder="mailer@example.com"
+								/>
 							</label>
 							<label class="field">
 								<span>SMTP password</span>
-								<input bind:value={smtpSettings.password} type="password" placeholder={smtpPasswordSet ? 'Leave blank to keep the saved password' : 'Enter SMTP password'} />
+								<input
+									bind:value={smtpSettings.password}
+									type="password"
+									placeholder={smtpPasswordSet
+										? 'Leave blank to keep the saved password'
+										: 'Enter SMTP password'}
+								/>
 							</label>
 							<label class="field">
 								<span>From email</span>
-								<input bind:value={smtpSettings.from_email} type="email" placeholder="noreply@vquest.saveetha.com" />
+								<input
+									bind:value={smtpSettings.from_email}
+									type="email"
+									placeholder="noreply@vquest.saveetha.com"
+								/>
 							</label>
 							<label class="field">
 								<span>From name</span>
@@ -793,7 +910,13 @@ async function toggleSignup() {
 							</label>
 							<label class="field">
 								<span>Connection security</span>
-								<select value={getEncryptionMode()} onchange={(event) => setEncryptionMode((event.currentTarget as HTMLSelectElement).value as SMTPEncryptionMode)}>
+								<select
+									value={getEncryptionMode()}
+									onchange={(event) =>
+										setEncryptionMode(
+											(event.currentTarget as HTMLSelectElement).value as SMTPEncryptionMode
+										)}
+								>
 									<option value="tls">STARTTLS</option>
 									<option value="ssl">SSL/TLS</option>
 									<option value="none">No encryption</option>
@@ -805,8 +928,14 @@ async function toggleSignup() {
 							</label>
 							<label class="field field-span-2">
 								<span>Password reset URL template</span>
-								<input bind:value={smtpSettings.password_reset_url_template} type="text" placeholder="https://vquest.saveetha.com/reset-password?token=%7Btoken%7D" />
-								<small>Use <code>{'{token}'}</code> where the signed password reset token should be inserted.</small>
+								<input
+									bind:value={smtpSettings.password_reset_url_template}
+									type="text"
+									placeholder="https://vquest.saveetha.com/reset-password?token=%7Btoken%7D"
+								/>
+								<small
+									>Use <code>{'{token}'}</code> where the signed password reset token should be inserted.</small
+								>
 							</label>
 						</div>
 
@@ -815,7 +944,12 @@ async function toggleSignup() {
 								<span>Test email target</span>
 								<input bind:value={testEmail} type="email" placeholder="admin@example.com" />
 							</label>
-							<button class="secondary-btn" type="button" onclick={sendTestEmail} disabled={testEmailLoading}>
+							<button
+								class="secondary-btn"
+								type="button"
+								onclick={sendTestEmail}
+								disabled={testEmailLoading}
+							>
 								{testEmailLoading ? 'Sending...' : 'Send Test Email'}
 							</button>
 						</div>
@@ -833,8 +967,16 @@ async function toggleSignup() {
 			</div> -->
 
 			<div class="tabs ai-tabs" role="tablist" aria-label="AI tabs">
-				<button class="tab-btn" class:active={activeAITab === 'connectors'} onclick={() => (activeAITab = 'connectors')}>Connectors</button>
-				<button class="tab-btn" class:active={activeAITab === 'statistics'} onclick={() => (activeAITab = 'statistics')}>Statistics</button>
+				<button
+					class="tab-btn"
+					class:active={activeAITab === 'connectors'}
+					onclick={() => (activeAITab = 'connectors')}>Connectors</button
+				>
+				<button
+					class="tab-btn"
+					class:active={activeAITab === 'statistics'}
+					onclick={() => (activeAITab = 'statistics')}>Statistics</button
+				>
 			</div>
 
 			{#if activeAITab === 'connectors'}
@@ -871,13 +1013,23 @@ async function toggleSignup() {
 										<input
 											class="cell-input service-input"
 											value={provider.name}
-											oninput={(event) => updateProviderField(index, 'name', (event.currentTarget as HTMLInputElement).value)}
+											oninput={(event) =>
+												updateProviderField(
+													index,
+													'name',
+													(event.currentTarget as HTMLInputElement).value
+												)}
 										/>
 										<input
 											class="cell-input key-input"
 											value={provider.key}
 											placeholder="provider_key"
-											oninput={(event) => updateProviderField(index, 'key', (event.currentTarget as HTMLInputElement).value)}
+											oninput={(event) =>
+												updateProviderField(
+													index,
+													'key',
+													(event.currentTarget as HTMLInputElement).value
+												)}
 										/>
 									</td>
 									<td>
@@ -885,7 +1037,12 @@ async function toggleSignup() {
 											class="cell-input"
 											value={provider.base_url}
 											placeholder="https://api.example.com/v1"
-											oninput={(event) => updateProviderField(index, 'base_url', (event.currentTarget as HTMLInputElement).value)}
+											oninput={(event) =>
+												updateProviderField(
+													index,
+													'base_url',
+													(event.currentTarget as HTMLInputElement).value
+												)}
 										/>
 									</td>
 									<td>
@@ -893,7 +1050,12 @@ async function toggleSignup() {
 											class="cell-input"
 											value={provider.model}
 											placeholder="Model name"
-											oninput={(event) => updateProviderField(index, 'model', (event.currentTarget as HTMLInputElement).value)}
+											oninput={(event) =>
+												updateProviderField(
+													index,
+													'model',
+													(event.currentTarget as HTMLInputElement).value
+												)}
 										/>
 									</td>
 									<td>
@@ -903,7 +1065,12 @@ async function toggleSignup() {
 												type={visibleKeys[provider.key] ? 'text' : 'password'}
 												value={provider.api_key}
 												placeholder="Enter API key"
-												oninput={(event) => updateProviderField(index, 'api_key', (event.currentTarget as HTMLInputElement).value)}
+												oninput={(event) =>
+													updateProviderField(
+														index,
+														'api_key',
+														(event.currentTarget as HTMLInputElement).value
+													)}
 											/>
 											<button class="tiny-btn" onclick={() => toggleApiKeyVisibility(provider.key)}>
 												{visibleKeys[provider.key] ? 'Hide' : 'Show'}
@@ -917,16 +1084,29 @@ async function toggleSignup() {
 											max="1000"
 											class="cell-input"
 											value={provider.questions_per_batch}
-											oninput={(event) => updateProviderField(index, 'questions_per_batch', Number((event.currentTarget as HTMLInputElement).value || '1'))}
+											oninput={(event) =>
+												updateProviderField(
+													index,
+													'questions_per_batch',
+													Number((event.currentTarget as HTMLInputElement).value || '1')
+												)}
 										/>
 									</td>
 									<td>
-										<button class="status-pill" class:active={provider.enabled} onclick={() => updateProviderField(index, 'enabled', !provider.enabled)}>
+										<button
+											class="status-pill"
+											class:active={provider.enabled}
+											onclick={() => updateProviderField(index, 'enabled', !provider.enabled)}
+										>
 											{provider.enabled ? 'Active' : 'Inactive'}
 										</button>
 									</td>
 									<td>
-										<button class="remove-btn" onclick={() => removeProvider(index)} disabled={providers.length <= 1}>Delete</button>
+										<button
+											class="remove-btn"
+											onclick={() => removeProvider(index)}
+											disabled={providers.length <= 1}>Delete</button
+										>
 									</td>
 								</tr>
 							{/each}
@@ -949,7 +1129,11 @@ async function toggleSignup() {
 						<p>Overview of AI generation performance and vetting outcomes</p>
 					</div>
 					<div class="metric-controls">
-						<select bind:value={metricsWindowDays} class="cell-input window-select" onchange={loadMetrics}>
+						<select
+							bind:value={metricsWindowDays}
+							class="cell-input window-select"
+							onchange={loadMetrics}
+						>
 							<option value={7}>7 days</option>
 							<option value={30}>30 days</option>
 							<option value={90}>90 days</option>
@@ -966,10 +1150,26 @@ async function toggleSignup() {
 					</div>
 				{:else}
 					<div class="summary-grid">
-						<div class="summary-item"><span>Total Generations</span><strong>{providerMetrics.total_generated}</strong></div>
-						<div class="summary-item"><span>Total Rejected</span><strong>{providerMetrics.total_rejected}</strong></div>
-						<div class="summary-item"><span>Total Regenerated</span><strong>{providerMetrics.total_regenerated}</strong></div>
-						<div class="summary-item"><span>Acceptance Rate</span><strong>{providerMetrics.total_generated > 0 ? Math.round(((providerMetrics.total_generated - providerMetrics.total_rejected) / providerMetrics.total_generated) * 100) : 0}%</strong></div>
+						<div class="summary-item">
+							<span>Total Generations</span><strong>{providerMetrics.total_generated}</strong>
+						</div>
+						<div class="summary-item">
+							<span>Total Rejected</span><strong>{providerMetrics.total_rejected}</strong>
+						</div>
+						<div class="summary-item">
+							<span>Total Regenerated</span><strong>{providerMetrics.total_regenerated}</strong>
+						</div>
+						<div class="summary-item">
+							<span>Acceptance Rate</span><strong
+								>{providerMetrics.total_generated > 0
+									? Math.round(
+											((providerMetrics.total_generated - providerMetrics.total_rejected) /
+												providerMetrics.total_generated) *
+												100
+										)
+									: 0}%</strong
+							>
+						</div>
 					</div>
 
 					<div class="table-wrap">
@@ -981,8 +1181,7 @@ async function toggleSignup() {
 									<th>Calls</th>
 									<th>Avg/Call</th>
 									<th>Rejected</th>
-									<th>Regenerated</th>
-									<th>Preference</th>
+									<th>Vetted</th>
 								</tr>
 							</thead>
 							<tbody>
@@ -993,8 +1192,7 @@ async function toggleSignup() {
 										<td>{metric.api_calls}</td>
 										<td>{metric.avg_questions_per_call}</td>
 										<td>{metric.total_rejected}</td>
-										<td>{metric.total_regenerated}</td>
-										<td><span class={`pref-pill ${preferenceClass(metric.inferred_preference)}`}>{metric.inferred_preference}</span></td>
+										<td>{metric.total_vetted}</td>
 									</tr>
 								{/each}
 							</tbody>
@@ -1022,11 +1220,17 @@ async function toggleSignup() {
 			{#if editingTheme}
 				<div class="theme-editor">
 					<h3 class="editor-title">{isCreatingTheme ? 'Create New Theme' : 'Edit Theme'}</h3>
-					
+
 					<div class="form-grid theme-form">
 						<div class="field">
 							<span>Name (slug)</span>
-							<input type="text" bind:value={editingTheme.name} placeholder="my-theme" disabled={!isCreatingTheme} pattern="^[a-z0-9_-]+$" />
+							<input
+								type="text"
+								bind:value={editingTheme.name}
+								placeholder="my-theme"
+								disabled={!isCreatingTheme}
+								pattern="^[a-z0-9_-]+$"
+							/>
 							<small>Lowercase, no spaces. Used internally.</small>
 						</div>
 						<div class="field">
@@ -1039,7 +1243,11 @@ async function toggleSignup() {
 						</div>
 						<div class="field">
 							<span>Background Image URL</span>
-							<input type="text" bind:value={editingTheme.bgImage} placeholder="/theme-pictures/custom.webp" />
+							<input
+								type="text"
+								bind:value={editingTheme.bgImage}
+								placeholder="/theme-pictures/custom.webp"
+							/>
 						</div>
 						<div class="field field-span-2">
 							<span>Background Gradient</span>
@@ -1094,21 +1302,37 @@ async function toggleSignup() {
 						</div>
 						<div class="field">
 							<span>Glass Background</span>
-							<input type="text" bind:value={editingTheme.glassBg} placeholder="rgba(255, 255, 255, 0.55)" />
+							<input
+								type="text"
+								bind:value={editingTheme.glassBg}
+								placeholder="rgba(255, 255, 255, 0.55)"
+							/>
 						</div>
 						<div class="field">
 							<span>Glass Border</span>
-							<input type="text" bind:value={editingTheme.glassBorder} placeholder="rgba(255, 255, 255, 0.7)" />
+							<input
+								type="text"
+								bind:value={editingTheme.glassBorder}
+								placeholder="rgba(255, 255, 255, 0.7)"
+							/>
 						</div>
 						<div class="field">
 							<span>Glow Color</span>
-							<input type="text" bind:value={editingTheme.glow} placeholder="rgba(99,102,241,0.35)" />
+							<input
+								type="text"
+								bind:value={editingTheme.glow}
+								placeholder="rgba(99,102,241,0.35)"
+							/>
 						</div>
 					</div>
 
 					<div class="editor-actions">
 						<button class="secondary-btn" onclick={cancelEditTheme}>Cancel</button>
-						<button class="primary-btn" onclick={saveTheme} disabled={themesLoading || !editingTheme.name || !editingTheme.label}>
+						<button
+							class="primary-btn"
+							onclick={saveTheme}
+							disabled={themesLoading || !editingTheme.name || !editingTheme.label}
+						>
 							{themesLoading ? 'Saving...' : 'Save Theme'}
 						</button>
 						{#if themesSaved}
@@ -1116,36 +1340,48 @@ async function toggleSignup() {
 						{/if}
 					</div>
 				</div>
+			{:else if themes.length === 0}
+				<div class="center-state">
+					<p>No custom themes yet. Click "Create Theme" to add one.</p>
+				</div>
 			{:else}
-				{#if themes.length === 0}
-					<div class="center-state">
-						<p>No custom themes yet. Click "Create Theme" to add one.</p>
-					</div>
-				{:else}
-					<div class="themes-grid">
-						{#each themes as theme (theme.name)}
-							<div class="theme-card" style="--card-primary: {theme.primary}; --card-bg: {theme.bgColor};">
-								<div class="theme-card-header">
-									<span class="theme-icon">{theme.icon}</span>
-									<div class="theme-meta">
-										<strong>{theme.label}</strong>
-										<span class="theme-name">@{theme.name}</span>
-									</div>
-								</div>
-								<div class="theme-colors">
-									<span class="color-chip" style="background: {theme.primary};" title="Primary"></span>
-									<span class="color-chip" style="background: {theme.primaryHover};" title="Primary Hover"></span>
-									<span class="color-chip" style="background: {theme.accentGradient};" title="Accent"></span>
-									<span class="color-chip" style="background: {theme.bgColor};" title="Background"></span>
-								</div>
-								<div class="theme-card-actions">
-									<button class="tiny-btn" onclick={() => startEditTheme(theme)}>Edit</button>
-									<button class="tiny-btn danger" onclick={() => deleteTheme((theme as unknown as { id: string }).id)}>Delete</button>
+				<div class="themes-grid">
+					{#each themes as theme (theme.name)}
+						<div
+							class="theme-card"
+							style="--card-primary: {theme.primary}; --card-bg: {theme.bgColor};"
+						>
+							<div class="theme-card-header">
+								<span class="theme-icon">{theme.icon}</span>
+								<div class="theme-meta">
+									<strong>{theme.label}</strong>
+									<span class="theme-name">@{theme.name}</span>
 								</div>
 							</div>
-						{/each}
-					</div>
-				{/if}
+							<div class="theme-colors">
+								<span class="color-chip" style="background: {theme.primary};" title="Primary"
+								></span>
+								<span
+									class="color-chip"
+									style="background: {theme.primaryHover};"
+									title="Primary Hover"
+								></span>
+								<span class="color-chip" style="background: {theme.accentGradient};" title="Accent"
+								></span>
+								<span class="color-chip" style="background: {theme.bgColor};" title="Background"
+								></span>
+							</div>
+							<div class="theme-card-actions">
+								<button class="tiny-btn" onclick={() => startEditTheme(theme)}>Edit</button>
+								<button
+									class="tiny-btn danger"
+									onclick={() => deleteTheme((theme as unknown as { id: string }).id)}
+									>Delete</button
+								>
+							</div>
+						</div>
+					{/each}
+				</div>
 			{/if}
 		</section>
 	{/if}
@@ -1423,7 +1659,9 @@ async function toggleSignup() {
 		font-size: 1rem;
 		line-height: 1;
 		border-radius: 999px;
-		transition: background 0.15s, color 0.15s;
+		transition:
+			background 0.15s,
+			color 0.15s;
 	}
 
 	.domain-remove:hover {
@@ -1622,7 +1860,9 @@ async function toggleSignup() {
 		font-size: 0.78rem;
 		font-weight: 700;
 		color: var(--theme-text-muted);
-		transition: border-color 0.15s, background 0.15s;
+		transition:
+			border-color 0.15s,
+			background 0.15s;
 		min-width: 4.8rem;
 	}
 
@@ -1756,7 +1996,9 @@ async function toggleSignup() {
 		background: var(--theme-input-bg);
 		cursor: pointer;
 		text-align: left;
-		transition: border-color 0.15s, background 0.15s;
+		transition:
+			border-color 0.15s,
+			background 0.15s;
 	}
 
 	.method-tab.selected {
@@ -1962,7 +2204,7 @@ async function toggleSignup() {
 		align-items: center;
 	}
 
-	.color-input-row input[type="color"] {
+	.color-input-row input[type='color'] {
 		width: 2.5rem;
 		height: 2.2rem;
 		padding: 0.15rem;
@@ -1971,7 +2213,7 @@ async function toggleSignup() {
 		cursor: pointer;
 	}
 
-	.color-input-row input[type="text"] {
+	.color-input-row input[type='text'] {
 		flex: 1;
 	}
 
