@@ -166,6 +166,7 @@
 	<div class="toolbar glass-panel animate-slide-up">
 		<input class="search-input" bind:value={query} placeholder="Search by subject, code, teacher, or email" />
 		<div class="toolbar-actions">
+			<a class="nav-btn" href="/admin/questions">Questions</a>
 			<a class="nav-btn" href="/admin/groups">Groups</a>
 		</div>
 		<!-- <button class="refresh-btn" onclick={loadSubjects}>Refresh</button> -->

@@ -346,7 +346,7 @@
 		</div>
 	{:else}
 		<!-- Live Activity Summary -->
-		<!-- <div class="stats-row">
+		<div class="stats-row">
 			<div class="stat-card glass-panel">
 				<div class="stat-icon vetting-icon">✓</div>
 				<div class="stat-content">
@@ -368,10 +368,10 @@
 					<span class="stat-label">Total Active</span>
 				</div>
 			</div>
-		</div> -->
+		</div>
 
 		<!-- Active Users List -->
-		<!-- <section class="glass-panel section">
+		<section class="glass-panel section">
 			<h2 class="section-title">Active Users</h2>
 			{#if activeUsers.length === 0}
 				<div class="empty-state">
@@ -420,7 +420,7 @@
 					</table>
 				</div>
 			{/if}
-		</section> -->
+		</section>
 
 		<!-- Historical Data -->
 		<section class="glass-panel section">
@@ -593,7 +593,7 @@
 		gap: 1rem;
 	}
 
-	/* .ws-status {
+	.ws-status {
 		display: flex;
 		align-items: center;
 		gap: 0.4rem;
@@ -617,7 +617,7 @@
 		height: 0.5rem;
 		border-radius: 50%;
 		background: currentColor;
-	} */
+	}
 
 	.last-update {
 		font-size: 0.78rem;
@@ -632,7 +632,7 @@
 		padding: 0.75rem 1rem;
 	}
 
-	/* .stats-row {
+	.stats-row {
 		display: grid;
 		grid-template-columns: repeat(auto-fit, minmax(180px, 1fr));
 		gap: 1rem;
@@ -686,7 +686,7 @@
 	.stat-label {
 		font-size: 0.82rem;
 		color: var(--theme-text-muted);
-	} */
+	}
 
 	.section {
 		padding: 1.25rem;
@@ -857,7 +857,7 @@
 		border-bottom: none;
 	}
 
-	/* .user-cell {
+	.user-cell {
 		display: flex;
 		flex-direction: column;
 		gap: 0.1rem;
@@ -904,7 +904,7 @@
 	.duration {
 		font-family: monospace;
 		font-size: 0.85rem;
-	} */
+	}
 
 	.summary-stats {
 		display: grid;

@@ -368,12 +368,43 @@
 
 <style>
 	.page {
+		--panel-bg: color-mix(in srgb, var(--theme-input-bg, rgba(15, 23, 42, 0.84)) 84%, rgba(7, 11, 21, 0.96));
+		--panel-bg-soft: color-mix(in srgb, var(--theme-input-bg, rgba(15, 23, 42, 0.74)) 76%, rgba(255, 255, 255, 0.03));
+		--panel-border: color-mix(in srgb, var(--theme-glass-border, rgba(255, 255, 255, 0.12)) 72%, rgba(148, 163, 184, 0.14));
+		--panel-divider: rgba(148, 163, 184, 0.12);
+		--chip-bg: color-mix(in srgb, var(--theme-input-bg, rgba(15, 23, 42, 0.72)) 84%, rgba(255, 255, 255, 0.03));
+		--danger-bg: rgba(220, 38, 38, 0.12);
+		--danger-border: rgba(248, 113, 113, 0.2);
+		--danger-text: #fecaca;
+		--success-bg: rgba(34, 197, 94, 0.14);
+		--success-text: #bbf7d0;
+		--failure-bg: rgba(239, 68, 68, 0.14);
+		--failure-text: #fecaca;
+		--code-bg: rgba(15, 23, 42, 0.55);
+		--code-text: #dbeafe;
 		max-width: 1180px;
 		margin: 0 auto;
 		padding: 2rem 1.25rem 2.25rem;
 		display: flex;
 		flex-direction: column;
 		gap: 1rem;
+	}
+
+	:global(:root[data-color-mode='light']) .page {
+		--panel-bg: color-mix(in srgb, rgba(255, 255, 255, 0.92) 88%, rgba(241, 245, 249, 0.96));
+		--panel-bg-soft: color-mix(in srgb, rgba(255, 255, 255, 0.9) 82%, rgba(248, 250, 252, 0.96));
+		--panel-border: color-mix(in srgb, rgba(148, 163, 184, 0.28) 74%, rgba(255, 255, 255, 0.55));
+		--panel-divider: rgba(148, 163, 184, 0.18);
+		--chip-bg: color-mix(in srgb, rgba(255, 255, 255, 0.82) 78%, rgba(241, 245, 249, 0.92));
+		--danger-bg: rgba(220, 38, 38, 0.08);
+		--danger-border: rgba(239, 68, 68, 0.18);
+		--danger-text: #991b1b;
+		--success-bg: rgba(34, 197, 94, 0.1);
+		--success-text: #166534;
+		--failure-bg: rgba(239, 68, 68, 0.1);
+		--failure-text: #991b1b;
+		--code-bg: rgba(248, 250, 252, 0.96);
+		--code-text: #1e293b;
 	}
 
 	.header,
@@ -383,6 +414,22 @@
 	.pagination {
 		padding: 1rem;
 		border-radius: 1rem;
+		background: var(--panel-bg);
+		border: 1px solid var(--panel-border);
+		box-shadow: 0 10px 28px rgba(15, 23, 42, 0.08);
+	}
+
+	.header::before,
+	.header::after,
+	.toolbar::before,
+	.toolbar::after,
+	.log-card::before,
+	.log-card::after,
+	.center-state::before,
+	.center-state::after,
+	.pagination::before,
+	.pagination::after {
+		content: none;
 	}
 
 	.header {
@@ -434,8 +481,8 @@
 
 	.count-pill,
 	.meta-chip {
-		background: rgba(255, 255, 255, 0.08);
-		border: 1px solid rgba(255, 255, 255, 0.08);
+		background: var(--chip-bg);
+		border: 1px solid var(--panel-border);
 		color: var(--theme-text-muted);
 	}
 
@@ -455,11 +502,15 @@
 	.filter-field select {
 		width: 100%;
 		border-radius: 0.85rem;
-		border: 1px solid rgba(255, 255, 255, 0.12);
-		background: rgba(255, 255, 255, 0.04);
+		border: 1px solid var(--panel-border);
+		background: var(--panel-bg-soft);
 		color: var(--theme-text);
 		padding: 0.8rem 0.95rem;
 		outline: none;
+	}
+
+	.search-input::placeholder {
+		color: var(--theme-text-muted);
 	}
 
 	.search-input {
@@ -482,19 +533,20 @@
 	}
 
 	.action-btn {
-		border: 0;
+		border: 1px solid rgba(var(--theme-primary-rgb), 0.28);
 		border-radius: 0.85rem;
 		padding: 0.8rem 1rem;
 		font-weight: 700;
 		cursor: pointer;
-		background: linear-gradient(135deg, rgba(245, 158, 11, 0.95), rgba(249, 115, 22, 0.95));
-		color: #1b1205;
+		background: color-mix(in srgb, var(--theme-primary) 18%, var(--panel-bg-soft));
+		color: var(--theme-text);
+		box-shadow: inset 0 0 0 1px rgba(var(--theme-primary-rgb), 0.06);
 	}
 
 	.action-btn.secondary {
-		background: rgba(255, 255, 255, 0.06);
+		background: var(--chip-bg);
 		color: var(--theme-text);
-		border: 1px solid rgba(255, 255, 255, 0.1);
+		border: 1px solid var(--panel-border);
 	}
 
 	.action-btn:disabled {
@@ -506,9 +558,9 @@
 	.error-inline {
 		border-radius: 0.9rem;
 		padding: 0.85rem 1rem;
-		background: rgba(220, 38, 38, 0.12);
-		border: 1px solid rgba(248, 113, 113, 0.2);
-		color: #fecaca;
+		background: var(--danger-bg);
+		border: 1px solid var(--danger-border);
+		color: var(--danger-text);
 	}
 
 	.center-state {
@@ -542,7 +594,7 @@
 	}
 
 	.log-card.is-failure {
-		border: 1px solid rgba(248, 113, 113, 0.18);
+		border: 1px solid var(--danger-border);
 	}
 
 	.log-top {
@@ -572,13 +624,13 @@
 	}
 
 	.status-pill.success {
-		background: rgba(34, 197, 94, 0.14);
-		color: #bbf7d0;
+		background: var(--success-bg);
+		color: var(--success-text);
 	}
 
 	.status-pill.failure {
-		background: rgba(239, 68, 68, 0.14);
-		color: #fecaca;
+		background: var(--failure-bg);
+		color: var(--failure-text);
 	}
 
 	.log-summary {
@@ -612,8 +664,8 @@
 	.detail-block {
 		padding: 0.85rem 0.95rem;
 		border-radius: 0.9rem;
-		background: rgba(255, 255, 255, 0.04);
-		border: 1px solid rgba(255, 255, 255, 0.06);
+		background: var(--panel-bg-soft);
+		border: 1px solid var(--panel-border);
 	}
 
 	.detail-label {
@@ -647,8 +699,9 @@
 		margin: 0.8rem 0 0;
 		padding: 0.9rem;
 		border-radius: 0.85rem;
-		background: rgba(15, 23, 42, 0.55);
-		color: #dbeafe;
+		background: var(--code-bg);
+		color: var(--code-text);
+		border: 1px solid var(--panel-border);
 		overflow-x: auto;
 		font-size: 0.8rem;
 		line-height: 1.45;

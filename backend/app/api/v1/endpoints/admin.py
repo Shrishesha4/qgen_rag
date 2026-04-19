@@ -8,10 +8,15 @@ subjects, topics, questions generated, vetting stats, per-user breakdowns.
 from typing import Optional, List, Any, Dict
 from collections import Counter
 from datetime import datetime, timezone, timedelta
+import base64
+import csv
+import io
+import json
 import re
 import uuid
 
-from fastapi import APIRouter, Depends, HTTPException, Request, status
+from fastapi import APIRouter, Depends, HTTPException, Query, Request, status
+from fastapi.responses import StreamingResponse
 from sqlalchemy import select, func, and_, case, distinct, delete, or_, literal
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import selectinload
@@ -34,6 +39,19 @@ from app.services.user_service import UserService
 
 
 router = APIRouter()
+
+_ADMIN_QUESTION_FEED_DEFAULT_LIMIT = 40
+_ADMIN_QUESTION_FEED_MAX_LIMIT = 80
+_ADMIN_QUESTION_EXPORT_BATCH_SIZE = 500
+_ADMIN_QUESTION_EXPORT_PREVIEW_LIMIT = 5
+_ADMIN_QUESTION_EXPORT_DEFAULT_FIELDS = (
+    "question_text",
+    "correct_answer",
+    "answer_options",
+    "subject_name",
+    "topic_name",
+    "difficulty_level",
+)
 
 
 # ============== Schemas ==============
@@ -136,6 +154,73 @@ class AdminSubjectSummary(BaseModel):
 
 class AdminSubjectDetail(AdminSubjectSummary):
     topics: List[AdminTopicSummary]
+
+
+class AdminQuestionSummary(BaseModel):
+    id: str
+    document_id: Optional[str]
+    session_id: Optional[str]
+    question_text: str
+    correct_answer: Optional[str]
+    options: Optional[List[str]]
+    question_type: Optional[str]
+    difficulty_level: Optional[str]
+    marks: Optional[int]
+    bloom_taxonomy_level: Optional[str]
+    vetting_status: str
+    vetted_by: Optional[str]
+    vetted_at: Optional[datetime]
+    generated_at: datetime
+    explanation: Optional[str]
+    answerability_score: Optional[float]
+    specificity_score: Optional[float]
+    generation_confidence: Optional[float]
+    novelty_score: Optional[float]
+    max_similarity: Optional[float]
+    similarity_source: Optional[str]
+    generation_attempt_count: int
+    used_reference_materials: bool
+    generation_status: str
+    discard_reason: Optional[str]
+    replaced_by_id: Optional[str]
+    replaces_id: Optional[str]
+    version_number: int
+    is_latest: bool
+    is_archived: bool
+    subject_id: Optional[str]
+    subject_name: Optional[str]
+    topic_id: Optional[str]
+    topic_name: Optional[str]
+    learning_outcome_id: Optional[str]
+    vetting_notes: Optional[str]
+    provider_key: str
+
+
+class AdminQuestionFeedResponse(BaseModel):
+    questions: List[AdminQuestionSummary]
+    total_count: int
+    next_cursor: Optional[str]
+    has_more: bool
+
+
+class AdminQuestionExportField(BaseModel):
+    key: str
+    label: str
+    group: str
+    description: str
+    selected_by_default: bool
+
+
+class AdminQuestionExportColumn(BaseModel):
+    key: str
+    label: str
+
+
+class AdminQuestionExportPreviewResponse(BaseModel):
+    available_fields: List[AdminQuestionExportField]
+    selected_fields: List[AdminQuestionExportColumn]
+    preview_count: int
+    rows: List[Dict[str, str]]
 
 
 class AdminUserSummary(BaseModel):
@@ -263,6 +348,614 @@ def _live_question_filters():
 
 def _managed_live_question_filters():
     return (*_live_question_filters(), Question.subject_id.isnot(None))
+
+
+def _normalize_admin_question_status(vetting_status: Optional[str]) -> Optional[str]:
+    normalized = (vetting_status or "").strip().lower()
+    if not normalized or normalized in {"all", "any"}:
+        return None
+    if normalized not in {"pending", "approved", "rejected"}:
+        raise HTTPException(
+            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+            detail="Invalid vetting_status. Use pending, approved, rejected, or all.",
+        )
+    return normalized
+
+
+def _normalize_admin_question_choice(
+    value: Optional[str],
+    *,
+    allowed: set[str],
+    field_name: str,
+    default: Optional[str] = None,
+) -> Optional[str]:
+    normalized = (value or "").strip().lower()
+    if not normalized:
+        return default
+    if normalized in {"all", "any"}:
+        return None
+    if normalized not in allowed:
+        raise HTTPException(
+            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+            detail=f"Invalid {field_name}",
+        )
+    return normalized
+
+
+def _apply_nullable_text_filter(query, column, value: Optional[str]):
+    if not value:
+        return query
+    if value == "unspecified":
+        return query.where(or_(column.is_(None), column == ""))
+    return query.where(func.lower(column) == value)
+
+
+async def _normalize_admin_question_filters(
+    db: AsyncSession,
+    *,
+    subject_id: Optional[str],
+    topic_id: Optional[str],
+    vetting_status: Optional[str],
+    question_type: Optional[str],
+    difficulty_level: Optional[str],
+    bloom_taxonomy_level: Optional[str],
+    generation_status: Optional[str],
+    reference_mode: Optional[str],
+    provider_key: Optional[str],
+    version_scope: Optional[str],
+    archived_state: Optional[str],
+) -> Dict[str, Optional[str]]:
+    normalized_status = _normalize_admin_question_status(vetting_status)
+    normalized_question_type = _normalize_admin_question_choice(
+        question_type,
+        allowed={"mcq", "short_answer", "long_answer", "essay", "true_false", "unspecified"},
+        field_name="question_type",
+    )
+    normalized_difficulty = _normalize_admin_question_choice(
+        difficulty_level,
+        allowed={"easy", "medium", "hard", "unspecified"},
+        field_name="difficulty_level",
+    )
+    normalized_bloom = _normalize_admin_question_choice(
+        bloom_taxonomy_level,
+        allowed={"remember", "understand", "apply", "analyze", "evaluate", "create", "unspecified"},
+        field_name="bloom_taxonomy_level",
+    )
+    normalized_generation_status = _normalize_admin_question_choice(
+        generation_status,
+        allowed={"accepted", "discarded"},
+        field_name="generation_status",
+    )
+    normalized_reference_mode = _normalize_admin_question_choice(
+        reference_mode,
+        allowed={"with_reference", "without_reference"},
+        field_name="reference_mode",
+        default=None,
+    )
+    normalized_provider_key = (provider_key or "").strip().lower() or None
+    normalized_version_scope = _normalize_admin_question_choice(
+        version_scope,
+        allowed={"latest", "all"},
+        field_name="version_scope",
+        default="latest",
+    )
+    normalized_archived_state = _normalize_admin_question_choice(
+        archived_state,
+        allowed={"active", "archived"},
+        field_name="archived_state",
+        default="active",
+    )
+
+    if topic_id:
+        topic_subject_id = await _resolve_topic_subject_id(db, topic_id)
+        if subject_id and topic_subject_id != subject_id:
+            raise HTTPException(
+                status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+                detail="Selected topic does not belong to the selected subject",
+            )
+        subject_id = subject_id or topic_subject_id
+
+    return {
+        "subject_id": subject_id,
+        "topic_id": topic_id,
+        "normalized_status": normalized_status,
+        "normalized_question_type": normalized_question_type,
+        "normalized_difficulty": normalized_difficulty,
+        "normalized_bloom": normalized_bloom,
+        "normalized_generation_status": normalized_generation_status,
+        "normalized_reference_mode": normalized_reference_mode,
+        "normalized_provider_key": normalized_provider_key,
+        "normalized_version_scope": normalized_version_scope,
+        "normalized_archived_state": normalized_archived_state,
+    }
+
+
+def _build_admin_question_base_query(*columns):
+    return (
+        select(*columns)
+        .outerjoin(Subject, Subject.id == Question.subject_id)
+        .outerjoin(Topic, Topic.id == Question.topic_id)
+    )
+
+
+def _apply_admin_question_filters(
+    query,
+    *,
+    subject_id: Optional[str],
+    topic_id: Optional[str],
+    normalized_status: Optional[str],
+    normalized_question_type: Optional[str],
+    normalized_difficulty: Optional[str],
+    normalized_bloom: Optional[str],
+    normalized_generation_status: Optional[str],
+    normalized_reference_mode: Optional[str],
+    normalized_provider_key: Optional[str],
+    normalized_version_scope: Optional[str],
+    normalized_archived_state: Optional[str],
+):
+    if subject_id:
+        query = query.where(Question.subject_id == subject_id)
+    if topic_id:
+        query = query.where(Question.topic_id == topic_id)
+    if normalized_status:
+        query = query.where(Question.vetting_status == normalized_status)
+    if normalized_version_scope == "latest":
+        query = query.where(Question.is_latest == True)
+    if normalized_archived_state == "active":
+        query = query.where(Question.is_archived == False)
+    elif normalized_archived_state == "archived":
+        query = query.where(Question.is_archived == True)
+    if normalized_generation_status:
+        query = query.where(Question.generation_status == normalized_generation_status)
+    if normalized_reference_mode == "with_reference":
+        query = query.where(Question.used_reference_materials == True)
+    elif normalized_reference_mode == "without_reference":
+        query = query.where(Question.used_reference_materials == False)
+    if normalized_provider_key:
+        query = query.where(func.lower(_provider_key_expr()) == normalized_provider_key)
+    if normalized_question_type:
+        query = _apply_nullable_text_filter(query, Question.question_type, normalized_question_type)
+    if normalized_difficulty:
+        query = _apply_nullable_text_filter(query, Question.difficulty_level, normalized_difficulty)
+    if normalized_bloom:
+        query = _apply_nullable_text_filter(query, Question.bloom_taxonomy_level, normalized_bloom)
+    return query
+
+
+def _admin_question_export_fields(provider_expr):
+    return [
+        {
+            "key": "question_text",
+            "label": "Question",
+            "group": "Core",
+            "description": "Full question text",
+            "selected_by_default": True,
+            "expression": Question.question_text.label("question_text"),
+        },
+        {
+            "key": "correct_answer",
+            "label": "Correct Answer",
+            "group": "Core",
+            "description": "Stored answer value or MCQ answer label",
+            "selected_by_default": True,
+            "expression": Question.correct_answer.label("correct_answer"),
+        },
+        {
+            "key": "answer_options",
+            "label": "Answer Options",
+            "group": "Core",
+            "description": "MCQ options exported into a single cell",
+            "selected_by_default": True,
+            "expression": Question.options.label("answer_options"),
+        },
+        {
+            "key": "subject_name",
+            "label": "Subject",
+            "group": "Core",
+            "description": "Resolved subject name",
+            "selected_by_default": True,
+            "expression": Subject.name.label("subject_name"),
+        },
+        {
+            "key": "topic_name",
+            "label": "Topic",
+            "group": "Core",
+            "description": "Resolved topic name",
+            "selected_by_default": True,
+            "expression": Topic.name.label("topic_name"),
+        },
+        {
+            "key": "difficulty_level",
+            "label": "Difficulty",
+            "group": "Core",
+            "description": "Difficulty classification",
+            "selected_by_default": True,
+            "expression": Question.difficulty_level.label("difficulty_level"),
+        },
+        {
+            "key": "question_type",
+            "label": "Question Type",
+            "group": "Core",
+            "description": "MCQ, short answer, essay, and related types",
+            "selected_by_default": False,
+            "expression": Question.question_type.label("question_type"),
+        },
+        {
+            "key": "marks",
+            "label": "Marks",
+            "group": "Core",
+            "description": "Assigned marks for the question",
+            "selected_by_default": False,
+            "expression": Question.marks.label("marks"),
+        },
+        {
+            "key": "bloom_taxonomy_level",
+            "label": "Bloom Level",
+            "group": "Core",
+            "description": "Bloom taxonomy label",
+            "selected_by_default": False,
+            "expression": Question.bloom_taxonomy_level.label("bloom_taxonomy_level"),
+        },
+        {
+            "key": "explanation",
+            "label": "Explanation",
+            "group": "Core",
+            "description": "Stored answer explanation",
+            "selected_by_default": False,
+            "expression": Question.explanation.label("explanation"),
+        },
+        {
+            "key": "learning_outcome_id",
+            "label": "Learning Outcome",
+            "group": "Core",
+            "description": "Mapped learning outcome id",
+            "selected_by_default": False,
+            "expression": Question.learning_outcome_id.label("learning_outcome_id"),
+        },
+        {
+            "key": "vetting_status",
+            "label": "Review Status",
+            "group": "Review",
+            "description": "Pending, approved, or rejected",
+            "selected_by_default": False,
+            "expression": Question.vetting_status.label("vetting_status"),
+        },
+        {
+            "key": "vetted_by",
+            "label": "Vetted By",
+            "group": "Review",
+            "description": "Admin or vetter id/email stored on the record",
+            "selected_by_default": False,
+            "expression": Question.vetted_by.label("vetted_by"),
+        },
+        {
+            "key": "vetted_at",
+            "label": "Vetted At",
+            "group": "Review",
+            "description": "Review timestamp",
+            "selected_by_default": False,
+            "expression": Question.vetted_at.label("vetted_at"),
+        },
+        {
+            "key": "vetting_notes",
+            "label": "Vetting Notes",
+            "group": "Review",
+            "description": "Reviewer notes captured during vetting",
+            "selected_by_default": False,
+            "expression": Question.vetting_notes.label("vetting_notes"),
+        },
+        {
+            "key": "generated_at",
+            "label": "Generated At",
+            "group": "Generation",
+            "description": "Creation timestamp",
+            "selected_by_default": False,
+            "expression": Question.generated_at.label("generated_at"),
+        },
+        {
+            "key": "generation_status",
+            "label": "Generation Result",
+            "group": "Generation",
+            "description": "Accepted or discarded generation result",
+            "selected_by_default": False,
+            "expression": Question.generation_status.label("generation_status"),
+        },
+        {
+            "key": "used_reference_materials",
+            "label": "Used References",
+            "group": "Generation",
+            "description": "Whether references were used during generation",
+            "selected_by_default": False,
+            "expression": Question.used_reference_materials.label("used_reference_materials"),
+        },
+        {
+            "key": "provider_key",
+            "label": "Provider",
+            "group": "Generation",
+            "description": "Resolved provider key",
+            "selected_by_default": False,
+            "expression": provider_expr,
+        },
+        {
+            "key": "generation_confidence",
+            "label": "Confidence",
+            "group": "Generation",
+            "description": "Generation confidence score",
+            "selected_by_default": False,
+            "expression": Question.generation_confidence.label("generation_confidence"),
+        },
+        {
+            "key": "answerability_score",
+            "label": "Answerability",
+            "group": "Generation",
+            "description": "Answerability score",
+            "selected_by_default": False,
+            "expression": Question.answerability_score.label("answerability_score"),
+        },
+        {
+            "key": "specificity_score",
+            "label": "Specificity",
+            "group": "Generation",
+            "description": "Specificity score",
+            "selected_by_default": False,
+            "expression": Question.specificity_score.label("specificity_score"),
+        },
+        {
+            "key": "novelty_score",
+            "label": "Novelty",
+            "group": "Generation",
+            "description": "Novelty score",
+            "selected_by_default": False,
+            "expression": Question.novelty_score.label("novelty_score"),
+        },
+        {
+            "key": "max_similarity",
+            "label": "Max Similarity",
+            "group": "Generation",
+            "description": "Highest similarity detected",
+            "selected_by_default": False,
+            "expression": Question.max_similarity.label("max_similarity"),
+        },
+        {
+            "key": "similarity_source",
+            "label": "Similarity Source",
+            "group": "Generation",
+            "description": "Where the max similarity was found",
+            "selected_by_default": False,
+            "expression": Question.similarity_source.label("similarity_source"),
+        },
+        {
+            "key": "generation_attempt_count",
+            "label": "Generation Attempts",
+            "group": "Generation",
+            "description": "How many generation attempts were used",
+            "selected_by_default": False,
+            "expression": Question.generation_attempt_count.label("generation_attempt_count"),
+        },
+        {
+            "key": "discard_reason",
+            "label": "Discard Reason",
+            "group": "Generation",
+            "description": "Reason recorded for discarded questions",
+            "selected_by_default": False,
+            "expression": Question.discard_reason.label("discard_reason"),
+        },
+        {
+            "key": "id",
+            "label": "Question ID",
+            "group": "Traceability",
+            "description": "Primary question id",
+            "selected_by_default": False,
+            "expression": Question.id.label("id"),
+        },
+        {
+            "key": "document_id",
+            "label": "Document ID",
+            "group": "Traceability",
+            "description": "Source document id",
+            "selected_by_default": False,
+            "expression": Question.document_id.label("document_id"),
+        },
+        {
+            "key": "session_id",
+            "label": "Session ID",
+            "group": "Traceability",
+            "description": "Generation session id",
+            "selected_by_default": False,
+            "expression": Question.session_id.label("session_id"),
+        },
+        {
+            "key": "subject_id",
+            "label": "Subject ID",
+            "group": "Traceability",
+            "description": "Raw subject id",
+            "selected_by_default": False,
+            "expression": Question.subject_id.label("subject_id"),
+        },
+        {
+            "key": "topic_id",
+            "label": "Topic ID",
+            "group": "Traceability",
+            "description": "Raw topic id",
+            "selected_by_default": False,
+            "expression": Question.topic_id.label("topic_id"),
+        },
+        {
+            "key": "replaced_by_id",
+            "label": "Replaced By",
+            "group": "Traceability",
+            "description": "Successor question id",
+            "selected_by_default": False,
+            "expression": Question.replaced_by_id.label("replaced_by_id"),
+        },
+        {
+            "key": "replaces_id",
+            "label": "Replaces",
+            "group": "Traceability",
+            "description": "Predecessor question id",
+            "selected_by_default": False,
+            "expression": Question.replaces_id.label("replaces_id"),
+        },
+        {
+            "key": "version_number",
+            "label": "Version Number",
+            "group": "Traceability",
+            "description": "Stored version number",
+            "selected_by_default": False,
+            "expression": Question.version_number.label("version_number"),
+        },
+        {
+            "key": "is_latest",
+            "label": "Is Latest",
+            "group": "Traceability",
+            "description": "Whether this row is the current version",
+            "selected_by_default": False,
+            "expression": Question.is_latest.label("is_latest"),
+        },
+        {
+            "key": "is_archived",
+            "label": "Is Archived",
+            "group": "Traceability",
+            "description": "Archive flag",
+            "selected_by_default": False,
+            "expression": Question.is_archived.label("is_archived"),
+        },
+        {
+            "key": "topic_tags",
+            "label": "Topic Tags",
+            "group": "Structured",
+            "description": "Stored topic tags array",
+            "selected_by_default": False,
+            "expression": Question.topic_tags.label("topic_tags"),
+        },
+        {
+            "key": "source_chunk_ids",
+            "label": "Source Chunk IDs",
+            "group": "Structured",
+            "description": "Linked source chunk ids",
+            "selected_by_default": False,
+            "expression": Question.source_chunk_ids.label("source_chunk_ids"),
+        },
+        {
+            "key": "course_outcome_mapping",
+            "label": "Course Outcome Mapping",
+            "group": "Structured",
+            "description": "Stored course outcome mapping JSON",
+            "selected_by_default": False,
+            "expression": Question.course_outcome_mapping.label("course_outcome_mapping"),
+        },
+        {
+            "key": "novelty_metadata",
+            "label": "Novelty Metadata",
+            "group": "Structured",
+            "description": "Detailed novelty metadata JSON",
+            "selected_by_default": False,
+            "expression": Question.novelty_metadata.label("novelty_metadata"),
+        },
+        {
+            "key": "generation_metadata",
+            "label": "Generation Metadata",
+            "group": "Structured",
+            "description": "Stored generation metadata JSON",
+            "selected_by_default": False,
+            "expression": Question.generation_metadata.label("generation_metadata"),
+        },
+    ]
+
+
+def _normalize_admin_question_export_fields(
+    requested_fields: List[str],
+    fields_by_key: Dict[str, Dict[str, Any]],
+) -> List[str]:
+    if not requested_fields:
+        return [field_key for field_key in _ADMIN_QUESTION_EXPORT_DEFAULT_FIELDS if field_key in fields_by_key]
+
+    normalized_fields: List[str] = []
+    invalid_fields: List[str] = []
+    for raw_field in requested_fields:
+        field_key = (raw_field or "").strip()
+        if not field_key:
+            continue
+        if field_key not in fields_by_key:
+            invalid_fields.append(field_key)
+            continue
+        if field_key not in normalized_fields:
+            normalized_fields.append(field_key)
+
+    if invalid_fields:
+        raise HTTPException(
+            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+            detail=f"Invalid export fields: {', '.join(invalid_fields)}",
+        )
+
+    if not normalized_fields:
+        raise HTTPException(
+            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+            detail="Select at least one export field.",
+        )
+
+    return normalized_fields
+
+
+def _serialize_admin_question_export_value(field_key: str, value: Any) -> str:
+    if value is None:
+        return ""
+    if isinstance(value, datetime):
+        return value.isoformat()
+    if isinstance(value, bool):
+        return "true" if value else "false"
+    if field_key == "answer_options" and isinstance(value, list):
+        return "\n".join(str(item) for item in value)
+    if isinstance(value, list):
+        return json.dumps(value, ensure_ascii=False)
+    if isinstance(value, dict):
+        return json.dumps(value, ensure_ascii=False, sort_keys=True)
+    return str(value)
+
+
+def _encode_admin_question_cursor(generated_at: datetime, question_id: str) -> str:
+    payload = json.dumps(
+        {
+            "generated_at": generated_at.isoformat(),
+            "question_id": question_id,
+        },
+        separators=(",", ":"),
+    ).encode("utf-8")
+    return base64.urlsafe_b64encode(payload).decode("ascii")
+
+
+def _decode_admin_question_cursor(cursor: str) -> tuple[datetime, str]:
+    try:
+        payload = json.loads(base64.urlsafe_b64decode(cursor.encode("ascii")).decode("utf-8"))
+        generated_at = datetime.fromisoformat(payload["generated_at"])
+        question_id = str(payload["question_id"])
+    except Exception as exc:
+        raise HTTPException(
+            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+            detail="Invalid cursor",
+        ) from exc
+
+    if not question_id:
+        raise HTTPException(
+            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+            detail="Invalid cursor",
+        )
+
+    if generated_at.tzinfo is None:
+        generated_at = generated_at.replace(tzinfo=timezone.utc)
+
+    return generated_at, question_id
+
+
+async def _resolve_topic_subject_id(db: AsyncSession, topic_id: str) -> str:
+    result = await db.execute(select(Topic.subject_id).where(Topic.id == topic_id))
+    subject_id = result.scalar_one_or_none()
+    if not subject_id:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="Topic not found",
+        )
+    return subject_id
 
 
 def _validate_role(role: str) -> str:
@@ -809,6 +1502,365 @@ async def get_admin_subject(
             for topic in topics
         ],
     )
+
+
+@router.get("/questions", response_model=AdminQuestionFeedResponse)
+async def list_admin_questions(
+    subject_id: Optional[str] = Query(None, description="Filter by subject ID"),
+    topic_id: Optional[str] = Query(None, description="Filter by topic ID"),
+    vetting_status: Optional[str] = Query(None, description="Filter by pending, approved, rejected, or all"),
+    question_type: Optional[str] = Query(None, description="Filter by question type"),
+    difficulty_level: Optional[str] = Query(None, description="Filter by difficulty or unspecified"),
+    bloom_taxonomy_level: Optional[str] = Query(None, description="Filter by Bloom level or unspecified"),
+    generation_status: Optional[str] = Query(None, description="Filter by generation status accepted, discarded, or all"),
+    reference_mode: str = Query("all", description="Filter by with_reference, without_reference, or all"),
+    provider_key: Optional[str] = Query(None, description="Filter by AI provider key"),
+    version_scope: str = Query("latest", description="Filter by latest or all versions"),
+    archived_state: str = Query("active", description="Filter by active, archived, or all"),
+    cursor: Optional[str] = Query(None, description="Opaque cursor from the previous admin questions response"),
+    limit: int = Query(
+        _ADMIN_QUESTION_FEED_DEFAULT_LIMIT,
+        ge=1,
+        le=_ADMIN_QUESTION_FEED_MAX_LIMIT,
+        description="Batch size for the admin questions feed",
+    ),
+    current_user: User = Depends(get_current_admin),
+    db: AsyncSession = Depends(get_db),
+):
+    """Stream admin questions using keyset pagination to avoid expensive counts and offsets."""
+    normalized_filters = await _normalize_admin_question_filters(
+        db,
+        subject_id=subject_id,
+        topic_id=topic_id,
+        vetting_status=vetting_status,
+        question_type=question_type,
+        difficulty_level=difficulty_level,
+        bloom_taxonomy_level=bloom_taxonomy_level,
+        generation_status=generation_status,
+        reference_mode=reference_mode,
+        provider_key=provider_key,
+        version_scope=version_scope,
+        archived_state=archived_state,
+    )
+
+    cursor_generated_at: Optional[datetime] = None
+    cursor_question_id: Optional[str] = None
+    if cursor:
+        cursor_generated_at, cursor_question_id = _decode_admin_question_cursor(cursor)
+
+    provider_expr = _provider_key_expr().label("provider_key")
+
+    count_query = _build_admin_question_base_query(func.count(Question.id))
+    count_query = _apply_admin_question_filters(count_query, **normalized_filters)
+
+    total_count = int((await db.execute(count_query)).scalar() or 0)
+
+    query = _build_admin_question_base_query(
+        Question.id,
+        Question.document_id,
+        Question.session_id,
+        Question.question_text,
+        Question.correct_answer,
+        Question.options,
+        Question.question_type,
+        Question.difficulty_level,
+        Question.marks,
+        Question.bloom_taxonomy_level,
+        Question.vetting_status,
+        Question.vetted_by,
+        Question.vetted_at,
+        Question.generated_at,
+        Question.explanation,
+        Question.answerability_score,
+        Question.specificity_score,
+        Question.generation_confidence,
+        Question.novelty_score,
+        Question.max_similarity,
+        Question.similarity_source,
+        Question.generation_attempt_count,
+        Question.used_reference_materials,
+        Question.generation_status,
+        Question.discard_reason,
+        Question.replaced_by_id,
+        Question.replaces_id,
+        Question.version_number,
+        Question.is_latest,
+        Question.is_archived,
+        Question.subject_id,
+        Subject.name.label("subject_name"),
+        Question.topic_id,
+        Topic.name.label("topic_name"),
+        Question.learning_outcome_id,
+        Question.vetting_notes,
+        provider_expr,
+    )
+    query = _apply_admin_question_filters(query, **normalized_filters)
+    if cursor_generated_at and cursor_question_id:
+        query = query.where(
+            or_(
+                Question.generated_at < cursor_generated_at,
+                and_(
+                    Question.generated_at == cursor_generated_at,
+                    Question.id < cursor_question_id,
+                ),
+            )
+        )
+
+    result = await db.execute(
+        query
+        .order_by(Question.generated_at.desc(), Question.id.desc())
+        .limit(limit + 1)
+    )
+    rows = result.all()
+    visible_rows = rows[:limit]
+    has_more = len(rows) > limit
+
+    vetted_by_ids = {
+        row.vetted_by
+        for row in visible_rows
+        if row.vetted_by
+    }
+    users_map = await _get_all_users() if vetted_by_ids else {}
+
+    next_cursor = None
+    if has_more and visible_rows:
+        last_row = visible_rows[-1]
+        next_cursor = _encode_admin_question_cursor(last_row.generated_at, last_row.id)
+
+    return AdminQuestionFeedResponse(
+        questions=[
+            AdminQuestionSummary(
+                id=row.id,
+                document_id=row.document_id,
+                session_id=row.session_id,
+                question_text=row.question_text,
+                correct_answer=row.correct_answer,
+                options=row.options,
+                question_type=row.question_type,
+                difficulty_level=row.difficulty_level,
+                marks=row.marks,
+                bloom_taxonomy_level=row.bloom_taxonomy_level,
+                vetting_status=row.vetting_status,
+                vetted_by=(users_map.get(row.vetted_by, {}).get("full_name") or users_map.get(row.vetted_by, {}).get("username") or "Unknown vetter"),
+                vetted_at=row.vetted_at,
+                generated_at=row.generated_at,
+                explanation=row.explanation,
+                answerability_score=row.answerability_score,
+                specificity_score=row.specificity_score,
+                generation_confidence=row.generation_confidence,
+                novelty_score=row.novelty_score,
+                max_similarity=row.max_similarity,
+                similarity_source=row.similarity_source,
+                generation_attempt_count=int(row.generation_attempt_count or 0),
+                used_reference_materials=bool(row.used_reference_materials),
+                generation_status=row.generation_status,
+                discard_reason=row.discard_reason,
+                replaced_by_id=row.replaced_by_id,
+                replaces_id=row.replaces_id,
+                version_number=int(row.version_number or 1),
+                is_latest=bool(row.is_latest),
+                is_archived=bool(row.is_archived),
+                subject_id=row.subject_id,
+                subject_name=row.subject_name,
+                topic_id=row.topic_id,
+                topic_name=row.topic_name,
+                learning_outcome_id=row.learning_outcome_id,
+                vetting_notes=row.vetting_notes,
+                provider_key=row.provider_key,
+            )
+            for row in visible_rows
+        ],
+        total_count=total_count,
+        next_cursor=next_cursor,
+        has_more=has_more,
+    )
+
+
+@router.get("/questions/export/preview", response_model=AdminQuestionExportPreviewResponse)
+async def preview_admin_question_export(
+    subject_id: Optional[str] = Query(None, description="Filter by subject ID"),
+    topic_id: Optional[str] = Query(None, description="Filter by topic ID"),
+    vetting_status: Optional[str] = Query(None, description="Filter by pending, approved, rejected, or all"),
+    question_type: Optional[str] = Query(None, description="Filter by question type"),
+    difficulty_level: Optional[str] = Query(None, description="Filter by difficulty or unspecified"),
+    bloom_taxonomy_level: Optional[str] = Query(None, description="Filter by Bloom level or unspecified"),
+    generation_status: Optional[str] = Query(None, description="Filter by generation status accepted, discarded, or all"),
+    reference_mode: str = Query("all", description="Filter by with_reference, without_reference, or all"),
+    provider_key: Optional[str] = Query(None, description="Filter by AI provider key"),
+    version_scope: str = Query("latest", description="Filter by latest or all versions"),
+    archived_state: str = Query("active", description="Filter by active, archived, or all"),
+    field: Optional[List[str]] = Query(None, description="Selected export field keys"),
+    current_user: User = Depends(get_current_admin),
+    db: AsyncSession = Depends(get_db),
+):
+    provider_expr = _provider_key_expr().label("provider_key")
+    export_fields = _admin_question_export_fields(provider_expr)
+    fields_by_key = {item["key"]: item for item in export_fields}
+    selected_keys = _normalize_admin_question_export_fields(field or [], fields_by_key)
+    normalized_filters = await _normalize_admin_question_filters(
+        db,
+        subject_id=subject_id,
+        topic_id=topic_id,
+        vetting_status=vetting_status,
+        question_type=question_type,
+        difficulty_level=difficulty_level,
+        bloom_taxonomy_level=bloom_taxonomy_level,
+        generation_status=generation_status,
+        reference_mode=reference_mode,
+        provider_key=provider_key,
+        version_scope=version_scope,
+        archived_state=archived_state,
+    )
+
+    query = _build_admin_question_base_query(*[fields_by_key[key]["expression"] for key in selected_keys])
+    query = _apply_admin_question_filters(query, **normalized_filters)
+    result = await db.execute(
+        query.order_by(Question.generated_at.desc(), Question.id.desc()).limit(_ADMIN_QUESTION_EXPORT_PREVIEW_LIMIT)
+    )
+    rows = result.mappings().all()
+
+    return AdminQuestionExportPreviewResponse(
+        available_fields=[
+            AdminQuestionExportField(
+                key=item["key"],
+                label=item["label"],
+                group=item["group"],
+                description=item["description"],
+                selected_by_default=bool(item["selected_by_default"]),
+            )
+            for item in export_fields
+        ],
+        selected_fields=[
+            AdminQuestionExportColumn(key=key, label=fields_by_key[key]["label"])
+            for key in selected_keys
+        ],
+        preview_count=len(rows),
+        rows=[
+            {
+                key: _serialize_admin_question_export_value(key, row.get(key))
+                for key in selected_keys
+            }
+            for row in rows
+        ],
+    )
+
+
+@router.get("/questions/export")
+async def export_admin_questions(
+    subject_id: Optional[str] = Query(None, description="Filter by subject ID"),
+    topic_id: Optional[str] = Query(None, description="Filter by topic ID"),
+    vetting_status: Optional[str] = Query(None, description="Filter by pending, approved, rejected, or all"),
+    question_type: Optional[str] = Query(None, description="Filter by question type"),
+    difficulty_level: Optional[str] = Query(None, description="Filter by difficulty or unspecified"),
+    bloom_taxonomy_level: Optional[str] = Query(None, description="Filter by Bloom level or unspecified"),
+    generation_status: Optional[str] = Query(None, description="Filter by generation status accepted, discarded, or all"),
+    reference_mode: str = Query("all", description="Filter by with_reference, without_reference, or all"),
+    provider_key: Optional[str] = Query(None, description="Filter by AI provider key"),
+    version_scope: str = Query("latest", description="Filter by latest or all versions"),
+    archived_state: str = Query("active", description="Filter by active, archived, or all"),
+    field: Optional[List[str]] = Query(None, description="Selected export field keys"),
+    current_user: User = Depends(get_current_admin),
+    db: AsyncSession = Depends(get_db),
+):
+    provider_expr = _provider_key_expr().label("provider_key")
+    export_fields = _admin_question_export_fields(provider_expr)
+    fields_by_key = {item["key"]: item for item in export_fields}
+    selected_keys = _normalize_admin_question_export_fields(field or [], fields_by_key)
+    normalized_filters = await _normalize_admin_question_filters(
+        db,
+        subject_id=subject_id,
+        topic_id=topic_id,
+        vetting_status=vetting_status,
+        question_type=question_type,
+        difficulty_level=difficulty_level,
+        bloom_taxonomy_level=bloom_taxonomy_level,
+        generation_status=generation_status,
+        reference_mode=reference_mode,
+        provider_key=provider_key,
+        version_scope=version_scope,
+        archived_state=archived_state,
+    )
+    selected_columns = [fields_by_key[key]["expression"] for key in selected_keys]
+    header_labels = [fields_by_key[key]["label"] for key in selected_keys]
+
+    async def generate_csv():
+        buffer = io.StringIO(newline="")
+        writer = csv.writer(buffer)
+        writer.writerow(header_labels)
+        yield buffer.getvalue()
+        buffer.seek(0)
+        buffer.truncate(0)
+
+        batch_cursor_generated_at: Optional[datetime] = None
+        batch_cursor_question_id: Optional[str] = None
+
+        while True:
+            query = _build_admin_question_base_query(
+                Question.generated_at.label("__cursor_generated_at"),
+                Question.id.label("__cursor_question_id"),
+                *selected_columns,
+            )
+            query = _apply_admin_question_filters(query, **normalized_filters)
+            if batch_cursor_generated_at and batch_cursor_question_id:
+                query = query.where(
+                    or_(
+                        Question.generated_at < batch_cursor_generated_at,
+                        and_(
+                            Question.generated_at == batch_cursor_generated_at,
+                            Question.id < batch_cursor_question_id,
+                        ),
+                    )
+                )
+
+            result = await db.execute(
+                query.order_by(Question.generated_at.desc(), Question.id.desc()).limit(_ADMIN_QUESTION_EXPORT_BATCH_SIZE)
+            )
+            rows = result.mappings().all()
+            if not rows:
+                break
+
+            for row in rows:
+                writer.writerow([
+                    _serialize_admin_question_export_value(key, row.get(key))
+                    for key in selected_keys
+                ])
+
+            chunk = buffer.getvalue()
+            if chunk:
+                yield chunk
+            buffer.seek(0)
+            buffer.truncate(0)
+
+            last_row = rows[-1]
+            batch_cursor_generated_at = last_row["__cursor_generated_at"]
+            batch_cursor_question_id = last_row["__cursor_question_id"]
+
+            if len(rows) < _ADMIN_QUESTION_EXPORT_BATCH_SIZE:
+                break
+
+    timestamp = datetime.now(timezone.utc).strftime("%Y%m%d_%H%M%S")
+    return StreamingResponse(
+        generate_csv(),
+        media_type="text/csv; charset=utf-8",
+        headers={
+            "Content-Disposition": f'attachment; filename="admin_questions_export_{timestamp}.csv"',
+        },
+    )
+
+
+@router.get("/questions/providers", response_model=List[str])
+async def list_admin_question_providers(
+    current_user: User = Depends(get_current_admin),
+    db: AsyncSession = Depends(get_db),
+):
+    provider_expr = _provider_key_expr().label("provider_key")
+    result = await db.execute(
+        select(provider_expr)
+        .where(provider_expr.isnot(None), provider_expr != "")
+        .distinct()
+        .order_by(provider_expr.asc())
+    )
+    return [row.provider_key for row in result.all() if row.provider_key]
 
 
 @router.get("/users", response_model=List[AdminUserSummary])

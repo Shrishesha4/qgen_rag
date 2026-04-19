@@ -278,10 +278,10 @@ export function getThemeNames(): ThemeName[] {
 export function registerCustomThemes(dbThemes: ThemeConfig[]) {
 	// When themes come from DB (after seeding), they include both builtin and custom
 	// Override the hardcoded themes with DB versions, add any new custom themes
-	
-	// Build new theme list starting fresh
-	const newNames: ThemeName[] = [];
-	
+
+	// Always preserve the built-in themes in the picker, then append any DB themes.
+	const newNames: ThemeName[] = [...builtInThemeNames];
+
 	// Add/update themes from database
 	for (const theme of dbThemes) {
 		const config: ThemeConfig = {
@@ -292,11 +292,6 @@ export function registerCustomThemes(dbThemes: ThemeConfig[]) {
 		if (!newNames.includes(theme.name)) {
 			newNames.push(theme.name);
 		}
-	}
-	
-	// If no themes from DB, use hardcoded builtin themes as fallback
-	if (newNames.length === 0) {
-		newNames.push(...builtInThemeNames);
 	}
 	
 	// Update the store - triggers reactivity in all subscribers

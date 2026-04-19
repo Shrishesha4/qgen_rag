@@ -46,9 +46,13 @@ class RerankerService:
             settings.RERANKER_MODEL,
             max_length=512,
             device=device,
+            model_kwargs={"torch_dtype": torch.float32},
         )
         self._model_loaded = True
-        logger.info(f"✅ Reranker model loaded: {settings.RERANKER_MODEL}")
+        logger.info(
+            f"✅ Reranker model loaded: {settings.RERANKER_MODEL} "
+            f"(device={device}, dtype=float32)"
+        )
 
     def rerank(
         self,
