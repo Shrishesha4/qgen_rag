@@ -28,8 +28,11 @@ from app.models.subject import Subject, Topic
 from app.models.rubric import Rubric
 from app.models.training import VettingReasonCode
 from app.models.vetting_progress import TeacherVettingProgress
-from app.services.question_service import QuestionGenerationService
 from app.services.embedding_service import EmbeddingService
+from app.services.provider_service import (
+    create_llm_service_for_active_provider,
+    create_question_service_for_active_provider,
+)
 from app.api.v1.deps import get_current_superuser
 from app.services.metrics_service import vetting_submit_success_total, vetting_submit_failure_total, edit_distance_mean
 from app.schemas.question import QuestionSourceInfo, SourceReference
@@ -1633,7 +1636,7 @@ async def reject_with_feedback(
             chunks = list(chunks_result.scalars().all())
 
             if chunks:
-                gen_service = QuestionGenerationService(db)
+                gen_service = await create_question_service_for_active_provider(db)
                 embedding_service = EmbeddingService()
                 new_q_data = None
 
@@ -1767,8 +1770,7 @@ async def reject_with_feedback(
         }
 
     # 4. IMPROVE mode (default) — use LLM to improve the same question based on feedback
-    from app.services.llm_service import LLMService
-    llm = LLMService()
+    llm, _ = await create_llm_service_for_active_provider()
 
     improve_prompt = f"""You are a question quality improvement assistant. A reviewer rejected a question and provided feedback. 
 Your task is to IMPROVE the same question based on the feedback. Do NOT create a completely different question.
@@ -2067,7 +2069,7 @@ async def reject_and_regenerate_question(
 
     # 7. Generate a replacement question (with dedupe retry loop)
     import numpy as np
-    gen_service = QuestionGenerationService(db)
+    gen_service = await create_question_service_for_active_provider(db)
     embedding_service = EmbeddingService()
     question_data = None
     selected_chunks = chunks[:3]  # fallback; overwritten on each attempt

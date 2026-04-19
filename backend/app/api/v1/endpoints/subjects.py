@@ -38,8 +38,10 @@ from app.schemas.subject import (
     SubjectTreeResponse,
 )
 from app.api.v1.deps import get_current_user, ensure_user_can_generate, ensure_user_can_manage_groups
-from app.services.llm_service import LLMService
-from app.services.provider_service import get_provider_service
+from app.services.provider_service import (
+    create_llm_service_for_active_provider,
+    get_provider_service,
+)
 from app.services.activity_service import safe_record_activity
 
 logger = logging.getLogger(__name__)
@@ -1501,7 +1503,7 @@ async def _extract_chapters_with_llm(text_content: str, subject_name: str, subje
     Use LLM to intelligently extract chapters/topics from syllabus text.
     Returns a list of dicts with 'name', 'description', and optionally 'syllabus_content'.
     """
-    llm_service = LLMService()
+    llm_service, _ = await create_llm_service_for_active_provider()
     
     # Truncate text if too long (LLMs have context limits)
     max_chars = 15000

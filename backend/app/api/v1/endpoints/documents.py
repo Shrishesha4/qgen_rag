@@ -21,6 +21,7 @@ from app.schemas.document import (
     PaginationInfo,
 )
 from app.services.document_service import DocumentService
+from app.services.provider_service import create_llm_service_for_active_provider
 from app.api.v1.deps import get_current_user, rate_limit
 from app.services.activity_service import safe_record_activity
 from app.models.subject import Subject, Topic
@@ -401,7 +402,6 @@ async def _process_pdf_reference_questions(
     import logging
     from sqlalchemy import update
     from app.models.document import Document
-    from app.services.llm_service import LLMService
     from app.core.database import AsyncSessionLocal
     import fitz
     import re
@@ -519,7 +519,7 @@ async def _process_pdf_reference_questions(
                     "total_pages": len(pages_data),
                 }
             })
-            llm = LLMService()
+            llm, _ = await create_llm_service_for_active_provider()
             prompt_text = full_text[:14000]
             result = await llm.generate_json(
                 prompt=(

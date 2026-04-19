@@ -398,6 +398,108 @@ def get_provider_service() -> ProviderService:
     return _provider_service
 
 
+async def get_active_provider(
+    provider_key: Optional[str] = None,
+) -> Optional[ProviderConfig]:
+    """Resolve the enabled admin-configured provider to use for generation."""
+    from app.core.config import settings
+
+    provider_svc = get_provider_service()
+    enabled = await provider_svc.get_enabled_providers()
+    if not enabled:
+        return None
+
+    normalized_key = (provider_key or "").strip().lower()
+    if normalized_key:
+        matched = next((p for p in enabled if p.key == normalized_key), None)
+        if matched:
+            return matched
+        logger.warning(
+            "Requested provider '%s' is not enabled; using first available enabled provider.",
+            normalized_key,
+        )
+        return enabled[0]
+
+    preferred = (getattr(settings, "LLM_PROVIDER", "") or "").strip().lower()
+    return next((p for p in enabled if p.key == preferred), enabled[0])
+
+
+async def create_llm_service_for_active_provider(
+    provider_key: Optional[str] = None,
+    model_override: Optional[str] = None,
+) -> Tuple[LLMProvider, Dict[str, Any]]:
+    """Create an LLM service using the active admin-configured provider.
+
+    Falls back to the environment-configured provider only when provider settings
+    are unavailable or no enabled provider is configured in admin settings.
+    """
+    from app.core.config import settings
+    from app.services.llm_service import LLMService
+
+    try:
+        provider = await get_active_provider(provider_key=provider_key)
+    except Exception as exc:
+        logger.warning(
+            "Provider lookup failed; falling back to environment provider '%s': %s",
+            settings.LLM_PROVIDER,
+            exc,
+        )
+        fallback_service = LLMService(model=model_override)
+        fallback_key = (settings.LLM_PROVIDER or "unknown").strip().lower() or "unknown"
+        return fallback_service, {
+            "provider_key": fallback_key,
+            "provider": fallback_key,
+            "llm_provider": fallback_key,
+            "base_url": "",
+            "llm_model": model_override,
+        }
+
+    if provider is None:
+        logger.info(
+            "No enabled admin provider configured; using environment provider '%s'.",
+            settings.LLM_PROVIDER,
+        )
+        fallback_service = LLMService(model=model_override)
+        fallback_key = (settings.LLM_PROVIDER or "unknown").strip().lower() or "unknown"
+        return fallback_service, {
+            "provider_key": fallback_key,
+            "provider": fallback_key,
+            "llm_provider": fallback_key,
+            "base_url": "",
+            "llm_model": model_override,
+        }
+
+    provider_svc = get_provider_service()
+    return provider_svc.create_llm_service(provider, model_override=model_override)
+
+
+async def create_question_service_for_active_provider(
+    db,
+    provider_key: Optional[str] = None,
+    embedding_service=None,
+    redis_service=None,
+    document_service=None,
+    reranker_service=None,
+    novelty_service=None,
+):
+    """Create a QuestionGenerationService using the active admin-configured provider."""
+    from app.services.question_service import QuestionGenerationService
+
+    llm_service, _ = await create_llm_service_for_active_provider(
+        provider_key=provider_key,
+    )
+
+    return QuestionGenerationService(
+        db=db,
+        embedding_service=embedding_service,
+        llm_service=llm_service,
+        redis_service=redis_service,
+        document_service=document_service,
+        reranker_service=reranker_service,
+        novelty_service=novelty_service,
+    )
+
+
 async def create_question_service_for_provider(
     db,
     provider: ProviderConfig,

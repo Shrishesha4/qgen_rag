@@ -32,7 +32,11 @@ from app.schemas.question import (
     QuickGenerateProgress,
 )
 from app.services.question_service import QuestionGenerationService
-from app.services.provider_service import get_provider_service, create_question_service_for_provider
+from app.services.provider_service import (
+    create_llm_service_for_active_provider,
+    create_question_service_for_active_provider,
+    get_provider_service,
+)
 from app.services.document_service import DocumentService
 from app.api.v1.deps import get_current_user, rate_limit, ensure_user_can_generate, ensure_user_can_vet
 from app.models.user import User
@@ -56,29 +60,21 @@ async def _build_provider_aware_question_service(
     db_session: AsyncSession,
     provider_key: Optional[str] = None,
 ) -> QuestionGenerationService:
-    """Create a QuestionGenerationService backed by an admin-configured provider.
+    """Create a QuestionGenerationService backed by the active admin provider."""
+    return await create_question_service_for_active_provider(
+        db_session,
+        provider_key=provider_key,
+    )
 
-    If ``provider_key`` is given the matching enabled provider is used; otherwise
-    the preferred provider (from settings.LLM_PROVIDER) or the first enabled
-    provider is chosen.  Falls back to the default QuestionGenerationService when
-    no providers are configured or on any error.
-    """
-    try:
-        ps = get_provider_service()
-        enabled = await ps.get_enabled_providers()
-        if enabled:
-            if provider_key:
-                provider = next((p for p in enabled if p.key == provider_key), enabled[0])
-            else:
-                preferred = (getattr(settings, "LLM_PROVIDER", "") or "").strip().lower()
-                provider = next((p for p in enabled if p.key == preferred), enabled[0])
-            return await create_question_service_for_provider(db_session, provider)
-    except Exception as provider_exc:
-        logger.warning(
-            "Provider-aware generation setup failed, falling back to default: %s",
-            provider_exc,
-        )
-    return QuestionGenerationService(db_session)
+
+async def _build_provider_aware_llm_service(
+    provider_key: Optional[str] = None,
+):
+    """Create an LLM service backed by the active admin provider."""
+    llm_service, _ = await create_llm_service_for_active_provider(
+        provider_key=provider_key,
+    )
+    return llm_service
 
 
 router = APIRouter()
@@ -1144,7 +1140,7 @@ async def generate_questions(
     4. Validates quality and stores results
     """
     ensure_user_can_generate(current_user)
-    question_service = QuestionGenerationService(db)
+    question_service = await _build_provider_aware_question_service(db)
     
     async def event_generator():
         """Generate SSE events."""
@@ -1265,7 +1261,7 @@ async def quick_generate_questions(
         logger = logging.getLogger(__name__)
         
         document_service = DocumentService(db)
-        question_service = QuestionGenerationService(db)
+        question_service = await _build_provider_aware_question_service(db)
         
         # Step 1: Upload and process document (run enhance in parallel)
         logger.info(f"Quick generate: Starting for user {current_user.id}, context: {context}")
@@ -1273,8 +1269,7 @@ async def quick_generate_questions(
         
         try:
             import asyncio
-            from app.services.llm_service import LLMService
-            llm = LLMService()
+            llm = question_service.llm_service
 
             # Run context enhancement and document upload concurrently
             enhanced_context_task = asyncio.create_task(_enhance_focus_prompt(context, llm))
@@ -3261,12 +3256,12 @@ async def vet_question(
 
     if vetting_data.status == "rejected":
         replacement = None
-        qsvc = QuestionGenerationService(db)
+        qsvc = await _build_provider_aware_question_service(db)
+        provider_llm_service = qsvc.llm_service
         
         from loguru import logger
         from app.models.question import Question as QuestionModel
         from app.models.subject import Subject, Topic
-        from app.services.llm_service import LLMService
         from app.services.embedding_service import EmbeddingService
         from app.services.document_service import DocumentService
         import random
@@ -3352,7 +3347,7 @@ async def vet_question(
         if gen_method == "quick" and question_snapshot["document_id"]:
             logger.info(f"Regenerating via direct generation (method=quick)")
 
-            llm_service = LLMService()
+            llm_service = provider_llm_service
             embedding_service = EmbeddingService()
             doc_service = DocumentService(db, embedding_service)
 
@@ -3528,7 +3523,7 @@ Output valid JSON only."""
         elif gen_method == "quick_from_subject" and question_snapshot["subject_id"]:
             logger.info(f"Regenerating via quick_from_subject for subject_id={question_snapshot['subject_id']}")
 
-            llm_service = LLMService()
+            llm_service = provider_llm_service
             embedding_service = EmbeddingService()
             doc_service = DocumentService(db, embedding_service)
 
@@ -3735,7 +3730,7 @@ Output valid JSON only."""
                 topic_obj = tres.scalar_one_or_none()
 
             if topic_obj and topic_obj.syllabus_content:
-                llm_service = LLMService()
+                llm_service = provider_llm_service
                 embedding_service = EmbeddingService()
                 syllabus_content = topic_obj.syllabus_content
                 topic_name = topic_obj.name
@@ -3948,7 +3943,7 @@ Output valid JSON only."""
                             all_chunks.append({"topic_id": str(t.id), "topic_name": t.name, "content": current_chunk.strip()})
 
                 if all_chunks:
-                    llm_service = LLMService()
+                    llm_service = provider_llm_service
                     embedding_service = EmbeddingService()
                     system_prompt = _get_rubric_system_prompt(q_type)
                     
@@ -4502,7 +4497,6 @@ async def generate_from_rubric(
 
     from app.models.rubric import Rubric
     from app.models.subject import Subject, Topic
-    from app.services.llm_service import LLMService
     from app.services.embedding_service import EmbeddingService
     from app.models.question import Question
     from loguru import logger
@@ -4577,7 +4571,7 @@ async def generate_from_rubric(
             "lo_mappings": t.learning_outcome_mappings or {},
         })
     
-    llm_service = LLMService()
+    llm_service = await _build_provider_aware_llm_service()
     embedding_service = EmbeddingService()
     
     # Pre-fetch subject attributes that might not be loaded in the new session
@@ -5120,7 +5114,6 @@ async def generate_chapter(
     ensure_user_can_generate(current_user)
 
     from app.models.subject import Subject, Topic
-    from app.services.llm_service import LLMService
     from app.services.embedding_service import EmbeddingService
     from app.services.document_service import DocumentService
     from app.models.question import Question
@@ -5189,7 +5182,7 @@ async def generate_chapter(
     if total_questions == 0:
         raise HTTPException(status_code=400, detail="Add at least one question to generate.")
 
-    llm_service = LLMService()
+    llm_service = await _build_provider_aware_llm_service()
     embedding_service = EmbeddingService()
 
     # Pre-compute LO slots from distribution (if provided)
