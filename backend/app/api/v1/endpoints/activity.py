@@ -19,7 +19,7 @@ router = APIRouter()
 
 
 class FavoriteToggleRequest(BaseModel):
-    entity_type: Literal["subject", "group"]
+    entity_type: Literal["subject", "topic", "group"]
     entity_id: str = Field(..., min_length=1, max_length=36)
     entity_name: Optional[str] = Field(default=None, max_length=255)
     source_area: Optional[str] = Field(default=None, max_length=50)

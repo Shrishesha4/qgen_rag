@@ -11,7 +11,7 @@ export interface FavoritesResponse {
 }
 
 export interface FavoriteToggleRequest {
-	entity_type: 'subject' | 'group';
+	entity_type: 'subject' | 'topic' | 'group';
 	entity_id: string;
 	entity_name?: string;
 	source_area?: string;

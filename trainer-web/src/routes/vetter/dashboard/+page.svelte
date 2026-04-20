@@ -12,8 +12,18 @@
 		type TopicResponse
 	} from '$lib/api/subjects';
 	import { getBackgroundGenerationStatuses } from '$lib/api/documents';
-	import { getQuestionsForVetting } from '$lib/api/vetting';
-	import { recordActivityEvent } from '$lib/api/activity';
+	import {
+		getQuestionsForVetting,
+		getVetterSubjects,
+		type VetterSubjectSummary,
+	} from '$lib/api/vetting';
+	import {
+		listCurrentUserFavorites,
+		addCurrentUserFavorite,
+		removeCurrentUserFavorite,
+		recordActivityEvent,
+		type FavoriteSummary,
+	} from '$lib/api/activity';
 	import { buildSubjectGroupMetaById, getSubjectGroupPath, matchesSubjectSearch } from '$lib/subject-group-search';
 	import {
 		createTeacherVettingLoopUrl,
@@ -39,6 +49,30 @@
 		approved: number;
 		rejected: number;
 	};
+	type FavoriteEntityType = 'subject' | 'topic' | 'group';
+	type DashboardTopicMatch = {
+		subjectId: string;
+		subjectName: string;
+		subjectCode: string;
+		topicId: string;
+		topicName: string;
+		pendingCount: number;
+		groupPath: string | null;
+	};
+	type DashboardGroupCard = {
+		id: string;
+		name: string;
+		groupPath: string;
+		ancestorIds: string[];
+		totalQuestions: number;
+		totalPending: number;
+		totalApproved: number;
+		totalRejected: number;
+	};
+	type DashboardGroupMeta = {
+		groupPath: string;
+		ancestorIds: string[];
+	};
 	let topicStatsByTopic = $state<Record<string, TopicCountStats>>({});
 	let loadingPendingCounts = $state(false);
 	let showGenerateFirstModal = $state(false);
@@ -48,6 +82,9 @@
 	let generateFirstMessage = $state('');
 	type ViewTab = 'subjects' | 'groups';
 	let activeViewTab = $state<ViewTab>('subjects');
+	let searchableSubjects = $state<VetterSubjectSummary[]>([]);
+	let favorites = $state<FavoriteSummary[]>([]);
+	let favoriteBusyKeys = $state<Record<string, boolean>>({});
 
 	type SubjectGenerationState = {
 		in_progress: boolean;
@@ -68,6 +105,53 @@
 	
 	// WebSocket for live stats updates
 	let wsUnsubscribers: (() => void)[] = [];
+
+	function favoriteKey(entityType: string, entityId: string): string {
+		return `${entityType}:${entityId}`;
+	}
+
+	function collectFavoritedGroups(groups: SubjectGroupTreeNode[], favoriteIds: Set<string>): SubjectGroupTreeNode[] {
+		const results: SubjectGroupTreeNode[] = [];
+		function walk(group: SubjectGroupTreeNode) {
+			if (favoriteIds.has(group.id)) {
+				results.push(group);
+				return;
+			}
+			group.children.forEach(walk);
+		}
+		groups.forEach(walk);
+		return results;
+	}
+
+	function stripFavoritedGroups(groups: SubjectGroupTreeNode[], favoriteIds: Set<string>): SubjectGroupTreeNode[] {
+		return groups.flatMap((group) => {
+			if (favoriteIds.has(group.id)) {
+				return [];
+			}
+			return [{
+				...group,
+				children: stripFavoritedGroups(group.children, favoriteIds),
+			}];
+		});
+	}
+
+	function buildGroupMetaById(groups: SubjectGroupTreeNode[]): Map<string, DashboardGroupMeta> {
+		const metaById = new Map<string, DashboardGroupMeta>();
+		function walk(group: SubjectGroupTreeNode, parentNames: string[], ancestorIds: string[]) {
+			const pathNames = [...parentNames, group.name];
+			metaById.set(group.id, {
+				groupPath: pathNames.join(' / '),
+				ancestorIds,
+			});
+			for (const child of group.children) {
+				walk(child, pathNames, [...ancestorIds, group.id]);
+			}
+		}
+		for (const group of groups) {
+			walk(group, [], []);
+		}
+		return metaById;
+	}
 
 	function toMillis(iso: string): number {
 		const ts = Date.parse(iso);
@@ -204,9 +288,15 @@
 			pendingCountsLoadingForSubject.clear();
 			pendingLoadInFlightCount = 0;
 			loadingPendingCounts = false;
-			const treeRes = await getSubjectsTree();
+			const [treeRes, vetterSubjectRes, favoriteRes] = await Promise.all([
+				getSubjectsTree(),
+				getVetterSubjects(),
+				listCurrentUserFavorites(),
+			]);
 			treeData = treeRes;
 			subjects = flattenSubjects(treeRes.groups, treeRes.ungrouped_subjects);
+			searchableSubjects = vetterSubjectRes;
+			favorites = favoriteRes;
 			expandedGroups = new Set();
 			void preloadInitialSubjectData(subjects);
 			await refreshSubjectGenerationStatuses(subjects);
@@ -528,6 +618,72 @@
 		goto(`/vetter/dashboard/loop?${params.toString()}`);
 	}
 
+	async function toggleFavorite(entityType: FavoriteEntityType, entityId: string, entityName: string): Promise<void> {
+		const key = favoriteKey(entityType, entityId);
+		if (favoriteBusyKeys[key]) return;
+		favoriteBusyKeys = { ...favoriteBusyKeys, [key]: true };
+		try {
+			if (favoriteEntityKeys.has(key)) {
+				await removeCurrentUserFavorite({
+					entity_type: entityType,
+					entity_id: entityId,
+					entity_name: entityName,
+					source_area: 'vetter_dashboard',
+				});
+				favorites = favorites.filter((favorite) => favoriteKey(favorite.entity_type, favorite.entity_id) !== key);
+			} else {
+				const favorite = await addCurrentUserFavorite({
+					entity_type: entityType,
+					entity_id: entityId,
+					entity_name: entityName,
+					source_area: 'vetter_dashboard',
+				});
+				favorites = [...favorites, favorite];
+			}
+		} catch (e: unknown) {
+			error = e instanceof Error ? e.message : 'Failed to update favorite';
+		} finally {
+			favoriteBusyKeys = { ...favoriteBusyKeys, [key]: false };
+		}
+	}
+
+	function isFavorite(entityType: FavoriteEntityType, entityId: string): boolean {
+		return favoriteEntityKeys.has(favoriteKey(entityType, entityId));
+	}
+
+	function getTopicMatchStats(match: DashboardTopicMatch): TopicCountStats {
+		return (
+			topicStatsByTopic[match.topicId] ?? {
+				generated: match.pendingCount,
+				pending: match.pendingCount,
+				approved: 0,
+				rejected: 0,
+			}
+		);
+	}
+
+	function topicsForSubject(subjectId: string): TopicResponse[] {
+		const topics = [...(topicsMap[subjectId] ?? [])];
+		return topics.sort((left, right) => {
+			const favoriteDiff = Number(isFavorite('topic', right.id)) - Number(isFavorite('topic', left.id));
+			if (favoriteDiff !== 0) return favoriteDiff;
+			return left.name.localeCompare(right.name);
+		});
+	}
+
+	async function startTopicVettingFromMatch(match: DashboardTopicMatch): Promise<void> {
+		const topicProgress = topicResumeSnapshot(match.subjectId, match.topicId);
+		if (topicProgress) {
+			resumeSpecificProgress(topicProgress);
+			return;
+		}
+
+		await ensureTopicsLoaded(match.subjectId, { silent: true, includePendingCounts: true });
+		const loadedTopic = (topicsMap[match.subjectId] ?? []).find((topic) => topic.id === match.topicId);
+		const topicStats = loadedTopic ? getTopicStats(loadedTopic) : getTopicMatchStats(match);
+		await startTopicVetting(match.subjectId, match.topicId, match.topicName, topicStats.generated);
+	}
+
 	const currentProgressLabel = $derived.by(() => {
 		if (!latestProgress) return 'No active progress';
 		const total = latestProgress.questions.length;
@@ -568,11 +724,115 @@
 		return `${current}/${total} reviewed`;
 	}
 
+	const favoriteEntityKeys = $derived.by(() => new Set(favorites.map((favorite) => favoriteKey(favorite.entity_type, favorite.entity_id))));
+
 	const subjectGroupMetaById = $derived.by(() => buildSubjectGroupMetaById(treeData?.groups ?? []));
+
+	const groupMetaById = $derived.by(() => buildGroupMetaById(treeData?.groups ?? []));
+
+	const searchableTopicsBySubjectId = $derived.by(() => {
+		const topicsBySubjectId = new Map<string, VetterSubjectSummary['topics']>();
+		for (const subject of searchableSubjects) {
+			topicsBySubjectId.set(subject.id, subject.topics);
+		}
+		return topicsBySubjectId;
+	});
+
+	const allTopicMatches = $derived.by(() => {
+		const matches: DashboardTopicMatch[] = [];
+		for (const subject of searchableSubjects) {
+			const groupPath = getSubjectGroupPath(subject.id, subjectGroupMetaById);
+			for (const topic of subject.topics) {
+				matches.push({
+					subjectId: subject.id,
+					subjectName: subject.name,
+					subjectCode: subject.code,
+					topicId: topic.id,
+					topicName: topic.name,
+					pendingCount: topic.pending_count,
+					groupPath,
+				});
+			}
+		}
+		return matches;
+	});
+
+	const favoriteTopicMatches = $derived.by(() => {
+		return allTopicMatches
+			.filter((topic) => isFavorite('topic', topic.topicId))
+			.sort((left, right) => left.topicName.localeCompare(right.topicName));
+	});
+
+	const topicSearchResults = $derived.by(() => {
+		const q = searchQuery.trim().toLowerCase();
+		if (!q) return [];
+		return allTopicMatches
+			.filter((topic) => topic.topicName.toLowerCase().includes(q))
+			.sort((left, right) => {
+				const favoriteDiff = Number(isFavorite('topic', right.topicId)) - Number(isFavorite('topic', left.topicId));
+				if (favoriteDiff !== 0) return favoriteDiff;
+				const pendingDiff = right.pendingCount - left.pendingCount;
+				if (pendingDiff !== 0) return pendingDiff;
+				return left.topicName.localeCompare(right.topicName);
+			});
+	});
+
+	const visibleTopicQuickCards = $derived.by(() => {
+		const q = searchQuery.trim();
+		return q ? topicSearchResults : favoriteTopicMatches;
+	});
+
+	const allGroupCards = $derived.by(() => {
+		if (!treeData) return [] as DashboardGroupCard[];
+		const cards: DashboardGroupCard[] = [];
+		const walk = (group: SubjectGroupTreeNode) => {
+			const groupMeta = groupMetaById.get(group.id);
+			cards.push({
+				id: group.id,
+				name: group.name,
+				groupPath: groupMeta?.groupPath ?? group.name,
+				ancestorIds: groupMeta?.ancestorIds ?? [],
+				totalQuestions: group.total_questions,
+				totalPending: group.total_pending,
+				totalApproved: group.total_approved,
+				totalRejected: group.total_rejected,
+			});
+			for (const child of group.children) {
+				walk(child);
+			}
+		};
+		for (const group of treeData.groups) {
+			walk(group);
+		}
+		return cards;
+	});
+
+	const favoriteGroupCards = $derived.by(() => {
+		return allGroupCards
+			.filter((group) => isFavorite('group', group.id))
+			.sort((left, right) => left.groupPath.localeCompare(right.groupPath));
+	});
+
+	const groupSearchResults = $derived.by(() => {
+		const q = searchQuery.trim().toLowerCase();
+		if (!q) return [];
+		return allGroupCards
+			.filter((group) => group.name.toLowerCase().includes(q) || group.groupPath.toLowerCase().includes(q))
+			.sort((left, right) => {
+				const favoriteDiff = Number(isFavorite('group', right.id)) - Number(isFavorite('group', left.id));
+				if (favoriteDiff !== 0) return favoriteDiff;
+				return left.groupPath.localeCompare(right.groupPath);
+			});
+	});
+
+	const visibleGroupQuickCards = $derived.by(() => {
+		const q = searchQuery.trim();
+		return q ? groupSearchResults : favoriteGroupCards;
+	});
 
 	function matchesTrainingSubjectSearch(subject: SubjectResponse, query: string): boolean {
 		if (matchesSubjectSearch(subject, query, subjectGroupMetaById)) return true;
-		const topics = topicsMap[subject.id] || [];
+		const topics = searchableTopicsBySubjectId.get(subject.id) ?? [];
 		return topics.some((topic) => topic.name.toLowerCase().includes(query));
 	}
 
@@ -581,6 +841,10 @@
 		if (!q) return subjects;
 		return subjects.filter((subject) => matchesTrainingSubjectSearch(subject, q));
 	});
+
+	const pinnedSubjects = $derived.by(() => filteredSubjects.filter((subject) => isFavorite('subject', subject.id)));
+
+	const regularSubjects = $derived.by(() => filteredSubjects.filter((subject) => !isFavorite('subject', subject.id)));
 
 	function collectGroupedSubjectIds(groups: SubjectGroupTreeNode[]): Set<string> {
 		const ids = new Set<string>();
@@ -603,20 +867,47 @@
 		return collectGroupedSubjectIds(treeData.groups);
 	});
 
+	const groupedSubjects = $derived.by(() => subjects.filter((subject) => groupedSubjectIds.has(subject.id)));
+
 	const filteredGroupedSubjects = $derived.by(() => {
 		const q = searchQuery.trim().toLowerCase();
-		const groupedSubjects = subjects.filter((subject) => groupedSubjectIds.has(subject.id));
 		if (!q) return groupedSubjects;
 		return groupedSubjects.filter((subject) => matchesTrainingSubjectSearch(subject, q));
 	});
 
+	const pinnedGroupedSubjectResults = $derived.by(() => filteredGroupedSubjects.filter((subject) => isFavorite('subject', subject.id)));
+
+	const regularGroupedSubjectResults = $derived.by(() => filteredGroupedSubjects.filter((subject) => !isFavorite('subject', subject.id)));
+
+	const favoriteGroupIds = $derived.by(() => new Set(favorites.filter((favorite) => favorite.entity_type === 'group').map((favorite) => favorite.entity_id)));
+
+	const pinnedGroupsTree = $derived.by(() => {
+		if (!treeData) return [] as SubjectGroupTreeNode[];
+		return collectFavoritedGroups(treeData.groups, favoriteGroupIds);
+	});
+
+	const visibleGroupsTree = $derived.by(() => {
+		if (!treeData) return [] as SubjectGroupTreeNode[];
+		return stripFavoritedGroups(treeData.groups, favoriteGroupIds);
+	});
+
+	const orderedSubjects = $derived.by(() => [...pinnedSubjects, ...regularSubjects]);
+
+	const orderedGroupedSubjects = $derived.by(() => {
+		const pinned = groupedSubjects.filter((subject) => isFavorite('subject', subject.id));
+		const regular = groupedSubjects.filter((subject) => !isFavorite('subject', subject.id));
+		return [...pinned, ...regular];
+	});
+
+	const orderedGroupedSubjectSearchResults = $derived.by(() => [...pinnedGroupedSubjectResults, ...regularGroupedSubjectResults]);
+
 	const mobileVisibleSubjects = $derived.by(() => {
 		if (activeViewTab === 'groups') {
 			const hasQuery = searchQuery.trim().length > 0;
-			if (hasQuery) return filteredGroupedSubjects;
-			return filteredGroupedSubjects;
+			if (hasQuery) return orderedGroupedSubjectSearchResults;
+			return orderedGroupedSubjects;
 		}
-		return filteredSubjects;
+		return orderedSubjects;
 	});
 
 	const hasSearchQuery = $derived.by(() => searchQuery.trim().length > 0);
@@ -650,6 +941,19 @@
 		for (const subjectId of allGroupSubjectIds.slice(0, GROUP_SUBJECT_PRELOAD_LIMIT)) {
 			void ensureTopicsLoaded(subjectId, { silent: true, includePendingCounts: true });
 		}
+	}
+
+	function focusGroup(groupId: string) {
+		const meta = groupMetaById.get(groupId);
+		const next = new Set(expandedGroups);
+		for (const ancestorId of meta?.ancestorIds ?? []) {
+			next.add(ancestorId);
+		}
+		next.add(groupId);
+		expandedGroups = next;
+		expandedSubjectId = '';
+		activeViewTab = 'groups';
+		searchQuery = '';
 	}
 
 	function getSubjectGenerationState(subjectId: string): SubjectGenerationState | null {
@@ -781,6 +1085,95 @@
 				<input class="search-input" bind:value={searchQuery} placeholder="Search subjects, topics, or groups" />
 			</div>
 
+			{#if activeViewTab === 'subjects' && visibleTopicQuickCards.length > 0}
+				<section class="quick-section glass-panel">
+					<div class="quick-section-head">
+						<div>
+							<p class="quick-section-kicker">{hasSearchQuery ? 'Search Results' : 'Favorites'}</p>
+							<h3>{hasSearchQuery ? 'Matching Topics' : 'Pinned Topics'}</h3>
+						</div>
+						<span class="quick-section-count">{visibleTopicQuickCards.length}</span>
+					</div>
+					<div class="quick-card-grid">
+						{#each visibleTopicQuickCards as topic}
+							{@const topicStats = getTopicMatchStats(topic)}
+							{@const topicProgress = topicResumeSnapshot(topic.subjectId, topic.topicId)}
+							<div class="quick-card">
+								<div class="quick-card-head">
+									<div class="quick-card-title-block">
+										<strong>{topic.topicName}</strong>
+										<span>{topic.subjectCode} · {topic.subjectName}</span>
+									</div>
+									<button
+										class="favorite-btn quick-favorite-btn"
+										type="button"
+										title={isFavorite('topic', topic.topicId) ? 'Unpin topic' : 'Pin topic'}
+										onclick={() => void toggleFavorite('topic', topic.topicId, topic.topicName)}
+										disabled={favoriteBusyKeys[favoriteKey('topic', topic.topicId)]}
+									>
+										{isFavorite('topic', topic.topicId) ? '★' : '☆'}
+									</button>
+								</div>
+								{#if topic.groupPath}
+									<p class="group-context">Group: {topic.groupPath}</p>
+								{/if}
+								<div class="quick-card-stats">
+									<span>Questions <strong>{topicStats.generated}</strong></span>
+									<span>Pending <strong>{topicStats.pending}</strong></span>
+								</div>
+								<div class="inline-actions quick-card-actions">
+									{#if topicProgress}
+										<button class="table-btn" onclick={() => resumeSpecificProgress(topicProgress)}>Resume</button>
+									{:else}
+										<button class="table-btn primary" onclick={() => void startTopicVettingFromMatch(topic)} disabled={loadingPendingCounts}>Start Vetting</button>
+									{/if}
+								</div>
+							</div>
+						{/each}
+					</div>
+				</section>
+			{/if}
+
+			{#if activeViewTab === 'groups' && visibleGroupQuickCards.length > 0}
+				<section class="quick-section glass-panel">
+					<div class="quick-section-head">
+						<div>
+							<p class="quick-section-kicker">{hasSearchQuery ? 'Search Results' : 'Favorites'}</p>
+							<h3>{hasSearchQuery ? 'Matching Groups' : 'Pinned Groups'}</h3>
+						</div>
+						<span class="quick-section-count">{visibleGroupQuickCards.length}</span>
+					</div>
+					<div class="quick-card-grid">
+						{#each visibleGroupQuickCards as group}
+							<div class="quick-card">
+								<div class="quick-card-head">
+									<div class="quick-card-title-block">
+										<strong>{group.name}</strong>
+										<span>{group.groupPath}</span>
+									</div>
+									<button
+										class="favorite-btn quick-favorite-btn"
+										type="button"
+										title={isFavorite('group', group.id) ? 'Unpin group' : 'Pin group'}
+										onclick={() => void toggleFavorite('group', group.id, group.name)}
+										disabled={favoriteBusyKeys[favoriteKey('group', group.id)]}
+									>
+										{isFavorite('group', group.id) ? '★' : '☆'}
+									</button>
+								</div>
+								<div class="quick-card-stats">
+									<span>Questions <strong>{group.totalQuestions}</strong></span>
+									<span>Pending <strong>{group.totalPending}</strong></span>
+								</div>
+								<div class="inline-actions quick-card-actions">
+									<button class="table-btn primary" onclick={() => focusGroup(group.id)}>Open Group</button>
+								</div>
+							</div>
+						{/each}
+					</div>
+				</section>
+			{/if}
+
 			<div class="table-shell desktop-only">
 				<table class="training-table">
 					<colgroup>
@@ -803,23 +1196,39 @@
 					</thead>
 					<tbody>
 						{#if activeViewTab === 'subjects'}
-							{#if filteredSubjects.length === 0}
+							{#if orderedSubjects.length === 0}
 								<tr>
 									<td colspan="6" class="empty-cell">No matching subjects.</td>
 								</tr>
 							{:else}
-								{#each filteredSubjects as subject}
+								{#each pinnedSubjects as subject}
+									{@render vettingSubjectRow(subject, 0)}
+								{/each}
+								{#if pinnedSubjects.length > 0 && regularSubjects.length > 0}
+									<tr class="pin-divider-row">
+										<td colspan="6"><span>More Subjects</span></td>
+									</tr>
+								{/if}
+								{#each regularSubjects as subject}
 									{@render vettingSubjectRow(subject, 0)}
 								{/each}
 							{/if}
 						{:else}
 							{#if hasSearchQuery}
-								{#if filteredGroupedSubjects.length === 0}
+								{#if orderedGroupedSubjectSearchResults.length === 0}
 									<tr>
 										<td colspan="6" class="empty-cell">No matching grouped subjects.</td>
 									</tr>
 								{:else}
-									{#each filteredGroupedSubjects as subject}
+									{#each pinnedGroupedSubjectResults as subject}
+										{@render vettingSubjectRow(subject, 0)}
+									{/each}
+									{#if pinnedGroupedSubjectResults.length > 0 && regularGroupedSubjectResults.length > 0}
+										<tr class="pin-divider-row">
+											<td colspan="6"><span>More Results</span></td>
+										</tr>
+									{/if}
+									{#each regularGroupedSubjectResults as subject}
 										{@render vettingSubjectRow(subject, 0)}
 									{/each}
 								{/if}
@@ -828,7 +1237,15 @@
 									<td colspan="6" class="empty-cell">No subjects yet.</td>
 								</tr>
 							{:else}
-								{#each treeData.groups as group}
+								{#each pinnedGroupsTree as group}
+									{@render vettingGroupRow(group, 0)}
+								{/each}
+								{#if pinnedGroupsTree.length > 0 && visibleGroupsTree.length > 0}
+									<tr class="pin-divider-row">
+										<td colspan="6"><span>Other Groups</span></td>
+									</tr>
+								{/if}
+								{#each visibleGroupsTree as group}
 									{@render vettingGroupRow(group, 0)}
 								{/each}
 							{/if}
@@ -849,9 +1266,20 @@
 									<span class="code-chip">{subject.code}</span>
 									<strong>{subject.name}</strong>
 								</div>
-								<button class="table-btn" onclick={() => toggleSubject(subject.id)}>
-									{isExpanded(subject.id) ? 'Hide Topics' : 'Show Topics'}
-								</button>
+								<div class="inline-actions compact-actions">
+									<button
+										class="favorite-btn"
+										type="button"
+										title={isFavorite('subject', subject.id) ? 'Unpin subject' : 'Pin subject'}
+										onclick={() => void toggleFavorite('subject', subject.id, subject.name)}
+										disabled={favoriteBusyKeys[favoriteKey('subject', subject.id)]}
+									>
+										{isFavorite('subject', subject.id) ? '★' : '☆'}
+									</button>
+									<button class="table-btn" onclick={() => toggleSubject(subject.id)}>
+										{isExpanded(subject.id) ? 'Hide Topics' : 'Show Topics'}
+									</button>
+								</div>
 							</div>
 							{#if hasSearchQuery && groupPath}
 								<span class="group-context">Group: {groupPath}</span>
@@ -873,15 +1301,26 @@
 									<div class="empty-cell">No topics found for this subject.</div>
 								{:else}
 									<div class="mobile-topic-list">
-										{#each topicsMap[subject.id] || [] as topic}
+										{#each topicsForSubject(subject.id) as topic}
 													{@const topicStats = getTopicStats(topic)}
 													{@const pendingCount = topicStats.pending}
 													{@const topicProgress = topicResumeSnapshot(subject.id, topic.id)}
 											{@const subjectGenerationState = getSubjectGenerationState(subject.id)}
 											<div class="mobile-topic-card">
-												<div class="topic-title-line">
-													<span class="topic-branch">  </span>
-													<strong>{topic.name}</strong>
+												<div class="mobile-topic-head">
+													<div class="topic-title-line">
+														<span class="topic-branch">  </span>
+														<strong>{topic.name}</strong>
+													</div>
+													<button
+														class="favorite-btn inline-favorite-btn"
+														type="button"
+														title={isFavorite('topic', topic.id) ? 'Unpin topic' : 'Pin topic'}
+														onclick={() => void toggleFavorite('topic', topic.id, topic.name)}
+														disabled={favoriteBusyKeys[favoriteKey('topic', topic.id)]}
+													>
+														{isFavorite('topic', topic.id) ? '★' : '☆'}
+													</button>
 												</div>
 												<div class="mobile-metrics">
 															<span>Questions <strong>{topicStats.generated}</strong></span>
@@ -928,6 +1367,18 @@
 				</button>
 				<div class="name-stack">
 					<div class="name-header">
+						<button
+							class="favorite-btn inline-favorite-btn"
+							type="button"
+							title={isFavorite('group', group.id) ? 'Unpin group' : 'Pin group'}
+							onclick={(event) => {
+								event.stopPropagation();
+								void toggleFavorite('group', group.id, group.name);
+							}}
+							disabled={favoriteBusyKeys[favoriteKey('group', group.id)]}
+						>
+							{isFavorite('group', group.id) ? '★' : '☆'}
+						</button>
 						<strong>📁 {group.name}</strong>
 						<span class="code-chip">GROUP</span>
 					</div>
@@ -970,6 +1421,18 @@
 				</button>
 				<div class="name-stack">
 					<div class="name-header">
+						<button
+							class="favorite-btn inline-favorite-btn"
+							type="button"
+							title={isFavorite('subject', subject.id) ? 'Unpin subject' : 'Pin subject'}
+							onclick={(event) => {
+								event.stopPropagation();
+								void toggleFavorite('subject', subject.id, subject.name);
+							}}
+							disabled={favoriteBusyKeys[favoriteKey('subject', subject.id)]}
+						>
+							{isFavorite('subject', subject.id) ? '★' : '☆'}
+						</button>
 						<!-- {#if depth > 0}
 							<span class="subject-in-group-branch" aria-hidden="true"> </span>
 						{/if} -->
@@ -1011,7 +1474,7 @@
 				<td colspan="6" class="empty-cell">No topics found for this subject.</td>
 			</tr>
 		{:else}
-			{#each topicsMap[subject.id] || [] as topic}
+			{#each topicsForSubject(subject.id) as topic}
 				{@const topicStats = getTopicStats(topic)}
 				{@const pendingCount = topicStats.pending}
 				{@const topicProgress = topicResumeSnapshot(subject.id, topic.id)}
@@ -1022,6 +1485,18 @@
 							<div class="topic-title-line">
 							<!-- ↳ -->
 								<!-- <span class="topic-branch">  </span>  -->
+								<button
+									class="favorite-btn inline-favorite-btn"
+									type="button"
+									title={isFavorite('topic', topic.id) ? 'Unpin topic' : 'Pin topic'}
+									onclick={(event) => {
+										event.stopPropagation();
+										void toggleFavorite('topic', topic.id, topic.name);
+									}}
+									disabled={favoriteBusyKeys[favoriteKey('topic', topic.id)]}
+								>
+									{isFavorite('topic', topic.id) ? '★' : '☆'}
+								</button>
 								<strong>{topic.name}</strong>
 							</div>
 						</div>
@@ -1172,6 +1647,109 @@
 		min-height: 0;
 	}
 
+	.quick-section {
+		padding: 0.9rem;
+		border-radius: 1rem;
+		display: flex;
+		flex-direction: column;
+		gap: 0.75rem;
+		border: 1px solid var(--theme-glass-border);
+		background: rgba(255, 255, 255, 0.04);
+	}
+
+	.quick-section-head {
+		display: flex;
+		justify-content: space-between;
+		align-items: flex-start;
+		gap: 0.8rem;
+	}
+
+	.quick-section-kicker {
+		margin: 0 0 0.18rem;
+		font-size: 0.7rem;
+		font-weight: 700;
+		letter-spacing: 0.08em;
+		text-transform: uppercase;
+		color: var(--theme-text-muted);
+	}
+
+	.quick-section-head h3 {
+		margin: 0;
+		font-size: 1rem;
+		color: var(--theme-text-primary);
+	}
+
+	.quick-section-count {
+		display: inline-flex;
+		align-items: center;
+		justify-content: center;
+		min-width: 2rem;
+		height: 2rem;
+		padding: 0 0.6rem;
+		border-radius: 999px;
+		background: rgba(var(--theme-primary-rgb), 0.14);
+		border: 1px solid rgba(var(--theme-primary-rgb), 0.3);
+		color: var(--theme-primary);
+		font-size: 0.82rem;
+		font-weight: 700;
+	}
+
+	.quick-card-grid {
+		display: grid;
+		grid-template-columns: repeat(auto-fit, minmax(220px, 1fr));
+		gap: 0.75rem;
+	}
+
+	.quick-card {
+		border: 1px solid var(--theme-glass-border);
+		border-radius: 0.9rem;
+		padding: 0.8rem;
+		display: flex;
+		flex-direction: column;
+		gap: 0.55rem;
+		background: rgba(255, 255, 255, 0.05);
+	}
+
+	.quick-card-head {
+		display: flex;
+		justify-content: space-between;
+		align-items: flex-start;
+		gap: 0.6rem;
+	}
+
+	.quick-card-title-block {
+		display: flex;
+		flex-direction: column;
+		gap: 0.18rem;
+		min-width: 0;
+	}
+
+	.quick-card-title-block strong {
+		font-size: 0.95rem;
+		color: var(--theme-text-primary);
+	}
+
+	.quick-card-title-block span {
+		font-size: 0.78rem;
+		color: var(--theme-text-muted);
+	}
+
+	.quick-card-stats {
+		display: grid;
+		grid-template-columns: repeat(2, minmax(0, 1fr));
+		gap: 0.35rem 0.7rem;
+		font-size: 0.8rem;
+		color: var(--theme-text-muted);
+	}
+
+	.quick-card-stats strong {
+		color: var(--theme-text-primary);
+	}
+
+	.quick-card-actions {
+		justify-content: flex-start;
+	}
+
 	.tab-bar {
 		display: inline-flex;
 		align-items: center;
@@ -1313,6 +1891,13 @@
 		gap: 0.6rem;
 	}
 
+	.mobile-topic-head {
+		display: flex;
+		justify-content: space-between;
+		align-items: flex-start;
+		gap: 0.5rem;
+	}
+
 	.mobile-topic-list {
 		display: grid;
 		gap: 0.5rem;
@@ -1404,6 +1989,10 @@
 		background: rgba(255, 255, 255, 0.04);
 	}
 
+	.group-row td {
+		background: rgba(var(--theme-primary-rgb), 0.06);
+	}
+
 	.subject-row {
 		cursor: pointer;
 	}
@@ -1450,7 +2039,7 @@
 	.name-header {
 		display: flex;
 		align-items: center;
-		gap: 2rem;
+		gap: 0.6rem;
 		flex-wrap: wrap;
 	}
 
@@ -1497,6 +2086,48 @@
 		align-items: center;
 		gap: 0.35rem;
 		min-width: 0;
+		flex-wrap: wrap;
+	}
+
+	.favorite-btn {
+		width: 2rem;
+		height: 2rem;
+		border-radius: 999px;
+		border: 1px solid rgba(var(--theme-primary-rgb), 0.35);
+		background: rgba(var(--theme-primary-rgb), 0.1);
+		color: var(--theme-primary);
+		font: inherit;
+		font-size: 1rem;
+		font-weight: 700;
+		line-height: 1;
+		display: inline-flex;
+		align-items: center;
+		justify-content: center;
+		cursor: pointer;
+		flex-shrink: 0;
+		transition: transform 0.15s ease, background 0.15s ease, border-color 0.15s ease;
+	}
+
+	.favorite-btn:hover {
+		transform: translateY(-1px);
+		background: rgba(var(--theme-primary-rgb), 0.18);
+		border-color: rgba(var(--theme-primary-rgb), 0.48);
+	}
+
+	.favorite-btn:disabled {
+		opacity: 0.6;
+		cursor: not-allowed;
+		transform: none;
+	}
+
+	.inline-favorite-btn {
+		width: 1.75rem;
+		height: 1.75rem;
+		font-size: 0.95rem;
+	}
+
+	.quick-favorite-btn {
+		margin-left: auto;
 	}
 
 	.topic-branch {
@@ -1528,6 +2159,10 @@
 		padding-bottom: 0.12rem;
 		justify-content: flex-end;
 		align-items: center;
+	}
+
+	.compact-actions {
+		justify-content: flex-end;
 	}
 
 	.action-stack {
@@ -1615,6 +2250,16 @@
 		text-align: center;
 		color: var(--theme-text-muted);
 		padding: 0.95rem 0.7rem;
+	}
+
+	.pin-divider-row td {
+		background: rgba(var(--theme-primary-rgb), 0.08);
+		color: var(--theme-text-muted);
+		text-align: left !important;
+		font-size: 0.75rem;
+		font-weight: 700;
+		letter-spacing: 0.06em;
+		text-transform: uppercase;
 	}
 
 	.error-banner {

@@ -8,6 +8,8 @@
 	let error = $state('');
 	let query = $state('');
 	let stats = $state<AdminDashboard | null>(null);
+	let sortColumn = $state<'name' | 'total_vetted' | 'approved' | 'rejected' | 'approval_rate' | 'rejection_rate' | 'platform_share' | 'subjects' | 'topics'>('total_vetted');
+	let sortDirection = $state<'asc' | 'desc'>('desc');
 
 	onMount(() => {
 		const unsub = session.subscribe((s) => {
@@ -28,6 +30,15 @@
 			error = e instanceof Error ? e.message : 'Failed to load vetter analytics';
 		} finally {
 			loading = false;
+		}
+	}
+
+	function setSortColumn(column: typeof sortColumn) {
+		if (sortColumn === column) {
+			sortDirection = sortDirection === 'asc' ? 'desc' : 'asc';
+		} else {
+			sortColumn = column;
+			sortDirection = 'desc';
 		}
 	}
 
@@ -63,10 +74,61 @@
 				)
 			: rows;
 
-		return filtered.sort((a, b) => {
-			if (b.vetter.total_vetted !== a.vetter.total_vetted) return b.vetter.total_vetted - a.vetter.total_vetted;
-			return a.vetter.username.localeCompare(b.vetter.username);
+		const sorted = filtered.sort((a, b) => {
+			let aVal: number | string = 0;
+			let bVal: number | string = 0;
+
+			switch (sortColumn) {
+				case 'name':
+					aVal = a.vetter.full_name || a.vetter.username;
+					bVal = b.vetter.full_name || b.vetter.username;
+					break;
+				case 'total_vetted':
+					aVal = a.vetter.total_vetted;
+					bVal = b.vetter.total_vetted;
+					break;
+				case 'approved':
+					aVal = a.vetter.total_approved;
+					bVal = b.vetter.total_approved;
+					break;
+				case 'rejected':
+					aVal = a.vetter.total_rejected;
+					bVal = b.vetter.total_rejected;
+					break;
+				case 'approval_rate':
+					aVal = a.approvalRate;
+					bVal = b.approvalRate;
+					break;
+				case 'rejection_rate':
+					aVal = a.rejectionRate;
+					bVal = b.rejectionRate;
+					break;
+				case 'platform_share':
+					aVal = a.platformShare;
+					bVal = b.platformShare;
+					break;
+				case 'subjects':
+					aVal = a.userRecord?.subjects_count ?? 0;
+					bVal = b.userRecord?.subjects_count ?? 0;
+					break;
+				case 'topics':
+					aVal = a.userRecord?.topics_count ?? 0;
+					bVal = b.userRecord?.topics_count ?? 0;
+					break;
+			}
+
+			if (typeof aVal === 'string' && typeof bVal === 'string') {
+				return sortDirection === 'asc' 
+					? aVal.localeCompare(bVal)
+					: bVal.localeCompare(aVal);
+			}
+
+			return sortDirection === 'asc' 
+				? (aVal as number) - (bVal as number) 
+				: (bVal as number) - (aVal as number);
 		});
+
+		return sorted;
 	});
 
 	const totals = $derived.by(() => {
@@ -142,15 +204,60 @@
 			<table class="data-table">
 				<thead>
 					<tr>
-						<th>Vetter</th>
-						<th>Total Vetted</th>
-						<th>Approved</th>
-						<th>Rejected</th>
-						<th>Approval Rate</th>
-						<th>Rejection Rate</th>
-						<th>Platform Share</th>
-						<th>Subjects</th>
-						<th>Topics</th>
+						<th class="sortable" onclick={() => setSortColumn('name')}>
+							Vetter
+							{#if sortColumn === 'name'}
+								<span class="sort-indicator">{sortDirection === 'asc' ? '↑' : '↓'}</span>
+							{/if}
+						</th>
+						<th class="sortable" onclick={() => setSortColumn('total_vetted')}>
+							Total Vetted
+							{#if sortColumn === 'total_vetted'}
+								<span class="sort-indicator">{sortDirection === 'asc' ? '↑' : '↓'}</span>
+							{/if}
+						</th>
+						<th class="sortable" onclick={() => setSortColumn('approved')}>
+							Approved
+							{#if sortColumn === 'approved'}
+								<span class="sort-indicator">{sortDirection === 'asc' ? '↑' : '↓'}</span>
+							{/if}
+						</th>
+						<th class="sortable" onclick={() => setSortColumn('rejected')}>
+							Rejected
+							{#if sortColumn === 'rejected'}
+								<span class="sort-indicator">{sortDirection === 'asc' ? '↑' : '↓'}</span>
+							{/if}
+						</th>
+						<th class="sortable" onclick={() => setSortColumn('approval_rate')}>
+							Approval Rate
+							{#if sortColumn === 'approval_rate'}
+								<span class="sort-indicator">{sortDirection === 'asc' ? '↑' : '↓'}</span>
+							{/if}
+						</th>
+						<th class="sortable" onclick={() => setSortColumn('rejection_rate')}>
+							Rejection Rate
+							{#if sortColumn === 'rejection_rate'}
+								<span class="sort-indicator">{sortDirection === 'asc' ? '↑' : '↓'}</span>
+							{/if}
+						</th>
+						<th class="sortable" onclick={() => setSortColumn('platform_share')}>
+							Platform Share
+							{#if sortColumn === 'platform_share'}
+								<span class="sort-indicator">{sortDirection === 'asc' ? '↑' : '↓'}</span>
+							{/if}
+						</th>
+						<th class="sortable" onclick={() => setSortColumn('subjects')}>
+							Subjects
+							{#if sortColumn === 'subjects'}
+								<span class="sort-indicator">{sortDirection === 'asc' ? '↑' : '↓'}</span>
+							{/if}
+						</th>
+						<th class="sortable" onclick={() => setSortColumn('topics')}>
+							Topics
+							{#if sortColumn === 'topics'}
+								<span class="sort-indicator">{sortDirection === 'asc' ? '↑' : '↓'}</span>
+							{/if}
+						</th>
 					</tr>
 				</thead>
 				<tbody>
@@ -355,6 +462,24 @@
 		font-weight: 700;
 	}
 
+	.data-table th.sortable {
+		cursor: pointer;
+		user-select: none;
+		transition: color 0.2s ease, background-color 0.2s ease;
+		position: relative;
+	}
+
+	.data-table th.sortable:hover {
+		color: var(--theme-text);
+		background-color: rgba(255, 255, 255, 0.05);
+	}
+
+	.sort-indicator {
+		margin-left: 0.35rem;
+		font-size: 0.9rem;
+		color: #fbbf24;
+	}
+
 	.user-cell {
 		display: flex;
 		flex-direction: column;
@@ -469,5 +594,10 @@
 	:global([data-color-mode='light']) .data-table th,
 	:global([data-color-mode='light']) .data-table td {
 		border-bottom-color: rgba(148, 163, 184, 0.35);
+	}
+
+	:global([data-color-mode='light']) .data-table th.sortable:hover {
+		color: #0f172a;
+		background-color: rgba(148, 163, 184, 0.08);
 	}
 </style>
