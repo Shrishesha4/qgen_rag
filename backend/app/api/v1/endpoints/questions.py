@@ -44,9 +44,11 @@ from app.models.question import Question, GenerationSession
 from app.models.document import Document
 from app.models.subject import Subject, Topic
 from app.models.generation_run import GenerationRun
+from app.models.system_settings import DEFAULT_BACKGROUND_GENERATION_CONCURRENCY
 from app.services.generation_status_service import GenerationStatusService, broadcast_generation_update
 from app.services.activity_service import safe_record_activity
 from app.services.analytics_websocket_manager import analytics_ws_manager
+from app.services.provider_usage_tracking_service import provider_usage_tracker
 
 
 # MIME type mapping for allowed extensions
@@ -71,11 +73,14 @@ async def _build_provider_aware_question_service(
 async def _build_provider_aware_llm_service(
     provider_key: Optional[str] = None,
 ):
-    """Create an LLM service backed by the active admin provider."""
-    llm_service, _ = await create_llm_service_for_active_provider(
+    """Create an LLM service backed by the active admin provider.
+    
+    Returns:
+        tuple: (llm_service, provider_metadata_dict)
+    """
+    return await create_llm_service_for_active_provider(
         provider_key=provider_key,
     )
-    return llm_service
 
 
 router = APIRouter()
@@ -84,7 +89,6 @@ _BACKGROUND_GENERATION_STATUS: dict[str, dict] = {}
 _BACKGROUND_GENERATION_QUEUE: list[dict] = []  # Global queue for all users
 _QUEUE_PROCESSING_LOCK = asyncio.Lock()  # Prevent race conditions in queue processing
 _RECONCILIATION_LOCK = asyncio.Lock()
-_MAX_CONCURRENT_GENERATIONS = 2  # Max concurrent generations across all users
 _MAX_RECONCILIATION_BACKLOG = 10  # Avoid flooding startup with too many queued auto-reconciliation jobs
 _TASK_CLEANUP_INTERVAL = 300  # Clean up completed tasks every 5 minutes
 _QUEUE_PROCESSING_INTERVAL = 10  # Process queue every 10 seconds
@@ -220,58 +224,108 @@ def _cleanup_completed_tasks():
         logger.info(f"Cleaned up {len(completed_tasks)} completed tasks")
 
 
+async def _get_background_generation_concurrency_limit() -> int:
+    try:
+        provider_config = await get_provider_service().get_config()
+        configured_limit = int(
+            getattr(
+                provider_config,
+                "background_generation_concurrency",
+                DEFAULT_BACKGROUND_GENERATION_CONCURRENCY,
+            )
+            or DEFAULT_BACKGROUND_GENERATION_CONCURRENCY
+        )
+    except Exception as exc:
+        logger.warning(
+            "Failed to load background generation concurrency; using default %s: %s",
+            DEFAULT_BACKGROUND_GENERATION_CONCURRENCY,
+            exc,
+        )
+        return DEFAULT_BACKGROUND_GENERATION_CONCURRENCY
+
+    return max(1, configured_limit)
+
+
 async def _process_queue():
-    """Process queue when there's capacity with proper locking to prevent race conditions"""
+    """Start queued generations until the configured concurrency limit is reached."""
     async with _QUEUE_PROCESSING_LOCK:
-        # Double-check capacity with lock held
         current_running = _get_current_running_count()
-        if current_running >= _MAX_CONCURRENT_GENERATIONS:
-            logger.debug(f"Queue processing skipped: {current_running}/{_MAX_CONCURRENT_GENERATIONS} tasks running")
+        max_concurrent_generations = await _get_background_generation_concurrency_limit()
+
+        if current_running >= max_concurrent_generations:
+            logger.debug(
+                "Queue processing skipped: %s/%s tasks running",
+                current_running,
+                max_concurrent_generations,
+            )
             return
-        
-        next_item = _get_next_from_queue()
-        if not next_item:
+
+        if not _BACKGROUND_GENERATION_QUEUE:
             logger.debug("Queue processing skipped: no items in queue")
             return
-        
-        logger.info(f"Processing queue item: user_id={next_item['user_id']}, subject_id={next_item['subject_id']}, attempt={next_item.get('retry_count', 0) + 1}")
-        
-        # Start the queued generation — wrap in a task so _BACKGROUND_GENERATION_TASKS has an entry
-        # (prevents "in-progress without task entry" warnings during polling)
-        q_task_key = _bg_gen_task_key(next_item["user_id"], next_item["subject_id"])
-        try:
-            q_task = asyncio.create_task(
-                _run_background_subject_generation(
-                    user_id=next_item["user_id"],
-                    subject_id=next_item["subject_id"],
-                    count=next_item["count"],
-                    types=next_item["request_data"]["types"],
-                    difficulty=next_item["request_data"]["difficulty"],
-                    run_id=next_item["run_id"],
-                    topic_id=next_item["request_data"].get("topic_id"),
-                    topic_ids=next_item["request_data"].get("topic_ids"),
-                    allow_without_reference=next_item["request_data"].get("allow_without_reference", False),
-                )
+
+        started_count = 0
+
+        while current_running < max_concurrent_generations:
+            next_item = _get_next_from_queue()
+            if not next_item:
+                break
+
+            logger.info(
+                "Processing queue item: user_id=%s, subject_id=%s, attempt=%s",
+                next_item["user_id"],
+                next_item["subject_id"],
+                next_item.get("retry_count", 0) + 1,
             )
-            _BACKGROUND_GENERATION_TASKS[q_task_key] = q_task
-            await q_task
-            logger.info(f"Successfully started queued generation for user_id={next_item['user_id']}, subject_id={next_item['subject_id']}")
-        except Exception as e:
-            logger.error(f"Error processing queued generation for user_id={next_item['user_id']}, subject_id={next_item['subject_id']}: {e}")
-            
-            # Retry logic for failed queue items
-            retry_count = next_item.get("retry_count", 0)
-            if retry_count < _MAX_RETRY_ATTEMPTS:
-                next_item["retry_count"] = retry_count + 1
-                _BACKGROUND_GENERATION_QUEUE.insert(0, next_item)  # Put back at front of queue
-                analytics_ws_manager.request_live_refresh()
-                logger.warning(f"Retrying queue item (attempt {retry_count + 1}/{_MAX_RETRY_ATTEMPTS}): user_id={next_item['user_id']}, subject_id={next_item['subject_id']}")
-            else:
-                logger.error(f"Queue item failed after {_MAX_RETRY_ATTEMPTS} attempts: user_id={next_item['user_id']}, subject_id={next_item['subject_id']}")
-                # Update status to show failure
-                task_key = _bg_gen_task_key(next_item["user_id"], next_item["subject_id"])
+
+            q_task_key = _bg_gen_task_key(next_item["user_id"], next_item["subject_id"])
+            try:
+                q_task = asyncio.create_task(
+                    _run_background_subject_generation(
+                        user_id=next_item["user_id"],
+                        subject_id=next_item["subject_id"],
+                        count=next_item["count"],
+                        types=next_item["request_data"]["types"],
+                        difficulty=next_item["request_data"]["difficulty"],
+                        run_id=next_item["run_id"],
+                        topic_id=next_item["request_data"].get("topic_id"),
+                        topic_ids=next_item["request_data"].get("topic_ids"),
+                        allow_without_reference=next_item["request_data"].get(
+                            "allow_without_reference",
+                            False,
+                        ),
+                    )
+                )
+            except Exception as exc:
+                logger.error(
+                    "Error processing queued generation for user_id=%s, subject_id=%s: %s",
+                    next_item["user_id"],
+                    next_item["subject_id"],
+                    exc,
+                )
+
+                retry_count = next_item.get("retry_count", 0)
+                if retry_count < _MAX_RETRY_ATTEMPTS:
+                    next_item["retry_count"] = retry_count + 1
+                    _BACKGROUND_GENERATION_QUEUE.insert(0, next_item)
+                    analytics_ws_manager.request_live_refresh()
+                    logger.warning(
+                        "Retrying queue item (attempt %s/%s): user_id=%s, subject_id=%s",
+                        retry_count + 1,
+                        _MAX_RETRY_ATTEMPTS,
+                        next_item["user_id"],
+                        next_item["subject_id"],
+                    )
+                    break
+
+                logger.error(
+                    "Queue item failed after %s attempts: user_id=%s, subject_id=%s",
+                    _MAX_RETRY_ATTEMPTS,
+                    next_item["user_id"],
+                    next_item["subject_id"],
+                )
                 _update_background_generation_status(
-                    task_key,
+                    q_task_key,
                     {
                         "in_progress": False,
                         "run_id": next_item["run_id"],
@@ -279,16 +333,26 @@ async def _process_queue():
                         "progress": 0,
                         "current_question": 0,
                         "total_questions": next_item["count"],
-                        "message": f"Failed after {_MAX_RETRY_ATTEMPTS} retry attempts: {str(e)}",
+                        "message": f"Failed after {_MAX_RETRY_ATTEMPTS} retry attempts: {str(exc)}",
                         "updated_at": datetime.now(timezone.utc).isoformat(),
                     },
                     subject_id=next_item["subject_id"],
                     topic_id=(next_item.get("request_data") or {}).get("topic_id"),
                     topic_ids=(next_item.get("request_data") or {}).get("topic_ids"),
                 )
-            
-            # Continue processing queue if there are more items
-            asyncio.create_task(_process_queue())
+                continue
+
+            _BACKGROUND_GENERATION_TASKS[q_task_key] = q_task
+            current_running += 1
+            started_count += 1
+
+        if started_count:
+            logger.info(
+                "Started %s queued generation(s); running=%s/%s",
+                started_count,
+                current_running,
+                max_concurrent_generations,
+            )
 
 
 def _calculate_reconciliation_count(
@@ -402,6 +466,7 @@ async def _schedule_background_generation_internal(
         }
 
     current_running = _get_current_running_count()
+    max_concurrent_generations = await _get_background_generation_concurrency_limit()
     request_data = {
         "types": type_list,
         "difficulty": difficulty,
@@ -411,7 +476,7 @@ async def _schedule_background_generation_internal(
     }
     started_total_questions = int(subject.total_questions or 0)
 
-    if current_running >= _MAX_CONCURRENT_GENERATIONS:
+    if current_running >= max_concurrent_generations:
         queue_position, run_id = _add_to_queue(user_id, parsed_subject_id, count, request_data)
 
         _update_background_generation_status(
@@ -1815,9 +1880,20 @@ async def quick_generate_questions(
         try:
             import asyncio
             llm = question_service.llm_service
+            
+            # Get provider metadata for tracking
+            _, provider_metadata = await _build_provider_aware_llm_service()
 
             # Run context enhancement and document upload concurrently
-            enhanced_context_task = asyncio.create_task(_enhance_focus_prompt(context, llm))
+            enhanced_context_task = asyncio.create_task(
+                _enhance_focus_prompt(
+                    context, 
+                    llm, 
+                    user_id=current_user.id,
+                    subject_id=parsed_subject_id,
+                    provider_metadata=provider_metadata,
+                )
+            )
 
             yield f"data: {QuickGenerateProgress(status='processing', progress=8, message='Processing document content...').model_dump_json()}\n\n"
 
@@ -1917,7 +1993,13 @@ async def quick_generate_questions(
     )
 
 
-async def _enhance_focus_prompt(context: str, llm_service) -> str:
+async def _enhance_focus_prompt(
+    context: str, 
+    llm_service, 
+    user_id: Optional[str] = None,
+    subject_id: Optional[str] = None,
+    provider_metadata: Optional[dict] = None,
+) -> str:
     """Use LLM to improve the user's focus prompt before generation."""
     try:
         enhanced = await llm_service.generate(
@@ -1930,6 +2012,19 @@ async def _enhance_focus_prompt(context: str, llm_service) -> str:
             temperature=0.3,
             max_tokens=150,
         )
+        
+        # Track provider usage (non-blocking)
+        if user_id and provider_metadata:
+            provider_usage_tracker.track_usage(
+                provider_key=provider_metadata.get("provider_key", "unknown"),
+                user_id=user_id,
+                usage_type="prompt_enhancement",
+                provider_name=provider_metadata.get("provider"),
+                provider_model=provider_metadata.get("llm_model"),
+                subject_id=subject_id,
+                usage_metadata={"action": "enhance_prompt", "original_length": len(context)},
+            )
+        
         result = enhanced.strip().strip('"').strip("'")
         return result if result else context
     except Exception:

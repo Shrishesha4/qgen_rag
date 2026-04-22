@@ -1354,7 +1354,13 @@ async def _bg_generate_cos(subject_id: str, user_id: str) -> None:
                 )
 
             if len(combined) > 100:
-                cos = await _generate_cos_with_llm(subject.name, subject.code, combined + los_text)
+                cos = await _generate_cos_with_llm(
+                    subject.name, 
+                    subject.code, 
+                    combined + los_text,
+                    user_id=subject.teacher_id,
+                    subject_id=subject_id,
+                )
             else:
                 cos = list(_GENERIC_COS)
 
@@ -1379,7 +1385,13 @@ _GENERIC_COS = [
 ]
 
 
-async def _generate_cos_with_llm(subject_name: str, subject_code: str, syllabus_text: str) -> list:
+async def _generate_cos_with_llm(
+    subject_name: str, 
+    subject_code: str, 
+    syllabus_text: str,
+    user_id: Optional[str] = None,
+    subject_id: Optional[str] = None,
+) -> list:
     """Use LLM to derive 4-6 Course Outcomes from aggregated syllabus content; falls back to generic COs."""
     # Use the active AI provider from database instead of environment variable
     provider_svc = get_provider_service()
@@ -1388,7 +1400,7 @@ async def _generate_cos_with_llm(subject_name: str, subject_code: str, syllabus_
         if not enabled_providers:
             logger.warning("No enabled providers configured, falling back to generic COs")
             return _GENERIC_COS
-        llm_service, _ = provider_svc.create_llm_service(enabled_providers[0])
+        llm_service, provider_metadata = provider_svc.create_llm_service(enabled_providers[0])
     except Exception as e:
         logger.error(f"Failed to create LLM service for CO generation: {e}")
         return _GENERIC_COS
@@ -1417,6 +1429,20 @@ async def _generate_cos_with_llm(subject_name: str, subject_code: str, syllabus_
 
     try:
         result = await llm_service.generate_json(prompt=prompt, system_prompt=system_prompt, temperature=0.3)
+        
+        # Track provider usage (non-blocking)
+        if user_id and provider_metadata:
+            from app.services.provider_usage_tracking_service import provider_usage_tracker
+            provider_usage_tracker.track_usage(
+                provider_key=provider_metadata.get("provider_key", "unknown"),
+                user_id=user_id,
+                usage_type="course_outcomes_generation",
+                provider_name=provider_metadata.get("provider"),
+                provider_model=provider_metadata.get("llm_model"),
+                subject_id=subject_id,
+                usage_metadata={"action": "generate_course_outcomes", "subject_name": subject_name},
+            )
+        
         cos_raw = result if isinstance(result, list) else next(
             (v for v in result.values() if isinstance(v, list)), None
         )

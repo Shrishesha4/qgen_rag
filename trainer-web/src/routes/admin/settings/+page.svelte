@@ -24,6 +24,7 @@
 
 	interface ProviderSettingsResponse {
 		generation_batch_size: number;
+		background_generation_concurrency: number;
 		providers: ProviderConfig[];
 	}
 
@@ -82,6 +83,9 @@
 		timeout_seconds: 20,
 		password_reset_url_template: ''
 	};
+	const DEFAULT_BACKGROUND_GENERATION_CONCURRENCY = 10;
+	const MIN_BACKGROUND_GENERATION_CONCURRENCY = 1;
+	const MAX_BACKGROUND_GENERATION_CONCURRENCY = 20;
 
 	let loading = $state(true);
 	// AI connectors state
@@ -113,6 +117,7 @@
 	let testEmailLoading = $state(false);
 
 	let providers = $state<ProviderConfig[]>([]);
+	let backgroundGenerationConcurrency = $state(DEFAULT_BACKGROUND_GENERATION_CONCURRENCY);
 	let providerMetrics = $state<ProviderMetricsResponse | null>(null);
 	let visibleKeys = $state<Record<string, boolean>>({});
 
@@ -186,6 +191,17 @@
 		};
 	}
 
+	function clampBackgroundGenerationConcurrency(value: number): number {
+		if (!Number.isFinite(value)) {
+			return DEFAULT_BACKGROUND_GENERATION_CONCURRENCY;
+		}
+
+		return Math.max(
+			MIN_BACKGROUND_GENERATION_CONCURRENCY,
+			Math.min(MAX_BACKGROUND_GENERATION_CONCURRENCY, Math.trunc(value))
+		);
+	}
+
 	onMount(() => {
 		const unsub = session.subscribe((s) => {
 			if (!s || s.user.role !== 'admin') {
@@ -220,6 +236,10 @@
 			domainRestrictionEnabled = signup.domain_restriction_enabled ?? false;
 			allowedDomains = signup.allowed_domains ?? [];
 			providers = (providerSettings.providers || []).map((p) => normalizeProvider(p));
+			backgroundGenerationConcurrency = clampBackgroundGenerationConcurrency(
+				providerSettings.background_generation_concurrency ??
+					DEFAULT_BACKGROUND_GENERATION_CONCURRENCY
+			);
 			applyPasswordResetSettings(passwordResetResponse);
 			await Promise.all([loadMetrics(), loadThemes()]);
 		} catch (e: unknown) {
@@ -299,7 +319,11 @@
 		}
 
 		try {
+			const normalizedConcurrency = clampBackgroundGenerationConcurrency(
+				Number(backgroundGenerationConcurrency)
+			);
 			const payload = {
+				background_generation_concurrency: normalizedConcurrency,
 				providers: providers.map((provider) => ({
 					...provider,
 					key: String(provider.key ?? '')
@@ -318,6 +342,9 @@
 				body: JSON.stringify(payload)
 			});
 			providers = (res.providers || []).map((p) => normalizeProvider(p));
+			backgroundGenerationConcurrency = clampBackgroundGenerationConcurrency(
+				res.background_generation_concurrency ?? normalizedConcurrency
+			);
 			settingsSaved = true;
 			setTimeout(() => (settingsSaved = false), 1800);
 		} catch (e: unknown) {
@@ -988,9 +1015,38 @@
 					<button class="primary-btn" onclick={addProvider}>Add Service</button>
 				</div>
 
-				<div class="batch-summary">
-					<span>Total questions per batch (computed):</span>
-					<strong>{totalQuestionsPerBatch()}</strong>
+				<div class="connectors-summary-grid">
+					<div class="batch-summary">
+						<span>Total questions per batch (computed):</span>
+						<strong>{totalQuestionsPerBatch()}</strong>
+					</div>
+
+					<div class="concurrency-card">
+						<div>
+							<span class="concurrency-label">Parallel topic generations</span>
+							<p class="concurrency-copy">
+								How many queued background topic-generation jobs can run at once across the
+								platform. Use 10-20 only if your providers can handle the load.
+							</p>
+						</div>
+						<div class="concurrency-control">
+							<input
+								id="background-generation-concurrency"
+								type="number"
+								min={MIN_BACKGROUND_GENERATION_CONCURRENCY}
+								max={MAX_BACKGROUND_GENERATION_CONCURRENCY}
+								class="cell-input concurrency-input"
+								value={backgroundGenerationConcurrency}
+								disabled={settingsLoading}
+								oninput={(event) => {
+									backgroundGenerationConcurrency = clampBackgroundGenerationConcurrency(
+										Number((event.currentTarget as HTMLInputElement).value)
+									);
+								}}
+							/>
+							<span class="concurrency-range">1-20</span>
+						</div>
+					</div>
 				</div>
 
 				<div class="table-wrap">
@@ -1471,9 +1527,16 @@
 		gap: 0.5rem;
 		padding: 0.55rem 0.7rem;
 		border-radius: 0.65rem;
-		margin-bottom: 0.75rem;
 		background: color-mix(in srgb, var(--theme-primary) 10%, transparent);
 		border: 1px solid color-mix(in srgb, var(--theme-primary) 28%, var(--theme-glass-border));
+	}
+
+	.connectors-summary-grid {
+		display: grid;
+		grid-template-columns: minmax(0, 1fr) minmax(280px, 360px);
+		gap: 0.75rem;
+		margin-bottom: 0.75rem;
+		align-items: stretch;
 	}
 
 	.batch-summary span {
@@ -1483,6 +1546,47 @@
 
 	.batch-summary strong {
 		color: var(--theme-primary);
+	}
+
+	.concurrency-card {
+		display: flex;
+		flex-direction: column;
+		justify-content: space-between;
+		gap: 0.65rem;
+		padding: 0.75rem 0.85rem;
+		border-radius: 0.75rem;
+		border: 1px solid var(--theme-glass-border);
+		background: color-mix(in srgb, var(--theme-surface) 84%, transparent);
+	}
+
+	.concurrency-label {
+		display: block;
+		font-size: 0.84rem;
+		font-weight: 700;
+		color: var(--theme-text);
+	}
+
+	.concurrency-copy {
+		margin: 0.2rem 0 0;
+		font-size: 0.78rem;
+		line-height: 1.45;
+		color: var(--theme-text-muted);
+	}
+
+	.concurrency-control {
+		display: flex;
+		align-items: center;
+		gap: 0.55rem;
+	}
+
+	.concurrency-input {
+		max-width: 110px;
+		font-weight: 700;
+	}
+
+	.concurrency-range {
+		font-size: 0.78rem;
+		color: var(--theme-text-muted);
 	}
 
 	.table-wrap {
@@ -1753,6 +1857,10 @@
 	@media (max-width: 900px) {
 		.summary-grid {
 			grid-template-columns: repeat(2, minmax(0, 1fr));
+		}
+
+		.connectors-summary-grid {
+			grid-template-columns: 1fr;
 		}
 
 		.section-head,

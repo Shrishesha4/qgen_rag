@@ -13,6 +13,8 @@
 	let editingName = $state('');
 	let editingCode = $state('');
 	let saveBusySubjectId = $state('');
+	let sortColumn = $state<'name' | 'teacher' | 'topics' | 'questions' | 'approved' | 'rejected' | 'pending' | 'created'>('created');
+	let sortDirection = $state<'asc' | 'desc'>('desc');
 
 	onMount(() => {
 		const unsub = session.subscribe((s) => {
@@ -36,17 +38,79 @@
 		}
 	}
 
+	function setSortColumn(column: typeof sortColumn) {
+		if (sortColumn === column) {
+			sortDirection = sortDirection === 'asc' ? 'desc' : 'asc';
+		} else {
+			sortColumn = column;
+			sortDirection = 'desc';
+		}
+	}
+
 	const filteredSubjects = $derived.by(() => {
 		const search = query.trim().toLowerCase();
-		if (!search) return subjects;
-		return subjects.filter((subject) => {
-			return [
-				subject.name,
-				subject.code,
-				subject.teacher_name ?? '',
-				subject.teacher_email ?? ''
-			].some((value) => value.toLowerCase().includes(search));
+		const filtered = search
+			? subjects.filter((subject) => {
+					return [
+						subject.name,
+						subject.code,
+						subject.teacher_name ?? '',
+						subject.teacher_email ?? ''
+					].some((value) => value.toLowerCase().includes(search));
+				})
+			: subjects;
+
+		const sorted = [...filtered].sort((a, b) => {
+			let aVal: number | string = 0;
+			let bVal: number | string = 0;
+
+			switch (sortColumn) {
+				case 'name':
+					aVal = a.name;
+					bVal = b.name;
+					break;
+				case 'teacher':
+					aVal = a.teacher_name || a.teacher_email || '';
+					bVal = b.teacher_name || b.teacher_email || '';
+					break;
+				case 'topics':
+					aVal = a.total_topics;
+					bVal = b.total_topics;
+					break;
+				case 'questions':
+					aVal = a.total_questions;
+					bVal = b.total_questions;
+					break;
+				case 'approved':
+					aVal = a.total_approved;
+					bVal = b.total_approved;
+					break;
+				case 'rejected':
+					aVal = a.total_rejected;
+					bVal = b.total_rejected;
+					break;
+				case 'pending':
+					aVal = a.total_pending;
+					bVal = b.total_pending;
+					break;
+				case 'created':
+					aVal = a.created_at;
+					bVal = b.created_at;
+					break;
+			}
+
+			if (typeof aVal === 'string' && typeof bVal === 'string') {
+				return sortDirection === 'asc' 
+					? aVal.localeCompare(bVal)
+					: bVal.localeCompare(aVal);
+			}
+
+			return sortDirection === 'asc' 
+				? (aVal as number) - (bVal as number) 
+				: (bVal as number) - (aVal as number);
 		});
+
+		return sorted;
 	});
 
 	const totals = $derived.by(() => {
@@ -210,14 +274,54 @@
 				<thead>
 					<tr>
 						<th>S.No</th>
-						<th>Subject</th>
-						<th>Teacher</th>
-						<th>T</th>
-						<th>Q</th>
-						<th>Q</th>
-						<th>R</th>
-						<th>P</th>
-						<th>Created</th>
+						<th class="sortable" onclick={() => setSortColumn('name')}>
+							Subject
+							{#if sortColumn === 'name'}
+								<span class="sort-indicator">{sortDirection === 'asc' ? '↑' : '↓'}</span>
+							{/if}
+						</th>
+						<th class="sortable" onclick={() => setSortColumn('teacher')}>
+							Teacher
+							{#if sortColumn === 'teacher'}
+								<span class="sort-indicator">{sortDirection === 'asc' ? '↑' : '↓'}</span>
+							{/if}
+						</th>
+						<th class="sortable" onclick={() => setSortColumn('topics')}>
+							T
+							{#if sortColumn === 'topics'}
+								<span class="sort-indicator">{sortDirection === 'asc' ? '↑' : '↓'}</span>
+							{/if}
+						</th>
+						<th class="sortable" onclick={() => setSortColumn('questions')}>
+							Q
+							{#if sortColumn === 'questions'}
+								<span class="sort-indicator">{sortDirection === 'asc' ? '↑' : '↓'}</span>
+							{/if}
+						</th>
+						<th class="sortable" onclick={() => setSortColumn('approved')}>
+							Q
+							{#if sortColumn === 'approved'}
+								<span class="sort-indicator">{sortDirection === 'asc' ? '↑' : '↓'}</span>
+							{/if}
+						</th>
+						<th class="sortable" onclick={() => setSortColumn('rejected')}>
+							R
+							{#if sortColumn === 'rejected'}
+								<span class="sort-indicator">{sortDirection === 'asc' ? '↑' : '↓'}</span>
+							{/if}
+						</th>
+						<th class="sortable" onclick={() => setSortColumn('pending')}>
+							P
+							{#if sortColumn === 'pending'}
+								<span class="sort-indicator">{sortDirection === 'asc' ? '↑' : '↓'}</span>
+							{/if}
+						</th>
+						<th class="sortable" onclick={() => setSortColumn('created')}>
+							Created
+							{#if sortColumn === 'created'}
+								<span class="sort-indicator">{sortDirection === 'asc' ? '↑' : '↓'}</span>
+							{/if}
+						</th>
 					</tr>
 				</thead>
 				<tbody>
@@ -530,6 +634,24 @@
 		color: var(--theme-text-muted);
 	}
 
+	.data-table th.sortable {
+		cursor: pointer;
+		user-select: none;
+		transition: color 0.2s ease, background-color 0.2s ease;
+		position: relative;
+	}
+
+	.data-table th.sortable:hover {
+		color: var(--theme-text);
+		background-color: rgba(255, 255, 255, 0.05);
+	}
+
+	.sort-indicator {
+		margin-left: 0.35rem;
+		font-size: 0.9rem;
+		color: #fbbf24;
+	}
+
 	.subject-code {
 		display: inline-flex;
 		align-items: center;
@@ -801,6 +923,11 @@
 	:global([data-color-mode='light']) .data-table th,
 	:global([data-color-mode='light']) .data-table td {
 		border-bottom-color: rgba(148, 163, 184, 0.35);
+	}
+
+	:global([data-color-mode='light']) .data-table th.sortable:hover {
+		color: #0f172a;
+		background-color: rgba(148, 163, 184, 0.08);
 	}
 
 	:global([data-color-mode='light']) .open-btn {

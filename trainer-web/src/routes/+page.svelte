@@ -144,7 +144,10 @@
 			</div>
 			<h1 class="hero-title font-serif">VQuest</h1>
 			<p class="hero-sub">
-				AI That Thinks Like an Examiner 0 Powered by Vianasoft.
+				AI That Thinks Like an Examiner 0 <br>
+				<span class="text-[16px]">
+					Powered by Vianasoft
+				</span> 
 			</p>
 		</div>
 
@@ -545,7 +548,7 @@
 	}
 
 	.hero-title {
-		font-size: clamp(2.4rem, 5vw, 3.4rem);
+		font-size: clamp(1.5rem, 5vw, 2.8rem);
 		font-weight: 800;
 		letter-spacing: -0.02em;
 		margin: 0;

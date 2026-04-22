@@ -7,6 +7,7 @@ configured questions_per_batch allocation.
 """
 
 import logging
+from copy import deepcopy
 from typing import Optional, List, Dict, Any, Tuple
 from dataclasses import dataclass, field
 
@@ -15,14 +16,25 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.auth_database import AuthSessionLocal
 from app.models.system_settings import (
-    SystemSettings,
     SETTING_PROVIDER_GENERATION_CONFIG,
     DEFAULT_SETTINGS,
+    DEFAULT_BACKGROUND_GENERATION_CONCURRENCY,
+    MAX_BACKGROUND_GENERATION_CONCURRENCY,
+    SystemSettings,
 )
 from app.services.llm_service import LLMProvider
 
 
 logger = logging.getLogger(__name__)
+
+
+def _normalize_background_generation_concurrency(value: Any) -> int:
+    """Clamp background generation concurrency to a safe admin-configured range."""
+    try:
+        normalized = int(value)
+    except (TypeError, ValueError):
+        normalized = DEFAULT_BACKGROUND_GENERATION_CONCURRENCY
+    return max(1, min(normalized, MAX_BACKGROUND_GENERATION_CONCURRENCY))
 
 
 def _normalize_openai_base_url(base_url: str) -> str:
@@ -73,6 +85,7 @@ class ProviderConfig:
 class GenerationBatchConfig:
     """Configuration for a generation batch."""
     generation_batch_size: int = 30
+    background_generation_concurrency: int = DEFAULT_BACKGROUND_GENERATION_CONCURRENCY
     providers: List[ProviderConfig] = field(default_factory=list)
 
     @property
@@ -134,10 +147,9 @@ class ProviderService:
             )
             setting = result.scalar_one_or_none()
 
-        if setting and setting.value:
-            raw_config = setting.value
-        else:
-            raw_config = DEFAULT_SETTINGS.get(SETTING_PROVIDER_GENERATION_CONFIG, {})
+        raw_config = deepcopy(DEFAULT_SETTINGS.get(SETTING_PROVIDER_GENERATION_CONFIG, {}))
+        if setting and isinstance(setting.value, dict):
+            raw_config.update(setting.value)
 
         providers = []
         for p in raw_config.get("providers", []):
@@ -161,6 +173,9 @@ class ProviderService:
 
         config = GenerationBatchConfig(
             generation_batch_size=computed_batch_size,
+            background_generation_concurrency=_normalize_background_generation_concurrency(
+                raw_config.get("background_generation_concurrency")
+            ),
             providers=providers,
         )
 

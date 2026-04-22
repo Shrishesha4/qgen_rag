@@ -16,6 +16,8 @@
 	let stats = $state<AdminDashboard | null>(null);
 	let subjects = $state<AdminSubjectSummary[]>([]);
 	let expandedTeachers = $state<Record<string, boolean>>({});
+	let sortColumn = $state<'name' | 'subjects' | 'topics' | 'questions' | 'approved' | 'rejected' | 'pending' | 'coverage'>('questions');
+	let sortDirection = $state<'asc' | 'desc'>('desc');
 
 	onMount(() => {
 		const unsub = session.subscribe((s) => {
@@ -38,6 +40,15 @@
 			error = e instanceof Error ? e.message : 'Failed to load teacher analytics';
 		} finally {
 			loading = false;
+		}
+	}
+
+	function setSortColumn(column: typeof sortColumn) {
+		if (sortColumn === column) {
+			sortDirection = sortDirection === 'asc' ? 'desc' : 'asc';
+		} else {
+			sortColumn = column;
+			sortDirection = 'desc';
 		}
 	}
 
@@ -100,10 +111,57 @@
 				})
 			: rows;
 
-		return filtered.sort((a, b) => {
-			if (b.totalQuestions !== a.totalQuestions) return b.totalQuestions - a.totalQuestions;
-			return a.teacher.username.localeCompare(b.teacher.username);
+		const sorted = [...filtered].sort((a, b) => {
+			let aVal: number | string = 0;
+			let bVal: number | string = 0;
+
+			switch (sortColumn) {
+				case 'name':
+					aVal = a.teacher.full_name || a.teacher.username;
+					bVal = b.teacher.full_name || b.teacher.username;
+					break;
+				case 'subjects':
+					aVal = a.subjects.length;
+					bVal = b.subjects.length;
+					break;
+				case 'topics':
+					aVal = a.totalTopics;
+					bVal = b.totalTopics;
+					break;
+				case 'questions':
+					aVal = a.totalQuestions;
+					bVal = b.totalQuestions;
+					break;
+				case 'approved':
+					aVal = a.totalApproved;
+					bVal = b.totalApproved;
+					break;
+				case 'rejected':
+					aVal = a.totalRejected;
+					bVal = b.totalRejected;
+					break;
+				case 'pending':
+					aVal = a.totalPending;
+					bVal = b.totalPending;
+					break;
+				case 'coverage':
+					aVal = a.subjectProgress;
+					bVal = b.subjectProgress;
+					break;
+			}
+
+			if (typeof aVal === 'string' && typeof bVal === 'string') {
+				return sortDirection === 'asc' 
+					? aVal.localeCompare(bVal)
+					: bVal.localeCompare(aVal);
+			}
+
+			return sortDirection === 'asc' 
+				? (aVal as number) - (bVal as number) 
+				: (bVal as number) - (aVal as number);
 		});
+
+		return sorted;
 	});
 
 	const totals = $derived.by(() => {
@@ -198,14 +256,54 @@
 			<table class="data-table">
 				<thead>
 					<tr>
-						<th>Teacher</th>
-						<th>Subjects</th>
-						<th>Topics</th>
-						<th>Questions</th>
-						<th>Approved</th>
-						<th>Rejected</th>
-						<th>Pending</th>
-						<th>Coverage</th>
+						<th class="sortable" onclick={() => setSortColumn('name')}>
+							Teacher
+							{#if sortColumn === 'name'}
+								<span class="sort-indicator">{sortDirection === 'asc' ? '↑' : '↓'}</span>
+							{/if}
+						</th>
+						<th class="sortable" onclick={() => setSortColumn('subjects')}>
+							Subjects
+							{#if sortColumn === 'subjects'}
+								<span class="sort-indicator">{sortDirection === 'asc' ? '↑' : '↓'}</span>
+							{/if}
+						</th>
+						<th class="sortable" onclick={() => setSortColumn('topics')}>
+							Topics
+							{#if sortColumn === 'topics'}
+								<span class="sort-indicator">{sortDirection === 'asc' ? '↑' : '↓'}</span>
+							{/if}
+						</th>
+						<th class="sortable" onclick={() => setSortColumn('questions')}>
+							Questions
+							{#if sortColumn === 'questions'}
+								<span class="sort-indicator">{sortDirection === 'asc' ? '↑' : '↓'}</span>
+							{/if}
+						</th>
+						<th class="sortable" onclick={() => setSortColumn('approved')}>
+							Approved
+							{#if sortColumn === 'approved'}
+								<span class="sort-indicator">{sortDirection === 'asc' ? '↑' : '↓'}</span>
+							{/if}
+						</th>
+						<th class="sortable" onclick={() => setSortColumn('rejected')}>
+							Rejected
+							{#if sortColumn === 'rejected'}
+								<span class="sort-indicator">{sortDirection === 'asc' ? '↑' : '↓'}</span>
+							{/if}
+						</th>
+						<th class="sortable" onclick={() => setSortColumn('pending')}>
+							Pending
+							{#if sortColumn === 'pending'}
+								<span class="sort-indicator">{sortDirection === 'asc' ? '↑' : '↓'}</span>
+							{/if}
+						</th>
+						<th class="sortable" onclick={() => setSortColumn('coverage')}>
+							Coverage
+							{#if sortColumn === 'coverage'}
+								<span class="sort-indicator">{sortDirection === 'asc' ? '↑' : '↓'}</span>
+							{/if}
+						</th>
 						<th></th>
 					</tr>
 				</thead>
@@ -422,6 +520,24 @@
 		color: var(--theme-text-muted);
 	}
 
+	.data-table th.sortable {
+		cursor: pointer;
+		user-select: none;
+		transition: color 0.2s ease, background-color 0.2s ease;
+		position: relative;
+	}
+
+	.data-table th.sortable:hover {
+		color: var(--theme-text);
+		background-color: rgba(255, 255, 255, 0.05);
+	}
+
+	.sort-indicator {
+		margin-left: 0.35rem;
+		font-size: 0.9rem;
+		color: #fbbf24;
+	}
+
 	.teacher-cell {
 		display: flex;
 		flex-direction: column;
@@ -627,6 +743,11 @@
 	:global([data-color-mode='light']) .stat-label,
 	:global([data-color-mode='light']) .data-table th {
 		color: #475569;
+	}
+
+	:global([data-color-mode='light']) .data-table th.sortable:hover {
+		color: #0f172a;
+		background-color: rgba(148, 163, 184, 0.08);
 	}
 	
 	/* :global([data-color-mode='light']) .teacher-name,

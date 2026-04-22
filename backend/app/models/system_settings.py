@@ -36,6 +36,9 @@ SETTING_PROVIDER_GENERATION_CONFIG = "provider_generation_config"
 SETTING_PASSWORD_RESET = "password_reset"
 SETTING_EMAIL_DOMAIN_RESTRICTION = "email_domain_restriction"
 
+DEFAULT_BACKGROUND_GENERATION_CONCURRENCY = 10
+MAX_BACKGROUND_GENERATION_CONCURRENCY = 20
+
 PASSWORD_RESET_METHOD_SMTP = "smtp"
 PASSWORD_RESET_METHOD_SECURITY_QUESTION = "security_question"
 
@@ -72,6 +75,7 @@ DEFAULT_SETTINGS = {
         "allowed_domains": ["saveetha.com"],
     },
     SETTING_PROVIDER_GENERATION_CONFIG: {
+        "background_generation_concurrency": DEFAULT_BACKGROUND_GENERATION_CONCURRENCY,
         "providers": [
             {
                 "key": "deepseek",

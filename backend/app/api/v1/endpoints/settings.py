@@ -12,7 +12,9 @@ from app.models.system_settings import (
     SETTING_SIGNUP_ENABLED,
     SETTING_PROVIDER_GENERATION_CONFIG,
     SETTING_EMAIL_DOMAIN_RESTRICTION,
+    DEFAULT_BACKGROUND_GENERATION_CONCURRENCY,
     DEFAULT_SETTINGS,
+    MAX_BACKGROUND_GENERATION_CONCURRENCY,
 )
 from app.models.user import ROLE_ADMIN, User
 from app.schemas.auth import MessageResponse
@@ -53,10 +55,16 @@ class ProviderGenerationItem(BaseModel):
 
 class ProviderGenerationSettingsResponse(BaseModel):
     generation_batch_size: int
+    background_generation_concurrency: int
     providers: list[ProviderGenerationItem]
 
 
 class ProviderGenerationSettingsUpdate(BaseModel):
+    background_generation_concurrency: int | None = Field(
+        default=None,
+        ge=1,
+        le=MAX_BACKGROUND_GENERATION_CONCURRENCY,
+    )
     providers: list[ProviderGenerationItem]
 
 
@@ -144,6 +152,14 @@ def _normalize_provider_items(items: list[ProviderGenerationItem]) -> list[dict]
     return normalized
 
 
+def _normalize_background_generation_concurrency(value: object) -> int:
+    try:
+        normalized = int(value)
+    except (TypeError, ValueError):
+        normalized = DEFAULT_BACKGROUND_GENERATION_CONCURRENCY
+    return max(1, min(normalized, MAX_BACKGROUND_GENERATION_CONCURRENCY))
+
+
 def _provider_settings_response(value: dict) -> ProviderGenerationSettingsResponse:
     providers_raw = value.get("providers") or []
     providers: list[ProviderGenerationItem] = []
@@ -166,9 +182,13 @@ def _provider_settings_response(value: dict) -> ProviderGenerationSettingsRespon
     generation_batch_size = sum(
         int(p.questions_per_batch) for p in providers if p.enabled
     )
+    background_generation_concurrency = _normalize_background_generation_concurrency(
+        value.get("background_generation_concurrency")
+    )
 
     return ProviderGenerationSettingsResponse(
         generation_batch_size=generation_batch_size,
+        background_generation_concurrency=background_generation_concurrency,
         providers=providers,
     )
 
@@ -288,7 +308,15 @@ async def update_provider_generation_settings(
             detail="At least one provider must be enabled",
         )
 
+    current_value = await get_setting(db, SETTING_PROVIDER_GENERATION_CONFIG)
+    background_generation_concurrency = _normalize_background_generation_concurrency(
+        update.background_generation_concurrency
+        if update.background_generation_concurrency is not None
+        else current_value.get("background_generation_concurrency")
+    )
+
     value = {
+        "background_generation_concurrency": background_generation_concurrency,
         "providers": normalized_providers,
     }
 

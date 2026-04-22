@@ -48,7 +48,7 @@ class AdminNotificationService:
             message = f"{display_name} requested a password reset via {method_label}."
         else:
             message = f"{display_name} requested an admin-assisted password reset."
-        action_url = f"/users/{target_user.id}?intent=reset-password"
+        action_url = f"/admin/users/{target_user.id}?intent=reset-password"
         payload = {
             "method": method,
             "self_service_enabled": self_service_enabled,

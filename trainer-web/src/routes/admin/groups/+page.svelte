@@ -16,6 +16,8 @@
 	let query = $state('');
 	let selectedGroupId = $state<string | null>(null);
 	let expandedGroups = $state<Set<string>>(new Set());
+	let sortColumn = $state<'name' | 'questions' | 'pending' | 'approved' | 'rejected'>('questions');
+	let sortDirection = $state<'asc' | 'desc'>('desc');
 
 	onMount(() => {
 		const unsub = session.subscribe((s) => {
@@ -40,6 +42,15 @@
 		}
 	}
 
+	function setSortColumn(column: typeof sortColumn) {
+		if (sortColumn === column) {
+			sortDirection = sortDirection === 'asc' ? 'desc' : 'asc';
+		} else {
+			sortColumn = column;
+			sortDirection = 'desc';
+		}
+	}
+
 	const subjectGroupMetaById = $derived.by(() => buildSubjectGroupMetaById(treeData?.groups ?? []));
 
 	const allGroupedSubjects = $derived.by(() => {
@@ -59,7 +70,47 @@
 	const filteredGroupsView = $derived.by(() => {
 		const search = query.trim().toLowerCase();
 		if (!search) return null;
-		return allGroupedSubjects.filter((subject) => matchesSubjectSearch(subject, search, subjectGroupMetaById));
+		const filtered = allGroupedSubjects.filter((subject) => matchesSubjectSearch(subject, search, subjectGroupMetaById));
+
+		const sorted = [...filtered].sort((a, b) => {
+			let aVal: number | string = 0;
+			let bVal: number | string = 0;
+
+			switch (sortColumn) {
+				case 'name':
+					aVal = a.name;
+					bVal = b.name;
+					break;
+				case 'questions':
+					aVal = a.total_questions;
+					bVal = b.total_questions;
+					break;
+				case 'pending':
+					aVal = a.total_pending ?? 0;
+					bVal = b.total_pending ?? 0;
+					break;
+				case 'approved':
+					aVal = a.total_approved ?? 0;
+					bVal = b.total_approved ?? 0;
+					break;
+				case 'rejected':
+					aVal = a.total_rejected ?? 0;
+					bVal = b.total_rejected ?? 0;
+					break;
+			}
+
+			if (typeof aVal === 'string' && typeof bVal === 'string') {
+				return sortDirection === 'asc' 
+					? aVal.localeCompare(bVal)
+					: bVal.localeCompare(aVal);
+			}
+
+			return sortDirection === 'asc' 
+				? (aVal as number) - (bVal as number) 
+				: (bVal as number) - (aVal as number);
+		});
+
+		return sorted;
 	});
 
 	const totals = $derived.by(() => {
@@ -163,11 +214,36 @@
 				</colgroup>
 				<thead>
 					<tr>
-						<th>Name</th>
-						<th>Questions</th>
-						<th>Pending</th>
-						<th>Approved</th>
-						<th>Rejected</th>
+						<th class="sortable" onclick={() => setSortColumn('name')}>
+							Name
+							{#if sortColumn === 'name'}
+								<span class="sort-indicator">{sortDirection === 'asc' ? '↑' : '↓'}</span>
+							{/if}
+						</th>
+						<th class="sortable" onclick={() => setSortColumn('questions')}>
+							Questions
+							{#if sortColumn === 'questions'}
+								<span class="sort-indicator">{sortDirection === 'asc' ? '↑' : '↓'}</span>
+							{/if}
+						</th>
+						<th class="sortable" onclick={() => setSortColumn('pending')}>
+							Pending
+							{#if sortColumn === 'pending'}
+								<span class="sort-indicator">{sortDirection === 'asc' ? '↑' : '↓'}</span>
+							{/if}
+						</th>
+						<th class="sortable" onclick={() => setSortColumn('approved')}>
+							Approved
+							{#if sortColumn === 'approved'}
+								<span class="sort-indicator">{sortDirection === 'asc' ? '↑' : '↓'}</span>
+							{/if}
+						</th>
+						<th class="sortable" onclick={() => setSortColumn('rejected')}>
+							Rejected
+							{#if sortColumn === 'rejected'}
+								<span class="sort-indicator">{sortDirection === 'asc' ? '↑' : '↓'}</span>
+							{/if}
+						</th>
 					</tr>
 				</thead>
 				<tbody>
@@ -473,6 +549,24 @@
 		background: rgba(255, 255, 255, 0.04);
 	}
 
+	.subjects-table th.sortable {
+		cursor: pointer;
+		user-select: none;
+		transition: color 0.2s ease, background-color 0.2s ease;
+		position: relative;
+	}
+
+	.subjects-table th.sortable:hover {
+		color: var(--theme-text);
+		background-color: rgba(255, 255, 255, 0.08);
+	}
+
+	.sort-indicator {
+		margin-left: 0.35rem;
+		font-size: 0.9rem;
+		color: #fbbf24;
+	}
+
 	.group-row,
 	.subject-row {
 		transition: background 0.18s ease;
@@ -673,6 +767,11 @@
 
 	:global([data-color-mode='light']) .subjects-table th {
 		background: rgba(248, 250, 252, 0.95);
+	}
+
+	:global([data-color-mode='light']) .subjects-table th.sortable:hover {
+		color: #0f172a;
+		background-color: rgba(148, 163, 184, 0.15);
 	}
 
 	:global([data-color-mode='light']) .search-input {

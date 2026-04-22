@@ -38,6 +38,7 @@ from app.services.metrics_service import vetting_submit_success_total, vetting_s
 from app.schemas.question import QuestionSourceInfo, SourceReference
 from app.services.stats_broadcast_service import broadcast_vetting_stats_update
 from app.services.analytics_websocket_manager import analytics_ws_manager
+from app.services.provider_usage_tracking_service import provider_usage_tracker
 
 
 router = APIRouter()
@@ -1816,7 +1817,7 @@ async def reject_with_feedback(
         }
 
     # 4. IMPROVE mode (default) — use LLM to improve the same question based on feedback
-    llm, _ = await create_llm_service_for_active_provider()
+    llm, provider_metadata = await create_llm_service_for_active_provider()
 
     improve_prompt = f"""You are a question quality improvement assistant. A reviewer rejected a question and provided feedback. 
 Your task is to IMPROVE the same question based on the feedback. Do NOT create a completely different question.
@@ -1862,6 +1863,18 @@ Return ONLY the JSON, no other text."""
         try:
             # Use provider-level structured parsing first (more robust across models).
             improved = await llm.generate_json(improve_prompt, temperature=0.3)
+            
+            # Track non-blocking provider usage
+            provider_usage_tracker.track_usage(
+                provider_key=provider_metadata.get("provider_key", "unknown"),
+                user_id=current_user.id,
+                usage_type="question_improvement",
+                provider_name=provider_metadata.get("provider"),
+                provider_model=provider_metadata.get("llm_model"),
+                subject_id=question.subject_id,
+                topic_id=question.topic_id,
+                usage_metadata={"question_id": str(question_id), "action": "improve_rejected"},
+            )
         except Exception as parse_err:
             logger.warning(f"reject-with-feedback improve: generate_json failed, trying fallback parse: {parse_err}")
             llm_response = await llm.generate(improve_prompt, temperature=0.3)
