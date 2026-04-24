@@ -126,6 +126,15 @@ export interface VetterTopicQuestionStats {
 	rejected_count: number;
 }
 
+export interface VetterTopicSearchResult {
+	subject_id: string;
+	subject_name: string;
+	subject_code: string;
+	topic_id: string;
+	topic_name: string;
+	pending_count: number;
+}
+
 export interface VetterSubjectSummary {
 	id: string;
 	name: string;
@@ -287,6 +296,29 @@ export async function getVetterSubject(id: string): Promise<VetterSubjectSummary
 
 export async function getVetterSubjectTopicStats(subjectId: string): Promise<VetterTopicQuestionStats[]> {
 	return apiFetch<VetterTopicQuestionStats[]>(`/vetter/subjects/${subjectId}/topics`);
+}
+
+export async function searchVetterTopics(opts: {
+	query?: string;
+	topicIds?: string[];
+	limit?: number;
+} = {}): Promise<VetterTopicSearchResult[]> {
+	const search = opts.query?.trim() ?? '';
+	const topicIds = [...new Set((opts.topicIds ?? []).map((topicId) => topicId.trim()).filter(Boolean))];
+	if (!search && topicIds.length === 0) {
+		return [];
+	}
+
+	const normalizedLimit = Math.max(
+		1,
+		Math.min(200, Math.trunc(opts.limit ?? Math.max(50, topicIds.length || 0)))
+	);
+	const params = new URLSearchParams({ limit: String(normalizedLimit) });
+	if (search) params.set('search', search);
+	for (const topicId of topicIds) {
+		params.append('topic_id', topicId);
+	}
+	return apiFetch<VetterTopicSearchResult[]>(`/vetter/topics/search?${params.toString()}`);
 }
 
 export async function getQuestionsForVetting(opts: {

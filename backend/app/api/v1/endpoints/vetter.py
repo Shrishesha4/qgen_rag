@@ -12,7 +12,7 @@ from typing import Literal, Optional, List
 from datetime import datetime, timezone
 
 from fastapi import APIRouter, Depends, HTTPException, status, Query
-from sqlalchemy import select, func, and_, or_
+from sqlalchemy import select, func, and_, or_, case
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import selectinload, joinedload
 from sqlalchemy.exc import ProgrammingError
@@ -84,6 +84,16 @@ class TopicQuestionStats(BaseModel):
     pending_count: int
     approved_count: int
     rejected_count: int
+
+
+class TopicSearchResult(BaseModel):
+    """Compact topic search result for the vetter dashboard."""
+    subject_id: str
+    subject_name: str
+    subject_code: str
+    topic_id: str
+    topic_name: str
+    pending_count: int
 
 
 class VetterDashboard(BaseModel):
@@ -751,34 +761,46 @@ async def get_subjects_with_questions(
         )
         users_map = {u.id: u for u in users_result.scalars().all()}
 
-    # 3. Build response, fetching topic stats per subject
+    # 3. Fetch topic pending counts for all returned subjects in one pass.
+    subject_ids = [row[0] for row in pg_rows]
+    topics_by_subject: dict[str, List[dict]] = {subject_id: [] for subject_id in subject_ids}
+    topics_result = await db.execute(
+        select(
+            Topic.subject_id,
+            Topic.id,
+            Topic.name,
+            Topic.order_index,
+            func.count(
+                case(
+                    (
+                        and_(
+                            Question.vetting_status == "pending",
+                            Question.is_latest == True,
+                            Question.is_archived == False,
+                        ),
+                        1,
+                    )
+                )
+            ).label("pending_count"),
+        )
+        .outerjoin(Question, Question.topic_id == Topic.id)
+        .where(Topic.subject_id.in_(subject_ids))
+        .group_by(Topic.subject_id, Topic.id, Topic.name, Topic.order_index)
+        .order_by(Topic.subject_id, Topic.order_index, Topic.name)
+    )
+    for topic_subject_id, topic_id, topic_name, _topic_order_index, pending_count in topics_result.all():
+        topics_by_subject.setdefault(topic_subject_id, []).append({
+            "id": str(topic_id),
+            "name": topic_name,
+            "pending_count": int(pending_count or 0),
+        })
+
+    # 4. Build response from batched aggregates.
     subjects = []
     for row in pg_rows:
         subject_id, name, code, user_id, description, pending_count, approved_count, rejected_count, _ = row
         teacher = users_map.get(user_id)
         teacher_name = (teacher.full_name or teacher.username) if teacher else "Unknown"
-
-        # Get topics for this subject
-        topics_result = await db.execute(
-            select(Topic).where(Topic.subject_id == subject_id).order_by(Topic.order_index)
-        )
-        topics = topics_result.scalars().all()
-
-        topic_stats = []
-        for topic in topics:
-            topic_pending = await db.execute(
-                select(func.count(Question.id)).where(
-                    Question.topic_id == topic.id,
-                    Question.vetting_status == "pending",
-                    Question.is_latest == True,
-                    Question.is_archived == False,
-                )
-            )
-            topic_stats.append({
-                "id": str(topic.id),
-                "name": topic.name,
-                "pending_count": topic_pending.scalar() or 0,
-            })
 
         subjects.append(SubjectSummary(
             id=subject_id,
@@ -790,10 +812,113 @@ async def get_subjects_with_questions(
             pending_count=pending_count or 0,
             approved_count=approved_count or 0,
             rejected_count=rejected_count or 0,
-            topics=topic_stats,
+            topics=topics_by_subject.get(subject_id, []),
         ))
 
     return subjects
+
+
+@router.get("/topics/search", response_model=List[TopicSearchResult])
+async def search_topics_for_vetting(
+    search: Optional[str] = Query(None, description="Search by topic, subject, or code"),
+    topic_id: Optional[List[str]] = Query(None, description="Specific topic ids to look up"),
+    limit: int = Query(50, ge=1, le=200),
+    current_user: User = Depends(get_current_vetter),
+    db: AsyncSession = Depends(get_db),
+):
+    """Search vetting topics without loading the full subject/topic summary dataset."""
+    clean_search = (search or "").strip()
+    clean_topic_ids: List[str] = []
+    seen_topic_ids = set()
+    for raw_topic_id in topic_id or []:
+        clean_topic_id = (raw_topic_id or "").strip()
+        if not clean_topic_id or clean_topic_id in seen_topic_ids:
+            continue
+        seen_topic_ids.add(clean_topic_id)
+        clean_topic_ids.append(clean_topic_id)
+
+    if not clean_search and not clean_topic_ids:
+        return []
+
+    pending_count_expr = func.count(
+        case(
+            (
+                and_(
+                    Question.vetting_status == "pending",
+                    Question.is_latest == True,
+                    Question.is_archived == False,
+                ),
+                1,
+            )
+        )
+    )
+
+    query = (
+        select(
+            Topic.subject_id,
+            Subject.name.label("subject_name"),
+            Subject.code.label("subject_code"),
+            Topic.id.label("topic_id"),
+            Topic.name.label("topic_name"),
+            pending_count_expr.label("pending_count"),
+            Topic.order_index,
+        )
+        .join(Subject, Subject.id == Topic.subject_id)
+        .outerjoin(Question, Question.topic_id == Topic.id)
+    )
+
+    filters = []
+    if clean_search:
+        search_pattern = f"%{clean_search}%"
+        filters.append(
+            or_(
+                Topic.name.ilike(search_pattern),
+                Subject.name.ilike(search_pattern),
+                Subject.code.ilike(search_pattern),
+            )
+        )
+    if clean_topic_ids:
+        filters.append(Topic.id.in_(clean_topic_ids))
+    if filters:
+        query = query.where(and_(*filters) if len(filters) > 1 else filters[0])
+
+    query = query.group_by(
+        Topic.subject_id,
+        Subject.name,
+        Subject.code,
+        Topic.id,
+        Topic.name,
+        Topic.order_index,
+    )
+
+    if clean_search:
+        query = query.order_by(
+            pending_count_expr.desc(),
+            Subject.name.asc(),
+            Topic.order_index.asc(),
+            Topic.name.asc(),
+        )
+    else:
+        query = query.order_by(
+            Subject.name.asc(),
+            Topic.order_index.asc(),
+            Topic.name.asc(),
+        )
+
+    max_results = limit if clean_search else max(limit, len(clean_topic_ids))
+    result = await db.execute(query.limit(max_results))
+
+    return [
+        TopicSearchResult(
+            subject_id=subject_id,
+            subject_name=subject_name,
+            subject_code=subject_code,
+            topic_id=topic_id,
+            topic_name=topic_name,
+            pending_count=int(pending_count or 0),
+        )
+        for subject_id, subject_name, subject_code, topic_id, topic_name, pending_count, _topic_order_index in result.all()
+    ]
 
 
 @router.get("/subjects/{subject_id}", response_model=SubjectSummary)

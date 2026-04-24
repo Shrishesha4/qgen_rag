@@ -955,7 +955,6 @@
 <div class="page">
 	<div class="hero animate-fade-in">
 		<div class="hero-intro">
-			<p class="eyebrow">Teacher Console</p>
 			<h1 class="title font-serif">Subjects</h1>
 		</div>
 

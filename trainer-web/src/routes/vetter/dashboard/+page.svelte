@@ -14,8 +14,8 @@
 	import { getBackgroundGenerationStatuses } from '$lib/api/documents';
 	import {
 		getVetterSubjectTopicStats,
-		getVetterSubjects,
-		type VetterSubjectSummary,
+		searchVetterTopics,
+		type VetterTopicSearchResult,
 	} from '$lib/api/vetting';
 	import {
 		listCurrentUserFavorites,
@@ -81,8 +81,12 @@
 	let generateFirstTitle = $state('');
 	let generateFirstMessage = $state('');
 	type ViewTab = 'subjects' | 'groups';
-	let activeViewTab = $state<ViewTab>('subjects');
-	let searchableSubjects = $state<VetterSubjectSummary[]>([]);
+	let activeViewTab = $state<ViewTab>('groups');
+	let favoriteTopicMatches = $state<DashboardTopicMatch[]>([]);
+	let favoriteTopicMatchesLoading = $state(false);
+	let topicSearchMatches = $state<DashboardTopicMatch[]>([]);
+	let topicSearchLoading = $state(false);
+	let topicSearchError = $state('');
 	let favorites = $state<FavoriteSummary[]>([]);
 	let favoriteBusyKeys = $state<Record<string, boolean>>({});
 
@@ -94,13 +98,16 @@
 		total_questions?: number | null;
 	};
 
-	const INITIAL_SUBJECT_PRELOAD_LIMIT = 6;
-	const GROUP_SUBJECT_PRELOAD_LIMIT = 8;
 	const SUBJECT_GENERATION_ACTIVE_POLL_MS = 3000;
 	const SUBJECT_GENERATION_DISCOVERY_POLL_MS = 30000;
+	const TOPIC_SEARCH_DEBOUNCE_MS = 180;
 
 	let subjectGenerationStateBySubject = $state<Record<string, SubjectGenerationState>>({});
 	let subjectGenerationPollTimer: ReturnType<typeof setInterval> | null = null;
+	let topicSearchTimer: ReturnType<typeof setTimeout> | null = null;
+	let topicSearchRequestId = 0;
+	let favoriteTopicLookupKey = '';
+	let loadedFavoriteTopicLookupKey = '';
 	let lastSubjectGenerationDiscoveryAt = 0;
 	let pendingLoadInFlightCount = 0;
 	const pendingCountsLoadedForSubject = new Set<string>();
@@ -209,6 +216,10 @@
 			clearInterval(subjectGenerationPollTimer);
 			subjectGenerationPollTimer = null;
 		}
+		if (topicSearchTimer) {
+			clearTimeout(topicSearchTimer);
+			topicSearchTimer = null;
+		}
 		// Clean up WebSocket subscriptions
 		wsUnsubscribers.forEach(unsub => unsub());
 		wsUnsubscribers = [];
@@ -291,17 +302,15 @@
 			pendingCountsLoadingForSubject.clear();
 			pendingLoadInFlightCount = 0;
 			loadingPendingCounts = false;
-			const [treeRes, vetterSubjectRes, favoriteRes] = await Promise.all([
+			topicSearchError = '';
+			const [treeRes, favoriteRes] = await Promise.all([
 				getSubjectsTree(),
-				getVetterSubjects(),
 				listCurrentUserFavorites(),
 			]);
 			treeData = treeRes;
 			subjects = flattenSubjects(treeRes.groups, treeRes.ungrouped_subjects);
-			searchableSubjects = vetterSubjectRes;
 			favorites = favoriteRes;
 			expandedGroups = new Set();
-			void preloadInitialSubjectData(subjects);
 			lastSubjectGenerationDiscoveryAt = Date.now();
 			void refreshSubjectGenerationStatuses(subjects);
 			ensureSubjectGenerationPolling();
@@ -311,6 +320,112 @@
 			loading = false;
 		}
 	}
+
+	function mapTopicSearchResults(results: VetterTopicSearchResult[]): DashboardTopicMatch[] {
+		return results.map((result) => ({
+			subjectId: result.subject_id,
+			subjectName: result.subject_name,
+			subjectCode: result.subject_code,
+			topicId: result.topic_id,
+			topicName: result.topic_name,
+			pendingCount: result.pending_count,
+			groupPath: getSubjectGroupPath(result.subject_id, subjectGroupMetaById),
+		}));
+	}
+
+	async function loadFavoriteTopicMatches(topicIds: string[]) {
+		const normalizedTopicIds = [...new Set(topicIds.map((topicId) => topicId.trim()).filter(Boolean))].sort();
+		const lookupKey = normalizedTopicIds.join(',');
+		if (!lookupKey) {
+			favoriteTopicMatches = [];
+			favoriteTopicLookupKey = '';
+			loadedFavoriteTopicLookupKey = '';
+			return;
+		}
+		if (loadedFavoriteTopicLookupKey === lookupKey || favoriteTopicLookupKey === lookupKey) {
+			return;
+		}
+		favoriteTopicLookupKey = lookupKey;
+		favoriteTopicMatchesLoading = true;
+		try {
+			const results = await searchVetterTopics({
+				topicIds: normalizedTopicIds,
+				limit: Math.max(50, normalizedTopicIds.length),
+			});
+			if (favoriteTopicLookupKey !== lookupKey) {
+				return;
+			}
+			favoriteTopicMatches = mapTopicSearchResults(results)
+				.filter((topic) => normalizedTopicIds.includes(topic.topicId))
+				.sort((left, right) => left.topicName.localeCompare(right.topicName));
+			loadedFavoriteTopicLookupKey = lookupKey;
+		} catch (e: unknown) {
+			if (favoriteTopicLookupKey !== lookupKey) {
+				return;
+			}
+			favoriteTopicMatches = [];
+		} finally {
+			if (favoriteTopicLookupKey === lookupKey) {
+				favoriteTopicMatchesLoading = false;
+				favoriteTopicLookupKey = '';
+			}
+		}
+	}
+
+	$effect(() => {
+		const q = searchQuery.trim();
+		if (topicSearchTimer) {
+			clearTimeout(topicSearchTimer);
+			topicSearchTimer = null;
+		}
+		if (!q) {
+			topicSearchRequestId += 1;
+			topicSearchMatches = [];
+			topicSearchLoading = false;
+			topicSearchError = '';
+			return;
+		}
+
+		topicSearchLoading = true;
+		topicSearchError = '';
+		const requestId = ++topicSearchRequestId;
+		topicSearchTimer = setTimeout(async () => {
+			topicSearchTimer = null;
+			try {
+				const results = await searchVetterTopics({ query: q, limit: 60 });
+				if (requestId !== topicSearchRequestId) {
+					return;
+				}
+				topicSearchMatches = mapTopicSearchResults(results);
+			} catch (e: unknown) {
+				if (requestId !== topicSearchRequestId) {
+					return;
+				}
+				topicSearchMatches = [];
+				topicSearchError = e instanceof Error ? e.message : 'Failed to search topics';
+			} finally {
+				if (requestId === topicSearchRequestId) {
+					topicSearchLoading = false;
+				}
+			}
+		}, TOPIC_SEARCH_DEBOUNCE_MS);
+	});
+
+	$effect(() => {
+		if (activeViewTab !== 'subjects') return;
+		if (searchQuery.trim().length > 0) return;
+		const topicIds = favorites
+			.filter((favorite) => favorite.entity_type === 'topic')
+			.map((favorite) => favorite.entity_id)
+			.filter((topicId) => topicId.length > 0);
+		if (topicIds.length === 0) {
+			favoriteTopicMatches = [];
+			favoriteTopicLookupKey = '';
+			loadedFavoriteTopicLookupKey = '';
+			return;
+		}
+		void loadFavoriteTopicMatches(topicIds);
+	});
 
 	function flattenSubjects(groups: SubjectGroupTreeNode[], ungrouped: SubjectResponse[]): SubjectResponse[] {
 		const result: SubjectResponse[] = [...ungrouped];
@@ -328,14 +443,6 @@
 			subjectIds.push(...collectSubjectIdsFromGroup(child));
 		}
 		return subjectIds;
-	}
-
-	async function preloadInitialSubjectData(subjectList: SubjectResponse[]) {
-		const subjectIds = subjectList.slice(0, INITIAL_SUBJECT_PRELOAD_LIMIT).map((subject) => subject.id);
-		if (subjectIds.length === 0) return;
-		await Promise.all(subjectIds.map((subjectId) =>
-			ensureTopicsLoaded(subjectId, { silent: true, includePendingCounts: true })
-		));
 	}
 
 	function getPollableSubjectGenerationIds(): string[] {
@@ -725,55 +832,24 @@
 
 	const favoriteEntityKeys = $derived.by(() => new Set(favorites.map((favorite) => favoriteKey(favorite.entity_type, favorite.entity_id))));
 
+	const favoriteTopicIds = $derived.by(() => new Set(
+		favorites
+			.filter((favorite) => favorite.entity_type === 'topic')
+			.map((favorite) => favorite.entity_id)
+	));
+
 	const subjectGroupMetaById = $derived.by(() => buildSubjectGroupMetaById(treeData?.groups ?? []));
 
 	const groupMetaById = $derived.by(() => buildGroupMetaById(treeData?.groups ?? []));
 
-	const searchableTopicsBySubjectId = $derived.by(() => {
-		const topicsBySubjectId = new Map<string, VetterSubjectSummary['topics']>();
-		for (const subject of searchableSubjects) {
-			topicsBySubjectId.set(subject.id, subject.topics);
-		}
-		return topicsBySubjectId;
-	});
-
-	const allTopicMatches = $derived.by(() => {
-		const matches: DashboardTopicMatch[] = [];
-		for (const subject of searchableSubjects) {
-			const groupPath = getSubjectGroupPath(subject.id, subjectGroupMetaById);
-			for (const topic of subject.topics) {
-				matches.push({
-					subjectId: subject.id,
-					subjectName: subject.name,
-					subjectCode: subject.code,
-					topicId: topic.id,
-					topicName: topic.name,
-					pendingCount: topic.pending_count,
-					groupPath,
-				});
-			}
-		}
-		return matches;
-	});
-
-	const favoriteTopicMatches = $derived.by(() => {
-		return allTopicMatches
-			.filter((topic) => isFavorite('topic', topic.topicId))
-			.sort((left, right) => left.topicName.localeCompare(right.topicName));
-	});
-
 	const topicSearchResults = $derived.by(() => {
-		const q = searchQuery.trim().toLowerCase();
-		if (!q) return [];
-		return allTopicMatches
-			.filter((topic) => topic.topicName.toLowerCase().includes(q))
-			.sort((left, right) => {
-				const favoriteDiff = Number(isFavorite('topic', right.topicId)) - Number(isFavorite('topic', left.topicId));
-				if (favoriteDiff !== 0) return favoriteDiff;
-				const pendingDiff = right.pendingCount - left.pendingCount;
-				if (pendingDiff !== 0) return pendingDiff;
-				return left.topicName.localeCompare(right.topicName);
-			});
+		return [...topicSearchMatches].sort((left, right) => {
+			const favoriteDiff = Number(isFavorite('topic', right.topicId)) - Number(isFavorite('topic', left.topicId));
+			if (favoriteDiff !== 0) return favoriteDiff;
+			const pendingDiff = right.pendingCount - left.pendingCount;
+			if (pendingDiff !== 0) return pendingDiff;
+			return left.topicName.localeCompare(right.topicName);
+		});
 	});
 
 	const visibleTopicQuickCards = $derived.by(() => {
@@ -830,9 +906,7 @@
 	});
 
 	function matchesTrainingSubjectSearch(subject: SubjectResponse, query: string): boolean {
-		if (matchesSubjectSearch(subject, query, subjectGroupMetaById)) return true;
-		const topics = searchableTopicsBySubjectId.get(subject.id) ?? [];
-		return topics.some((topic) => topic.name.toLowerCase().includes(query));
+		return matchesSubjectSearch(subject, query, subjectGroupMetaById);
 	}
 
 	const filteredSubjects = $derived.by(() => {
@@ -926,20 +1000,6 @@
 		expandedGroups = next;
 
 		if (!isOpening || !treeData) return;
-		const allGroupSubjectIds: string[] = [];
-		const stack = [...treeData.groups];
-		while (stack.length > 0) {
-			const group = stack.pop();
-			if (!group) continue;
-			if (group.id === groupId) {
-				allGroupSubjectIds.push(...collectSubjectIdsFromGroup(group));
-				break;
-			}
-			stack.push(...group.children);
-		}
-		for (const subjectId of allGroupSubjectIds.slice(0, GROUP_SUBJECT_PRELOAD_LIMIT)) {
-			void ensureTopicsLoaded(subjectId, { silent: true, includePendingCounts: true });
-		}
 	}
 
 	function focusGroup(groupId: string) {
@@ -1057,18 +1117,6 @@
 					<div class="tab-bar" role="tablist" aria-label="Vetting views">
 						<button
 							class="tab-btn"
-							class:active={activeViewTab === 'subjects'}
-							role="tab"
-							aria-selected={activeViewTab === 'subjects'}
-							onclick={() => {
-								activeViewTab = 'subjects';
-								searchQuery = '';
-							}}
-						>
-							Subjects
-						</button>
-						<button
-							class="tab-btn"
 							class:active={activeViewTab === 'groups'}
 							role="tab"
 							aria-selected={activeViewTab === 'groups'}
@@ -1079,12 +1127,30 @@
 						>
 							Groups
 						</button>
+						<button
+							class="tab-btn"
+							class:active={activeViewTab === 'subjects'}
+							role="tab"
+							aria-selected={activeViewTab === 'subjects'}
+							onclick={() => {
+								activeViewTab = 'subjects';
+								searchQuery = '';
+							}}
+						>
+							Subjects
+						</button>
 					</div>
 				</div>
 				<input class="search-input" bind:value={searchQuery} placeholder="Search subjects, topics, or groups" />
 			</div>
 
-			{#if activeViewTab === 'subjects' && visibleTopicQuickCards.length > 0}
+			{#if topicSearchLoading && hasSearchQuery}
+				<p class="group-context">Loading topic...</p>
+			{:else if topicSearchError && hasSearchQuery}
+				<div class="error-banner" role="status">{topicSearchError}</div>
+			{/if}
+
+			{#if visibleTopicQuickCards.length > 0 && (activeViewTab === 'subjects' || hasSearchQuery)}
 				<section class="quick-section glass-panel">
 					<div class="quick-section-head">
 						<div>
@@ -1215,9 +1281,11 @@
 						{:else}
 							{#if hasSearchQuery}
 								{#if orderedGroupedSubjectSearchResults.length === 0}
-									<tr>
-										<td colspan="6" class="empty-cell">No matching grouped subjects.</td>
-									</tr>
+									{#if visibleTopicQuickCards.length === 0}
+										<tr>
+											<td colspan="6" class="empty-cell">No matching groups.</td>
+										</tr>
+									{/if}
 								{:else}
 									{#each pinnedGroupedSubjectResults as subject}
 										{@render vettingSubjectRow(subject, 0)}
@@ -1255,7 +1323,11 @@
 
 			<div class="training-mobile-list mobile-only">
 				{#if mobileVisibleSubjects.length === 0}
-					<div class="mobile-card glass-panel empty-cell">No matching subjects.</div>
+					{#if !(hasSearchQuery && visibleTopicQuickCards.length > 0)}
+						<div class="mobile-card glass-panel empty-cell">
+							{activeViewTab === 'groups' ? 'No matching groups.' : 'No matching subjects.'}
+						</div>
+					{/if}
 				{:else}
 					{#each mobileVisibleSubjects as subject}
 						{@const groupPath = getSubjectGroupPath(subject.id, subjectGroupMetaById)}
