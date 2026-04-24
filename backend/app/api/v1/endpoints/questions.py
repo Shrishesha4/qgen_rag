@@ -2619,6 +2619,7 @@ async def backfill_topic_mapping(
 @router.get("", response_model=QuestionListResponse)
 async def list_questions(
     document_id: Optional[str] = Query(None, description="Document ID to get questions for"),
+    group_id: Optional[str] = Query(None, description="Group ID to filter by, including nested descendant groups"),
     subject_id: Optional[str] = Query(None, description="Subject ID to filter by"),
     topic_id: Optional[str] = Query(None, description="Topic ID to filter by"),
     vetting_status: Optional[str] = Query(None, description="Filter by vetting status (pending, approved, rejected)"),
@@ -2626,6 +2627,7 @@ async def list_questions(
     limit: int = Query(20, ge=1, le=100),
     question_type: Optional[str] = Query(None, description="Filter by question type"),
     difficulty: Optional[str] = Query(None, description="Filter by difficulty"),
+    search: Optional[str] = Query(None, description="Search by question text, explanation, or answer"),
     show_archived: bool = Query(False, description="Show only archived questions when true"),
     include_all_versions: bool = Query(False, description="Include all versions including replaced questions"),
     current_user: User = Depends(get_current_user),
@@ -2643,6 +2645,7 @@ async def list_questions(
         questions, pagination = await question_service.get_questions(
             user_id=current_user.id,
             document_id=document_id,
+            group_id=group_id,
             subject_id=subject_id,
             topic_id=topic_id,
             vetting_status=vetting_status,
@@ -2650,6 +2653,7 @@ async def list_questions(
             limit=limit,
             question_type=question_type,
             difficulty=difficulty,
+            search=search,
             show_archived=show_archived,
             include_all_versions=include_all_versions,
         )

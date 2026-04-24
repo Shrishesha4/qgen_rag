@@ -17,7 +17,7 @@ import uuid
 
 from fastapi import APIRouter, Depends, HTTPException, Query, Request, status
 from fastapi.responses import StreamingResponse
-from sqlalchemy import select, func, and_, case, distinct, delete, or_, literal
+from sqlalchemy import select, func, and_, case, distinct, delete, or_, literal, false
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import selectinload
 from pydantic import BaseModel, Field
@@ -35,6 +35,7 @@ from app.models.provider_usage import ProviderUsageLog
 from app.core.security import hash_password, hash_security_answer
 from app.schemas.auth import MessageResponse
 from app.services.admin_notification_service import AdminNotificationService
+from app.services.subject_group_filter_service import get_subject_ids_for_group
 from app.services.user_service import UserService
 
 
@@ -593,6 +594,7 @@ def _apply_nullable_text_filter(query, column, value: Optional[str]):
 async def _normalize_admin_question_filters(
     db: AsyncSession,
     *,
+    group_id: Optional[str],
     subject_id: Optional[str],
     subject_scope: Optional[str],
     topic_id: Optional[str],
@@ -605,7 +607,7 @@ async def _normalize_admin_question_filters(
     provider_key: Optional[str],
     version_scope: Optional[str],
     archived_state: Optional[str],
-) -> Dict[str, Optional[str]]:
+) -> Dict[str, Any]:
     normalized_status = _normalize_admin_question_status(vetting_status)
     normalized_question_type = _normalize_admin_question_choice(
         question_type,
@@ -634,6 +636,7 @@ async def _normalize_admin_question_filters(
         default=None,
     )
     normalized_provider_key = (provider_key or "").strip().lower() or None
+    normalized_group_id = (group_id or "").strip() or None
     normalized_subject_scope = _normalize_admin_question_choice(
         subject_scope,
         allowed={"all", "assigned", "orphaned"},
@@ -654,12 +657,26 @@ async def _normalize_admin_question_filters(
     )
 
     if normalized_subject_scope == "orphaned":
+        if normalized_group_id:
+            raise HTTPException(
+                status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+                detail="Group filtering is unavailable for orphaned questions",
+            )
         if topic_id:
             raise HTTPException(
                 status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
                 detail="Topic filtering is unavailable for orphaned questions",
             )
         subject_id = None
+
+    group_subject_ids: Optional[List[str]] = None
+    if normalized_group_id:
+        group_subject_ids = await get_subject_ids_for_group(db, normalized_group_id)
+        if subject_id and subject_id not in group_subject_ids:
+            raise HTTPException(
+                status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+                detail="Selected subject does not belong to the selected group",
+            )
 
     if topic_id:
         topic_subject_id = await _resolve_topic_subject_id(db, topic_id)
@@ -668,9 +685,16 @@ async def _normalize_admin_question_filters(
                 status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
                 detail="Selected topic does not belong to the selected subject",
             )
+        if group_subject_ids is not None and topic_subject_id not in group_subject_ids:
+            raise HTTPException(
+                status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+                detail="Selected topic does not belong to the selected group",
+            )
         subject_id = subject_id or topic_subject_id
 
     return {
+        "group_id": normalized_group_id,
+        "normalized_group_subject_ids": group_subject_ids,
         "subject_id": subject_id,
         "normalized_subject_scope": normalized_subject_scope,
         "topic_id": topic_id,
@@ -697,6 +721,8 @@ def _build_admin_question_base_query(*columns):
 def _apply_admin_question_filters(
     query,
     *,
+    group_id: Optional[str],
+    normalized_group_subject_ids: Optional[List[str]],
     subject_id: Optional[str],
     normalized_subject_scope: Optional[str],
     topic_id: Optional[str],
@@ -714,6 +740,12 @@ def _apply_admin_question_filters(
         query = query.where(Question.subject_id.isnot(None))
     elif normalized_subject_scope == "orphaned":
         query = query.where(Question.subject_id.is_(None))
+
+    if group_id:
+        if normalized_group_subject_ids:
+            query = query.where(Question.subject_id.in_(normalized_group_subject_ids))
+        else:
+            query = query.where(false())
 
     if subject_id:
         query = query.where(Question.subject_id == subject_id)
@@ -1766,6 +1798,7 @@ async def get_admin_subject(
 
 @router.get("/questions", response_model=AdminQuestionFeedResponse)
 async def list_admin_questions(
+    group_id: Optional[str] = Query(None, description="Filter by group ID, including nested descendant groups"),
     subject_id: Optional[str] = Query(None, description="Filter by subject ID"),
     subject_scope: Optional[str] = Query(None, description="Filter by all, assigned, or orphaned subject linkage"),
     topic_id: Optional[str] = Query(None, description="Filter by topic ID"),
@@ -1791,6 +1824,7 @@ async def list_admin_questions(
     """Stream admin questions using keyset pagination to avoid expensive counts and offsets."""
     normalized_filters = await _normalize_admin_question_filters(
         db,
+        group_id=group_id,
         subject_id=subject_id,
         subject_scope=subject_scope,
         topic_id=topic_id,
@@ -1940,6 +1974,7 @@ async def list_admin_questions(
 
 @router.get("/questions/export/preview", response_model=AdminQuestionExportPreviewResponse)
 async def preview_admin_question_export(
+    group_id: Optional[str] = Query(None, description="Filter by group ID, including nested descendant groups"),
     subject_id: Optional[str] = Query(None, description="Filter by subject ID"),
     topic_id: Optional[str] = Query(None, description="Filter by topic ID"),
     vetting_status: Optional[str] = Query(None, description="Filter by pending, approved, rejected, or all"),
@@ -1961,6 +1996,7 @@ async def preview_admin_question_export(
     selected_keys = _normalize_admin_question_export_fields(field or [], fields_by_key)
     normalized_filters = await _normalize_admin_question_filters(
         db,
+        group_id=group_id,
         subject_id=subject_id,
         topic_id=topic_id,
         vetting_status=vetting_status,
@@ -2009,6 +2045,7 @@ async def preview_admin_question_export(
 
 @router.get("/questions/export")
 async def export_admin_questions(
+    group_id: Optional[str] = Query(None, description="Filter by group ID, including nested descendant groups"),
     subject_id: Optional[str] = Query(None, description="Filter by subject ID"),
     topic_id: Optional[str] = Query(None, description="Filter by topic ID"),
     vetting_status: Optional[str] = Query(None, description="Filter by pending, approved, rejected, or all"),
@@ -2030,6 +2067,7 @@ async def export_admin_questions(
     selected_keys = _normalize_admin_question_export_fields(field or [], fields_by_key)
     normalized_filters = await _normalize_admin_question_filters(
         db,
+        group_id=group_id,
         subject_id=subject_id,
         topic_id=topic_id,
         vetting_status=vetting_status,

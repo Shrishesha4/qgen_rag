@@ -74,7 +74,10 @@ class QuestionResponse(BaseModel):
     id: uuid.UUID
     document_id: Optional[uuid.UUID]
     subject_id: Optional[uuid.UUID]
+    subject_name: Optional[str] = None
+    subject_code: Optional[str] = None
     topic_id: Optional[uuid.UUID]
+    topic_name: Optional[str] = None
     session_id: Optional[uuid.UUID]
     
     question_text: str
@@ -131,7 +134,10 @@ class QuestionResponse(BaseModel):
             "id": question.id,
             "document_id": question.document_id,
             "subject_id": question.subject_id,
+            "subject_name": getattr(getattr(question, "subject", None), "name", None),
+            "subject_code": getattr(getattr(question, "subject", None), "code", None),
             "topic_id": question.topic_id,
+            "topic_name": getattr(getattr(question, "topic", None), "name", None),
             "session_id": getattr(question, "session_id", None),
             "question_text": question.question_text,
             "question_type": question.question_type,

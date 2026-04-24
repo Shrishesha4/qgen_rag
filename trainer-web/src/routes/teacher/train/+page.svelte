@@ -7,9 +7,11 @@
 		getSubject,
 		getSubjectReviewStats,
 		getSubjectsTree,
+		searchTeacherTopics,
 		type SubjectResponse,
 		type SubjectGroupTreeNode,
 		type SubjectTreeResponse,
+		type TeacherTopicSearchResult,
 		type TopicResponse
 	} from '$lib/api/subjects';
 	import { getBackgroundGenerationStatuses } from '$lib/api/documents';
@@ -21,6 +23,7 @@
 		type TeacherVettingProgressSnapshot,
 	} from '$lib/vetting-progress';
 	import { getGenerationWebSocketClient, type StatsData } from '$lib/api/generation-websocket';
+	import { buildTeacherQuestionsUrl, type QuestionStatusFilter } from '$lib/question-links';
 
 	let loading = $state(true);
 	let error = $state('');
@@ -33,6 +36,11 @@
 	let loadingTopics = $state('');
 	let expandedSubjectId = $state('');
 	let searchQuery = $state('');
+	let topicSearchMatches = $state<TeacherTopicSearchResult[]>([]);
+	let topicSearchLoading = $state(false);
+	let topicSearchError = $state('');
+	let topicSearchTimer: ReturnType<typeof setTimeout> | null = null;
+	let topicSearchRequestSequence = 0;
 	type TopicCountStats = {
 		generated: number;
 		pending: number;
@@ -124,6 +132,10 @@
 		if (subjectGenerationPollTimer) {
 			clearInterval(subjectGenerationPollTimer);
 			subjectGenerationPollTimer = null;
+		}
+		if (topicSearchTimer) {
+			clearTimeout(topicSearchTimer);
+			topicSearchTimer = null;
 		}
 		// Clean up WebSocket subscriptions
 		wsUnsubscribers.forEach(unsub => unsub());
@@ -468,6 +480,50 @@
 		goto(`/teacher/subjects/${targetSubjectId}${suffix}`);
 	}
 
+	function openTeacherQuestionsForGroup(group: SubjectGroupTreeNode, status?: QuestionStatusFilter) {
+		goto(buildTeacherQuestionsUrl({
+			groupId: group.id,
+			groupName: group.name,
+			status,
+		}));
+	}
+
+	function openTeacherQuestionsForSubject(subject: SubjectResponse, status?: QuestionStatusFilter) {
+		goto(buildTeacherQuestionsUrl({
+			subjectId: subject.id,
+			subjectName: subject.name,
+			subjectCode: subject.code,
+			status,
+		}));
+	}
+
+	function openTeacherQuestionsForTopic(subject: SubjectResponse, topic: TopicResponse, status?: QuestionStatusFilter) {
+		goto(buildTeacherQuestionsUrl({
+			subjectId: subject.id,
+			subjectName: subject.name,
+			subjectCode: subject.code,
+			topicId: topic.id,
+			topicName: topic.name,
+			status,
+		}));
+	}
+
+	function metricButtonHandler(callback: () => void, event: MouseEvent) {
+		event.stopPropagation();
+		callback();
+	}
+
+	function openTeacherQuestionsForTopicMatch(match: TeacherTopicSearchResult, status?: QuestionStatusFilter) {
+		goto(buildTeacherQuestionsUrl({
+			subjectId: match.subject_id,
+			subjectName: match.subject_name,
+			subjectCode: match.subject_code,
+			topicId: match.topic_id,
+			topicName: match.topic_name,
+			status,
+		}));
+	}
+
 	async function logStartVetting(subjectId: string, topicId?: string, topicName?: string) {
 		const subject = subjects.find((item) => item.id === subjectId);
 		try {
@@ -611,6 +667,48 @@
 	});
 
 	const hasSearchQuery = $derived.by(() => searchQuery.trim().length > 0);
+	const showTopicSearchRows = $derived.by(() => hasSearchQuery && topicSearchMatches.length > 0);
+
+	$effect(() => {
+		const searchTerm = searchQuery.trim();
+		const requestId = ++topicSearchRequestSequence;
+		if (topicSearchTimer) {
+			clearTimeout(topicSearchTimer);
+			topicSearchTimer = null;
+		}
+
+		if (searchTerm.length < 2) {
+			topicSearchMatches = [];
+			topicSearchError = '';
+			topicSearchLoading = false;
+			return;
+		}
+
+		topicSearchLoading = true;
+		topicSearchTimer = setTimeout(async () => {
+			try {
+				const matches = await searchTeacherTopics(searchTerm, 40);
+				if (requestId !== topicSearchRequestSequence) return;
+				topicSearchMatches = matches;
+				topicSearchError = '';
+			} catch (value: unknown) {
+				if (requestId !== topicSearchRequestSequence) return;
+				topicSearchMatches = [];
+				topicSearchError = value instanceof Error ? value.message : 'Topic search failed';
+			} finally {
+				if (requestId === topicSearchRequestSequence) {
+					topicSearchLoading = false;
+				}
+			}
+		}, 220);
+
+		return () => {
+			if (topicSearchTimer) {
+				clearTimeout(topicSearchTimer);
+				topicSearchTimer = null;
+			}
+		};
+	});
 
 	function isExpanded(subjectId: string): boolean {
 		return expandedSubjectId === subjectId;
@@ -784,7 +882,11 @@
 					</thead>
 					<tbody>
 						{#if activeViewTab === 'subjects'}
-							{#if filteredSubjects.length === 0}
+							{#if showTopicSearchRows}
+								{#each topicSearchMatches as match}
+									{@render teacherTopicSearchRow(match)}
+								{/each}
+							{:else if filteredSubjects.length === 0}
 								<tr>
 									<td colspan="6" class="empty-cell">No matching subjects.</td>
 								</tr>
@@ -795,7 +897,11 @@
 							{/if}
 						{:else}
 							{#if hasSearchQuery}
-								{#if filteredGroupedSubjects.length === 0}
+								{#if showTopicSearchRows}
+									{#each topicSearchMatches as match}
+										{@render teacherTopicSearchRow(match)}
+									{/each}
+								{:else if filteredGroupedSubjects.length === 0}
 									<tr>
 										<td colspan="6" class="empty-cell">No matching grouped subjects.</td>
 									</tr>
@@ -892,6 +998,47 @@
 	{/if}
 </div>
 
+{#snippet teacherTopicSearchRow(match: TeacherTopicSearchResult)}
+	{@const groupPath = getSubjectGroupPath(match.subject_id, subjectGroupMetaById)}
+	{@const topicProgress = topicResumeSnapshot(match.subject_id, match.topic_id)}
+	{@const subjectGenerationState = getSubjectGenerationState(match.subject_id)}
+	<tr class="topic-row" transition:slide={{ duration: 180 }}>
+		<td>
+			<div class="topic-name-stack" style="padding-left: 1.2rem">
+				<div class="topic-title-line">
+					<strong>{match.topic_name}</strong>
+					<span class="code-chip">{match.subject_code}</span>
+				</div>
+				<span class="group-context">Subject: {match.subject_name}</span>
+				{#if groupPath}
+					<span class="group-context">Group: {groupPath}</span>
+				{/if}
+			</div>
+		</td>
+		<td><button class="metric-link" type="button" onclick={(event) => metricButtonHandler(() => openTeacherQuestionsForTopicMatch(match), event)}>{match.generated_count}</button></td>
+		<td><button class="metric-link" type="button" onclick={(event) => metricButtonHandler(() => openTeacherQuestionsForTopicMatch(match, 'pending'), event)}>{match.pending_count}</button></td>
+		<td class="green-text"><button class="metric-link" type="button" onclick={(event) => metricButtonHandler(() => openTeacherQuestionsForTopicMatch(match, 'approved'), event)}>{match.approved_count}</button></td>
+		<td class="red-text"><button class="metric-link" type="button" onclick={(event) => metricButtonHandler(() => openTeacherQuestionsForTopicMatch(match, 'rejected'), event)}>{match.rejected_count}</button></td>
+		<td class="action-cell">
+			<div class="inline-actions action-stack">
+				{#if subjectGenerationState?.in_progress && match.pending_count === 0}
+					<span class="status-text generation-status"><span class="spinner-sm"></span>{getSubjectGenerationLabel(match.subject_id)}</span>
+				{:else if topicProgress}
+					<button class="table-btn" onclick={(event) => {
+						event.stopPropagation();
+						resumeSpecificProgress(topicProgress);
+					}}>Resume</button>
+				{:else}
+					<button class="table-btn primary" onclick={(event) => {
+						event.stopPropagation();
+						startTopicVetting(match.subject_id, match.topic_id, match.topic_name, match.generated_count);
+					}} disabled={loadingPendingCounts}>Start Vetting</button>
+				{/if}
+			</div>
+		</td>
+	</tr>
+{/snippet}
+
 {#snippet vettingGroupRow(group: SubjectGroupTreeNode, depth: number)}
 	<tr class="group-row" role="button" tabindex="0" onclick={() => toggleGroup(group.id)} onkeydown={(event) => {
 		if (event.key === 'Enter' || event.key === ' ') {
@@ -915,10 +1062,10 @@
 				</div>
 			</div>
 		</td>
-		<td>{group.total_questions}</td>
-		<td>{group.total_pending}</td>
-		<td class="green-text">{group.total_approved}</td>
-		<td class="red-text">{group.total_rejected}</td>
+		<td><button class="metric-link" type="button" onclick={(event) => metricButtonHandler(() => openTeacherQuestionsForGroup(group), event)}>{group.total_questions}</button></td>
+		<td><button class="metric-link" type="button" onclick={(event) => metricButtonHandler(() => openTeacherQuestionsForGroup(group, 'pending'), event)}>{group.total_pending}</button></td>
+		<td class="green-text"><button class="metric-link" type="button" onclick={(event) => metricButtonHandler(() => openTeacherQuestionsForGroup(group, 'approved'), event)}>{group.total_approved}</button></td>
+		<td class="red-text"><button class="metric-link" type="button" onclick={(event) => metricButtonHandler(() => openTeacherQuestionsForGroup(group, 'rejected'), event)}>{group.total_rejected}</button></td>
 		<td class="action-cell">
 			<span class="status-text">⌄</span>
 		</td>
@@ -963,10 +1110,10 @@
 				</div>
 			</div>
 		</td>
-		<td>{subject.total_questions}</td>
-		<td>{subject.total_pending ?? 0}</td>
-		<td class="green-text">{subject.total_approved ?? 0}</td>
-		<td class="red-text">{subject.total_rejected ?? 0}</td>
+		<td><button class="metric-link" type="button" onclick={(event) => metricButtonHandler(() => openTeacherQuestionsForSubject(subject), event)}>{subject.total_questions}</button></td>
+		<td><button class="metric-link" type="button" onclick={(event) => metricButtonHandler(() => openTeacherQuestionsForSubject(subject, 'pending'), event)}>{subject.total_pending ?? 0}</button></td>
+		<td class="green-text"><button class="metric-link" type="button" onclick={(event) => metricButtonHandler(() => openTeacherQuestionsForSubject(subject, 'approved'), event)}>{subject.total_approved ?? 0}</button></td>
+		<td class="red-text"><button class="metric-link" type="button" onclick={(event) => metricButtonHandler(() => openTeacherQuestionsForSubject(subject, 'rejected'), event)}>{subject.total_rejected ?? 0}</button></td>
 		<td class="action-cell">
 			<div class="inline-actions action-stack">
 				<button class="table-btn primary" onclick={(event) => {
@@ -1007,10 +1154,10 @@
 							</div>
 						</div>
 					</td>
-					<td>{topicStats.generated}</td>
-					<td>{pendingCount}</td>
-					<td class="green-text">{topicStats.approved}</td>
-					<td class="red-text">{topicStats.rejected}</td>
+					<td><button class="metric-link" type="button" onclick={(event) => metricButtonHandler(() => openTeacherQuestionsForTopic(subject, topic), event)}>{topicStats.generated}</button></td>
+					<td><button class="metric-link" type="button" onclick={(event) => metricButtonHandler(() => openTeacherQuestionsForTopic(subject, topic, 'pending'), event)}>{pendingCount}</button></td>
+					<td class="green-text"><button class="metric-link" type="button" onclick={(event) => metricButtonHandler(() => openTeacherQuestionsForTopic(subject, topic, 'approved'), event)}>{topicStats.approved}</button></td>
+					<td class="red-text"><button class="metric-link" type="button" onclick={(event) => metricButtonHandler(() => openTeacherQuestionsForTopic(subject, topic, 'rejected'), event)}>{topicStats.rejected}</button></td>
 					<td class="action-cell">
 						<div class="inline-actions action-stack">
 							{#if subjectGenerationState?.in_progress && pendingCount === 0}
@@ -1552,6 +1699,22 @@
 	.table-btn.primary {
 		background: rgba(var(--theme-primary-rgb), 0.2);
 		color: var(--theme-text-primary);
+	}
+
+	.metric-link {
+		padding: 0;
+		border: none;
+		background: transparent;
+		color: inherit;
+		font: inherit;
+		font-weight: 700;
+		cursor: pointer;
+	}
+
+	.metric-link:hover,
+	.metric-link:focus-visible {
+		text-decoration: underline;
+		text-underline-offset: 0.16em;
 	}
 
 	.table-btn:disabled,

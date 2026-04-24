@@ -1,6 +1,8 @@
 <script lang="ts">
+	import { get } from 'svelte/store';
 	import { onMount } from 'svelte';
 	import { goto } from '$app/navigation';
+	import { page } from '$app/stores';
 	import { session } from '$lib/session';
 	import {
 		downloadAdminQuestionExport,
@@ -93,6 +95,8 @@
 	const PROVIDER_FILTER_ALL = '__all__';
 	const SUBJECT_SCOPE_ALL = 'all';
 	const SUBJECT_SCOPE_ORPHANED = 'orphaned';
+	type QuestionSortKey = 'generated_at' | 'question_text' | 'subject_name' | 'topic_name' | 'vetting_status' | 'question_type' | 'provider_key';
+	type SortDirection = 'asc' | 'desc';
 
 	let loading = $state(true);
 	let loadingMore = $state(false);
@@ -103,6 +107,7 @@
 	let questions = $state<AdminQuestionSummary[]>([]);
 	let totalQuestions = $state(0);
 
+	let selectedGroupId = $state('');
 	let selectedSubjectId = $state('');
 	let selectedSubjectScope = $state<'all' | 'orphaned'>(SUBJECT_SCOPE_ALL);
 	let selectedTopicId = $state('');
@@ -134,6 +139,8 @@
 	let exportModalOpen = $state(false);
 	let exportRequestSequence = 0;
 	let exportPreviewDebounce: ReturnType<typeof setTimeout> | null = null;
+	let questionSortKey = $state<QuestionSortKey>('generated_at');
+	let questionSortDirection = $state<SortDirection>('desc');
 
 	onMount(() => {
 		const unsub = session.subscribe((s) => {
@@ -175,6 +182,7 @@
 
 	function currentQuestionFilters(): AdminQuestionFeedParams {
 		return {
+			group_id: selectedGroupId || undefined,
 			subject_id: selectedSubjectId || undefined,
 			subject_scope: selectedSubjectScope,
 			topic_id: selectedTopicId || undefined,
@@ -205,12 +213,58 @@
 		};
 	}
 
+	function normalizeStatusFilter(value: string | null): 'all' | 'pending' | 'approved' | 'rejected' {
+		if (value === 'pending' || value === 'approved' || value === 'rejected') {
+			return value;
+		}
+		return 'all';
+	}
+
+	async function applyRouteFilters(searchParams: URLSearchParams) {
+		selectedGroupId = searchParams.get('group_id') ?? '';
+		selectedSubjectScope = searchParams.get('subject_scope') === SUBJECT_SCOPE_ORPHANED
+			? SUBJECT_SCOPE_ORPHANED
+			: SUBJECT_SCOPE_ALL;
+		selectedSubjectId = searchParams.get('subject_id') ?? '';
+		selectedTopicId = searchParams.get('topic_id') ?? '';
+		selectedStatus = normalizeStatusFilter(searchParams.get('vetting_status'));
+
+		if (selectedSubjectScope === SUBJECT_SCOPE_ORPHANED) {
+			subjectSearch = 'Orphaned questions';
+			topics = [];
+			topicSearch = '';
+			return;
+		}
+
+		subjectSearch = selectedSubjectId
+			? subjects.find((subject) => subject.id === selectedSubjectId)?.name ?? ''
+			: '';
+
+		if (!selectedSubjectId) {
+			topics = [];
+			topicSearch = '';
+			return;
+		}
+
+		try {
+			await loadTopicsForSubject(selectedSubjectId);
+			topicSearch = selectedTopicId
+				? topics.find((topic) => topic.id === selectedTopicId)?.name ?? ''
+				: '';
+		} catch (e: unknown) {
+			topics = [];
+			topicSearch = '';
+			error = getLoadErrorMessage(e, 'Failed to load topics');
+		}
+	}
+
 	async function loadInitialData() {
 		loading = true;
 		error = '';
 		try {
 			subjects = await listAdminSubjects();
 			providerKeys = await listAdminQuestionProviders();
+			await applyRouteFilters(get(page).url.searchParams);
 			await loadQuestions(true);
 		} catch (e: unknown) {
 			error = getLoadErrorMessage(e, 'Failed to load admin questions');
@@ -307,6 +361,7 @@
 		subjectId: string,
 		subjectScope: 'all' | 'orphaned' = SUBJECT_SCOPE_ALL
 	) {
+		selectedGroupId = '';
 		selectedSubjectScope = subjectScope;
 		selectedSubjectId = subjectId;
 		selectedTopicId = '';
@@ -374,6 +429,7 @@
 	}
 
 	async function clearFilters() {
+		selectedGroupId = '';
 		selectedSubjectId = '';
 		selectedSubjectScope = SUBJECT_SCOPE_ALL;
 		selectedTopicId = '';
@@ -574,6 +630,54 @@
 		return String.fromCharCode(65 + index);
 	}
 
+	function toggleQuestionSort(nextSortKey: QuestionSortKey) {
+		if (questionSortKey === nextSortKey) {
+			questionSortDirection = questionSortDirection === 'asc' ? 'desc' : 'asc';
+			return;
+		}
+		questionSortKey = nextSortKey;
+		questionSortDirection = nextSortKey === 'generated_at' ? 'desc' : 'asc';
+	}
+
+	function compareQuestions(
+		left: AdminQuestionSummary,
+		right: AdminQuestionSummary,
+		sortKey: QuestionSortKey,
+		direction: SortDirection,
+	): number {
+		const multiplier = direction === 'asc' ? 1 : -1;
+		const leftValue = getQuestionSortValue(left, sortKey);
+		const rightValue = getQuestionSortValue(right, sortKey);
+
+		if (leftValue < rightValue) return -1 * multiplier;
+		if (leftValue > rightValue) return 1 * multiplier;
+		return 0;
+	}
+
+	function getQuestionSortValue(question: AdminQuestionSummary, sortKey: QuestionSortKey): number | string {
+		switch (sortKey) {
+			case 'generated_at':
+				return Date.parse(question.generated_at) || 0;
+			case 'question_text':
+				return question.question_text.toLowerCase();
+			case 'subject_name':
+				return (question.subject_name ?? '').toLowerCase();
+			case 'topic_name':
+				return (question.topic_name ?? '').toLowerCase();
+			case 'vetting_status':
+				return question.vetting_status.toLowerCase();
+			case 'question_type':
+				return (question.question_type ?? '').toLowerCase();
+			case 'provider_key':
+				return question.provider_key.toLowerCase();
+		}
+	}
+
+	function questionSortIndicator(key: QuestionSortKey): string {
+		if (questionSortKey !== key) return 'Sort';
+		return questionSortDirection === 'asc' ? 'Asc' : 'Desc';
+	}
+
 	function normalizeAnswerValue(value: string | null): string {
 		return (value ?? '')
 			.trim()
@@ -618,6 +722,7 @@
 
 	const activeFilterCount = $derived.by(() => {
 		let count = 0;
+		if (selectedGroupId) count += 1;
 		if (selectedSubjectId || selectedSubjectScope !== SUBJECT_SCOPE_ALL) count += 1;
 		if (selectedTopicId) count += 1;
 		if (selectedStatus !== 'all') count += 1;
@@ -633,6 +738,7 @@
 	});
 
 	const selectedSubjectName = $derived.by(() => {
+		if (selectedGroupId && !selectedSubjectId) return 'Grouped drilldown';
 		if (selectedSubjectScope === SUBJECT_SCOPE_ORPHANED) return 'Orphaned questions';
 		return subjects.find((subject) => subject.id === selectedSubjectId)?.name ?? 'All subjects';
 	});
@@ -652,6 +758,12 @@
 	});
 
 	const selectedExportCount = $derived.by(() => selectedExportFieldKeys.length);
+
+	const sortedQuestions = $derived.by(() => {
+		const nextQuestions = [...questions];
+		nextQuestions.sort((left, right) => compareQuestions(left, right, questionSortKey, questionSortDirection));
+		return nextQuestions;
+	});
 </script>
 
 <svelte:head>
@@ -1052,177 +1164,64 @@
 			<p>Change the subject, topic, or review filters to load a different slice of the question inventory.</p>
 		</div>
 	{:else}
-		<div class="question-list animate-fade-in">
-			{#each questions as question}
-				<article class="question-card glass-panel">
-					<div class="question-topline">
-						<div class="pill-row">
-							<span class="pill type-pill">{typeLabel(question.question_type)}</span>
-							<span class={`pill status-pill ${statusClass(question.vetting_status)}`}>{statusLabel(question.vetting_status)}</span>
-							<span class="pill neutral-pill">{difficultyLabel(question.difficulty_level)}</span>
-							<span class={`pill status-pill ${generationClass(question.generation_status)}`}>{statusLabel(question.generation_status)}</span>
-							<span class={`pill status-pill ${referenceClass(question.used_reference_materials)}`}>
-								{question.used_reference_materials ? 'Reference-backed' : 'No references'}
-							</span>
-							<span class="pill neutral-pill">{question.provider_key}</span>
-							<span class="pill neutral-pill">{archivedLabel(question)}</span>
-							{#if question.marks != null}
-								<span class="pill marks-pill">{question.marks} marks</span>
-							{/if}
-						</div>
-						<time class="question-time" datetime={question.generated_at}>{formatDate(question.generated_at)}</time>
-					</div>
-
-					<div class="question-body">
-						<div class="question-main">
-							<!-- <div class="question-identifiers">
-								<div class="identifier-block">
-									<span>ID</span>
-									<code>{question.id}</code>
-								</div>
-								{#if question.document_id}
-									<div class="identifier-block">
-										<span>Document</span>
-										<code>{question.document_id}</code>
+		<div class="question-table-wrap glass-panel animate-fade-in">
+			<div class="question-table-scroll">
+				<table class="question-table">
+					<colgroup>
+						<col class="question-col" />
+						<col class="subject-col" />
+						<col class="topic-col" />
+						<col class="status-col" />
+						<col class="type-col" />
+						<col class="provider-col" />
+						<col class="date-col" />
+					</colgroup>
+					<thead>
+						<tr>
+							<th><button class="table-sort" type="button" onclick={() => toggleQuestionSort('question_text')}>Question <span>{questionSortIndicator('question_text')}</span></button></th>
+							<th><button class="table-sort" type="button" onclick={() => toggleQuestionSort('subject_name')}>Subject <span>{questionSortIndicator('subject_name')}</span></button></th>
+							<th><button class="table-sort" type="button" onclick={() => toggleQuestionSort('topic_name')}>Topic <span>{questionSortIndicator('topic_name')}</span></button></th>
+							<th><button class="table-sort" type="button" onclick={() => toggleQuestionSort('vetting_status')}>Status <span>{questionSortIndicator('vetting_status')}</span></button></th>
+							<th><button class="table-sort" type="button" onclick={() => toggleQuestionSort('question_type')}>Type <span>{questionSortIndicator('question_type')}</span></button></th>
+							<th><button class="table-sort" type="button" onclick={() => toggleQuestionSort('provider_key')}>Provider <span>{questionSortIndicator('provider_key')}</span></button></th>
+							<th><button class="table-sort" type="button" onclick={() => toggleQuestionSort('generated_at')}>Generated <span>{questionSortIndicator('generated_at')}</span></button></th>
+						</tr>
+					</thead>
+					<tbody>
+						{#each sortedQuestions as question}
+							<tr>
+								<td>
+									<div class="question-row-copy">
+										<strong>{question.question_text}</strong>
+										<div class="row-pill-line">
+											<span class="pill type-pill">{typeLabel(question.question_type)}</span>
+											<span class={`pill status-pill ${generationClass(question.generation_status)}`}>{statusLabel(question.generation_status)}</span>
+											<span class={`pill status-pill ${referenceClass(question.used_reference_materials)}`}>
+												{question.used_reference_materials ? 'Reference-backed' : 'No references'}
+											</span>
+											<span class="pill neutral-pill">{archivedLabel(question)}</span>
+										</div>
+										{#if question.correct_answer}
+											<small>Answer: {question.correct_answer}</small>
+										{/if}
 									</div>
-								{/if}
-								{#if question.session_id}
-									<div class="identifier-block">
-										<span>Session</span>
-										<code>{question.session_id}</code>
+								</td>
+								<td>{formatOptionalText(question.subject_name, 'Unassigned')}</td>
+								<td>{formatOptionalText(question.topic_name, 'No topic')}</td>
+								<td><span class={`pill status-pill ${statusClass(question.vetting_status)}`}>{statusLabel(question.vetting_status)}</span></td>
+								<td>
+									<div class="type-stack">
+										<span>{typeLabel(question.question_type)}</span>
+										<small>{difficultyLabel(question.difficulty_level)}</small>
 									</div>
-								{/if}
-							</div> -->
-
-							<p class="question-text">{question.question_text}</p>
-
-							{#if questionOptions(question).length > 0}
-								<div class="answer-block">
-									<div class="answer-block-head">
-										<span class="meta-label">Answer Options</span>
-									</div>
-									<div class="option-list">
-										{#each questionOptions(question) as option, index}
-											<div class="option-item" class:correct={isCorrectOption(option, index, question.correct_answer)}>
-												<span class="option-badge">{optionLetter(index)}</span>
-												<span class="option-text">{option}</span>
-												{#if isCorrectOption(option, index, question.correct_answer)}
-													<span class="option-flag">Correct</span>
-												{/if}
-											</div>
-										{/each}
-									</div>
-								</div>
-							{:else if question.correct_answer}
-								<div class="answer-block">
-									<div class="answer-block-head">
-										<span class="meta-label">Correct Answer</span>
-									</div>
-									<div class="direct-answer">{question.correct_answer}</div>
-								</div>
-							{/if}
-						</div>
-
-						<div class="question-side">
-							<div class="question-meta">
-								<div>
-									<span class="meta-label">Subject</span>
-									<strong>{formatOptionalText(question.subject_name, 'Unassigned')}</strong>
-								</div>
-								<div>
-									<span class="meta-label">Topic</span>
-									<strong>{formatOptionalText(question.topic_name, 'No topic')}</strong>
-								</div>
-								<div>
-									<span class="meta-label">Bloom</span>
-									<strong>{formatOptionalText(question.bloom_taxonomy_level, 'Unspecified')}</strong>
-								</div>
-								<div>
-									<span class="meta-label">Learning Outcome</span>
-									<strong>{formatOptionalText(question.learning_outcome_id, 'None')}</strong>
-								</div>
-								<div>
-									<span class="meta-label">Vetted At</span>
-									<strong>{question.vetted_at ? formatDate(question.vetted_at) : 'Not vetted'}</strong>
-								</div>
-								<div>
-									<span class="meta-label">Vetted By</span>
-									<strong>{formatOptionalText(question.vetted_by, 'Pending review')}</strong>
-								</div>
-							</div>
-
-							<div class="score-grid">
-								<div class="score-card">
-									<span>Confidence</span>
-									<strong>{formatScore(question.generation_confidence)}</strong>
-								</div>
-								<div class="score-card">
-									<span>Answerability</span>
-									<strong>{formatScore(question.answerability_score)}</strong>
-								</div>
-								<div class="score-card">
-									<span>Specificity</span>
-									<strong>{formatScore(question.specificity_score)}</strong>
-								</div>
-								<div class="score-card">
-									<span>Novelty</span>
-									<strong>{formatScore(question.novelty_score)}</strong>
-								</div>
-								<!-- <div class="score-card">
-									<span>Max Similarity</span>
-									<strong>{formatScore(question.max_similarity)}</strong>
-								</div>
-								<div class="score-card">
-									<span>Similarity Source</span>
-									<strong>{formatOptionalText(question.similarity_source, '—')}</strong>
-								</div> -->
-							</div>
-						</div>
-					</div>
-
-					{#if question.explanation || question.vetting_notes || question.discard_reason || question.replaces_id || question.replaced_by_id}
-						<details class="detail-panel">
-							<summary>Explanation and notes</summary>
-
-							{#if question.explanation}
-								<div class="detail-copy">
-									<span>Explanation</span>
-									<p>{question.explanation}</p>
-								</div>
-							{/if}
-
-							{#if question.vetting_notes}
-								<div class="detail-copy">
-									<span>Vetting notes</span>
-									<p>{question.vetting_notes}</p>
-								</div>
-							{/if}
-
-							{#if question.discard_reason}
-								<div class="detail-copy">
-									<span>Discard reason</span>
-									<p>{question.discard_reason}</p>
-								</div>
-							{/if}
-
-							<!-- <div class="detail-grid">
-								<div>
-									<span>Generation attempts</span>
-									<strong>{question.generation_attempt_count}</strong>
-								</div>
-								<div>
-									<span>Replaces</span>
-									<strong>{formatOptionalText(question.replaces_id, 'None')}</strong>
-								</div>
-								<div>
-									<span>Replaced by</span>
-									<strong>{formatOptionalText(question.replaced_by_id, 'None')}</strong>
-								</div>
-							</div> -->
-						</details>
-					{/if}
-				</article>
-			{/each}
+								</td>
+								<td>{question.provider_key}</td>
+								<td>{formatDate(question.generated_at)}</td>
+							</tr>
+						{/each}
+					</tbody>
+				</table>
+			</div>
 		</div>
 
 		{#if hasMore}
@@ -2162,43 +2161,81 @@
 		line-height: 1.45;
 	}
 
-	.question-list {
-		display: grid;
-		gap: 0.7rem;
-	}
-
-	.question-card {
-		padding: 0.88rem 0.95rem;
-		border-radius: 0.9rem;
-		display: flex;
-		flex-direction: column;
-		gap: 0.75rem;
-		background: var(--panel-bg);
+	.question-table-wrap {
+		padding: 0.35rem;
 		border: 1px solid var(--panel-border);
+		background: var(--panel-bg);
 		box-shadow: 0 10px 28px rgba(15, 23, 42, 0.08);
 	}
 
-	.question-topline {
-		display: flex;
-		justify-content: space-between;
-		gap: 0.7rem;
-		align-items: center;
-		padding-bottom: 0.65rem;
+	.question-table-scroll {
+		overflow-x: auto;
+	}
+
+	.question-table {
+		width: 100%;
+		min-width: 1080px;
+		border-collapse: collapse;
+	}
+
+	.question-col {
+		width: 36%;
+	}
+
+	.subject-col,
+	.topic-col,
+	.status-col,
+	.type-col,
+	.provider-col,
+	.date-col {
+		width: 10.6%;
+	}
+
+	.question-table thead th,
+	.question-table tbody td {
+		padding: 0.88rem 0.92rem;
+		text-align: left;
+		vertical-align: top;
 		border-bottom: 1px solid var(--panel-divider);
 	}
 
-	.question-body {
-		display: grid;
-		grid-template-columns: minmax(0, 1.65fr) minmax(18rem, 0.95fr);
-		gap: 0.9rem;
-		align-items: start;
+	.question-table tbody tr:hover {
+		background: rgba(255, 255, 255, 0.03);
 	}
 
-	.question-main,
-	.question-side {
+	.table-sort {
+		padding: 0;
+		width: 100%;
+		display: inline-flex;
+		justify-content: space-between;
+		align-items: center;
+		gap: 0.5rem;
+		border: none;
+		background: transparent;
+		color: inherit;
+		font: inherit;
+		font-weight: 700;
+		cursor: pointer;
+	}
+
+	.table-sort span {
+		font-size: 0.68rem;
+		letter-spacing: 0.08em;
+		text-transform: uppercase;
+		color: var(--theme-text-muted);
+	}
+
+	.question-row-copy,
+	.type-stack {
 		display: flex;
 		flex-direction: column;
-		gap: 0.72rem;
+		gap: 0.35rem;
+	}
+
+	.row-pill-line {
+		display: flex;
+		gap: 0.35rem;
+		flex-wrap: wrap;
 	}
 
 	.pill-row {
@@ -2250,211 +2287,15 @@
 		color: color-mix(in srgb, #c7d2fe 80%, var(--theme-text));
 	}
 
-	.question-time {
-		font-size: 0.76rem;
-		font-weight: 600;
-		color: var(--theme-text-muted);
-		white-space: nowrap;
-	}
-
-	.question-identifiers {
-		display: flex;
-		gap: 0.45rem;
-		flex-wrap: wrap;
-	}
-
-	.identifier-block {
-		display: flex;
-		align-items: center;
-		gap: 0.35rem;
-		padding: 0.32rem 0.5rem;
-		border-radius: 0.56rem;
-		background: rgba(255, 255, 255, 0.025);
-		border: 1px solid var(--panel-border);
-		color: var(--theme-text-muted);
-		font-size: 0.68rem;
-		letter-spacing: 0.08em;
-		text-transform: uppercase;
-	}
-
-	/* .identifier-block code {
-		color: var(--theme-text);
-		font-size: 0.72rem;
-		letter-spacing: 0;
-		text-transform: none;
-		overflow-wrap: anywhere;
-	} */
-
-	.question-text {
-		margin: 0;
+	.question-row-copy strong {
 		font-size: 0.94rem;
-		line-height: 1.55;
-		color: var(--theme-text);
-		line-clamp: 4;
-		display: -webkit-box;
-		-webkit-line-clamp: 3;
-		-webkit-box-orient: vertical;
-		overflow: hidden;
-	}
-
-	.answer-block {
-		display: flex;
-		flex-direction: column;
-		gap: 0.5rem;
-		padding: 0.72rem;
-		border-radius: 0.76rem;
-		background: rgba(255, 255, 255, 0.025);
-		border: 1px solid var(--panel-border);
-	}
-
-	.answer-block-head {
-		display: flex;
-		justify-content: space-between;
-		align-items: center;
-		gap: 0.5rem;
-		flex-wrap: wrap;
-	}
-
-	.answer-key,
-	.direct-answer {
-		font-size: 0.8rem;
-		font-weight: 700;
+		line-height: 1.5;
 		color: var(--theme-text);
 	}
 
-	.option-list {
-		display: grid;
-		gap: 0.4rem;
-	}
-
-	.option-item {
-		display: grid;
-		grid-template-columns: auto minmax(0, 1fr) auto;
-		align-items: start;
-		gap: 0.5rem;
-		padding: 0.58rem 0.62rem;
-		border-radius: 0.68rem;
-		background: rgba(255, 255, 255, 0.02);
-		border: 1px solid var(--panel-border);
-	}
-
-	.option-item.correct {
-		background: rgba(16, 185, 129, 0.1);
-		border-color: rgba(16, 185, 129, 0.24);
-	}
-
-	.option-badge,
-	.option-flag {
-		display: inline-flex;
-		align-items: center;
-		justify-content: center;
-		border-radius: 999px;
-		font-size: 0.68rem;
-		font-weight: 700;
-		letter-spacing: 0.08em;
-		text-transform: uppercase;
-	}
-
-	.option-badge {
-		min-width: 1.7rem;
-		height: 1.7rem;
-		padding: 0 0.45rem;
-		background: rgba(255, 255, 255, 0.04);
+	.question-row-copy small,
+	.type-stack small {
 		color: var(--theme-text-muted);
-	}
-
-	.option-text {
-		font-size: 0.86rem;
-		line-height: 1.45;
-		color: var(--theme-text);
-		word-break: break-word;
-	}
-
-	.option-flag {
-		padding: 0.24rem 0.46rem;
-		background: rgba(16, 185, 129, 0.18);
-		color: color-mix(in srgb, #6ee7b7 82%, var(--theme-text));
-	}
-
-	.question-meta,
-	.score-grid,
-	.detail-grid {
-		display: grid;
-		grid-template-columns: repeat(2, minmax(0, 1fr));
-		gap: 0.55rem;
-	}
-
-	.question-meta {
-		padding: 0.7rem;
-		border-radius: 0.72rem;
-		background: rgba(255, 255, 255, 0.025);
-		border: 1px solid var(--panel-border);
-	}
-
-	.question-meta strong,
-	.score-card strong {
-		display: block;
-		font-size: 0.82rem;
-		color: var(--theme-text);
-		margin-top: 0.15rem;
-		word-break: break-word;
-	}
-
-	.meta-label,
-	.score-card span {
-		font-size: 0.66rem;
-		letter-spacing: 0.12em;
-		text-transform: uppercase;
-		color: var(--theme-text-muted);
-	}
-
-	.score-card {
-		padding: 0.58rem 0.68rem;
-		border-radius: 0.68rem;
-		background: rgba(255, 255, 255, 0.025);
-		border: 1px solid var(--panel-border);
-	}
-
-	.detail-panel {
-		border-radius: 0.72rem;
-		border: 1px solid var(--panel-border);
-		background: rgba(255, 255, 255, 0.02);
-		padding: 0.15rem 0.75rem 0.75rem;
-	}
-
-	.detail-panel summary {
-		cursor: pointer;
-		padding: 0.62rem 0 0.32rem;
-		font-size: 0.82rem;
-		font-weight: 700;
-		letter-spacing: 0.08em;
-		text-transform: uppercase;
-		color: var(--theme-text);
-	}
-
-	.detail-copy {
-		display: flex;
-		flex-direction: column;
-		gap: 0.25rem;
-		padding: 0.45rem 0 0;
-	}
-
-	.detail-copy span {
-		font-size: 0.66rem;
-		letter-spacing: 0.12em;
-		text-transform: uppercase;
-		color: var(--theme-text-muted);
-	}
-
-	.detail-copy p {
-		margin: 0;
-		font-size: 0.86rem;
-		line-height: 1.45;
-		color: var(--theme-text);
-	}
-
-	.detail-grid {
-		padding-top: 0.55rem;
 	}
 
 	.lazy-sentinel,

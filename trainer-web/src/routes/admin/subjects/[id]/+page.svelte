@@ -5,6 +5,7 @@
 	import { session } from '$lib/session';
 	import { getAdminSubject, type AdminSubjectDetail } from '$lib/api/admin';
 	import { updateSubject, updateTopic } from '$lib/api/subjects';
+	import { buildAdminQuestionsUrl, type QuestionStatusFilter } from '$lib/question-links';
 
 	let loading = $state(true);
 	let error = $state('');
@@ -50,6 +51,16 @@
 	function approvalRate(totalApproved: number, totalQuestions: number) {
 		if (!totalQuestions) return '0%';
 		return `${Math.round((totalApproved / totalQuestions) * 100)}%`;
+	}
+
+	function openAdminQuestionsForSubject(status?: QuestionStatusFilter) {
+		if (!subject) return;
+		goto(buildAdminQuestionsUrl({ subjectId: subject.id, status }));
+	}
+
+	function openAdminQuestionsForTopic(topic: AdminSubjectDetail['topics'][number], status?: QuestionStatusFilter) {
+		if (!subject) return;
+		goto(buildAdminQuestionsUrl({ subjectId: subject.id, topicId: topic.id, status }));
 	}
 
 	function startSubjectHeaderEdit() {
@@ -266,19 +277,19 @@
 				<span class="stat-label">Topics</span>
 			</div>
 			<div class="stat-card glass-panel">
-				<span class="stat-value white-text">{subject.total_questions}</span>
+				<span class="stat-value white-text"><button class="metric-link" type="button" onclick={() => openAdminQuestionsForSubject()}>{subject.total_questions}</button></span>
 				<span class="stat-label">Questions</span>
 			</div>
 			<div class="stat-card glass-panel">
-				<span class="stat-value green-text">{subject.total_approved}</span>
+				<span class="stat-value green-text"><button class="metric-link" type="button" onclick={() => openAdminQuestionsForSubject('approved')}>{subject.total_approved}</button></span>
 				<span class="stat-label">Approved</span>
 			</div>
 			<div class="stat-card glass-panel">
-				<span class="stat-value red-text">{subject.total_rejected}</span>
+				<span class="stat-value red-text"><button class="metric-link" type="button" onclick={() => openAdminQuestionsForSubject('rejected')}>{subject.total_rejected}</button></span>
 				<span class="stat-label">Rejected</span>
 			</div>
 			<div class="stat-card glass-panel">
-				<span class="stat-value orange-text">{subject.total_pending}</span>
+				<span class="stat-value orange-text"><button class="metric-link" type="button" onclick={() => openAdminQuestionsForSubject('pending')}>{subject.total_pending}</button></span>
 				<span class="stat-label">Pending</span>
 			</div>
 			<div class="stat-card glass-panel">
@@ -350,10 +361,10 @@
 									</div>
 								</div>
 								<div class="topic-metrics">
-									<div class="metric"><span>Questions</span><strong>{topic.total_questions}</strong></div>
-									<div class="metric"><span>Approved</span><strong class="green-text">{topic.total_approved}</strong></div>
-									<div class="metric"><span>Rejected</span><strong class="red-text">{topic.total_rejected}</strong></div>
-									<div class="metric"><span>Pending</span><strong class="orange-text">{topic.total_pending}</strong></div>
+									<div class="metric"><span>Questions</span><strong><button class="metric-link" type="button" onclick={() => openAdminQuestionsForTopic(topic)}>{topic.total_questions}</button></strong></div>
+									<div class="metric"><span>Approved</span><strong class="green-text"><button class="metric-link" type="button" onclick={() => openAdminQuestionsForTopic(topic, 'approved')}>{topic.total_approved}</button></strong></div>
+									<div class="metric"><span>Rejected</span><strong class="red-text"><button class="metric-link" type="button" onclick={() => openAdminQuestionsForTopic(topic, 'rejected')}>{topic.total_rejected}</button></strong></div>
+									<div class="metric"><span>Pending</span><strong class="orange-text"><button class="metric-link" type="button" onclick={() => openAdminQuestionsForTopic(topic, 'pending')}>{topic.total_pending}</button></strong></div>
 									<div class="metric"><span>Approval Rate</span><strong class="blue-text">{approvalRate(topic.total_approved, topic.total_questions)}</strong></div>
 								</div>
 							</div>
@@ -530,6 +541,22 @@
 	.stat-value {
 		font-size: 1.55rem;
 		font-weight: 800;
+	}
+
+	.metric-link {
+		padding: 0;
+		border: none;
+		background: transparent;
+		color: inherit;
+		font: inherit;
+		font-weight: inherit;
+		cursor: pointer;
+	}
+
+	.metric-link:hover,
+	.metric-link:focus-visible {
+		text-decoration: underline;
+		text-underline-offset: 0.16em;
 	}
 
 	.stat-label {

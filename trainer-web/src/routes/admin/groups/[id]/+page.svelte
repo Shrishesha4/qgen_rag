@@ -10,6 +10,7 @@
 		type SubjectResponse,
 		type SubjectTreeResponse
 	} from '$lib/api/subjects';
+	import { buildAdminQuestionsUrl, type QuestionStatusFilter } from '$lib/question-links';
 
 	type SubjectSortKey =
 		| 'name'
@@ -158,6 +159,15 @@
 	function openSubject(subjectId: string) {
 		goto(`/admin/subjects/${subjectId}`);
 	}
+
+	function openAdminQuestionsForGroup(status?: QuestionStatusFilter) {
+		if (!selectedGroup) return;
+		goto(buildAdminQuestionsUrl({ groupId: selectedGroup.id, status }));
+	}
+
+	function openAdminQuestionsForSubject(subject: GroupSubjectRow, status?: QuestionStatusFilter) {
+		goto(buildAdminQuestionsUrl({ subjectId: subject.id, status }));
+	}
 </script>
 
 <svelte:head>
@@ -180,8 +190,8 @@
 		{#if selectedGroup}
 			<div class="hero-stats">
 				<span>{selectedGroup.total_subjects} subjects</span>
-				<span>{selectedGroup.total_questions} questions</span>
-				<span>{selectedGroup.total_pending} pending</span>
+				<span><button class="metric-link" type="button" onclick={() => openAdminQuestionsForGroup()}>{selectedGroup.total_questions}</button> questions</span>
+				<span><button class="metric-link" type="button" onclick={() => openAdminQuestionsForGroup('pending')}>{selectedGroup.total_pending}</button> pending</span>
 			</div>
 		{/if}
 	</div>
@@ -206,11 +216,11 @@
 				<span class="stat-label">Direct Subjects</span>
 			</div>
 			<div class="stat-card glass-panel">
-				<span class="stat-value white-text">{selectedGroup.total_questions}</span>
+				<span class="stat-value white-text"><button class="metric-link" type="button" onclick={() => openAdminQuestionsForGroup()}>{selectedGroup.total_questions}</button></span>
 				<span class="stat-label">Questions</span>
 			</div>
 			<div class="stat-card glass-panel">
-				<span class="stat-value orange-text">{selectedGroup.total_pending}</span>
+				<span class="stat-value orange-text"><button class="metric-link" type="button" onclick={() => openAdminQuestionsForGroup('pending')}>{selectedGroup.total_pending}</button></span>
 				<span class="stat-label">Pending</span>
 			</div>
 		</div>
@@ -310,10 +320,10 @@
 									<div class="path-cell">{subject.groupPath}</div>
 								</td>
 								<td class="num">{subject.total_topics}</td>
-								<td class="num">{subject.total_questions}</td>
-								<td class="num green-text">{subject.total_approved ?? 0}</td>
-								<td class="num red-text">{subject.total_rejected ?? 0}</td>
-								<td class="num orange-text">{subject.total_pending ?? 0}</td>
+								<td class="num"><button class="metric-link" type="button" onclick={() => openAdminQuestionsForSubject(subject)}>{subject.total_questions}</button></td>
+								<td class="num green-text"><button class="metric-link" type="button" onclick={() => openAdminQuestionsForSubject(subject, 'approved')}>{subject.total_approved ?? 0}</button></td>
+								<td class="num red-text"><button class="metric-link" type="button" onclick={() => openAdminQuestionsForSubject(subject, 'rejected')}>{subject.total_rejected ?? 0}</button></td>
+								<td class="num orange-text"><button class="metric-link" type="button" onclick={() => openAdminQuestionsForSubject(subject, 'pending')}>{subject.total_pending ?? 0}</button></td>
 								<td>
 									<button class="open-btn" type="button" onclick={() => openSubject(subject.id)}>Open</button>
 								</td>
@@ -456,6 +466,22 @@
 		border: 1px solid color-mix(in srgb, var(--theme-primary) 45%, var(--theme-glass-border));
 		background: color-mix(in srgb, var(--theme-primary) 16%, var(--theme-input-bg));
 		color: var(--theme-text);
+	}
+
+	.metric-link {
+		padding: 0;
+		border: none;
+		background: transparent;
+		color: inherit;
+		font: inherit;
+		font-weight: 700;
+		cursor: pointer;
+	}
+
+	.metric-link:hover,
+	.metric-link:focus-visible {
+		text-decoration: underline;
+		text-underline-offset: 0.16em;
 	}
 
 	.error-banner {

@@ -65,6 +65,18 @@ class SubjectReviewStatsResponse(BaseModel):
     topics: List[SubjectTopicReviewStats]
 
 
+class TeacherTopicSearchResult(BaseModel):
+    subject_id: str
+    subject_name: str
+    subject_code: str
+    topic_id: str
+    topic_name: str
+    generated_count: int
+    pending_count: int
+    approved_count: int
+    rejected_count: int
+
+
 # ============== Subject Endpoints ==============
 
 @router.post("", response_model=SubjectResponse, status_code=status.HTTP_201_CREATED)
@@ -708,6 +720,67 @@ async def move_group(
 
 
 # ============== Subject Detail Endpoints ==============
+
+@router.get("/topics/search", response_model=List[TeacherTopicSearchResult])
+async def search_teacher_topics(
+    q: str = Query(..., min_length=2, description="Search query for teacher topic names"),
+    limit: int = Query(40, ge=1, le=100),
+    current_user: User = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+):
+    """Search the current teacher's topics and return row-friendly counts."""
+    query_text = (q or "").strip()
+    if len(query_text) < 2:
+        return []
+
+    search_pattern = f"%{query_text}%"
+    result = await db.execute(
+        select(
+            Subject.id,
+            Subject.name,
+            Subject.code,
+            Topic.id,
+            Topic.name,
+            func.count(Question.id).label("generated_count"),
+            func.count(case((Question.vetting_status == "pending", 1))).label("pending_count"),
+            func.count(case((Question.vetting_status == "approved", 1))).label("approved_count"),
+            func.count(case((Question.vetting_status == "rejected", 1))).label("rejected_count"),
+        )
+        .join(Subject, Topic.subject_id == Subject.id)
+        .outerjoin(
+            Question,
+            (Question.topic_id == Topic.id)
+            & (Question.is_archived == False)
+            & (Question.is_latest == True),
+        )
+        .where(
+            Subject.user_id == current_user.id,
+            Topic.name.ilike(search_pattern),
+        )
+        .group_by(Subject.id, Subject.name, Subject.code, Topic.id, Topic.name)
+        .order_by(
+            func.count(case((Question.vetting_status == "pending", 1))).desc(),
+            func.count(Question.id).desc(),
+            Subject.name.asc(),
+            Topic.name.asc(),
+        )
+        .limit(limit)
+    )
+
+    return [
+        TeacherTopicSearchResult(
+            subject_id=str(subject_id),
+            subject_name=subject_name,
+            subject_code=subject_code,
+            topic_id=str(topic_id),
+            topic_name=topic_name,
+            generated_count=int(generated_count or 0),
+            pending_count=int(pending_count or 0),
+            approved_count=int(approved_count or 0),
+            rejected_count=int(rejected_count or 0),
+        )
+        for subject_id, subject_name, subject_code, topic_id, topic_name, generated_count, pending_count, approved_count, rejected_count in result.all()
+    ]
 
 @router.get("/{subject_id}", response_model=SubjectDetailResponse)
 async def get_subject(

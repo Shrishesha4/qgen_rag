@@ -74,6 +74,18 @@ export interface SubjectReviewStatsResponse {
 	topics: SubjectTopicReviewStats[];
 }
 
+export interface TeacherTopicSearchResult {
+	subject_id: string;
+	subject_name: string;
+	subject_code: string;
+	topic_id: string;
+	topic_name: string;
+	generated_count: number;
+	pending_count: number;
+	approved_count: number;
+	rejected_count: number;
+}
+
 export interface SubjectListResponse {
 	subjects: SubjectResponse[];
 	pagination: { page: number; limit: number; total: number; total_pages: number };
@@ -94,6 +106,11 @@ export async function getSubject(id: string): Promise<SubjectDetailResponse> {
 export async function getSubjectReviewStats(id: string): Promise<SubjectReviewStatsResponse> {
 	return apiFetch<SubjectReviewStatsResponse>(`/subjects/${id}/review-stats`);
 	}
+
+export async function searchTeacherTopics(query: string, limit = 40): Promise<TeacherTopicSearchResult[]> {
+	const params = new URLSearchParams({ q: query, limit: String(limit) });
+	return apiFetch<TeacherTopicSearchResult[]>(`/subjects/topics/search?${params.toString()}`);
+}
 
 export async function createSubject(data: SubjectCreate): Promise<SubjectResponse> {
 	return apiFetch<SubjectResponse>('/subjects', {

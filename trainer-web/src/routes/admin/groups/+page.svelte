@@ -9,6 +9,7 @@
 		type SubjectTreeResponse
 	} from '$lib/api/subjects';
 	import { buildSubjectGroupMetaById, getSubjectGroupPath, matchesSubjectSearch } from '$lib/subject-group-search';
+	import { buildAdminQuestionsUrl, type QuestionStatusFilter } from '$lib/question-links';
 
 	let loading = $state(true);
 	let error = $state('');
@@ -155,6 +156,19 @@
 	function openSubject(subjectId: string) {
 		goto(`/admin/subjects/${subjectId}`);
 	}
+
+	function openAdminQuestionsForGroup(group: SubjectGroupTreeNode, status?: QuestionStatusFilter) {
+		goto(buildAdminQuestionsUrl({ groupId: group.id, status }));
+	}
+
+	function openAdminQuestionsForSubject(subject: SubjectResponse, status?: QuestionStatusFilter) {
+		goto(buildAdminQuestionsUrl({ subjectId: subject.id, status }));
+	}
+
+	function metricButtonHandler(callback: () => void, event: MouseEvent) {
+		event.stopPropagation();
+		callback();
+	}
 </script>
 
 <svelte:head>
@@ -274,10 +288,10 @@
 											{/if}
 										</div>
 									</td>
-									<td>{subject.total_questions}</td>
-									<td>{subject.total_pending ?? 0}</td>
-									<td class="green-text">{subject.total_approved ?? 0}</td>
-									<td class="red-text">{subject.total_rejected ?? 0}</td>
+									<td><button class="metric-link" type="button" onclick={(event) => metricButtonHandler(() => openAdminQuestionsForSubject(subject), event)}>{subject.total_questions}</button></td>
+									<td><button class="metric-link" type="button" onclick={(event) => metricButtonHandler(() => openAdminQuestionsForSubject(subject, 'pending'), event)}>{subject.total_pending ?? 0}</button></td>
+									<td class="green-text"><button class="metric-link" type="button" onclick={(event) => metricButtonHandler(() => openAdminQuestionsForSubject(subject, 'approved'), event)}>{subject.total_approved ?? 0}</button></td>
+									<td class="red-text"><button class="metric-link" type="button" onclick={(event) => metricButtonHandler(() => openAdminQuestionsForSubject(subject, 'rejected'), event)}>{subject.total_rejected ?? 0}</button></td>
 								</tr>
 							{/each}
 						{/if}
@@ -353,10 +367,10 @@
 				</div>
 			</div>
 		</td>
-		<td class="muted-text">{group.total_questions}</td>
-		<td class="muted-text">{group.total_pending}</td>
-		<td class="muted-text green-text">{group.total_approved}</td>
-		<td class="muted-text red-text">{group.total_rejected}</td>
+		<td class="muted-text"><button class="metric-link" type="button" onclick={(event) => metricButtonHandler(() => openAdminQuestionsForGroup(group), event)}>{group.total_questions}</button></td>
+		<td class="muted-text"><button class="metric-link" type="button" onclick={(event) => metricButtonHandler(() => openAdminQuestionsForGroup(group, 'pending'), event)}>{group.total_pending}</button></td>
+		<td class="muted-text green-text"><button class="metric-link" type="button" onclick={(event) => metricButtonHandler(() => openAdminQuestionsForGroup(group, 'approved'), event)}>{group.total_approved}</button></td>
+		<td class="muted-text red-text"><button class="metric-link" type="button" onclick={(event) => metricButtonHandler(() => openAdminQuestionsForGroup(group, 'rejected'), event)}>{group.total_rejected}</button></td>
 	</tr>
 	{#if expandedGroups.has(group.id)}
 		{#each group.children as child}
@@ -396,10 +410,10 @@
 				</div>
 			</div>
 		</td>
-		<td>{subject.total_questions}</td>
-		<td>{subject.total_pending ?? 0}</td>
-		<td class="green-text">{subject.total_approved ?? 0}</td>
-		<td class="red-text">{subject.total_rejected ?? 0}</td>
+		<td><button class="metric-link" type="button" onclick={(event) => metricButtonHandler(() => openAdminQuestionsForSubject(subject), event)}>{subject.total_questions}</button></td>
+		<td><button class="metric-link" type="button" onclick={(event) => metricButtonHandler(() => openAdminQuestionsForSubject(subject, 'pending'), event)}>{subject.total_pending ?? 0}</button></td>
+		<td class="green-text"><button class="metric-link" type="button" onclick={(event) => metricButtonHandler(() => openAdminQuestionsForSubject(subject, 'approved'), event)}>{subject.total_approved ?? 0}</button></td>
+		<td class="red-text"><button class="metric-link" type="button" onclick={(event) => metricButtonHandler(() => openAdminQuestionsForSubject(subject, 'rejected'), event)}>{subject.total_rejected ?? 0}</button></td>
 	</tr>
 {/snippet}
 
@@ -619,6 +633,22 @@
 		line-height: 1;
 		background: color-mix(in srgb, rgba(96, 165, 250, 0.22) 72%, var(--theme-input-bg));
 		color: color-mix(in srgb, #60a5fa 78%, var(--theme-text));
+	}
+
+	.metric-link {
+		padding: 0;
+		border: none;
+		background: transparent;
+		color: inherit;
+		font: inherit;
+		font-weight: 700;
+		cursor: pointer;
+	}
+
+	.metric-link:hover,
+	.metric-link:focus-visible {
+		text-decoration: underline;
+		text-underline-offset: 0.16em;
 	}
 
 	.subject-row {

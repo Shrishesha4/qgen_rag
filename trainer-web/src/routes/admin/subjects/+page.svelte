@@ -4,6 +4,7 @@
 	import { session } from '$lib/session';
 	import { listAdminSubjects, type AdminSubjectSummary } from '$lib/api/admin';
 	import { updateSubject } from '$lib/api/subjects';
+	import { buildAdminQuestionsUrl, type QuestionStatusFilter } from '$lib/question-links';
 
 	let loading = $state(true);
 	let error = $state('');
@@ -127,6 +128,10 @@
 
 	function openSubject(subjectId: string) {
 		goto(`/admin/subjects/${subjectId}`);
+	}
+
+	function openAdminQuestionsForSubject(subject: AdminSubjectSummary, status?: QuestionStatusFilter) {
+		goto(buildAdminQuestionsUrl({ subjectId: subject.id, status }));
 	}
 
 	function startInlineEdit(subject: AdminSubjectSummary): void {
@@ -388,10 +393,10 @@
 								</div>
 							</td>
 							<td class="num">{subject.total_topics}</td>
-							<td class="num">{subject.total_questions}</td>
-							<td class="num green-text">{subject.total_approved}</td>
-							<td class="num red-text">{subject.total_rejected}</td>
-							<td class="num orange-text">{subject.total_pending}</td>
+							<td class="num"><button class="metric-link" type="button" onclick={() => openAdminQuestionsForSubject(subject)}>{subject.total_questions}</button></td>
+							<td class="num green-text"><button class="metric-link" type="button" onclick={() => openAdminQuestionsForSubject(subject, 'approved')}>{subject.total_approved}</button></td>
+							<td class="num red-text"><button class="metric-link" type="button" onclick={() => openAdminQuestionsForSubject(subject, 'rejected')}>{subject.total_rejected}</button></td>
+							<td class="num orange-text"><button class="metric-link" type="button" onclick={() => openAdminQuestionsForSubject(subject, 'pending')}>{subject.total_pending}</button></td>
 							<td>{formatDate(subject.created_at)}</td>
 							<td>
 								<button class="open-btn" onclick={() => openSubject(subject.id)}>Open</button>
@@ -790,6 +795,22 @@
 		color: var(--theme-text);
 		font-weight: 700;
 		cursor: pointer;
+	}
+
+	.metric-link {
+		padding: 0;
+		border: none;
+		background: transparent;
+		color: inherit;
+		font: inherit;
+		font-weight: 700;
+		cursor: pointer;
+	}
+
+	.metric-link:hover,
+	.metric-link:focus-visible {
+		text-decoration: underline;
+		text-underline-offset: 0.16em;
 	}
 
 	.mobile-list {

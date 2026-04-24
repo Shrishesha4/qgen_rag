@@ -34,6 +34,7 @@ from app.services.redis_service import RedisService
 from app.services.document_service import DocumentService
 from app.services.reranker_service import RerankerService
 from app.services.novelty_service import NoveltyService, NoveltyResult
+from app.services.subject_group_filter_service import get_subject_ids_for_group
 from app.core.config import settings
 from app.services.analytics_websocket_manager import analytics_ws_manager
 
@@ -2473,6 +2474,7 @@ Output valid JSON only."""
         self,
         user_id: str,
         document_id: Optional[str] = None,
+        group_id: Optional[str] = None,
         subject_id: Optional[str] = None,
         topic_id: Optional[str] = None,
         vetting_status: Optional[str] = None,
@@ -2480,6 +2482,7 @@ Output valid JSON only."""
         limit: int = 20,
         question_type: Optional[str] = None,
         difficulty: Optional[str] = None,
+        search: Optional[str] = None,
         show_archived: bool = False,
         include_all_versions: bool = False,
     ) -> tuple[List[Question], Dict[str, Any]]:
@@ -2488,6 +2491,10 @@ Output valid JSON only."""
         # Questions can be owned via Document OR via Subject
         query = (
             select(Question)
+            .options(
+                selectinload(Question.subject),
+                selectinload(Question.topic),
+            )
             .outerjoin(Document, Question.document_id == Document.id)
             .outerjoin(Subject, Question.subject_id == Subject.id)
             .where(
@@ -2512,6 +2519,16 @@ Output valid JSON only."""
         # Apply optional filters
         if document_id:
             query = query.where(Question.document_id == document_id)
+        if group_id:
+            group_subject_ids = await get_subject_ids_for_group(self.db, group_id, owner_id=user_id)
+            if not group_subject_ids:
+                return [], {
+                    "page": page,
+                    "limit": limit,
+                    "total": 0,
+                    "total_pages": 0,
+                }
+            query = query.where(Question.subject_id.in_(group_subject_ids))
         if subject_id:
             query = query.where(Question.subject_id == subject_id)
         if topic_id:
@@ -2522,6 +2539,14 @@ Output valid JSON only."""
             query = query.where(Question.question_type == question_type)
         if difficulty:
             query = query.where(Question.difficulty_level == difficulty)
+        if search:
+            query = query.where(
+                or_(
+                    Question.question_text.ilike(f"%{search}%"),
+                    Question.correct_answer.ilike(f"%{search}%"),
+                    Question.explanation.ilike(f"%{search}%"),
+                )
+            )
 
         # Count total
         count_result = await self.db.execute(
@@ -2531,7 +2556,7 @@ Output valid JSON only."""
 
         # Paginate
         offset = (page - 1) * limit
-        query = query.offset(offset).limit(limit).order_by(Question.generated_at.desc())
+        query = query.order_by(Question.generated_at.desc()).offset(offset).limit(limit)
         
         result = await self.db.execute(query)
         questions = result.scalars().all()

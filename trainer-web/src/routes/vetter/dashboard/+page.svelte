@@ -857,6 +857,8 @@
 		return q ? topicSearchResults : favoriteTopicMatches;
 	});
 
+	const hasTopicSearchResults = $derived.by(() => hasSearchQuery && topicSearchResults.length > 0);
+
 	const allGroupCards = $derived.by(() => {
 		if (!treeData) return [] as DashboardGroupCard[];
 		const cards: DashboardGroupCard[] = [];
@@ -1150,7 +1152,7 @@
 				<div class="error-banner" role="status">{topicSearchError}</div>
 			{/if}
 
-			{#if visibleTopicQuickCards.length > 0 && (activeViewTab === 'subjects' || hasSearchQuery)}
+			{#if activeViewTab === 'subjects' && !hasSearchQuery && visibleTopicQuickCards.length > 0}
 				<section class="quick-section glass-panel">
 					<div class="quick-section-head">
 						<div>
@@ -1199,7 +1201,7 @@
 				</section>
 			{/if}
 
-			{#if activeViewTab === 'groups' && visibleGroupQuickCards.length > 0}
+			{#if activeViewTab === 'groups' && !hasSearchQuery && visibleGroupQuickCards.length > 0}
 				<section class="quick-section glass-panel">
 					<div class="quick-section-head">
 						<div>
@@ -1261,7 +1263,11 @@
 					</thead>
 					<tbody>
 						{#if activeViewTab === 'subjects'}
-							{#if orderedSubjects.length === 0}
+							{#if hasTopicSearchResults}
+								{#each topicSearchResults as topicMatch}
+									{@render vettingTopicMatchRow(topicMatch, 0)}
+								{/each}
+							{:else if orderedSubjects.length === 0}
 								<tr>
 									<td colspan="6" class="empty-cell">No matching subjects.</td>
 								</tr>
@@ -1280,12 +1286,14 @@
 							{/if}
 						{:else}
 							{#if hasSearchQuery}
-								{#if orderedGroupedSubjectSearchResults.length === 0}
-									{#if visibleTopicQuickCards.length === 0}
+								{#if hasTopicSearchResults}
+									{#each topicSearchResults as topicMatch}
+										{@render vettingTopicMatchRow(topicMatch, 0)}
+									{/each}
+								{:else if orderedGroupedSubjectSearchResults.length === 0}
 										<tr>
 											<td colspan="6" class="empty-cell">No matching groups.</td>
 										</tr>
-									{/if}
 								{:else}
 									{#each pinnedGroupedSubjectResults as subject}
 										{@render vettingSubjectRow(subject, 0)}
@@ -1322,7 +1330,45 @@
 			</div>
 
 			<div class="training-mobile-list mobile-only">
-				{#if mobileVisibleSubjects.length === 0}
+				{#if hasTopicSearchResults}
+					{#each topicSearchResults as topicMatch}
+						{@const topicStats = getTopicMatchStats(topicMatch)}
+						{@const topicProgress = topicResumeSnapshot(topicMatch.subjectId, topicMatch.topicId)}
+						<div class="mobile-card glass-panel">
+							<div class="mobile-card-head">
+								<div class="name-header topic-search-name-header">
+									<strong>{topicMatch.topicName}</strong>
+									<span>{topicMatch.subjectCode} · {topicMatch.subjectName}</span>
+								</div>
+								<button
+									class="favorite-btn"
+									type="button"
+									title={isFavorite('topic', topicMatch.topicId) ? 'Unpin topic' : 'Pin topic'}
+									onclick={() => void toggleFavorite('topic', topicMatch.topicId, topicMatch.topicName)}
+									disabled={favoriteBusyKeys[favoriteKey('topic', topicMatch.topicId)]}
+								>
+									{isFavorite('topic', topicMatch.topicId) ? '★' : '☆'}
+								</button>
+							</div>
+							{#if topicMatch.groupPath}
+								<span class="group-context">Group: {topicMatch.groupPath}</span>
+							{/if}
+							<div class="mobile-metrics">
+								<span>Questions <strong>{topicStats.generated}</strong></span>
+								<span>Pending <strong>{topicStats.pending}</strong></span>
+								<span class="green-text">Approved <strong>{topicStats.approved}</strong></span>
+								<span class="red-text">Rejected <strong>{topicStats.rejected}</strong></span>
+							</div>
+							<div class="inline-actions">
+								{#if topicProgress}
+									<button class="table-btn" onclick={() => resumeSpecificProgress(topicProgress)}>Resume</button>
+								{:else}
+									<button class="table-btn primary" onclick={() => void startTopicVettingFromMatch(topicMatch)} disabled={loadingPendingCounts}>Start Vetting</button>
+								{/if}
+							</div>
+						</div>
+					{/each}
+				{:else if mobileVisibleSubjects.length === 0}
 					{#if !(hasSearchQuery && visibleTopicQuickCards.length > 0)}
 						<div class="mobile-card glass-panel empty-cell">
 							{activeViewTab === 'groups' ? 'No matching groups.' : 'No matching subjects.'}
@@ -1472,6 +1518,49 @@
 			{@render vettingSubjectRow(subject, depth + 1)}
 		{/each}
 	{/if}
+{/snippet}
+
+{#snippet vettingTopicMatchRow(match: DashboardTopicMatch, depth: number)}
+	{@const topicStats = getTopicMatchStats(match)}
+	{@const topicProgress = topicResumeSnapshot(match.subjectId, match.topicId)}
+	<tr class="topic-row topic-match-row">
+		<td>
+			<div class="topic-name-stack" style="padding-left: {depth * 1.2 + 1.2}rem">
+				<div class="topic-title-line">
+					<button
+						class="favorite-btn inline-favorite-btn"
+						type="button"
+						title={isFavorite('topic', match.topicId) ? 'Unpin topic' : 'Pin topic'}
+						onclick={(event) => {
+							event.stopPropagation();
+							void toggleFavorite('topic', match.topicId, match.topicName);
+						}}
+						disabled={favoriteBusyKeys[favoriteKey('topic', match.topicId)]}
+					>
+						{isFavorite('topic', match.topicId) ? '★' : '☆'}
+					</button>
+					<strong>{match.topicName}</strong>
+				</div>
+				<span class="group-context">{match.subjectCode} · {match.subjectName}</span>
+				{#if match.groupPath}
+					<span class="group-context">Group: {match.groupPath}</span>
+				{/if}
+			</div>
+		</td>
+		<td>{topicStats.generated}</td>
+		<td>{topicStats.pending}</td>
+		<td class="green-text">{topicStats.approved}</td>
+		<td class="red-text">{topicStats.rejected}</td>
+		<td class="action-cell">
+			<div class="inline-actions action-stack">
+				{#if topicProgress}
+					<button class="table-btn" onclick={() => resumeSpecificProgress(topicProgress)}>Resume</button>
+				{:else}
+					<button class="table-btn primary" onclick={() => void startTopicVettingFromMatch(match)} disabled={loadingPendingCounts}>Start Vetting</button>
+				{/if}
+			</div>
+		</td>
+	</tr>
 {/snippet}
 
 {#snippet vettingSubjectRow(subject: SubjectResponse, depth: number)}

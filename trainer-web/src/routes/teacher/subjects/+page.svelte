@@ -9,9 +9,11 @@
 		moveSubject,
 		moveGroup,
 		deleteGroup,
+		searchTeacherTopics,
 		type SubjectResponse,
 		type SubjectGroupTreeNode,
-		type SubjectTreeResponse
+		type SubjectTreeResponse,
+		type TeacherTopicSearchResult
 	} from '$lib/api/subjects';
 	import {
 		listCurrentUserFavorites,
@@ -21,6 +23,7 @@
 	} from '$lib/api/activity';
 	import { getGenerationWebSocketClient, type StatsData } from '$lib/api/generation-websocket';
 	import { buildSubjectGroupMetaById, getSubjectGroupPath, matchesSubjectSearch } from '$lib/subject-group-search';
+	import { buildTeacherQuestionsUrl, type QuestionStatusFilter } from '$lib/question-links';
 
 	// Tab state
 	type ViewTab = 'subjects' | 'groups';
@@ -32,6 +35,11 @@
 	let favorites = $state<FavoriteSummary[]>([]);
 	let favoriteBusyKeys = $state<Record<string, boolean>>({});
 	let query = $state('');
+	let topicSearchMatches = $state<TeacherTopicSearchResult[]>([]);
+	let topicSearchLoading = $state(false);
+	let topicSearchError = $state('');
+	let topicSearchTimer: ReturnType<typeof setTimeout> | null = null;
+	let topicSearchRequestSequence = 0;
 	
 	// WebSocket for live stats updates
 	let wsUnsubscribers: (() => void)[] = [];
@@ -132,6 +140,10 @@
 	});
 	
 	onDestroy(() => {
+		if (topicSearchTimer) {
+			clearTimeout(topicSearchTimer);
+			topicSearchTimer = null;
+		}
 		wsUnsubscribers.forEach(unsub => unsub());
 		wsUnsubscribers = [];
 	});
@@ -301,6 +313,48 @@
 	});
 
 	const hasActiveSearch = $derived.by(() => query.trim().length > 0);
+	const showTopicSearchRows = $derived.by(() => hasActiveSearch && topicSearchMatches.length > 0);
+
+	$effect(() => {
+		const searchTerm = query.trim();
+		const requestId = ++topicSearchRequestSequence;
+		if (topicSearchTimer) {
+			clearTimeout(topicSearchTimer);
+			topicSearchTimer = null;
+		}
+
+		if (searchTerm.length < 2) {
+			topicSearchMatches = [];
+			topicSearchError = '';
+			topicSearchLoading = false;
+			return;
+		}
+
+		topicSearchLoading = true;
+		topicSearchTimer = setTimeout(async () => {
+			try {
+				const matches = await searchTeacherTopics(searchTerm, 40);
+				if (requestId !== topicSearchRequestSequence) return;
+				topicSearchMatches = matches;
+				topicSearchError = '';
+			} catch (value: unknown) {
+				if (requestId !== topicSearchRequestSequence) return;
+				topicSearchMatches = [];
+				topicSearchError = value instanceof Error ? value.message : 'Topic search failed';
+			} finally {
+				if (requestId === topicSearchRequestSequence) {
+					topicSearchLoading = false;
+				}
+			}
+		}, 220);
+
+		return () => {
+			if (topicSearchTimer) {
+				clearTimeout(topicSearchTimer);
+				topicSearchTimer = null;
+			}
+		};
+	});
 
 	// Filtered subjects for subjects view
 	const filteredSubjectsView = $derived.by(() => {
@@ -374,6 +428,39 @@
 	function openSubject(subjectId: string) {
 		void preloadSubjectRoute(subjectId);
 		goto(`/teacher/subjects/${subjectId}`);
+	}
+
+	function openTeacherQuestionsForGroup(group: SubjectGroupTreeNode, status?: QuestionStatusFilter) {
+		goto(buildTeacherQuestionsUrl({
+			groupId: group.id,
+			groupName: group.name,
+			status,
+		}));
+	}
+
+	function openTeacherQuestionsForSubject(subject: SubjectResponse, status?: QuestionStatusFilter) {
+		goto(buildTeacherQuestionsUrl({
+			subjectId: subject.id,
+			subjectName: subject.name,
+			subjectCode: subject.code,
+			status,
+		}));
+	}
+
+	function metricButtonHandler(callback: () => void, event: MouseEvent) {
+		event.stopPropagation();
+		callback();
+	}
+
+	function openTeacherQuestionsForTopicMatch(match: TeacherTopicSearchResult, status?: QuestionStatusFilter) {
+		goto(buildTeacherQuestionsUrl({
+			subjectId: match.subject_id,
+			subjectName: match.subject_name,
+			subjectCode: match.subject_code,
+			topicId: match.topic_id,
+			topicName: match.topic_name,
+			status,
+		}));
 	}
 
 	function toggleGroup(groupId: string) {
@@ -1075,7 +1162,34 @@
 						</tr>
 					{/if}
 
-					{#if filteredSubjectsView.length === 0}
+					{#if showTopicSearchRows}
+						{#each topicSearchMatches as match}
+							{@const groupPath = getSubjectGroupPath(match.subject_id, subjectGroupMetaById)}
+							<tr class="subject-row" role="button" tabindex="0" onclick={() => openSubject(match.subject_id)} onkeydown={(event) => {
+								if (event.key === 'Enter' || event.key === ' ') {
+									event.preventDefault();
+									openSubject(match.subject_id);
+								}
+							}}>
+								<td>
+									<div class="name-stack">
+										<div class="name-header">
+											<strong>{match.topic_name}</strong>
+											<span class="code-chip">{match.subject_code}</span>
+										</div>
+										<span class="group-context">Subject: {match.subject_name}</span>
+										{#if groupPath}
+											<span class="group-context">Group: {groupPath}</span>
+										{/if}
+									</div>
+								</td>
+								<td><button class="metric-link" type="button" onclick={(event) => metricButtonHandler(() => openTeacherQuestionsForTopicMatch(match), event)}>{match.generated_count}</button></td>
+								<td><button class="metric-link" type="button" onclick={(event) => metricButtonHandler(() => openTeacherQuestionsForTopicMatch(match, 'pending'), event)}>{match.pending_count}</button></td>
+								<td class="green-text"><button class="metric-link" type="button" onclick={(event) => metricButtonHandler(() => openTeacherQuestionsForTopicMatch(match, 'approved'), event)}>{match.approved_count}</button></td>
+								<td class="red-text"><button class="metric-link" type="button" onclick={(event) => metricButtonHandler(() => openTeacherQuestionsForTopicMatch(match, 'rejected'), event)}>{match.rejected_count}</button></td>
+							</tr>
+						{/each}
+					{:else if filteredSubjectsView.length === 0}
 						<tr>
 							<td colspan="5" class="empty-cell">No subjects matched your search.</td>
 						</tr>
@@ -1111,10 +1225,10 @@
 										{/if}
 									</div>
 								</td>
-								<td>{subject.total_questions}</td>
-								<td>{subject.total_pending ?? 0}</td>
-								<td class="green-text">{subject.total_approved ?? 0}</td>
-								<td class="red-text">{subject.total_rejected ?? 0}</td>
+								<td><button class="metric-link" type="button" onclick={(event) => metricButtonHandler(() => openTeacherQuestionsForSubject(subject), event)}>{subject.total_questions}</button></td>
+								<td><button class="metric-link" type="button" onclick={(event) => metricButtonHandler(() => openTeacherQuestionsForSubject(subject, 'pending'), event)}>{subject.total_pending ?? 0}</button></td>
+								<td class="green-text"><button class="metric-link" type="button" onclick={(event) => metricButtonHandler(() => openTeacherQuestionsForSubject(subject, 'approved'), event)}>{subject.total_approved ?? 0}</button></td>
+								<td class="red-text"><button class="metric-link" type="button" onclick={(event) => metricButtonHandler(() => openTeacherQuestionsForSubject(subject, 'rejected'), event)}>{subject.total_rejected ?? 0}</button></td>
 							</tr>
 						{/each}
 						{#if pinnedSubjectsView.length > 0 && regularSubjectsView.length > 0}
@@ -1153,10 +1267,10 @@
 										{/if}
 									</div>
 								</td>
-								<td>{subject.total_questions}</td>
-								<td>{subject.total_pending ?? 0}</td>
-								<td class="green-text">{subject.total_approved ?? 0}</td>
-								<td class="red-text">{subject.total_rejected ?? 0}</td>
+								<td><button class="metric-link" type="button" onclick={(event) => metricButtonHandler(() => openTeacherQuestionsForSubject(subject), event)}>{subject.total_questions}</button></td>
+								<td><button class="metric-link" type="button" onclick={(event) => metricButtonHandler(() => openTeacherQuestionsForSubject(subject, 'pending'), event)}>{subject.total_pending ?? 0}</button></td>
+								<td class="green-text"><button class="metric-link" type="button" onclick={(event) => metricButtonHandler(() => openTeacherQuestionsForSubject(subject, 'approved'), event)}>{subject.total_approved ?? 0}</button></td>
+								<td class="red-text"><button class="metric-link" type="button" onclick={(event) => metricButtonHandler(() => openTeacherQuestionsForSubject(subject, 'rejected'), event)}>{subject.total_rejected ?? 0}</button></td>
 							</tr>
 						{/each}
 					{/if}
@@ -1281,7 +1395,37 @@
 
 					<!-- Search Results (flat list) in Groups view -->
 					{#if filteredGroupsView !== null}
-						{#if filteredGroupsView.length === 0}
+						{#if showTopicSearchRows}
+							{#each topicSearchMatches as match}
+								{@const groupPath = getSubjectGroupPath(match.subject_id, subjectGroupMetaById)}
+								<tr class="subject-row" role="button" tabindex="0" onclick={() => openSubject(match.subject_id)} onkeydown={(event) => {
+									if (event.key === 'Enter' || event.key === ' ') {
+										event.preventDefault();
+										openSubject(match.subject_id);
+									}
+								}}>
+									<td>
+										<div class="name-stack">
+											<div class="name-header">
+												<strong>{match.topic_name}</strong>
+												<span class="code-chip">{match.subject_code}</span>
+											</div>
+											<span class="group-context">Subject: {match.subject_name}</span>
+											{#if groupPath}
+												<span class="group-context">Group: {groupPath}</span>
+											{/if}
+										</div>
+									</td>
+									<td><button class="metric-link" type="button" onclick={(event) => metricButtonHandler(() => openTeacherQuestionsForTopicMatch(match), event)}>{match.generated_count}</button></td>
+									<td><button class="metric-link" type="button" onclick={(event) => metricButtonHandler(() => openTeacherQuestionsForTopicMatch(match, 'pending'), event)}>{match.pending_count}</button></td>
+									<td class="green-text"><button class="metric-link" type="button" onclick={(event) => metricButtonHandler(() => openTeacherQuestionsForTopicMatch(match, 'approved'), event)}>{match.approved_count}</button></td>
+									<td class="red-text"><button class="metric-link" type="button" onclick={(event) => metricButtonHandler(() => openTeacherQuestionsForTopicMatch(match, 'rejected'), event)}>{match.rejected_count}</button></td>
+									<td>
+										<button class="table-btn" type="button" onclick={(event) => metricButtonHandler(() => openSubject(match.subject_id), event)}>Open Subject</button>
+									</td>
+								</tr>
+							{/each}
+						{:else if filteredGroupsView.length === 0}
 							<tr>
 								<td colspan="6" class="empty-cell">No subjects matched your search.</td>
 							</tr>
@@ -1315,10 +1459,10 @@
 											{/if}
 										</div>
 									</td>
-									<td>{subject.total_questions}</td>
-									<td>{subject.total_pending ?? 0}</td>
-									<td class="green-text">{subject.total_approved ?? 0}</td>
-									<td class="red-text">{subject.total_rejected ?? 0}</td>
+									<td><button class="metric-link" type="button" onclick={(event) => metricButtonHandler(() => openTeacherQuestionsForSubject(subject), event)}>{subject.total_questions}</button></td>
+									<td><button class="metric-link" type="button" onclick={(event) => metricButtonHandler(() => openTeacherQuestionsForSubject(subject, 'pending'), event)}>{subject.total_pending ?? 0}</button></td>
+									<td class="green-text"><button class="metric-link" type="button" onclick={(event) => metricButtonHandler(() => openTeacherQuestionsForSubject(subject, 'approved'), event)}>{subject.total_approved ?? 0}</button></td>
+									<td class="red-text"><button class="metric-link" type="button" onclick={(event) => metricButtonHandler(() => openTeacherQuestionsForSubject(subject, 'rejected'), event)}>{subject.total_rejected ?? 0}</button></td>
 									<td>
 										<button class="icon-btn" title="Move" onclick={(e) => { e.stopPropagation(); openMoveModal('subject', subject.id, subject.name); }}>↔</button>
 									</td>
@@ -1358,10 +1502,10 @@
 											{/if}
 										</div>
 									</td>
-									<td>{subject.total_questions}</td>
-									<td>{subject.total_pending ?? 0}</td>
-									<td class="green-text">{subject.total_approved ?? 0}</td>
-									<td class="red-text">{subject.total_rejected ?? 0}</td>
+									<td><button class="metric-link" type="button" onclick={(event) => metricButtonHandler(() => openTeacherQuestionsForSubject(subject), event)}>{subject.total_questions}</button></td>
+									<td><button class="metric-link" type="button" onclick={(event) => metricButtonHandler(() => openTeacherQuestionsForSubject(subject, 'pending'), event)}>{subject.total_pending ?? 0}</button></td>
+									<td class="green-text"><button class="metric-link" type="button" onclick={(event) => metricButtonHandler(() => openTeacherQuestionsForSubject(subject, 'approved'), event)}>{subject.total_approved ?? 0}</button></td>
+									<td class="red-text"><button class="metric-link" type="button" onclick={(event) => metricButtonHandler(() => openTeacherQuestionsForSubject(subject, 'rejected'), event)}>{subject.total_rejected ?? 0}</button></td>
 									<td>
 										<button class="icon-btn" title="Move" onclick={(e) => { e.stopPropagation(); openMoveModal('subject', subject.id, subject.name); }}>↔</button>
 									</td>
@@ -1781,10 +1925,10 @@
 				</div>
 			</div>
 		</td>
-		<td class="muted-text">{group.total_questions}</td>
-		<td class="muted-text">{group.total_pending}</td>
-		<td class="muted-text green-text">{group.total_approved}</td>
-		<td class="muted-text red-text">{group.total_rejected}</td>
+		<td class="muted-text"><button class="metric-link" type="button" onclick={(event) => metricButtonHandler(() => openTeacherQuestionsForGroup(group), event)}>{group.total_questions}</button></td>
+		<td class="muted-text"><button class="metric-link" type="button" onclick={(event) => metricButtonHandler(() => openTeacherQuestionsForGroup(group, 'pending'), event)}>{group.total_pending}</button></td>
+		<td class="muted-text green-text"><button class="metric-link" type="button" onclick={(event) => metricButtonHandler(() => openTeacherQuestionsForGroup(group, 'approved'), event)}>{group.total_approved}</button></td>
+		<td class="muted-text red-text"><button class="metric-link" type="button" onclick={(event) => metricButtonHandler(() => openTeacherQuestionsForGroup(group, 'rejected'), event)}>{group.total_rejected}</button></td>
 		<td>
 			<button class="context-menu-btn" aria-label="Group options" title="Options" onclick={(e) => { e.stopPropagation(); showContextMenu(e, group.id); }}>
 				<svg class="options-icon" viewBox="0 0 24 24" aria-hidden="true" focusable="false">
@@ -1843,10 +1987,10 @@
 				</div>
 			</div>
 		</td>
-		<td>{subject.total_questions}</td>
-		<td>{subject.total_pending ?? 0}</td>
-		<td class="green-text">{subject.total_approved ?? 0}</td>
-		<td class="red-text">{subject.total_rejected ?? 0}</td>
+		<td><button class="metric-link" type="button" onclick={(event) => metricButtonHandler(() => openTeacherQuestionsForSubject(subject), event)}>{subject.total_questions}</button></td>
+		<td><button class="metric-link" type="button" onclick={(event) => metricButtonHandler(() => openTeacherQuestionsForSubject(subject, 'pending'), event)}>{subject.total_pending ?? 0}</button></td>
+		<td class="green-text"><button class="metric-link" type="button" onclick={(event) => metricButtonHandler(() => openTeacherQuestionsForSubject(subject, 'approved'), event)}>{subject.total_approved ?? 0}</button></td>
+		<td class="red-text"><button class="metric-link" type="button" onclick={(event) => metricButtonHandler(() => openTeacherQuestionsForSubject(subject, 'rejected'), event)}>{subject.total_rejected ?? 0}</button></td>
 		<td>
 			<button class="icon-btn" title="Move" onclick={(e) => { e.stopPropagation(); openMoveModal('subject', subject.id, subject.name); }}>↔</button>
 		</td>
@@ -2166,6 +2310,22 @@
 
 	.subjects-table tbody td:last-child {
 		border-right: none;
+	}
+
+	.metric-link {
+		padding: 0;
+		border: none;
+		background: transparent;
+		color: inherit;
+		font: inherit;
+		font-weight: 700;
+		cursor: pointer;
+	}
+
+	.metric-link:hover,
+	.metric-link:focus-visible {
+		text-decoration: underline;
+		text-underline-offset: 0.16em;
 	}
 
 	.subjects-table th:nth-child(n + 2),

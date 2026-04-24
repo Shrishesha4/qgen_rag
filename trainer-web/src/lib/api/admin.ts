@@ -252,6 +252,7 @@ export interface AdminQuestionExportPreviewResponse {
 }
 
 export interface AdminQuestionFeedParams {
+	group_id?: string;
 	subject_id?: string;
 	subject_scope?: 'all' | 'assigned' | 'orphaned';
 	topic_id?: string;
@@ -273,6 +274,7 @@ function buildAdminQuestionSearchParams(
 	fields: string[] = []
 ): URLSearchParams {
 	const searchParams = new URLSearchParams();
+	if (params.group_id) searchParams.set('group_id', params.group_id);
 	if (params.subject_id) searchParams.set('subject_id', params.subject_id);
 	if (params.subject_scope) searchParams.set('subject_scope', params.subject_scope);
 	if (params.topic_id) searchParams.set('topic_id', params.topic_id);
