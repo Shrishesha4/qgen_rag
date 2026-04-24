@@ -1358,7 +1358,7 @@ async def _bg_generate_cos(subject_id: str, user_id: str) -> None:
                     subject.name, 
                     subject.code, 
                     combined + los_text,
-                    user_id=subject.teacher_id,
+                    user_id=subject.user_id,
                     subject_id=subject_id,
                 )
             else:

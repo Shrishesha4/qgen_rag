@@ -227,6 +227,7 @@ export interface AdminQuestionExportPreviewResponse {
 
 export interface AdminQuestionFeedParams {
 	subject_id?: string;
+	subject_scope?: 'all' | 'assigned' | 'orphaned';
 	topic_id?: string;
 	vetting_status?: 'pending' | 'approved' | 'rejected' | 'all';
 	question_type?: 'mcq' | 'short_answer' | 'long_answer' | 'essay' | 'true_false' | 'unspecified' | 'all';
@@ -247,6 +248,7 @@ function buildAdminQuestionSearchParams(
 ): URLSearchParams {
 	const searchParams = new URLSearchParams();
 	if (params.subject_id) searchParams.set('subject_id', params.subject_id);
+	if (params.subject_scope) searchParams.set('subject_scope', params.subject_scope);
 	if (params.topic_id) searchParams.set('topic_id', params.topic_id);
 	if (params.vetting_status) searchParams.set('vetting_status', params.vetting_status);
 	if (params.question_type) searchParams.set('question_type', params.question_type);

@@ -91,6 +91,8 @@
 	];
 
 	const PROVIDER_FILTER_ALL = '__all__';
+	const SUBJECT_SCOPE_ALL = 'all';
+	const SUBJECT_SCOPE_ORPHANED = 'orphaned';
 
 	let loading = $state(true);
 	let loadingMore = $state(false);
@@ -102,6 +104,7 @@
 	let totalQuestions = $state(0);
 
 	let selectedSubjectId = $state('');
+	let selectedSubjectScope = $state<'all' | 'orphaned'>(SUBJECT_SCOPE_ALL);
 	let selectedTopicId = $state('');
 	let selectedStatus = $state<'all' | 'pending' | 'approved' | 'rejected'>('all');
 	let selectedQuestionType = $state('all');
@@ -173,6 +176,7 @@
 	function currentQuestionFilters(): AdminQuestionFeedParams {
 		return {
 			subject_id: selectedSubjectId || undefined,
+			subject_scope: selectedSubjectScope,
 			topic_id: selectedTopicId || undefined,
 			vetting_status: selectedStatus,
 			question_type: selectedQuestionType as
@@ -216,6 +220,10 @@
 
 	function closeSubjectMenu() {
 		subjectMenuOpen = false;
+		if (selectedSubjectScope === SUBJECT_SCOPE_ORPHANED) {
+			subjectSearch = 'Orphaned questions';
+			return;
+		}
 		if (selectedSubjectId) {
 			subjectSearch = subjects.find((subject) => subject.id === selectedSubjectId)?.name ?? subjectSearch;
 		}
@@ -229,7 +237,7 @@
 	}
 
 	async function loadTopicsForSubject(subjectId: string) {
-		if (!subjectId) {
+		if (!subjectId || selectedSubjectScope === SUBJECT_SCOPE_ORPHANED) {
 			topics = [];
 			return;
 		}
@@ -295,13 +303,17 @@
 		}
 	}
 
-	async function handleSubjectChange(subjectId: string) {
+	async function handleSubjectChange(
+		subjectId: string,
+		subjectScope: 'all' | 'orphaned' = SUBJECT_SCOPE_ALL
+	) {
+		selectedSubjectScope = subjectScope;
 		selectedSubjectId = subjectId;
 		selectedTopicId = '';
 		topicSearch = '';
 		error = '';
 
-		if (!subjectId) {
+		if (subjectScope === SUBJECT_SCOPE_ORPHANED || !subjectId) {
 			topics = [];
 			await loadQuestions(true);
 			return;
@@ -325,7 +337,13 @@
 	async function selectSubject(subject: AdminSubjectSummary | null) {
 		subjectMenuOpen = false;
 		subjectSearch = subject?.name ?? '';
-		await handleSubjectChange(subject?.id ?? '');
+		await handleSubjectChange(subject?.id ?? '', SUBJECT_SCOPE_ALL);
+	}
+
+	async function selectOrphanedQuestions() {
+		subjectMenuOpen = false;
+		subjectSearch = 'Orphaned questions';
+		await handleSubjectChange('', SUBJECT_SCOPE_ORPHANED);
 	}
 
 	async function selectTopic(topic: AdminTopicSummary | null) {
@@ -337,7 +355,7 @@
 	async function clearSubjectFilter() {
 		subjectSearch = '';
 		subjectMenuOpen = false;
-		await handleSubjectChange('');
+		await handleSubjectChange('', SUBJECT_SCOPE_ALL);
 	}
 
 	async function clearTopicFilter() {
@@ -357,6 +375,7 @@
 
 	async function clearFilters() {
 		selectedSubjectId = '';
+		selectedSubjectScope = SUBJECT_SCOPE_ALL;
 		selectedTopicId = '';
 		selectedStatus = 'all';
 		selectedQuestionType = 'all';
@@ -589,6 +608,7 @@
 	});
 
 	const filteredTopics = $derived.by(() => {
+		if (selectedSubjectScope === SUBJECT_SCOPE_ORPHANED) return [];
 		const query = topicSearch.trim().toLowerCase();
 		if (!query) return topics.slice(0, 50);
 		return topics
@@ -598,7 +618,7 @@
 
 	const activeFilterCount = $derived.by(() => {
 		let count = 0;
-		if (selectedSubjectId) count += 1;
+		if (selectedSubjectId || selectedSubjectScope !== SUBJECT_SCOPE_ALL) count += 1;
 		if (selectedTopicId) count += 1;
 		if (selectedStatus !== 'all') count += 1;
 		if (selectedQuestionType !== 'all') count += 1;
@@ -613,6 +633,7 @@
 	});
 
 	const selectedSubjectName = $derived.by(() => {
+		if (selectedSubjectScope === SUBJECT_SCOPE_ORPHANED) return 'Orphaned questions';
 		return subjects.find((subject) => subject.id === selectedSubjectId)?.name ?? 'All subjects';
 	});
 
@@ -707,7 +728,7 @@
 							onfocus={() => (subjectMenuOpen = true)}
 							oninput={() => (subjectMenuOpen = true)}
 						/>
-						{#if subjectSearch || selectedSubjectId}
+						{#if subjectSearch || selectedSubjectId || selectedSubjectScope !== SUBJECT_SCOPE_ALL}
 							<button type="button" class="combo-clear" aria-label="Clear subject filter" onclick={() => void clearSubjectFilter()}>
 								&#10005;
 							</button>
@@ -719,6 +740,10 @@
 							<button type="button" class="combo-option combo-option-all" onclick={() => void selectSubject(null)}>
 								<span class="combo-option-title">All subjects</span>
 								<span class="combo-option-meta">Clear the subject constraint</span>
+							</button>
+							<button type="button" class="combo-option combo-option-all" onclick={() => void selectOrphanedQuestions()}>
+								<span class="combo-option-title">Orphaned questions</span>
+								<span class="combo-option-meta">Only questions with no subject assigned</span>
 							</button>
 
 							{#if filteredSubjects.length === 0}
@@ -741,27 +766,31 @@
 			<label class="field field-wide">
 				<span>Topic Search</span>
 				<div class="combo" use:clickOutside={closeTopicMenu}>
-					<div class="combo-shell" class:open={topicMenuOpen} class:disabled={!selectedSubjectId}>
+					<div class="combo-shell" class:open={topicMenuOpen} class:disabled={!selectedSubjectId || selectedSubjectScope === SUBJECT_SCOPE_ORPHANED}>
 						<input
 							type="text"
 							bind:value={topicSearch}
-							placeholder={selectedSubjectId ? 'Search topics in the selected subject' : 'Pick a subject first'}
-							disabled={!selectedSubjectId}
+							placeholder={selectedSubjectScope === SUBJECT_SCOPE_ORPHANED
+								? 'Orphaned questions cannot be filtered by topic'
+								: selectedSubjectId
+									? 'Search topics in the selected subject'
+									: 'Pick a subject first'}
+							disabled={!selectedSubjectId || selectedSubjectScope === SUBJECT_SCOPE_ORPHANED}
 							onfocus={() => {
-								if (selectedSubjectId) topicMenuOpen = true;
+								if (selectedSubjectId && selectedSubjectScope !== SUBJECT_SCOPE_ORPHANED) topicMenuOpen = true;
 							}}
 							oninput={() => {
-								if (selectedSubjectId) topicMenuOpen = true;
+								if (selectedSubjectId && selectedSubjectScope !== SUBJECT_SCOPE_ORPHANED) topicMenuOpen = true;
 							}}
 						/>
-						{#if (topicSearch || selectedTopicId) && selectedSubjectId}
+						{#if (topicSearch || selectedTopicId) && selectedSubjectId && selectedSubjectScope !== SUBJECT_SCOPE_ORPHANED}
 							<button type="button" class="combo-clear" aria-label="Clear topic filter" onclick={() => void clearTopicFilter()}>
 								&#10005;
 							</button>
 						{/if}
 					</div>
 
-					{#if topicMenuOpen && selectedSubjectId}
+					{#if topicMenuOpen && selectedSubjectId && selectedSubjectScope !== SUBJECT_SCOPE_ORPHANED}
 						<div class="combo-menu">
 							<button type="button" class="combo-option combo-option-all" onclick={() => void selectTopic(null)}>
 								<span class="combo-option-title">All topics</span>

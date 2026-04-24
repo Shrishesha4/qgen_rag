@@ -394,6 +394,7 @@ async def _normalize_admin_question_filters(
     db: AsyncSession,
     *,
     subject_id: Optional[str],
+    subject_scope: Optional[str],
     topic_id: Optional[str],
     vetting_status: Optional[str],
     question_type: Optional[str],
@@ -433,6 +434,12 @@ async def _normalize_admin_question_filters(
         default=None,
     )
     normalized_provider_key = (provider_key or "").strip().lower() or None
+    normalized_subject_scope = _normalize_admin_question_choice(
+        subject_scope,
+        allowed={"all", "assigned", "orphaned"},
+        field_name="subject_scope",
+        default="all",
+    )
     normalized_version_scope = _normalize_admin_question_choice(
         version_scope,
         allowed={"latest", "all"},
@@ -446,6 +453,14 @@ async def _normalize_admin_question_filters(
         default="active",
     )
 
+    if normalized_subject_scope == "orphaned":
+        if topic_id:
+            raise HTTPException(
+                status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+                detail="Topic filtering is unavailable for orphaned questions",
+            )
+        subject_id = None
+
     if topic_id:
         topic_subject_id = await _resolve_topic_subject_id(db, topic_id)
         if subject_id and topic_subject_id != subject_id:
@@ -457,6 +472,7 @@ async def _normalize_admin_question_filters(
 
     return {
         "subject_id": subject_id,
+        "normalized_subject_scope": normalized_subject_scope,
         "topic_id": topic_id,
         "normalized_status": normalized_status,
         "normalized_question_type": normalized_question_type,
@@ -482,6 +498,7 @@ def _apply_admin_question_filters(
     query,
     *,
     subject_id: Optional[str],
+    normalized_subject_scope: Optional[str],
     topic_id: Optional[str],
     normalized_status: Optional[str],
     normalized_question_type: Optional[str],
@@ -493,6 +510,11 @@ def _apply_admin_question_filters(
     normalized_version_scope: Optional[str],
     normalized_archived_state: Optional[str],
 ):
+    if normalized_subject_scope == "assigned":
+        query = query.where(Question.subject_id.isnot(None))
+    elif normalized_subject_scope == "orphaned":
+        query = query.where(Question.subject_id.is_(None))
+
     if subject_id:
         query = query.where(Question.subject_id == subject_id)
     if topic_id:
@@ -1507,6 +1529,7 @@ async def get_admin_subject(
 @router.get("/questions", response_model=AdminQuestionFeedResponse)
 async def list_admin_questions(
     subject_id: Optional[str] = Query(None, description="Filter by subject ID"),
+    subject_scope: Optional[str] = Query(None, description="Filter by all, assigned, or orphaned subject linkage"),
     topic_id: Optional[str] = Query(None, description="Filter by topic ID"),
     vetting_status: Optional[str] = Query(None, description="Filter by pending, approved, rejected, or all"),
     question_type: Optional[str] = Query(None, description="Filter by question type"),
@@ -1531,6 +1554,7 @@ async def list_admin_questions(
     normalized_filters = await _normalize_admin_question_filters(
         db,
         subject_id=subject_id,
+        subject_scope=subject_scope,
         topic_id=topic_id,
         vetting_status=vetting_status,
         question_type=question_type,
