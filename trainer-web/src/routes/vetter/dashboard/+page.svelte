@@ -13,7 +13,7 @@
 	} from '$lib/api/subjects';
 	import { getBackgroundGenerationStatuses } from '$lib/api/documents';
 	import {
-		getQuestionsForVetting,
+		getVetterSubjectTopicStats,
 		getVetterSubjects,
 		type VetterSubjectSummary,
 	} from '$lib/api/vetting';
@@ -96,9 +96,12 @@
 
 	const INITIAL_SUBJECT_PRELOAD_LIMIT = 6;
 	const GROUP_SUBJECT_PRELOAD_LIMIT = 8;
+	const SUBJECT_GENERATION_ACTIVE_POLL_MS = 3000;
+	const SUBJECT_GENERATION_DISCOVERY_POLL_MS = 30000;
 
 	let subjectGenerationStateBySubject = $state<Record<string, SubjectGenerationState>>({});
 	let subjectGenerationPollTimer: ReturnType<typeof setInterval> | null = null;
+	let lastSubjectGenerationDiscoveryAt = 0;
 	let pendingLoadInFlightCount = 0;
 	const pendingCountsLoadedForSubject = new Set<string>();
 	const pendingCountsLoadingForSubject = new Set<string>();
@@ -299,7 +302,8 @@
 			favorites = favoriteRes;
 			expandedGroups = new Set();
 			void preloadInitialSubjectData(subjects);
-			await refreshSubjectGenerationStatuses(subjects);
+			lastSubjectGenerationDiscoveryAt = Date.now();
+			void refreshSubjectGenerationStatuses(subjects);
 			ensureSubjectGenerationPolling();
 		} catch (e: unknown) {
 			error = e instanceof Error ? e.message : 'Failed to load subjects';
@@ -334,18 +338,27 @@
 		));
 	}
 
-	async function refreshSubjectGenerationStatuses(subjectList: SubjectResponse[] = subjects) {
-		if (subjectList.length === 0) {
+	function getPollableSubjectGenerationIds(): string[] {
+		return Object.entries(subjectGenerationStateBySubject)
+			.filter(([, state]) => state.in_progress || state.status === 'queued' || state.status === 'generating' || state.status === 'processing')
+			.map(([subjectId]) => subjectId);
+	}
+
+	async function refreshSubjectGenerationStatuses(subjectList: Array<SubjectResponse | string> = subjects) {
+		const subjectIds = subjectList
+			.map((subject) => typeof subject === 'string' ? subject : subject.id)
+			.filter((subjectId) => subjectId.length > 0);
+		if (subjectIds.length === 0) {
 			subjectGenerationStateBySubject = {};
 			return;
 		}
 		try {
-			const statusRes = await getBackgroundGenerationStatuses(subjectList.map((subject) => subject.id));
+			const statusRes = await getBackgroundGenerationStatuses(subjectIds);
 			const nextState: Record<string, SubjectGenerationState> = {};
-			for (const subject of subjectList) {
-				const status = statusRes.statuses[subject.id];
+			for (const subjectId of subjectIds) {
+				const status = statusRes.statuses[subjectId];
 				if (!status) continue;
-				nextState[subject.id] = {
+				nextState[subjectId] = {
 					in_progress: Boolean(status.in_progress),
 					status: status.status || '',
 					progress: Math.max(0, Math.min(100, status.progress ?? 0)),
@@ -365,8 +378,18 @@
 			subjectGenerationPollTimer = null;
 		}
 		subjectGenerationPollTimer = setInterval(() => {
-			void refreshSubjectGenerationStatuses();
-		}, 3000);
+			const activeSubjectIds = getPollableSubjectGenerationIds();
+			if (activeSubjectIds.length > 0) {
+				void refreshSubjectGenerationStatuses(activeSubjectIds);
+				return;
+			}
+
+			const now = Date.now();
+			if (now - lastSubjectGenerationDiscoveryAt >= SUBJECT_GENERATION_DISCOVERY_POLL_MS) {
+				lastSubjectGenerationDiscoveryAt = now;
+				void refreshSubjectGenerationStatuses();
+			}
+		}, SUBJECT_GENERATION_ACTIVE_POLL_MS);
 	}
 
 	async function ensureTopicsLoaded(
@@ -428,53 +451,29 @@
 			loadingPendingCounts = true;
 		}
 		try {
-			const limit = 100;
-			const countByStatus = async (status: 'pending' | 'approved' | 'rejected') => {
-				let pageNo = 1;
-				const byTopic: Record<string, number> = {};
-				let orphan = 0;
-				while (true) {
-					const pageRes = await getQuestionsForVetting({
-						subject_id: subjectId,
-						status,
-						page: pageNo,
-						limit,
-					});
-					for (const q of pageRes.questions) {
-						if (q.topic_id && topics.some((topic) => topic.id === q.topic_id)) {
-							byTopic[q.topic_id] = (byTopic[q.topic_id] ?? 0) + 1;
-						} else {
-							orphan += 1;
-						}
-					}
-					if (pageNo >= pageRes.pages || pageRes.questions.length === 0) break;
-					pageNo += 1;
-				}
-				return { byTopic, orphan };
-			};
-
-			const [pendingCounts, approvedCounts, rejectedCounts] = await Promise.all([
-				countByStatus('pending'),
-				countByStatus('approved'),
-				countByStatus('rejected'),
-			]);
+			const topicCounts = await getVetterSubjectTopicStats(subjectId);
+			const topicCountsById = new Map(topicCounts.map((topic) => [topic.id, topic]));
+			const subjectSummary = subjects.find((subject) => subject.id === subjectId) ?? null;
 
 			const singleTopicId = topics.length === 1 ? topics[0].id : null;
 			const nextTopicStatsByTopic: Record<string, TopicCountStats> = {};
 
 			for (const topic of topics) {
-				let pending = pendingCounts.byTopic[topic.id] ?? 0;
-				let approved = approvedCounts.byTopic[topic.id] ?? 0;
-				let rejected = rejectedCounts.byTopic[topic.id] ?? 0;
+				const counts = topicCountsById.get(topic.id);
+				let pending = counts?.pending_count ?? 0;
+				let approved = counts?.approved_count ?? 0;
+				let rejected = counts?.rejected_count ?? 0;
 
-				if (singleTopicId && topic.id === singleTopicId) {
-					pending += pendingCounts.orphan;
-					approved += approvedCounts.orphan;
-					rejected += rejectedCounts.orphan;
+				if (singleTopicId && topic.id === singleTopicId && subjectSummary) {
+					pending = Math.max(pending, subjectSummary.total_pending ?? 0);
+					approved = Math.max(approved, subjectSummary.total_approved ?? 0);
+					rejected = Math.max(rejected, subjectSummary.total_rejected ?? 0);
 				}
 
 				const generatedFromStatuses = pending + approved + rejected;
-				const fallbackGenerated = topic.total_questions ?? 0;
+				const fallbackGenerated = singleTopicId && topic.id === singleTopicId && subjectSummary
+					? Math.max(topic.total_questions ?? 0, subjectSummary.total_questions ?? 0)
+					: (topic.total_questions ?? 0);
 				const generated = generatedFromStatuses > 0 ? generatedFromStatuses : fallbackGenerated;
 				nextTopicStatsByTopic[topic.id] = {
 					generated,

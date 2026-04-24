@@ -118,6 +118,14 @@ export interface VetterTopicSummary {
 	pending_count: number;
 }
 
+export interface VetterTopicQuestionStats {
+	id: string;
+	name: string;
+	pending_count: number;
+	approved_count: number;
+	rejected_count: number;
+}
+
 export interface VetterSubjectSummary {
 	id: string;
 	name: string;
@@ -275,6 +283,10 @@ export async function getVetterSubjects(): Promise<VetterSubjectSummary[]> {
 
 export async function getVetterSubject(id: string): Promise<VetterSubjectSummary> {
 	return apiFetch<VetterSubjectSummary>(`/vetter/subjects/${id}`);
+}
+
+export async function getVetterSubjectTopicStats(subjectId: string): Promise<VetterTopicQuestionStats[]> {
+	return apiFetch<VetterTopicQuestionStats[]>(`/vetter/subjects/${subjectId}/topics`);
 }
 
 export async function getQuestionsForVetting(opts: {

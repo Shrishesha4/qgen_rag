@@ -3,11 +3,15 @@
 	import { goto } from '$app/navigation';
 	import { session, currentUser } from '$lib/session';
 	import { logout } from '$lib/api/auth';
-	import { getAdminDashboard, listAdminSubjects, type AdminDashboard, type UserStats, type VetterBreakdown, type AdminSubjectSummary } from '$lib/api/admin';
+	import { getAdminDashboard, listAdminSubjects, listAdminTeacherProgress, type AdminDashboard, type UserStats, type VetterBreakdown, type AdminSubjectSummary, type AdminTeacherProgressSummary } from '$lib/api/admin';
 
 	let loading = $state(true);
 	let stats = $state<AdminDashboard | null>(null);
-	let adminSubjects = $state<AdminSubjectSummary[]>([]);
+	let teacherViewRows = $state<AdminTeacherProgressSummary[]>([]);
+	let teacherSubjectsByTeacher = $state<Record<string, AdminSubjectSummary[]>>({});
+	let teacherSubjectsLoadingByTeacher = $state<Record<string, boolean>>({});
+	let expandedTeachers = $state<Record<string, boolean>>({});
+	let loadingTeacherView = $state(false);
 	let error = $state('');
 	let activeTab: 'overview' | 'users' | 'vetters' | 'teachers' = $state('overview');
 	const USERS_PAGE_SIZE = 24;
@@ -31,9 +35,7 @@
 		loading = true;
 		error = '';
 		try {
-			const [dashboard, subjects] = await Promise.all([getAdminDashboard(), listAdminSubjects()]);
-			stats = dashboard;
-			adminSubjects = subjects;
+			stats = await getAdminDashboard();
 		} catch (e: unknown) {
 			error = e instanceof Error ? e.message : 'Failed to load dashboard';
 		} finally {
@@ -66,6 +68,7 @@
 	function onTeachersTabOpen() {
 		activeTab = 'teachers';
 		teachersVisibleCount = TEACHERS_PAGE_SIZE;
+		void ensureTeacherViewLoaded();
 	}
 
 	function onVettersTabOpen() {
@@ -86,6 +89,46 @@
 	function loadMoreTeachers() {
 		if (activeTab !== 'teachers') return;
 		teachersVisibleCount = Math.min(teachersVisibleCount + TEACHERS_PAGE_SIZE, teacherViewRows.length);
+	}
+
+	async function ensureTeacherViewLoaded() {
+		if (loadingTeacherView || teacherViewRows.length > 0) return;
+		loadingTeacherView = true;
+		try {
+			teacherViewRows = await listAdminTeacherProgress();
+		} catch (e: unknown) {
+			error = e instanceof Error ? e.message : 'Failed to load teacher progress';
+		} finally {
+			loadingTeacherView = false;
+		}
+	}
+
+	async function ensureTeacherSubjectsLoaded(teacherId: string) {
+		if (teacherSubjectsByTeacher[teacherId] || teacherSubjectsLoadingByTeacher[teacherId]) return;
+		teacherSubjectsLoadingByTeacher = { ...teacherSubjectsLoadingByTeacher, [teacherId]: true };
+		try {
+			teacherSubjectsByTeacher = {
+				...teacherSubjectsByTeacher,
+				[teacherId]: await listAdminSubjects(teacherId),
+			};
+		} catch (e: unknown) {
+			error = e instanceof Error ? e.message : 'Failed to load teacher subjects';
+			teacherSubjectsByTeacher = { ...teacherSubjectsByTeacher, [teacherId]: [] };
+		} finally {
+			teacherSubjectsLoadingByTeacher = { ...teacherSubjectsLoadingByTeacher, [teacherId]: false };
+		}
+	}
+
+	async function toggleTeacherSubjects(teacherId: string) {
+		const nextExpanded = !expandedTeachers[teacherId];
+		expandedTeachers = { ...expandedTeachers, [teacherId]: nextExpanded };
+		if (nextExpanded) {
+			await ensureTeacherSubjectsLoaded(teacherId);
+		}
+	}
+
+	function openSubject(subjectId: string) {
+		goto(`/admin/subjects/${subjectId}`);
 	}
 
 	function usersInfiniteSentinel(node: HTMLElement) {
@@ -160,30 +203,6 @@
 	const hasMoreVetters = $derived.by(() => {
 		if (!stats) return false;
 		return visibleVetters.length < stats.vetters.length;
-	});
-
-	let teacherViewRows = $derived.by(() => {
-		if (!stats) return [];
-		const teacherUsers = stats.users.filter((u) => u.role === 'teacher');
-		const grouped = new Map<string, AdminSubjectSummary[]>();
-		for (const subject of adminSubjects) {
-			const key = subject.teacher_id || 'unknown';
-			const current = grouped.get(key) || [];
-			current.push(subject);
-			grouped.set(key, current);
-		}
-
-		return teacherUsers.map((teacher) => {
-			const subjects = grouped.get(teacher.user_id) || [];
-			const totalTopics = subjects.reduce((sum, s) => sum + s.total_topics, 0);
-			const totalQuestions = subjects.reduce((sum, s) => sum + s.total_questions, 0);
-			const approved = subjects.reduce((sum, s) => sum + s.total_approved, 0);
-			const rejected = subjects.reduce((sum, s) => sum + s.total_rejected, 0);
-			const pending = subjects.reduce((sum, s) => sum + s.total_pending, 0);
-			const vetted = approved + rejected;
-			const progress = totalQuestions > 0 ? Math.round((vetted / totalQuestions) * 100) : 0;
-			return { teacher, subjects, totalTopics, totalQuestions, approved, rejected, pending, progress };
-		});
 	});
 
 	const visibleTeacherRows = $derived.by(() => {
@@ -493,7 +512,12 @@
 			{:else if activeTab === 'teachers'}
 				<div class="section glass-panel">
 					<h2 class="section-title">Teacher Subject Progress ({teacherViewRows.length})</h2>
-					{#if teacherViewRows.length === 0}
+					{#if loadingTeacherView && teacherViewRows.length === 0}
+						<div class="loading-msg compact">
+							<span class="spinner"></span>
+							Loading teacher progress…
+						</div>
+					{:else if teacherViewRows.length === 0}
 						<p class="empty-msg">No teachers found.</p>
 					{:else}
 						<div class="teacher-grid">
@@ -501,26 +525,31 @@
 								<div class="teacher-card">
 									<div class="teacher-head">
 										<div>
-											<p class="teacher-name">{row.teacher.full_name || row.teacher.username}</p>
-											<p class="teacher-email">{row.teacher.email}</p>
+											<p class="teacher-name">{row.full_name || row.username}</p>
+											<p class="teacher-email">{row.email}</p>
 										</div>
 										<!-- <span class="teacher-progress">{row.progress}% progress</span> -->
 									</div>
 									<div class="teacher-metrics">
-										<span>Subjects: <strong>{row.subjects.length}</strong></span>
-										<span>Topics: <strong>{row.totalTopics}</strong></span>
-										<span>Questions: <strong>{row.totalQuestions}</strong></span>
-										<span class="green-text">Approved: <strong>{row.approved}</strong></span>
-										<span class="red-text">Rejected: <strong>{row.rejected}</strong></span>
-										<span class="orange-text">Pending: <strong>{row.pending}</strong></span>
+										<span>Subjects: <strong>{row.subjects_count}</strong></span>
+										<span>Topics: <strong>{row.total_topics}</strong></span>
+										<span>Questions: <strong>{row.total_questions}</strong></span>
+										<span class="green-text">Approved: <strong>{row.total_approved}</strong></span>
+										<span class="red-text">Rejected: <strong>{row.total_rejected}</strong></span>
+										<span class="orange-text">Pending: <strong>{row.total_pending}</strong></span>
 									</div>
-									{#if row.subjects.length > 0}
+									<div class="teacher-actions">
+										<button class="subject-toggle" type="button" onclick={() => void toggleTeacherSubjects(row.teacher_id)} disabled={teacherSubjectsLoadingByTeacher[row.teacher_id] || row.subjects_count === 0}>
+											{#if row.subjects_count === 0}No subjects{:else if teacherSubjectsLoadingByTeacher[row.teacher_id]}Loading...{:else if expandedTeachers[row.teacher_id]}Hide subjects{:else}Show subjects{/if}
+										</button>
+									</div>
+									{#if expandedTeachers[row.teacher_id]}
 										<div class="teacher-subjects">
-											{#each row.subjects as subject}
-												<span class="teacher-subject-chip">{subject.name} ({subject.total_topics})</span>
+											{#each teacherSubjectsByTeacher[row.teacher_id] || [] as subject}
+												<button class="teacher-subject-chip" type="button" onclick={() => openSubject(subject.id)}>{subject.name} ({subject.total_topics})</button>
 											{/each}
 										</div>
-									{:else}
+									{:else if row.subjects_count === 0}
 										<p class="empty-msg">No subjects created.</p>
 									{/if}
 								</div>
@@ -810,6 +839,33 @@
 		color: var(--theme-text-secondary);
 	}
 
+	.teacher-actions {
+		margin-top: 0.75rem;
+	}
+
+	.subject-toggle {
+		padding: 0.45rem 0.85rem;
+		border-radius: 0.75rem;
+		border: 1px solid var(--theme-glass-border);
+		background: color-mix(in srgb, var(--theme-input-bg) 72%, rgba(var(--theme-primary-rgb), 0.14));
+		color: var(--theme-text-primary);
+		font: inherit;
+		font-size: 0.82rem;
+		font-weight: 700;
+		cursor: pointer;
+		transition: transform 0.16s ease, border-color 0.16s ease, background 0.16s ease;
+	}
+
+	.subject-toggle:hover:not(:disabled) {
+		transform: translateY(-1px);
+		border-color: color-mix(in srgb, var(--theme-glass-border) 52%, rgba(var(--theme-primary-rgb), 0.45));
+	}
+
+	.subject-toggle:disabled {
+		opacity: 0.62;
+		cursor: default;
+	}
+
 	.teacher-subjects {
 		margin-top: 0.7rem;
 		display: flex;
@@ -824,6 +880,12 @@
 		color: var(--theme-text-primary);
 		font-size: 0.76rem;
 		font-weight: 700;
+		border: 1px solid transparent;
+		cursor: pointer;
+	}
+
+	.loading-msg.compact {
+		padding: 0.4rem 0 0.1rem;
 	}
 
 	:global([data-color-mode='dark']) .tab-btn.active {

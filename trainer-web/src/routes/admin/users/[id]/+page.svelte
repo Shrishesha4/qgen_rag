@@ -92,7 +92,7 @@
 			const [users, dashboard, subjects] = await Promise.all([
 				listAdminUsers(),
 				getAdminDashboard(),
-				listAdminSubjects()
+				listAdminSubjects(userId)
 			]);
 
 			const foundUser = users.find((u) => u.id === userId) || null;
@@ -103,7 +103,7 @@
 
 			user = foundUser;
 			userStats = dashboard.users.find((u) => u.user_id === userId) || null;
-			assignedSubjects = subjects.filter((s) => s.teacher_id === userId);
+			assignedSubjects = subjects;
 		} catch (e: unknown) {
 			error = e instanceof Error ? e.message : 'Failed to load user details';
 		} finally {

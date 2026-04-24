@@ -156,6 +156,32 @@ class AdminSubjectDetail(AdminSubjectSummary):
     topics: List[AdminTopicSummary]
 
 
+class AdminTeacherProgressSummary(BaseModel):
+    teacher_id: str
+    username: str
+    full_name: Optional[str]
+    email: str
+    subjects_count: int
+    total_topics: int
+    total_questions: int
+    total_approved: int
+    total_rejected: int
+    total_pending: int
+    subject_search_text: str
+
+
+class AdminVetterProgressSummary(BaseModel):
+    user_id: str
+    username: str
+    full_name: Optional[str]
+    email: str
+    total_vetted: int
+    total_approved: int
+    total_rejected: int
+    subjects_count: int
+    topics_count: int
+
+
 class AdminQuestionSummary(BaseModel):
     id: str
     document_id: Optional[str]
@@ -329,6 +355,70 @@ async def _get_all_users() -> dict:
         }
 
 
+async def _build_admin_subject_summaries(
+    db: AsyncSession,
+    users_map: dict,
+    teacher_id: Optional[str] = None,
+) -> List[AdminSubjectSummary]:
+    subject_query = select(Subject)
+    if teacher_id:
+        subject_query = subject_query.where(Subject.user_id == teacher_id)
+    subject_query = subject_query.order_by(Subject.name.asc())
+
+    result = await db.execute(subject_query)
+    subjects = result.scalars().all()
+
+    subject_ids = [subject.id for subject in subjects]
+    topic_count_map = {}
+    subject_stats_map = {}
+
+    if subject_ids:
+        topic_counts = await db.execute(
+            select(Topic.subject_id, func.count(Topic.id).label("total_topics"))
+            .where(Topic.subject_id.in_(subject_ids))
+            .group_by(Topic.subject_id)
+        )
+        topic_count_map = {row.subject_id: int(row.total_topics or 0) for row in topic_counts.all()}
+
+        subject_stats = await db.execute(
+            select(Question.subject_id, *_question_count_columns())
+            .where(
+                Question.subject_id.in_(subject_ids),
+                *_live_question_filters(),
+            )
+            .group_by(Question.subject_id)
+        )
+        subject_stats_map = {
+            row.subject_id: {
+                "total_questions": int(row.total_questions or 0),
+                "total_approved": int(row.total_approved or 0),
+                "total_rejected": int(row.total_rejected or 0),
+                "total_pending": int(row.total_pending or 0),
+            }
+            for row in subject_stats.all()
+        }
+
+    return [
+        AdminSubjectSummary(
+            id=subject.id,
+            name=subject.name,
+            code=subject.code,
+            description=subject.description,
+            teacher_id=subject.user_id,
+            teacher_name=users_map.get(subject.user_id, {}).get("full_name") or users_map.get(subject.user_id, {}).get("username"),
+            teacher_email=users_map.get(subject.user_id, {}).get("email"),
+            total_topics=topic_count_map.get(subject.id, 0),
+            total_questions=subject_stats_map.get(subject.id, {}).get("total_questions", 0),
+            total_approved=subject_stats_map.get(subject.id, {}).get("total_approved", 0),
+            total_rejected=subject_stats_map.get(subject.id, {}).get("total_rejected", 0),
+            total_pending=subject_stats_map.get(subject.id, {}).get("total_pending", 0),
+            syllabus_coverage=subject.syllabus_coverage,
+            created_at=subject.created_at,
+        )
+        for subject in subjects
+    ]
+
+
 def _question_count_columns():
     return (
         func.count(Question.id).label("total_questions"),
@@ -348,6 +438,116 @@ def _live_question_filters():
 
 def _managed_live_question_filters():
     return (*_live_question_filters(), Question.subject_id.isnot(None))
+
+
+async def _get_user_assignment_count_maps(db: AsyncSession) -> tuple[Dict[str, int], Dict[str, int]]:
+    user_subject_q = (
+        select(
+            Subject.user_id,
+            func.count(distinct(Subject.id)).label("subjects_count"),
+        )
+        .where(Subject.user_id.isnot(None))
+        .group_by(Subject.user_id)
+    )
+    user_subject_rows = (await db.execute(user_subject_q)).all()
+    user_subject_map = {
+        str(row.user_id): int(row.subjects_count or 0)
+        for row in user_subject_rows
+        if row.user_id
+    }
+
+    user_topic_q = (
+        select(
+            Subject.user_id,
+            func.count(distinct(Topic.id)).label("topics_count"),
+        )
+        .select_from(Subject)
+        .outerjoin(Topic, Topic.subject_id == Subject.id)
+        .where(Subject.user_id.isnot(None))
+        .group_by(Subject.user_id)
+    )
+    user_topic_rows = (await db.execute(user_topic_q)).all()
+    user_topic_map = {
+        str(row.user_id): int(row.topics_count or 0)
+        for row in user_topic_rows
+        if row.user_id
+    }
+
+    return user_subject_map, user_topic_map
+
+
+async def _get_subject_owner_question_stats_map(db: AsyncSession) -> Dict[str, Dict[str, int]]:
+    owner_question_stats_q = (
+        select(
+            Subject.user_id,
+            *_question_count_columns(),
+        )
+        .select_from(Subject)
+        .outerjoin(
+            Question,
+            and_(Question.subject_id == Subject.id, *_live_question_filters()),
+        )
+        .where(Subject.user_id.isnot(None))
+        .group_by(Subject.user_id)
+    )
+    owner_question_rows = (await db.execute(owner_question_stats_q)).all()
+    return {
+        str(row.user_id): {
+            "total_questions": int(row.total_questions or 0),
+            "total_approved": int(row.total_approved or 0),
+            "total_rejected": int(row.total_rejected or 0),
+            "total_pending": int(row.total_pending or 0),
+        }
+        for row in owner_question_rows
+        if row.user_id
+    }
+
+
+async def _get_subject_owner_search_text_map(db: AsyncSession) -> Dict[str, str]:
+    subject_rows = (
+        await db.execute(
+            select(Subject.user_id, Subject.name, Subject.code)
+            .where(Subject.user_id.isnot(None))
+            .order_by(Subject.created_at.desc())
+        )
+    ).all()
+
+    search_parts_by_user: Dict[str, List[str]] = {}
+    for user_id, subject_name, subject_code in subject_rows:
+        if not user_id:
+            continue
+        user_key = str(user_id)
+        search_parts_by_user.setdefault(user_key, []).append(
+            " ".join(part for part in [subject_name or "", subject_code or ""] if part).strip()
+        )
+
+    return {
+        user_id: " ".join(part for part in parts if part)
+        for user_id, parts in search_parts_by_user.items()
+    }
+
+
+async def _get_user_vetting_stats_map(db: AsyncSession) -> Dict[str, Dict[str, int]]:
+    user_vet_q = (
+        select(
+            Question.vetted_by,
+            func.count(Question.id).label("total_vetted"),
+            func.count(case((Question.vetting_status == "approved", 1))).label("approved"),
+            func.count(case((Question.vetting_status == "rejected", 1))).label("rejected"),
+        )
+        .where(*_managed_live_question_filters(), Question.vetted_by.isnot(None))
+        .group_by(Question.vetted_by)
+    )
+    user_vet_rows = (await db.execute(user_vet_q)).all()
+    return {
+        str(row.vetted_by): {
+            "total_vetted": int(row.total_vetted or 0),
+            "approved": int(row.approved or 0),
+            "rejected": int(row.rejected or 0),
+        }
+        for row in user_vet_rows
+        if row.vetted_by
+    }
 
 
 def _normalize_admin_question_status(vetting_status: Optional[str]) -> Optional[str]:
@@ -1382,64 +1582,102 @@ async def get_admin_dashboard(
     )
 
 
-@router.get("/subjects", response_model=List[AdminSubjectSummary])
-async def list_admin_subjects(
+@router.get("/teachers/progress", response_model=List[AdminTeacherProgressSummary])
+async def list_admin_teacher_progress(
     current_user: User = Depends(get_current_admin),
     db: AsyncSession = Depends(get_db),
 ):
-    result = await db.execute(select(Subject).order_by(Subject.name.asc()))
-    subjects = result.scalars().all()
     users_map = await _get_all_users()
+    subject_count_map, topic_count_map = await _get_user_assignment_count_maps(db)
+    question_stats_map = await _get_subject_owner_question_stats_map(db)
+    search_text_map = await _get_subject_owner_search_text_map(db)
 
-    subject_ids = [subject.id for subject in subjects]
-    topic_count_map = {}
-    subject_stats_map = {}
-
-    if subject_ids:
-        topic_counts = await db.execute(
-            select(Topic.subject_id, func.count(Topic.id).label("total_topics"))
-            .where(Topic.subject_id.in_(subject_ids))
-            .group_by(Topic.subject_id)
+    teacher_rows: List[AdminTeacherProgressSummary] = []
+    for user_id, user_info in users_map.items():
+        if user_info.get("role") != "teacher":
+            continue
+        question_stats = question_stats_map.get(
+            user_id,
+            {
+                "total_questions": 0,
+                "total_approved": 0,
+                "total_rejected": 0,
+                "total_pending": 0,
+            },
         )
-        topic_count_map = {row.subject_id: int(row.total_topics or 0) for row in topic_counts.all()}
-
-        subject_stats = await db.execute(
-            select(Question.subject_id, *_question_count_columns())
-            .where(
-                Question.subject_id.in_(subject_ids),
-                *_live_question_filters(),
+        teacher_rows.append(
+            AdminTeacherProgressSummary(
+                teacher_id=user_id,
+                username=user_info.get("username", "unknown"),
+                full_name=user_info.get("full_name"),
+                email=user_info.get("email", ""),
+                subjects_count=int(subject_count_map.get(user_id, 0) or 0),
+                total_topics=int(topic_count_map.get(user_id, 0) or 0),
+                total_questions=int(question_stats["total_questions"] or 0),
+                total_approved=int(question_stats["total_approved"] or 0),
+                total_rejected=int(question_stats["total_rejected"] or 0),
+                total_pending=int(question_stats["total_pending"] or 0),
+                subject_search_text=search_text_map.get(user_id, ""),
             )
-            .group_by(Question.subject_id)
         )
-        subject_stats_map = {
-            row.subject_id: {
-                "total_questions": int(row.total_questions or 0),
-                "total_approved": int(row.total_approved or 0),
-                "total_rejected": int(row.total_rejected or 0),
-                "total_pending": int(row.total_pending or 0),
-            }
-            for row in subject_stats.all()
-        }
 
-    return [
-        AdminSubjectSummary(
-            id=subject.id,
-            name=subject.name,
-            code=subject.code,
-            description=subject.description,
-            teacher_id=subject.user_id,
-            teacher_name=users_map.get(subject.user_id, {}).get("full_name") or users_map.get(subject.user_id, {}).get("username"),
-            teacher_email=users_map.get(subject.user_id, {}).get("email"),
-            total_topics=topic_count_map.get(subject.id, 0),
-            total_questions=subject_stats_map.get(subject.id, {}).get("total_questions", 0),
-            total_approved=subject_stats_map.get(subject.id, {}).get("total_approved", 0),
-            total_rejected=subject_stats_map.get(subject.id, {}).get("total_rejected", 0),
-            total_pending=subject_stats_map.get(subject.id, {}).get("total_pending", 0),
-            syllabus_coverage=subject.syllabus_coverage,
-            created_at=subject.created_at,
+    teacher_rows.sort(
+        key=lambda row: (row.total_questions, row.total_pending, row.subjects_count),
+        reverse=True,
+    )
+    return teacher_rows
+
+
+@router.get("/vetters/progress", response_model=List[AdminVetterProgressSummary])
+async def list_admin_vetter_progress(
+    current_user: User = Depends(get_current_admin),
+    db: AsyncSession = Depends(get_db),
+):
+    users_map = await _get_all_users()
+    subject_count_map, topic_count_map = await _get_user_assignment_count_maps(db)
+    vetting_stats_map = await _get_user_vetting_stats_map(db)
+
+    vetter_rows: List[AdminVetterProgressSummary] = []
+    for user_id, user_info in users_map.items():
+        if user_info.get("role") != "vetter":
+            continue
+        vetting_stats = vetting_stats_map.get(
+            user_id,
+            {
+                "total_vetted": 0,
+                "approved": 0,
+                "rejected": 0,
+            },
         )
-        for subject in subjects
-    ]
+        vetter_rows.append(
+            AdminVetterProgressSummary(
+                user_id=user_id,
+                username=user_info.get("username", "unknown"),
+                full_name=user_info.get("full_name"),
+                email=user_info.get("email", ""),
+                total_vetted=int(vetting_stats["total_vetted"] or 0),
+                total_approved=int(vetting_stats["approved"] or 0),
+                total_rejected=int(vetting_stats["rejected"] or 0),
+                subjects_count=int(subject_count_map.get(user_id, 0) or 0),
+                topics_count=int(topic_count_map.get(user_id, 0) or 0),
+            )
+        )
+
+    vetter_rows.sort(
+        key=lambda row: (row.total_vetted, row.total_approved, row.subjects_count),
+        reverse=True,
+    )
+    return vetter_rows
+
+
+@router.get("/subjects", response_model=List[AdminSubjectSummary])
+async def list_admin_subjects(
+    teacher_id: Optional[str] = Query(None, description="Filter subjects by teacher/user ID"),
+    current_user: User = Depends(get_current_admin),
+    db: AsyncSession = Depends(get_db),
+):
+    users_map = await _get_all_users()
+    return await _build_admin_subject_summaries(db, users_map, teacher_id=teacher_id)
 
 
 @router.get("/subjects/{subject_id}", response_model=AdminSubjectDetail)

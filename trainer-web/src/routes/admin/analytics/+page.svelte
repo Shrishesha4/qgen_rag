@@ -213,16 +213,29 @@
 		loading = true;
 		error = '';
 		try {
-			const [active, historical] = await Promise.all([
-				apiFetch<LiveAnalyticsSnapshot>('/analytics/active'),
-				loadHistoricalData()
-			]);
+			const active = await apiFetch<LiveAnalyticsSnapshot>('/analytics/active');
 			applyLiveSnapshot(active);
-			historicalData = historical;
+			loading = false;
+			historicalLoading = true;
+			void loadHistoricalInitial();
 		} catch (e: unknown) {
 			error = e instanceof Error ? e.message : 'Failed to load analytics data';
 		} finally {
-			loading = false;
+			if (loading) {
+				loading = false;
+			}
+		}
+	}
+
+	async function loadHistoricalInitial() {
+		try {
+			historicalData = await loadHistoricalData();
+		} catch (e: unknown) {
+			if (!error) {
+				error = e instanceof Error ? e.message : 'Failed to load historical data';
+			}
+		} finally {
+			historicalLoading = false;
 		}
 	}
 

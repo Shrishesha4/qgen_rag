@@ -12,6 +12,7 @@ from fastapi import APIRouter, Depends, HTTPException, status, Query, UploadFile
 from sqlalchemy import select, func, case, update, delete
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import selectinload
+from pydantic import BaseModel
 
 from app.core.database import get_db
 from app.core.auth_database import AuthSessionLocal
@@ -46,6 +47,22 @@ from app.services.activity_service import safe_record_activity
 
 logger = logging.getLogger(__name__)
 router = APIRouter()
+
+
+class SubjectTopicReviewStats(BaseModel):
+    topic_id: str
+    generated: int
+    approved: int
+    rejected: int
+    pending: int
+
+
+class SubjectReviewStatsResponse(BaseModel):
+    generated: int
+    approved: int
+    rejected: int
+    pending: int
+    topics: List[SubjectTopicReviewStats]
 
 
 # ============== Subject Endpoints ==============
@@ -758,6 +775,98 @@ async def get_subject(
     return SubjectDetailResponse(
         **subject_resp.model_dump(),
         topics=topic_responses
+    )
+
+
+@router.get("/{subject_id}/review-stats", response_model=SubjectReviewStatsResponse)
+async def get_subject_review_stats(
+    subject_id: str,
+    current_user: User = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+):
+    """Return aggregated review stats for a subject and its topics."""
+    subject_result = await db.execute(
+        select(Subject.id).where(Subject.id == subject_id)
+    )
+    if not subject_result.scalar_one_or_none():
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="Subject not found",
+        )
+
+    topics_result = await db.execute(
+        select(Topic.id).where(Topic.subject_id == subject_id).order_by(Topic.order_index)
+    )
+    ordered_topic_ids = [str(topic_id) for topic_id in topics_result.scalars().all()]
+
+    question_counts_result = await db.execute(
+        select(
+            Question.topic_id,
+            func.count(Question.id).label("generated"),
+            func.count(case((Question.vetting_status == "approved", 1))).label("approved"),
+            func.count(case((Question.vetting_status == "rejected", 1))).label("rejected"),
+            func.count(case((Question.vetting_status == "pending", 1))).label("pending"),
+        )
+        .where(
+            Question.subject_id == subject_id,
+            Question.is_archived == False,
+            Question.is_latest == True,
+        )
+        .group_by(Question.topic_id)
+    )
+
+    counts_by_topic_id: dict[str, dict[str, int]] = {}
+    orphan_counts = {
+        "generated": 0,
+        "approved": 0,
+        "rejected": 0,
+        "pending": 0,
+    }
+    for topic_id, generated, approved, rejected, pending in question_counts_result.all():
+        counts = {
+            "generated": int(generated or 0),
+            "approved": int(approved or 0),
+            "rejected": int(rejected or 0),
+            "pending": int(pending or 0),
+        }
+        if topic_id is None:
+            orphan_counts = counts
+        else:
+            counts_by_topic_id[str(topic_id)] = counts
+
+    if len(ordered_topic_ids) == 1:
+        only_topic_id = ordered_topic_ids[0]
+        base_counts = counts_by_topic_id.get(
+            only_topic_id,
+            {"generated": 0, "approved": 0, "rejected": 0, "pending": 0},
+        )
+        counts_by_topic_id[only_topic_id] = {
+            key: int(base_counts.get(key, 0) or 0) + int(orphan_counts.get(key, 0) or 0)
+            for key in ("generated", "approved", "rejected", "pending")
+        }
+
+    topic_stats = [
+        SubjectTopicReviewStats(
+            topic_id=topic_id,
+            generated=int(counts_by_topic_id.get(topic_id, {}).get("generated", 0) or 0),
+            approved=int(counts_by_topic_id.get(topic_id, {}).get("approved", 0) or 0),
+            rejected=int(counts_by_topic_id.get(topic_id, {}).get("rejected", 0) or 0),
+            pending=int(counts_by_topic_id.get(topic_id, {}).get("pending", 0) or 0),
+        )
+        for topic_id in ordered_topic_ids
+    ]
+
+    generated_total = sum(item.generated for item in topic_stats) + (0 if len(ordered_topic_ids) == 1 else orphan_counts["generated"])
+    approved_total = sum(item.approved for item in topic_stats) + (0 if len(ordered_topic_ids) == 1 else orphan_counts["approved"])
+    rejected_total = sum(item.rejected for item in topic_stats) + (0 if len(ordered_topic_ids) == 1 else orphan_counts["rejected"])
+    pending_total = sum(item.pending for item in topic_stats) + (0 if len(ordered_topic_ids) == 1 else orphan_counts["pending"])
+
+    return SubjectReviewStatsResponse(
+        generated=generated_total,
+        approved=approved_total,
+        rejected=rejected_total,
+        pending=pending_total,
+        topics=topic_stats,
     )
 
 

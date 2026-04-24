@@ -6,7 +6,6 @@
 		createSubject,
 		createGroup,
 		getSubjectsTree,
-		listSubjects,
 		moveSubject,
 		moveGroup,
 		deleteGroup,
@@ -25,12 +24,11 @@
 
 	// Tab state
 	type ViewTab = 'subjects' | 'groups';
-	let activeTab = $state<ViewTab>('subjects');
+	let activeTab = $state<ViewTab>('groups');
 
 	let loading = $state(true);
 	let error = $state('');
 	let treeData = $state<SubjectTreeResponse | null>(null);
-	let subjects = $state<SubjectResponse[]>([]);
 	let favorites = $state<FavoriteSummary[]>([]);
 	let favoriteBusyKeys = $state<Record<string, boolean>>({});
 	let query = $state('');
@@ -82,8 +80,6 @@
 	let contextMenuPosition = $state<{ x: number; y: number } | null>(null);
 	let contextMenuElement = $state<HTMLDivElement | null>(null);
 	let contextMenuOverlayElement = $state<HTMLDivElement | null>(null);
-	const SUBJECTS_PAGE_LIMIT = 100;
-	const SUBJECT_ROUTE_PRELOAD_LIMIT = 8;
 	const preloadedSubjectRoutes = new Set<string>();
 
 	function favoriteKey(entityType: string, entityId: string): string {
@@ -164,20 +160,6 @@
 		
 		// Handle subject-specific stats updates
 		const subjectUnsub = wsClient.onSubjectStats((subjectId: string, statsData: StatsData) => {
-			// Update flat subjects list
-			subjects = subjects.map(s => {
-				if (s.id === subjectId) {
-					return {
-						...s,
-						total_questions: statsData.total_questions ?? s.total_questions,
-						total_approved: statsData.total_approved ?? s.total_approved,
-						total_rejected: statsData.total_rejected ?? s.total_rejected,
-						total_pending: statsData.total_pending ?? s.total_pending,
-					};
-				}
-				return s;
-			});
-			
 			if (!treeData) return;
 			
 			// Update subject in ungrouped_subjects
@@ -223,34 +205,16 @@
 		wsUnsubscribers.push(subjectUnsub);
 	}
 
-	async function listAllSubjects(): Promise<SubjectResponse[]> {
-		let page = 1;
-		let totalPages = 1;
-		const allSubjects: SubjectResponse[] = [];
-
-		do {
-			const response = await listSubjects(page, SUBJECTS_PAGE_LIMIT);
-			allSubjects.push(...response.subjects);
-			totalPages = Math.max(response.pagination.total_pages, 1);
-			page += 1;
-		} while (page <= totalPages);
-
-		return allSubjects;
-	}
-
 	async function loadData() {
 		loading = true;
 		error = '';
 		try {
-			const [treeRes, listRes, favoriteRes] = await Promise.all([
+			const [treeRes, favoriteRes] = await Promise.all([
 				getSubjectsTree(),
-				listAllSubjects(),
 				listCurrentUserFavorites(),
 			]);
 			treeData = treeRes;
-			subjects = listRes;
 			favorites = favoriteRes;
-			void preloadInitialSubjectRoutes(listRes);
 		} catch (e: unknown) {
 			error = e instanceof Error ? e.message : 'Failed to load subjects';
 		} finally {
@@ -268,11 +232,6 @@
 		}
 	}
 
-	async function preloadInitialSubjectRoutes(subjectList: SubjectResponse[]) {
-		const initialIds = subjectList.slice(0, SUBJECT_ROUTE_PRELOAD_LIMIT).map((subject) => subject.id);
-		await Promise.all(initialIds.map((subjectId) => preloadSubjectRoute(subjectId)));
-	}
-
 	async function loadTree() {
 		try {
 			treeData = await getSubjectsTree();
@@ -281,15 +240,26 @@
 		}
 	}
 
-	async function loadSubjects() {
-		try {
-			subjects = await listAllSubjects();
-		} catch (e: unknown) {
-			error = e instanceof Error ? e.message : 'Failed to load subjects';
-		}
-	}
-
 	const favoriteEntityKeys = $derived.by(() => new Set(favorites.map((favorite) => favoriteKey(favorite.entity_type, favorite.entity_id))));
+
+	const subjects = $derived.by<SubjectResponse[]>(() => {
+		if (!treeData) return [];
+
+		const groupedSubjects: SubjectResponse[] = [];
+		function walk(groups: SubjectGroupTreeNode[]) {
+			for (const group of groups) {
+				groupedSubjects.push(...group.subjects);
+				walk(group.children);
+			}
+		}
+
+		walk(treeData.groups);
+		return [...groupedSubjects, ...treeData.ungrouped_subjects].sort((left, right) => {
+			const byName = left.name.localeCompare(right.name);
+			if (byName !== 0) return byName;
+			return left.code.localeCompare(right.code);
+		});
+	});
 
 	function isFavorite(entityType: 'subject' | 'group', entityId: string): boolean {
 		return favoriteEntityKeys.has(favoriteKey(entityType, entityId));
@@ -544,7 +514,7 @@
 			addingSubject = false;
 			draftCode = '';
 			draftName = '';
-			await loadData();
+			await loadTree();
 		} catch (e: unknown) {
 			addSubjectError = e instanceof Error ? e.message : 'Failed to create subject';
 		} finally {
@@ -930,7 +900,7 @@
 		managingSubjects = true;
 		try {
 			await moveSubject(subjectId, manageGroupId);
-			await loadData();
+			await loadTree();
 		} catch (e: unknown) {
 			error = e instanceof Error ? e.message : 'Failed to add subject to group';
 		} finally {
@@ -943,7 +913,7 @@
 		managingSubjects = true;
 		try {
 			await moveSubject(subjectId, null);
-			await loadData();
+			await loadTree();
 		} catch (e: unknown) {
 			error = e instanceof Error ? e.message : 'Failed to remove subject from group';
 		} finally {
@@ -956,7 +926,7 @@
 		managingSubjects = true;
 		try {
 			await moveGroup(groupId, manageGroupId);
-			await loadData();
+			await loadTree();
 		} catch (e: unknown) {
 			error = e instanceof Error ? e.message : 'Failed to add group to group';
 		} finally {
@@ -969,7 +939,7 @@
 		managingSubjects = true;
 		try {
 			await moveGroup(groupId, null);
-			await loadData();
+			await loadTree();
 		} catch (e: unknown) {
 			error = e instanceof Error ? e.message : 'Failed to remove group from group';
 		} finally {
@@ -993,17 +963,17 @@
 		<div class="tab-bar animate-slide-up">
 			<button 
 				class="tab-btn" 
-				class:active={activeTab === 'subjects'} 
-				onclick={() => { activeTab = 'subjects'; query = ''; }}
-			>
-				Subjects
-			</button>
-			<button 
-				class="tab-btn" 
 				class:active={activeTab === 'groups'} 
 				onclick={() => { activeTab = 'groups'; query = ''; }}
 			>
 				Groups
+			</button>
+			<button 
+				class="tab-btn" 
+				class:active={activeTab === 'subjects'} 
+				onclick={() => { activeTab = 'subjects'; query = ''; }}
+			>
+				Subjects
 			</button>
 		</div>
 

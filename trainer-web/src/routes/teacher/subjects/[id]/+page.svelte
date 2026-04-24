@@ -8,8 +8,10 @@
 		createTopic,
 		deleteSubject,
 		getSubject,
+		getSubjectReviewStats,
 		updateTopic,
 		type SubjectDetailResponse,
+		type SubjectReviewStatsResponse,
 		type TopicResponse,
 	} from '$lib/api/subjects';
 	import {
@@ -24,7 +26,6 @@
 		type ReferenceDocumentItem,
 		type TopicGenerationStatusItem,
 	} from '$lib/api/documents';
-	import { getQuestionsForVetting } from '$lib/api/vetting';
 	import { getGenerationWebSocketClient, type GenerationWebSocketClient } from '$lib/api/generation-websocket';
 	import MultiPdfUpload, { type PdfFileProgress } from '$lib/components/MultiPdfUpload.svelte';
 
@@ -479,35 +480,51 @@
 
 	async function loadSubject(options: { background?: boolean; skipGenerationStatusCheck?: boolean } = {}) {
 		if (!subjectId) return;
+		const requestedSubjectId = subjectId;
 		const background = options.background ?? false;
 		if (!background) {
 			loading = true;
 			error = '';
 		}
 		try {
-			subject = await getSubject(subjectId);
+			const nextSubject = await getSubject(requestedSubjectId);
+			if (requestedSubjectId !== subjectId) return;
+			subject = nextSubject;
 			syncQueuedTopicGenerationsWithSubject();
-			await loadReviewStats();
-			if (!options.skipGenerationStatusCheck) {
-				// Check for any in-progress generation after loading subject
-				await checkForInProgressGeneration();
+			if (!background) {
+				loading = false;
 			}
-			await maybeStartQueuedTopicGeneration();
+			void loadSubjectSecondaryState(nextSubject, {
+				skipGenerationStatusCheck: options.skipGenerationStatusCheck,
+			});
 		} catch (e: unknown) {
 			error = e instanceof Error ? e.message : 'Failed to load subject';
 		} finally {
-			if (!background) {
+			if (!background && loading) {
 				loading = false;
 			}
 		}
 	}
 
-	async function checkForInProgressGeneration() {
-		if (!subjectId || !subject) return;
+	async function loadSubjectSecondaryState(
+		subjectSnapshot: SubjectDetailResponse,
+		options: { skipGenerationStatusCheck?: boolean } = {}
+	) {
+		await loadReviewStats(subjectSnapshot);
+		if (!options.skipGenerationStatusCheck) {
+			await checkForInProgressGeneration(subjectSnapshot);
+		}
+		if (subjectId === subjectSnapshot.id) {
+			await maybeStartQueuedTopicGeneration();
+		}
+	}
+
+	async function checkForInProgressGeneration(subjectSnapshot: SubjectDetailResponse | null = subject) {
+		if (!subjectId || !subjectSnapshot) return;
 
 		try {
 			// Get all topic IDs for this subject
-			const topicIds = subject.topics.map(t => t.id);
+			const topicIds = subjectSnapshot.topics.map(t => t.id);
 			if (!topicIds.length) return;
 
 			// Query the database for any active generation runs (cross-device visibility)
@@ -543,7 +560,7 @@
 				if (status && status.in_progress) {
 					const storedTopicId = sessionStorage.getItem(`gen_topic_${subjectId}`);
 
-					if (storedTopicId && subject?.topics.some(t => t.id === storedTopicId)) {
+					if (storedTopicId && subjectSnapshot.topics.some(t => t.id === storedTopicId)) {
 						clearQueuedTopicGeneration(storedTopicId);
 						topicGeneratingById = { ...topicGeneratingById, [storedTopicId]: true };
 						const total = status.total_questions || generationBatchSize;
@@ -698,98 +715,45 @@
 		return 'pending';
 	}
 
-	async function loadReviewStats() {
-		if (!subject) return;
+	async function loadReviewStats(subjectSnapshot: SubjectDetailResponse | null = subject) {
+		if (!subjectSnapshot) return;
+		const requestedSubjectId = subjectSnapshot.id;
 		statsLoading = true;
 		try {
-			const limit = 100;
-			let pageNo = 1;
-			const allQuestions: Array<{ topic_id: string | null; vetting_status: string }> = [];
+			const statsResponse = await getSubjectReviewStats(subjectSnapshot.id);
+			if (requestedSubjectId !== subjectId) return;
 
-			while (true) {
-				const pageRes = await getQuestionsForVetting({
-					subject_id: subject.id,
-					status: 'all',
-					page: pageNo,
-					limit,
-				});
-				allQuestions.push(
-					...pageRes.questions.map((q) => ({
-						topic_id: q.topic_id,
-						vetting_status: q.vetting_status,
-					}))
-				);
-				if (pageNo >= pageRes.pages || pageRes.questions.length === 0) break;
-				pageNo += 1;
+			const topicStatsById = new Map<string, SubjectReviewStatsResponse['topics'][number]>();
+			for (const topicStats of statsResponse.topics) {
+				topicStatsById.set(topicStats.topic_id, topicStats);
 			}
 
 			const perTopic: Record<string, ReviewStats> = {};
-			for (const topic of subject.topics) {
+			for (const topic of subjectSnapshot.topics) {
+				const topicStats = topicStatsById.get(topic.id);
+				const generated = topicStats?.generated ?? topic.total_questions;
+				const approved = topicStats?.approved ?? 0;
+				const rejected = topicStats?.rejected ?? 0;
+				const pending = topicStats?.pending ?? Math.max(0, generated - approved - rejected);
+				const vetted = approved + rejected;
 				perTopic[topic.id] = {
-					generated: 0,
-					approved: 0,
-					rejected: 0,
-					pending: 0,
-					vetted: 0,
-					approvalRate: 0,
+					generated,
+					approved,
+					rejected,
+					pending,
+					vetted,
+					approvalRate: calcApprovalRate(approved, generated),
 				};
 			}
 
-			let orphanApproved = 0;
-			let orphanRejected = 0;
-			let orphanPending = 0;
-
-			for (const q of allQuestions) {
-				const normalized = normalizeStatus(q.vetting_status);
-				if (q.topic_id && perTopic[q.topic_id]) {
-					if (normalized === 'approved') perTopic[q.topic_id].approved += 1;
-					else if (normalized === 'rejected') perTopic[q.topic_id].rejected += 1;
-					else perTopic[q.topic_id].pending += 1;
-					continue;
-				}
-
-				if (normalized === 'approved') orphanApproved += 1;
-				else if (normalized === 'rejected') orphanRejected += 1;
-				else orphanPending += 1;
-			}
-
-			if (subject.topics.length === 1) {
-				const onlyTopicId = subject.topics[0].id;
-				perTopic[onlyTopicId].approved += orphanApproved;
-				perTopic[onlyTopicId].rejected += orphanRejected;
-				perTopic[onlyTopicId].pending += orphanPending;
-			}
-
-			let approvedTotal = 0;
-			let rejectedTotal = 0;
-			let pendingTotal = 0;
-			let generatedTotal = 0;
-
-			for (const topic of subject.topics) {
-				const stats = perTopic[topic.id];
-				stats.generated = stats.approved + stats.rejected + stats.pending;
-				stats.vetted = stats.approved + stats.rejected;
-				if (stats.generated === 0) {
-					stats.generated = topic.total_questions;
-					stats.pending = Math.max(0, topic.total_questions - stats.vetted);
-				}
-				stats.approvalRate = calcApprovalRate(stats.approved, stats.generated);
-
-				generatedTotal += stats.generated;
-				approvedTotal += stats.approved;
-				rejectedTotal += stats.rejected;
-				pendingTotal += stats.pending;
-			}
-
-			const vettedTotal = approvedTotal + rejectedTotal;
 			topicReviewStats = perTopic;
-				subjectReviewStats = {
-				generated: generatedTotal,
-				approved: approvedTotal,
-				rejected: rejectedTotal,
-				pending: pendingTotal,
-				vetted: vettedTotal,
-					approvalRate: calcApprovalRate(approvedTotal, generatedTotal),
+			subjectReviewStats = {
+				generated: statsResponse.generated,
+				approved: statsResponse.approved,
+				rejected: statsResponse.rejected,
+				pending: statsResponse.pending,
+				vetted: statsResponse.approved + statsResponse.rejected,
+				approvalRate: calcApprovalRate(statsResponse.approved, statsResponse.generated),
 			};
 
 			if (Object.keys(completedGenerationHoldByTopicId).length > 0) {
@@ -803,18 +767,21 @@
 			}
 
 		} catch {
-			if (subject) {
+			if (requestedSubjectId !== subjectId) return;
+			if (subjectSnapshot) {
 				subjectReviewStats = {
-					generated: subject.total_questions,
+					generated: subjectSnapshot.total_questions,
 					approved: 0,
 					rejected: 0,
-					pending: subject.total_questions,
+					pending: subjectSnapshot.total_questions,
 					vetted: 0,
 					approvalRate: 0,
 				};
 			}
 		} finally {
-			statsLoading = false;
+			if (requestedSubjectId === subjectId) {
+				statsLoading = false;
+			}
 		}
 	}
 

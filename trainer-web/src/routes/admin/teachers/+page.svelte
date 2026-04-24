@@ -3,18 +3,18 @@
 	import { goto } from '$app/navigation';
 	import { session } from '$lib/session';
 	import {
-		getAdminDashboard,
+		listAdminTeacherProgress,
 		listAdminSubjects,
-		type AdminDashboard,
+		type AdminTeacherProgressSummary,
 		type AdminSubjectSummary,
-		type UserStats
 	} from '$lib/api/admin';
 
 	let loading = $state(true);
 	let error = $state('');
 	let query = $state('');	
-	let stats = $state<AdminDashboard | null>(null);
-	let subjects = $state<AdminSubjectSummary[]>([]);
+	let teachers = $state<AdminTeacherProgressSummary[]>([]);
+	let subjectsByTeacher = $state<Record<string, AdminSubjectSummary[]>>({});
+	let loadingSubjectsByTeacher = $state<Record<string, boolean>>({});
 	let expandedTeachers = $state<Record<string, boolean>>({});
 	let sortColumn = $state<'name' | 'subjects' | 'topics' | 'questions' | 'approved' | 'rejected' | 'pending' | 'coverage'>('questions');
 	let sortDirection = $state<'asc' | 'desc'>('desc');
@@ -33,9 +33,10 @@
 		loading = true;
 		error = '';
 		try {
-			const [dashboard, subjectList] = await Promise.all([getAdminDashboard(), listAdminSubjects()]);
-			stats = dashboard;
-			subjects = subjectList;
+			teachers = await listAdminTeacherProgress();
+			subjectsByTeacher = {};
+			loadingSubjectsByTeacher = {};
+			expandedTeachers = {};
 		} catch (e: unknown) {
 			error = e instanceof Error ? e.message : 'Failed to load teacher analytics';
 		} finally {
@@ -53,8 +54,11 @@
 	}
 
 	type TeacherRow = {
-		teacher: UserStats;
-		subjects: AdminSubjectSummary[];
+		teacher_id: string;
+		username: string;
+		full_name: string | null;
+		email: string;
+		subjects_count: number;
 		totalTopics: number;
 		totalQuestions: number;
 		totalApproved: number;
@@ -65,29 +69,20 @@
 	};
 
 	const teacherRows = $derived.by<TeacherRow[]>(() => {
-		if (!stats) return [];
-
-		const grouped = new Map<string, AdminSubjectSummary[]>();
-		for (const subject of subjects) {
-			const key = subject.teacher_id || 'unknown';
-			const current = grouped.get(key) || [];
-			current.push(subject);
-			grouped.set(key, current);
-		}
-
-		const teachers = stats.users.filter((user) => user.role === 'teacher');
 		const rows = teachers.map((teacher) => {
-			const teacherSubjects = grouped.get(teacher.user_id) || [];
-			const totalTopics = teacherSubjects.reduce((sum, subject) => sum + subject.total_topics, 0);
-			const totalQuestions = teacherSubjects.reduce((sum, subject) => sum + subject.total_questions, 0);
-			const totalApproved = teacherSubjects.reduce((sum, subject) => sum + subject.total_approved, 0);
-			const totalRejected = teacherSubjects.reduce((sum, subject) => sum + subject.total_rejected, 0);
-			const totalPending = teacherSubjects.reduce((sum, subject) => sum + subject.total_pending, 0);
+			const totalTopics = teacher.total_topics;
+			const totalQuestions = teacher.total_questions;
+			const totalApproved = teacher.total_approved;
+			const totalRejected = teacher.total_rejected;
+			const totalPending = teacher.total_pending;
 			const totalVetted = totalApproved + totalRejected;
 			const subjectProgress = totalQuestions > 0 ? Math.round((totalVetted / totalQuestions) * 100) : 0;
 			return {
-				teacher,
-				subjects: teacherSubjects,
+				teacher_id: teacher.teacher_id,
+				username: teacher.username,
+				full_name: teacher.full_name,
+				email: teacher.email,
+				subjects_count: teacher.subjects_count,
 				totalTopics,
 				totalQuestions,
 				totalApproved,
@@ -101,12 +96,11 @@
 		const needle = query.trim().toLowerCase();
 		const filtered = needle
 			? rows.filter((row) => {
-					const subjectText = row.subjects.map((subject) => `${subject.name} ${subject.code}`).join(' ');
 					return [
-						row.teacher.full_name || '',
-						row.teacher.username,
-						row.teacher.email,
-						subjectText
+						row.full_name || '',
+						row.username,
+						row.email,
+						teachers.find((teacher) => teacher.teacher_id === row.teacher_id)?.subject_search_text || ''
 					].some((value) => value.toLowerCase().includes(needle));
 				})
 			: rows;
@@ -117,12 +111,12 @@
 
 			switch (sortColumn) {
 				case 'name':
-					aVal = a.teacher.full_name || a.teacher.username;
-					bVal = b.teacher.full_name || b.teacher.username;
+					aVal = a.full_name || a.username;
+					bVal = b.full_name || b.username;
 					break;
 				case 'subjects':
-					aVal = a.subjects.length;
-					bVal = b.subjects.length;
+					aVal = a.subjects_count;
+					bVal = b.subjects_count;
 					break;
 				case 'topics':
 					aVal = a.totalTopics;
@@ -168,7 +162,7 @@
 		return teacherRows.reduce(
 			(acc, row) => {
 				acc.teachers += 1;
-				acc.subjects += row.subjects.length;
+				acc.subjects += row.subjects_count;
 				acc.questions += row.totalQuestions;
 				acc.vetted += row.totalVetted;
 				acc.pending += row.totalPending;
@@ -186,11 +180,30 @@
 		return `/admin/users/${userId}`;
 	}
 
-	function toggleTeacherRow(teacherId: string) {
+	async function ensureTeacherSubjectsLoaded(teacherId: string) {
+		if (subjectsByTeacher[teacherId] || loadingSubjectsByTeacher[teacherId]) return;
+		loadingSubjectsByTeacher = { ...loadingSubjectsByTeacher, [teacherId]: true };
+		try {
+			subjectsByTeacher = {
+				...subjectsByTeacher,
+				[teacherId]: await listAdminSubjects(teacherId),
+			};
+		} catch {
+			subjectsByTeacher = { ...subjectsByTeacher, [teacherId]: [] };
+		} finally {
+			loadingSubjectsByTeacher = { ...loadingSubjectsByTeacher, [teacherId]: false };
+		}
+	}
+
+	async function toggleTeacherRow(teacherId: string) {
+		const nextExpanded = !expandedTeachers[teacherId];
 		expandedTeachers = {
 			...expandedTeachers,
-			[teacherId]: !expandedTeachers[teacherId]
+			[teacherId]: nextExpanded
 		};
+		if (nextExpanded) {
+			await ensureTeacherSubjectsLoaded(teacherId);
+		}
 	}
 
 	function isTeacherExpanded(teacherId: string): boolean {
@@ -312,11 +325,11 @@
 						<tr>
 							<td>
 								<div class="teacher-cell">
-									<a class="teacher-name user-link" href={userDetailHref(row.teacher.user_id)}>{row.teacher.full_name || row.teacher.username}</a>
-									<span class="teacher-email">{row.teacher.email}</span>
+									<a class="teacher-name user-link" href={userDetailHref(row.teacher_id)}>{row.full_name || row.username}</a>
+									<span class="teacher-email">{row.email}</span>
 								</div>
 							</td>
-							<td class="num">{row.subjects.length}</td>
+							<td class="num">{row.subjects_count}</td>
 							<td class="num">{row.totalTopics}</td>
 							<td class="num">{row.totalQuestions}</td>
 							<td class="num green-text">{row.totalApproved}</td>
@@ -324,17 +337,19 @@
 							<td class="num orange-text">{row.totalPending}</td>
 							<td class="num">{row.subjectProgress}%</td>
 							<td>
-								<button class="toggle-btn" onclick={() => toggleTeacherRow(row.teacher.user_id)}>
-									{isTeacherExpanded(row.teacher.user_id) ? 'Hide' : 'Show'}
+								<button class="toggle-btn" onclick={() => void toggleTeacherRow(row.teacher_id)} disabled={loadingSubjectsByTeacher[row.teacher_id]}>
+									{#if loadingSubjectsByTeacher[row.teacher_id]}Loading...{:else if isTeacherExpanded(row.teacher_id)}Hide{:else}Show{/if}
 								</button>
 							</td>
 						</tr>
-						{#if isTeacherExpanded(row.teacher.user_id)}
+						{#if isTeacherExpanded(row.teacher_id)}
 							<tr class="detail-row">
 								<td colspan="9">
-									{#if row.subjects.length > 0}
+									{#if loadingSubjectsByTeacher[row.teacher_id]}
+										<p class="empty-msg">Loading subjects…</p>
+									{:else if row.subjects_count > 0}
 										<div class="detail-subjects">
-											{#each row.subjects as subject}
+											{#each subjectsByTeacher[row.teacher_id] || [] as subject}
 												<button class="subject-chip" onclick={() => openSubject(subject.id)}>
 													<span>{subject.name}</span>
 													<small>{subject.total_questions}q · {subject.total_pending} pending</small>
@@ -356,11 +371,11 @@
 			{#each teacherRows as row}
 				<div class="mobile-card glass-panel">
 					<div class="teacher-cell">
-						<a class="teacher-name user-link" href={userDetailHref(row.teacher.user_id)}>{row.teacher.full_name || row.teacher.username}</a>
-						<span class="teacher-email">{row.teacher.email}</span>
+						<a class="teacher-name user-link" href={userDetailHref(row.teacher_id)}>{row.full_name || row.username}</a>
+						<span class="teacher-email">{row.email}</span>
 					</div>
 					<div class="mobile-metrics">
-						<span>Subjects <strong>{row.subjects.length}</strong></span>
+						<span>Subjects <strong>{row.subjects_count}</strong></span>
 						<span>Topics <strong>{row.totalTopics}</strong></span>
 						<span>Questions <strong>{row.totalQuestions}</strong></span>
 						<span class="green-text">Approved <strong>{row.totalApproved}</strong></span>
@@ -368,13 +383,15 @@
 						<span class="orange-text">Pending <strong>{row.totalPending}</strong></span>
 						<span>Coverage <strong>{row.subjectProgress}%</strong></span>
 					</div>
-					<button class="toggle-btn" onclick={() => toggleTeacherRow(row.teacher.user_id)}>
-						{isTeacherExpanded(row.teacher.user_id) ? 'Hide Subjects' : 'Show Subjects'}
+					<button class="toggle-btn" onclick={() => void toggleTeacherRow(row.teacher_id)} disabled={loadingSubjectsByTeacher[row.teacher_id]}>
+						{#if loadingSubjectsByTeacher[row.teacher_id]}Loading subjects...{:else if isTeacherExpanded(row.teacher_id)}Hide Subjects{:else}Show Subjects{/if}
 					</button>
-					{#if isTeacherExpanded(row.teacher.user_id)}
-						{#if row.subjects.length > 0}
+					{#if isTeacherExpanded(row.teacher_id)}
+						{#if loadingSubjectsByTeacher[row.teacher_id]}
+							<p class="empty-msg">Loading subjects…</p>
+						{:else if row.subjects_count > 0}
 							<div class="detail-subjects">
-								{#each row.subjects as subject}
+								{#each subjectsByTeacher[row.teacher_id] || [] as subject}
 									<button class="subject-chip" onclick={() => openSubject(subject.id)}>
 										<span>{subject.name}</span>
 										<small>{subject.total_questions}q · {subject.total_pending} pending</small>

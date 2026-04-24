@@ -192,8 +192,10 @@ export async function scheduleBackgroundGeneration(opts: {
 
 export async function getBackgroundGenerationStatuses(subjectIds: string[]): Promise<BackgroundGenerationStatusesResponse> {
 	if (!subjectIds.length) return { statuses: {} };
-	const params = new URLSearchParams({ subject_ids: subjectIds.join(',') });
-	return apiFetch<BackgroundGenerationStatusesResponse>(`/questions/background-generation-statuses?${params.toString()}`);
+	return apiFetch<BackgroundGenerationStatusesResponse>('/questions/background-generation-statuses', {
+		method: 'POST',
+		body: JSON.stringify({ subject_ids: subjectIds }),
+	});
 }
 
 export async function getGenerationLimits(): Promise<GenerationLimitsResponse> {
@@ -222,8 +224,10 @@ export interface TopicGenerationStatusesResponse {
 
 export async function getTopicGenerationStatuses(topicIds: string[]): Promise<TopicGenerationStatusesResponse> {
 	if (!topicIds.length) return { statuses: {} };
-	const params = new URLSearchParams({ topic_ids: topicIds.join(',') });
-	return apiFetch<TopicGenerationStatusesResponse>(`/questions/topic-generation-statuses?${params.toString()}`);
+	return apiFetch<TopicGenerationStatusesResponse>('/questions/topic-generation-statuses', {
+		method: 'POST',
+		body: JSON.stringify({ topic_ids: topicIds }),
+	});
 }
 
 /**

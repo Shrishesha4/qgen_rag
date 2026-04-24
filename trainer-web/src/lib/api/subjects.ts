@@ -58,6 +58,22 @@ export interface SubjectDetailResponse extends SubjectResponse {
 	topics: TopicResponse[];
 }
 
+export interface SubjectTopicReviewStats {
+	topic_id: string;
+	generated: number;
+	approved: number;
+	rejected: number;
+	pending: number;
+}
+
+export interface SubjectReviewStatsResponse {
+	generated: number;
+	approved: number;
+	rejected: number;
+	pending: number;
+	topics: SubjectTopicReviewStats[];
+}
+
 export interface SubjectListResponse {
 	subjects: SubjectResponse[];
 	pagination: { page: number; limit: number; total: number; total_pages: number };
@@ -74,6 +90,10 @@ export async function listSubjects(page = 1, limit = 50, search?: string): Promi
 export async function getSubject(id: string): Promise<SubjectDetailResponse> {
 	return apiFetch<SubjectDetailResponse>(`/subjects/${id}`);
 }
+
+export async function getSubjectReviewStats(id: string): Promise<SubjectReviewStatsResponse> {
+	return apiFetch<SubjectReviewStatsResponse>(`/subjects/${id}/review-stats`);
+	}
 
 export async function createSubject(data: SubjectCreate): Promise<SubjectResponse> {
 	return apiFetch<SubjectResponse>('/subjects', {

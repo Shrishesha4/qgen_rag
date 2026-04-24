@@ -1515,40 +1515,44 @@ async def get_topic_stats(
         select(Topic).where(Topic.subject_id == subject_id).order_by(Topic.order_index)
     )
     topics = topics_result.scalars().all()
+
+    if not topics:
+        return []
+
+    topic_ids = [topic.id for topic in topics]
+    counts_result = await db.execute(
+        select(
+            Question.topic_id,
+            func.count(Question.id).filter(Question.vetting_status == "pending").label("pending_count"),
+            func.count(Question.id).filter(Question.vetting_status == "approved").label("approved_count"),
+            func.count(Question.id).filter(Question.vetting_status == "rejected").label("rejected_count"),
+        )
+        .where(
+            Question.topic_id.in_(topic_ids),
+            Question.is_latest == True,
+            Question.is_archived == False,
+        )
+        .group_by(Question.topic_id)
+    )
+    counts_by_topic_id = {
+        str(topic_id): {
+            "pending_count": pending_count or 0,
+            "approved_count": approved_count or 0,
+            "rejected_count": rejected_count or 0,
+        }
+        for topic_id, pending_count, approved_count, rejected_count in counts_result.all()
+    }
     
     stats = []
     for topic in topics:
-        pending = await db.execute(
-            select(func.count(Question.id)).where(
-                Question.topic_id == topic.id,
-                Question.vetting_status == "pending",
-                Question.is_latest == True,
-                Question.is_archived == False,
-            )
-        )
-        approved = await db.execute(
-            select(func.count(Question.id)).where(
-                Question.topic_id == topic.id,
-                Question.vetting_status == "approved",
-                Question.is_latest == True,
-                Question.is_archived == False,
-            )
-        )
-        rejected = await db.execute(
-            select(func.count(Question.id)).where(
-                Question.topic_id == topic.id,
-                Question.vetting_status == "rejected",
-                Question.is_latest == True,
-                Question.is_archived == False,
-            )
-        )
+        counts = counts_by_topic_id.get(str(topic.id), {})
         
         stats.append(TopicQuestionStats(
             id=topic.id,
             name=topic.name,
-            pending_count=pending.scalar() or 0,
-            approved_count=approved.scalar() or 0,
-            rejected_count=rejected.scalar() or 0,
+            pending_count=counts.get("pending_count", 0),
+            approved_count=counts.get("approved_count", 0),
+            rejected_count=counts.get("rejected_count", 0),
         ))
     
     return stats

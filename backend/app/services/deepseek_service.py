@@ -365,11 +365,28 @@ class DeepSeekService:
         for attempt in range(max_retries):
             try:
                 async with httpx.AsyncClient(timeout=self._timeout) as client:
-                    resp = await client.post(
-                        f"{self.base_url}/chat/completions",
-                        headers=self._headers(),
-                        json=payload,
-                    )
+                    try:
+                        resp = await client.post(
+                            f"{self.base_url}/chat/completions",
+                            headers=self._headers(),
+                            json=payload,
+                        )
+                    except Exception:
+                        raise
+
+                    if resp.status_code == 400 and "response_format" in payload:
+                        fallback_payload = dict(payload)
+                        fallback_payload.pop("response_format", None)
+                        logger.warning(
+                            "Provider rejected response_format=json_object for model=%s base_url=%s; retrying without response_format",
+                            self.model,
+                            self.base_url,
+                        )
+                        resp = await client.post(
+                            f"{self.base_url}/chat/completions",
+                            headers=self._headers(),
+                            json=fallback_payload,
+                        )
 
                     if resp.status_code == 429:
                         if attempt < max_retries - 1:

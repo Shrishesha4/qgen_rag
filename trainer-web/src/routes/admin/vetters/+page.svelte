@@ -2,12 +2,12 @@
 	import { onMount } from 'svelte';
 	import { goto } from '$app/navigation';
 	import { session } from '$lib/session';
-	import { getAdminDashboard, type AdminDashboard, type UserStats, type VetterBreakdown } from '$lib/api/admin';
+	import { listAdminVetterProgress, type AdminVetterProgressSummary } from '$lib/api/admin';
 
 	let loading = $state(true);
 	let error = $state('');
 	let query = $state('');
-	let stats = $state<AdminDashboard | null>(null);
+	let vetters = $state<AdminVetterProgressSummary[]>([]);
 	let sortColumn = $state<'name' | 'total_vetted' | 'approved' | 'rejected' | 'approval_rate' | 'rejection_rate' | 'platform_share' | 'subjects' | 'topics'>('total_vetted');
 	let sortDirection = $state<'asc' | 'desc'>('desc');
 
@@ -25,7 +25,7 @@
 		loading = true;
 		error = '';
 		try {
-			stats = await getAdminDashboard();
+			vetters = await listAdminVetterProgress();
 		} catch (e: unknown) {
 			error = e instanceof Error ? e.message : 'Failed to load vetter analytics';
 		} finally {
@@ -43,27 +43,20 @@
 	}
 
 	type VetterRow = {
-		vetter: VetterBreakdown;
-		userRecord: UserStats | null;
+		vetter: AdminVetterProgressSummary;
 		approvalRate: number;
 		rejectionRate: number;
 		platformShare: number;
 	};
 
 	const vetterRows = $derived.by<VetterRow[]>(() => {
-		if (!stats) return [];
-		const platformVetted = stats.total_vetted;
-		const byUser = new Map<string, UserStats>();
-		for (const user of stats.users) {
-			byUser.set(user.user_id, user);
-		}
+		const platformVetted = vetters.reduce((sum, vetter) => sum + vetter.total_vetted, 0);
 
-		const rows = stats.vetters.map((vetter) => {
-			const userRecord = byUser.get(vetter.user_id) || null;
+		const rows = vetters.map((vetter) => {
 			const approvalRate = vetter.total_vetted > 0 ? Math.round((vetter.total_approved / vetter.total_vetted) * 100) : 0;
 			const rejectionRate = vetter.total_vetted > 0 ? Math.round((vetter.total_rejected / vetter.total_vetted) * 100) : 0;
 			const platformShare = platformVetted > 0 ? Math.round((vetter.total_vetted / platformVetted) * 100) : 0;
-			return { vetter, userRecord, approvalRate, rejectionRate, platformShare };
+			return { vetter, approvalRate, rejectionRate, platformShare };
 		});
 
 		const needle = query.trim().toLowerCase();
@@ -108,12 +101,12 @@
 					bVal = b.platformShare;
 					break;
 				case 'subjects':
-					aVal = a.userRecord?.subjects_count ?? 0;
-					bVal = b.userRecord?.subjects_count ?? 0;
+					aVal = a.vetter.subjects_count;
+					bVal = b.vetter.subjects_count;
 					break;
 				case 'topics':
-					aVal = a.userRecord?.topics_count ?? 0;
-					bVal = b.userRecord?.topics_count ?? 0;
+					aVal = a.vetter.topics_count;
+					bVal = b.vetter.topics_count;
 					break;
 			}
 
@@ -276,8 +269,8 @@
 							<td class="num">{row.approvalRate}%</td>
 							<td class="num">{row.rejectionRate}%</td>
 							<td class="num">{row.platformShare}%</td>
-							<td class="num">{row.userRecord?.subjects_count ?? 0}</td>
-							<td class="num">{row.userRecord?.topics_count ?? 0}</td>
+							<td class="num">{row.vetter.subjects_count}</td>
+							<td class="num">{row.vetter.topics_count}</td>
 						</tr>
 					{/each}
 				</tbody>
@@ -298,8 +291,8 @@
 						<span>Approval <strong>{row.approvalRate}%</strong></span>
 						<span>Rejection <strong>{row.rejectionRate}%</strong></span>
 						<span>Share <strong>{row.platformShare}%</strong></span>
-						<span>Subjects <strong>{row.userRecord?.subjects_count ?? 0}</strong></span>
-						<span>Topics <strong>{row.userRecord?.topics_count ?? 0}</strong></span>
+						<span>Subjects <strong>{row.vetter.subjects_count}</strong></span>
+						<span>Topics <strong>{row.vetter.topics_count}</strong></span>
 					</div>
 				</div>
 			{/each}

@@ -30,6 +30,11 @@ _pending_reconciliation_cache: dict[str, object] = {
     "expires_at": 0.0,
     "items": [],
 }
+_LIVE_ACTIVITY_CACHE_TTL_SECONDS = 5.0
+_live_activity_cache: dict[str, object] = {
+    "expires_at": 0.0,
+    "response": None,
+}
 
 router = APIRouter()
 
@@ -726,6 +731,33 @@ async def _build_live_activity_response() -> ActiveUsersResponse:
     )
 
 
+def _clone_model(model: BaseModel) -> BaseModel:
+    if hasattr(model, "model_copy"):
+        return model.model_copy(deep=True)
+    return model.copy(deep=True)
+
+
+async def _get_live_activity_response_cached(*, force_refresh: bool = False) -> ActiveUsersResponse:
+    now = time.monotonic()
+    cached_expires_at = float(_live_activity_cache.get("expires_at") or 0.0)
+    cached_response = _live_activity_cache.get("response")
+    if (
+        not force_refresh
+        and now < cached_expires_at
+        and isinstance(cached_response, ActiveUsersResponse)
+    ):
+        return _clone_model(cached_response)
+
+    response = await _build_live_activity_response()
+    _live_activity_cache.update(
+        {
+            "expires_at": now + _LIVE_ACTIVITY_CACHE_TTL_SECONDS,
+            "response": response,
+        }
+    )
+    return _clone_model(response)
+
+
 def _dump_model(model: BaseModel) -> dict:
     return model.model_dump() if hasattr(model, "model_dump") else model.dict()
 
@@ -737,7 +769,7 @@ async def get_active_users(
     """Get live vetting sessions and automatic generation queue counts."""
     _ensure_admin(current_user)
 
-    return await _build_live_activity_response()
+    return await _get_live_activity_response_cached()
 
 
 @router.get("/historical", response_model=HistoricalResponse)
@@ -894,7 +926,7 @@ async def analytics_websocket(
         await analytics_ws_manager.connect(websocket, connection_id, user_id, is_admin)
         
         # Send initial state
-        live_snapshot = await _build_live_activity_response()
+        live_snapshot = await _get_live_activity_response_cached()
         await websocket.send_json({
             "type": "connected",
             "connection_id": connection_id,
@@ -913,7 +945,7 @@ async def analytics_websocket(
                     await websocket.send_json({"type": "pong"})
                     await websocket.send_json({
                         "type": "activity_update",
-                        "data": _dump_model(await _build_live_activity_response()),
+                        "data": _dump_model(await _get_live_activity_response_cached()),
                     })
                 else:
                     await websocket.send_json({

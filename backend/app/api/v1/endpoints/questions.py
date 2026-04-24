@@ -2335,14 +2335,20 @@ async def schedule_background_generation(
 
 
 @router.get("/background-generation-statuses")
-async def get_background_generation_statuses(
-    subject_ids: str = Query(..., description="Comma-separated subject IDs"),
-    current_user: User = Depends(get_current_user),
-):
-    """Get in-progress background generation status for multiple subjects."""
-    raw_ids = [item.strip() for item in subject_ids.split(",") if item.strip()]
+class BackgroundGenerationStatusesRequest(BaseModel):
+    subject_ids: List[str]
+
+
+class TopicGenerationStatusesRequest(BaseModel):
+    topic_ids: List[str]
+
+
+def _collect_background_generation_statuses(
+    current_user: User,
+    raw_ids: List[str],
+) -> dict[str, dict]:
     if not raw_ids:
-        return {"statuses": {}}
+        return {}
 
     statuses: dict[str, dict] = {}
     for subject_id_str in raw_ids:
@@ -2485,7 +2491,26 @@ async def get_background_generation_statuses(
             "updated_at": (status_payload or {}).get("updated_at"),
         }
 
-    return {"statuses": statuses}
+    return statuses
+
+
+async def get_background_generation_statuses(
+    subject_ids: str = Query(..., description="Comma-separated subject IDs"),
+    current_user: User = Depends(get_current_user),
+):
+    """Get in-progress background generation status for multiple subjects."""
+    raw_ids = [item.strip() for item in subject_ids.split(",") if item.strip()]
+    return {"statuses": _collect_background_generation_statuses(current_user, raw_ids)}
+
+
+@router.post("/background-generation-statuses")
+async def post_background_generation_statuses(
+    request: BackgroundGenerationStatusesRequest,
+    current_user: User = Depends(get_current_user),
+):
+    """Get in-progress background generation status for multiple subjects via JSON body."""
+    raw_ids = [item.strip() for item in request.subject_ids if item and item.strip()]
+    return {"statuses": _collect_background_generation_statuses(current_user, raw_ids)}
 
 
 @router.get("/topic-generation-statuses")
@@ -2499,8 +2524,15 @@ async def get_topic_generation_statuses(
     This provides cross-device visibility of generation status.
     """
     raw_ids = [item.strip() for item in topic_ids.split(",") if item.strip()]
+    return {"statuses": await _collect_topic_generation_statuses(raw_ids, db)}
+
+
+async def _collect_topic_generation_statuses(
+    raw_ids: List[str],
+    db: AsyncSession,
+) -> dict[str, dict]:
     if not raw_ids:
-        return {"statuses": {}}
+        return {}
 
     statuses: dict[str, dict] = {}
     
@@ -2537,8 +2569,19 @@ async def get_topic_generation_statuses(
             if run.topic_id not in seen_topics:
                 statuses[run.topic_id] = run.to_status_dict()
                 seen_topics.add(run.topic_id)
-    
-    return {"statuses": statuses}
+
+    return statuses
+
+
+@router.post("/topic-generation-statuses")
+async def post_topic_generation_statuses(
+    request: TopicGenerationStatusesRequest,
+    current_user: User = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+):
+    """Get generation status for specific topics via JSON body."""
+    raw_ids = [item.strip() for item in request.topic_ids if item and item.strip()]
+    return {"statuses": await _collect_topic_generation_statuses(raw_ids, db)}
 
 
 @router.post("/backfill-topic-mapping")
@@ -6030,10 +6073,15 @@ Output valid JSON only."""
                                     system_prompt=system_prompt,
                                     temperature=0.75 + (0.05 * attempt),
                                 )
-                            except Exception:
+                                resp = _normalize_llm_response(resp)
+                            except Exception as e:
+                                logger.warning(f"[{request_id}] LLM call exception (attempt {attempt+1}): {e}")
                                 resp = None
 
                             if not resp or "question_text" not in resp:
+                                resp_keys = list(resp.keys()) if resp else []
+                                resp_preview = str(resp)[:300] if resp else "None"
+                                logger.warning(f"[{request_id}] LLM returned invalid response (attempt {attempt+1}), keys={resp_keys}, preview={resp_preview}")
                                 if attempt == RETRY_LIMIT - 1:
                                     questions_failed += 1
                                 continue

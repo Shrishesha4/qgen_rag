@@ -34,7 +34,7 @@
 		error = '';
 		try {
 			treeData = await getSubjectsTree();
-			expandedGroups = new Set(treeData.groups.map((group) => group.id));
+			expandedGroups = new Set();
 		} catch (e: unknown) {
 			error = e instanceof Error ? e.message : 'Failed to load groups';
 		} finally {
@@ -53,24 +53,20 @@
 
 	const subjectGroupMetaById = $derived.by(() => buildSubjectGroupMetaById(treeData?.groups ?? []));
 
-	const allGroupedSubjects = $derived.by(() => {
-		const groupedSubjects: SubjectResponse[] = [];
+	const filteredGroupsView = $derived.by(() => {
+		const search = query.trim().toLowerCase();
+		if (!search) return null;
 
+		const groupedSubjects: SubjectResponse[] = [];
 		function walk(groups: SubjectGroupTreeNode[]) {
 			for (const group of groups) {
 				groupedSubjects.push(...group.subjects);
 				walk(group.children);
 			}
 		}
-
 		walk(treeData?.groups ?? []);
-		return groupedSubjects;
-	});
 
-	const filteredGroupsView = $derived.by(() => {
-		const search = query.trim().toLowerCase();
-		if (!search) return null;
-		const filtered = allGroupedSubjects.filter((subject) => matchesSubjectSearch(subject, search, subjectGroupMetaById));
+		const filtered = groupedSubjects.filter((subject) => matchesSubjectSearch(subject, search, subjectGroupMetaById));
 
 		const sorted = [...filtered].sort((a, b) => {
 			let aVal: number | string = 0;

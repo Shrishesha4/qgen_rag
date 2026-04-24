@@ -158,6 +158,32 @@ export interface AdminSubjectDetail extends AdminSubjectSummary {
 	topics: AdminTopicSummary[];
 }
 
+export interface AdminTeacherProgressSummary {
+	teacher_id: string;
+	username: string;
+	full_name: string | null;
+	email: string;
+	subjects_count: number;
+	total_topics: number;
+	total_questions: number;
+	total_approved: number;
+	total_rejected: number;
+	total_pending: number;
+	subject_search_text: string;
+}
+
+export interface AdminVetterProgressSummary {
+	user_id: string;
+	username: string;
+	full_name: string | null;
+	email: string;
+	total_vetted: number;
+	total_approved: number;
+	total_rejected: number;
+	subjects_count: number;
+	topics_count: number;
+}
+
 export interface AdminQuestionSummary {
 	id: string;
 	document_id: string | null;
@@ -301,8 +327,19 @@ export async function getAdminDashboard(): Promise<AdminDashboard> {
 	return apiFetch<AdminDashboard>('/admin/dashboard');
 }
 
-export async function listAdminSubjects(): Promise<AdminSubjectSummary[]> {
-	return apiFetch<AdminSubjectSummary[]>('/admin/subjects');
+export async function listAdminSubjects(teacherId?: string): Promise<AdminSubjectSummary[]> {
+	const params = new URLSearchParams();
+	if (teacherId) params.set('teacher_id', teacherId);
+	const suffix = params.toString() ? `?${params.toString()}` : '';
+	return apiFetch<AdminSubjectSummary[]>(`/admin/subjects${suffix}`);
+}
+
+export async function listAdminTeacherProgress(): Promise<AdminTeacherProgressSummary[]> {
+	return apiFetch<AdminTeacherProgressSummary[]>('/admin/teachers/progress');
+}
+
+export async function listAdminVetterProgress(): Promise<AdminVetterProgressSummary[]> {
+	return apiFetch<AdminVetterProgressSummary[]>('/admin/vetters/progress');
 }
 
 export async function getAdminSubject(subjectId: string): Promise<AdminSubjectDetail> {
