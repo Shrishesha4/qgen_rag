@@ -2,7 +2,7 @@
 	import { browser } from '$app/environment';
 	import { onMount, tick } from 'svelte';
 	import MarkdownIt from 'markdown-it';
-	import markdownItKatex from 'markdown-it-katex';
+	import katex from 'katex';
 	import hljs from 'highlight.js/lib/common';
 	import sanitizeHtml from 'sanitize-html';
 	import mermaid from 'mermaid';
@@ -32,7 +32,11 @@
 		const unescaped = value.replace(/\\`\\`\\`/g, '```');
 
 		return unescaped.replace(/```([\s\S]*?)```/g, (_match: string, rawInner: string) => {
-			const inner = String(rawInner || '').replace(/^\n+/, '');
+			// Unescape literal \n / \t sequences produced by LLM double-escaping
+			const inner = String(rawInner || '')
+				.replace(/^\n+/, '')
+				.replace(/\\n/g, '\n')
+				.replace(/\\t/g, '\t');
 			let lang = '';
 			let code = inner;
 
@@ -61,16 +65,73 @@
 		return out;
 	}
 
+	function restoreCorruptedLatex(value: string): string {
+		// Existing DB records may have LaTeX commands corrupted by JSON \t/\b/\f/\r escape parsing.
+		// e.g. \times → TAB + "imes", \beta → BACKSPACE + "eta", \frac → FORMFEED + "rac"
+		// Restore by replacing control chars followed by letters back to \command form.
+		return value
+			.replace(/\x09([a-zA-Z]+)/g, '\\t$1')  // TAB + letters → \t... (\times, \theta, etc.)
+			.replace(/\x08([a-zA-Z]+)/g, '\\b$1')  // Backspace + letters → \b... (\beta, etc.)
+			.replace(/\x0c([a-zA-Z]+)/g, '\\f$1')  // Form feed + letters → \f... (\frac, \forall, etc.)
+			.replace(/\x0d([a-zA-Z]+)/g, '\\r$1'); // CR + letters → \r... (\rho, \right, etc.)
+	}
+
 	function normalizeMathNotation(value: string): string {
 		return mapNonCodeSegments(value, (segment: string) => {
 			let next = segment;
-			// Normalize escaped LaTeX delimiters to forms markdown-it-katex parses reliably.
+			// \(...\) → $...$  and  \[...\] → $$...$$
 			next = next.replace(/\\\(([^\n]+?)\\\)/g, (_m: string, expr: string) => `$${expr.trim()}$`);
 			next = next.replace(/\\\[([\s\S]+?)\\\]/g, (_m: string, expr: string) => `\n\n$$\n${expr.trim()}\n$$\n\n`);
-			// Normalize common plain transpose notation so it renders as math.
-			next = next.replace(/\b([A-Za-z][A-Za-z0-9]*)\s*\^\s*T\b/g, (_m: string, symbol: string) => `$${symbol}^{T}$`);
+			// Normalize plain transpose notation: A^T → $A^{T}$
+			next = next.replace(/\b([A-Za-z][A-Za-z0-9]*)\s*\^\s*T\b(?!\$)/g, (_m: string, symbol: string) => `$${symbol}^{T}$`);
 			return next;
 		});
+	}
+
+	interface MathPlaceholder {
+		key: string;
+		html: string;
+	}
+
+	function extractAndRenderMath(text: string): { processed: string; placeholders: MathPlaceholder[] } {
+		const placeholders: MathPlaceholder[] = [];
+		let counter = 0;
+		const makeKey = () => `MATHPH${counter++}MATHPH`;
+		const opts = { throwOnError: false, trust: false, strict: false } as const;
+
+		// Display math $$...$$ first (before inline to avoid partial matches)
+		let processed = text.replace(/\$\$([\s\S]*?)\$\$/g, (_: string, expr: string) => {
+			const key = makeKey();
+			try {
+				const html = katex.renderToString(expr.trim(), { ...opts, displayMode: true });
+				placeholders.push({ key, html: `<span class="math-display">${html}</span>` });
+			} catch {
+				placeholders.push({ key, html: `<span class="math-error">$$${expr}$$</span>` });
+			}
+			return key;
+		});
+
+		// Inline math $...$  — require non-whitespace start/end to avoid false positives
+		processed = processed.replace(/\$([^\s$][^$\n]*?[^\s$]|\S)\$/g, (_: string, expr: string) => {
+			const key = makeKey();
+			try {
+				const html = katex.renderToString(expr.trim(), { ...opts, displayMode: false });
+				placeholders.push({ key, html: `<span class="math-inline">${html}</span>` });
+			} catch {
+				placeholders.push({ key, html: `<span class="math-error">$${expr}$</span>` });
+			}
+			return key;
+		});
+
+		return { processed, placeholders };
+	}
+
+	function restoreMathPlaceholders(html: string, placeholders: MathPlaceholder[]): string {
+		let result = html;
+		for (const { key, html: mathHtml } of placeholders) {
+			result = result.split(key).join(mathHtml);
+		}
+		return result;
 	}
 
 	const markdown: MarkdownIt = new MarkdownIt({
@@ -87,7 +148,8 @@
 			return `<pre class="rich-pre"><code class="hljs">${escaped}</code></pre>`;
 		}
 	});
-	markdown.use(markdownItKatex as never);
+	// Math is handled manually via extractAndRenderMath (KaTeX pre-render + placeholder restore)
+	// so no markdown-it-katex plugin needed.
 
 	const allowedTags = [
 		...sanitizeHtml.defaults.allowedTags,
@@ -122,8 +184,8 @@
 				a: ['href', 'name', 'target', 'rel'],
 				img: ['src', 'alt', 'title', 'width', 'height'],
 				code: ['class'],
-				span: ['class'],
-				div: ['class'],
+				span: ['class', 'style'],
+				div: ['class', 'style'],
 				pre: ['class'],
 				table: ['class'],
 				svg: [
@@ -192,10 +254,15 @@
 	}
 
 	async function renderContent(): Promise<void> {
-		const normalizedCode = normalizeFencedCodeBlocks(content || '');
+		const restorePass = restoreCorruptedLatex(content || '');
+		const normalizedCode = normalizeFencedCodeBlocks(restorePass);
 		const normalized = normalizeMathNotation(normalizedCode);
-		const raw = normalized.trim() ? markdown.render(normalized) : '';
-		const sanitized = sanitizeMarkup(raw || '');
+		// Pre-render all math expressions with KaTeX (bypasses broken markdown-it-katex@2.x)
+		const { processed, placeholders } = extractAndRenderMath(normalized);
+		const raw = processed.trim() ? markdown.render(processed) : '';
+		// Restore KaTeX HTML in place of placeholders
+		const withMath = restoreMathPlaceholders(raw, placeholders);
+		const sanitized = sanitizeMarkup(withMath);
 		renderedHtml = inline ? toInline(sanitized) : sanitized;
 		if (!browser) return;
 		await tick();

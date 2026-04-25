@@ -417,6 +417,8 @@ class GeminiService:
         logger.warning(f"JSON appears truncated (depth={depth}, in_string={in_string}). Attempting repair.")
         repaired = self._repair_truncated_json(text[start:])
         if repaired:
+            # Re-sanitize: string is now closed, so control chars inside can be escaped
+            repaired = self._sanitize_control_chars(repaired)
             try:
                 return json.loads(repaired)
             except json.JSONDecodeError:
@@ -458,6 +460,18 @@ class GeminiService:
         
         # If we ended inside a string, close it
         if in_str:
+            # Truncate chain-of-thought before closing
+            _COT_MARKERS = [
+                ". Wait,", ". Wait.", " Wait, ", " Hmm,", ". Hmm,",
+                ". Let me re", "Let me recalculate", "Let me re-",
+                ". Oops,", ". Actually, let", ". I made an error",
+            ]
+            lower_result = result.lower()
+            for _marker in _COT_MARKERS:
+                _idx = lower_result.rfind(_marker.lower())
+                if _idx > 0 and _idx > len(result) - 600:
+                    result = result[:_idx]
+                    lower_result = result.lower()
             while result and result[-1] == '\\':
                 result = result[:-1]
             result += '"'
@@ -500,7 +514,19 @@ class GeminiService:
                     else:
                         nxt = content[i + 1]
                         if nxt in valid_escapes:
-                            result.append('\\' + nxt)
+                            # Heuristic: \t, \n, \r, \b, \f followed by lowercase alpha
+                            # = LaTeX command (\times, \theta, \nabla, \beta, \frac, etc.)
+                            # Double-escape so json.loads keeps the literal backslash.
+                            is_latex_cmd = (
+                                nxt == 't' and (i + 2) < len(content) and content[i + 2].islower()
+                            ) or (
+                                nxt in 'nrbf' and (i + 3) < len(content)
+                                and content[i + 2].islower() and content[i + 3].islower()
+                            )
+                            if is_latex_cmd:
+                                result.append('\\\\' + nxt)
+                            else:
+                                result.append('\\' + nxt)
                             i += 2
                         elif nxt == 'u':
                             hex_part = content[i + 2:i + 6]

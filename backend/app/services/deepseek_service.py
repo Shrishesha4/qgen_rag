@@ -363,19 +363,33 @@ class DeepSeekService:
         last_error = None
 
         for attempt in range(max_retries):
+            attempt_payload = dict(payload)
+            if attempt > 0:
+                attempt_payload["temperature"] = max(0.1, temperature - (attempt * 0.1))
+                attempt_payload["messages"] = messages + [
+                    {
+                        "role": "user",
+                        "content": (
+                            "Previous response was invalid/truncated JSON. "
+                            "Return one complete JSON object only. "
+                            "Keep explanation concise (max 80 words)."
+                        ),
+                    }
+                ]
+
             try:
                 async with httpx.AsyncClient(timeout=self._timeout) as client:
                     try:
                         resp = await client.post(
                             f"{self.base_url}/chat/completions",
                             headers=self._headers(),
-                            json=payload,
+                            json=attempt_payload,
                         )
                     except Exception:
                         raise
 
-                    if resp.status_code == 400 and "response_format" in payload:
-                        fallback_payload = dict(payload)
+                    if resp.status_code == 400 and "response_format" in attempt_payload:
+                        fallback_payload = dict(attempt_payload)
                         fallback_payload.pop("response_format", None)
                         logger.warning(
                             "Provider rejected response_format=json_object for model=%s base_url=%s; retrying without response_format",
@@ -430,6 +444,13 @@ class DeepSeekService:
                 try:
                     return self._extract_json_object(content)
                 except json.JSONDecodeError as e:
+                    salvaged = self._salvage_json_prefix(content)
+                    if salvaged is not None:
+                        logger.warning(
+                            "Recovered malformed JSON by prefix salvage on attempt %s",
+                            attempt + 1,
+                        )
+                        return salvaged
                     logger.warning(
                         f"JSON extraction failed: {e}. Cleaned response was: {content[:800]}"
                     )
@@ -441,8 +462,8 @@ class DeepSeekService:
                         continue
                     raise
 
-            except (DeepSeekError, json.JSONDecodeError):
-                last_error = last_error  # keep original
+            except (DeepSeekError, json.JSONDecodeError) as e:
+                last_error = e
                 raise
 
             except httpx.HTTPStatusError as e:
@@ -519,7 +540,20 @@ class DeepSeekService:
                     else:
                         nxt = content[i + 1]
                         if nxt in valid_escapes:
-                            result.append("\\" + nxt)
+                            # Heuristic: \t, \n, \r, \b, \f followed by lowercase alpha
+                            # = LaTeX command (\times, \theta, \nabla, \beta, \frac, etc.)
+                            # not a real JSON control-char escape. Double the backslash so
+                            # json.loads preserves the literal backslash.
+                            is_latex_cmd = (
+                                nxt == 't' and (i + 2) < len(content) and content[i + 2].islower()
+                            ) or (
+                                nxt in 'nrbf' and (i + 3) < len(content)
+                                and content[i + 2].islower() and content[i + 3].islower()
+                            )
+                            if is_latex_cmd:
+                                result.append('\\\\' + nxt)
+                            else:
+                                result.append('\\' + nxt)
                             i += 2
                         elif nxt == "u":
                             hex_part = content[i + 2:i + 6]
@@ -619,12 +653,69 @@ class DeepSeekService:
         )
         repaired = self._repair_truncated_json(text[start:], depth, in_string)
         if repaired:
+            # Re-sanitize: string is now closed, so control chars inside can be escaped
+            repaired = self._sanitize_control_chars(repaired)
             try:
                 return json.loads(repaired)
             except json.JSONDecodeError:
-                pass
+                fixed_repaired = self._fix_json_syntax(repaired)
+                try:
+                    return json.loads(fixed_repaired)
+                except json.JSONDecodeError:
+                    decoded = self._decode_json_prefix(fixed_repaired)
+                    if decoded is not None:
+                        return decoded
+
+        decoded = self._decode_json_prefix(text[start:])
+        if decoded is not None:
+            return decoded
 
         raise json.JSONDecodeError("No valid JSON structure found", text, 0)
+
+    def _decode_json_prefix(self, text: str) -> Optional[Dict[str, Any]]:
+        """Decode first complete JSON value from text prefix, ignoring trailing garbage."""
+        decoder = json.JSONDecoder()
+        try:
+            parsed, _ = decoder.raw_decode(text)
+            if isinstance(parsed, dict):
+                return parsed
+            return None
+        except json.JSONDecodeError:
+            return None
+
+    def _salvage_json_prefix(self, text: str) -> Optional[Dict[str, Any]]:
+        """Best-effort salvage for malformed model output."""
+        if not text:
+            return None
+
+        sanitized = self._sanitize_control_chars(text.strip())
+        decoded = self._decode_json_prefix(sanitized)
+        if decoded is not None:
+            return decoded
+
+        first_obj = sanitized.find("{")
+        if first_obj == -1:
+            return None
+
+        repaired = self._repair_truncated_json(sanitized[first_obj:], depth=0, in_string=False)
+        if not repaired:
+            return None
+
+        # Re-sanitize after repair: explanation string is now closed so control chars can be escaped
+        repaired = self._sanitize_control_chars(repaired)
+
+        for candidate in (repaired, self._fix_json_syntax(repaired)):
+            decoded = self._decode_json_prefix(candidate)
+            if decoded is not None:
+                return decoded
+            try:
+                parsed = json.loads(candidate)
+                if isinstance(parsed, dict):
+                    return parsed
+            except json.JSONDecodeError:
+                continue
+
+        return None
 
     def _repair_truncated_json(
         self, text: str, depth: int, in_string: bool
@@ -660,6 +751,18 @@ class DeepSeekService:
                     stack.pop()
 
         if in_str:
+            # Truncate chain-of-thought before closing: strip verbose reasoning markers
+            _COT_MARKERS = [
+                ". Wait,", ". Wait.", " Wait, ", " Hmm,", ". Hmm,",
+                ". Let me re", ". Let me re", "Let me recalculate", "Let me re-",
+                ". Oops,", ". Actually, let", ". I made an error",
+            ]
+            lower_result = result.lower()
+            for _marker in _COT_MARKERS:
+                _idx = lower_result.rfind(_marker.lower())
+                if _idx > 0 and _idx > len(result) - 600:
+                    result = result[:_idx]
+                    lower_result = result.lower()
             while result and result[-1] == "\\":
                 result = result[:-1]
             result += '"'

@@ -79,9 +79,11 @@ Output ONLY valid JSON with this exact format:
     "question_text": "Clear, specific question based on the content",
     "options": ["A) First option with actual value", "B) Second option with actual value", "C) Third option with actual value", "D) Fourth option with actual value"],
     "correct_answer": "The letter (A, B, C, or D) of the correct option",
-    "explanation": "Why this answer is correct, referencing the source content",
+    "explanation": "1-2 sentences ONLY. State the final reason the answer is correct. NO step-by-step calculations, NO self-corrections, NO 'wait' or 'let me recalculate'.",
     "topic_tags": ["relevant", "topics"]
 }
+
+CRITICAL for explanation field: keep it under 60 words, state only the final rationale, never include working-through reasoning.
 
 Example for a math topic:
 {
@@ -294,7 +296,9 @@ class QuestionGenerationService:
                 "Write mathematical expressions in KaTeX-compatible LaTeX delimiters: inline $...$ and display $$...$$. "
                 "For matrix operations, represent transpose/inverse/determinant clearly (for example $A^T$, $A^{-1}$, $\\det(A)$). "
                 "Avoid verbose matrix environments like \\begin{bmatrix}...\\end{bmatrix} in options/explanations; prefer compact notation "
-                "such as $[[1,2],[3,4]]$ to keep JSON stable. Keep explanation under 70 words and avoid long step-by-step narration."
+                "such as $[[1,2],[3,4]]$ to keep JSON stable. "
+                "EXPLANATION RULE: max 50 words, state ONLY the final answer rationale. "
+                "NEVER include working-through steps, self-corrections, or 'Wait, let me recalculate' text."
             )
         return "STYLE PROFILE: General academic exam style with rigorous reasoning and clarity."
 
@@ -1700,6 +1704,8 @@ Return JSON only:
         """
         import logging
         logger = logging.getLogger(__name__)
+
+        question_data = self._normalize_generation_payload_for_rendering(question_data)
         
         # Validate question quality if chunks provided
         confidence_score = 0.8  # Default confidence
@@ -2600,6 +2606,8 @@ Output valid JSON only."""
         """Save a question with novelty metadata."""
         import logging
         logger = logging.getLogger(__name__)
+
+        question_data = self._normalize_generation_payload_for_rendering(question_data)
         
         # Validate question quality if chunks provided
         confidence_score = 0.8
@@ -2780,39 +2788,162 @@ Output valid JSON only."""
         if syllabus_text.strip():
             text = syllabus_text.strip()
 
-            # 1. Numbered items: "1. ...", "1) ...", "i. ..."
-            numbered = re.split(r'\n\s*(?:\d+|[ivxIVX]+)[\.\)]\s+', text)
-            if len(numbered) > 2:
-                concepts = [c.strip() for c in numbered if c.strip() and len(c.strip()) > 10]
+            # Normalize list separators first so mixed styles still split cleanly.
+            text = re.sub(r"[\u2022\u2023\u25E6\u2043]", "\n- ", text)
+            text = re.sub(r"\s+", " ", text).strip()
+            text = re.sub(r"\s*(?:\|{2,}|/{2,}|>{2,})\s*", "; ", text)
 
-            # 2. Bullet points: "- ...", "* ...", "• ..."
-            if not concepts:
-                bullets = re.split(r'\n\s*[-•*]\s+', text)
-                if len(bullets) > 2:
-                    concepts = [c.strip() for c in bullets if c.strip() and len(c.strip()) > 10]
+            candidate_segments: List[str] = []
 
-            # 3. Semicolons (compact one-liner syllabi)
-            if not concepts and ';' in text:
-                concepts = [c.strip() for c in text.split(';') if c.strip() and len(c.strip()) > 10]
+            # 1. Numbered and bullet items (most reliable for syllabus outlines)
+            numbered_or_bulleted = re.split(
+                r"\s*(?:\d+[\.)]|[ivxIVX]+[\.)]|[a-zA-Z][\.)]|[-*])\s+",
+                text,
+            )
+            if len(numbered_or_bulleted) > 2:
+                candidate_segments.extend(numbered_or_bulleted)
 
-            # 4. Comma-separated items (if many commas, likely a list)
-            if not concepts and text.count(',') >= 3:
-                parts = [c.strip() for c in text.split(',') if c.strip() and len(c.strip()) > 8]
-                if len(parts) >= 3:
-                    concepts = parts
+            # 2. Clause-style splits used in compact syllabus text.
+            candidate_segments.extend(re.split(r"\s*;\s*", text))
+            candidate_segments.extend(re.split(r"\s*:\s*", text))
 
-            # 5. Sentence split (last resort)
-            if not concepts:
-                sentences = re.split(r'(?<=[.!?])\s+', text)
-                concepts = [s.strip() for s in sentences if s.strip() and len(s.strip()) > 15]
+            # 3. Sentence-level fallback.
+            candidate_segments.extend(re.split(r"(?<=[.!?])\s+", text))
 
-        # Truncate each concept to 300 chars, cap total at 20, require min 10 chars
-        concepts = [c[:300] for c in concepts if len(c) >= 10][:20]
+            # 4. Final coarse split for comma-heavy one-liners.
+            if text.count(",") >= 3:
+                candidate_segments.extend(re.split(r"\s*,\s*", text))
+
+            stop_phrases = {
+                "syllabus",
+                "topic",
+                "topics",
+                "unit",
+                "chapter",
+                "course outcomes",
+                "learning outcomes",
+            }
+
+            for segment in candidate_segments:
+                cleaned = re.sub(r"\s+", " ", (segment or "")).strip(" -,:;.")
+                if len(cleaned) < 8:
+                    continue
+                if cleaned.lower() in stop_phrases:
+                    continue
+                concepts.append(cleaned)
+
+        # Deduplicate while preserving order.
+        seen: set[str] = set()
+        deduped: List[str] = []
+        for concept in concepts:
+            key = re.sub(r"\s+", " ", concept.lower()).strip()
+            if not key or key in seen:
+                continue
+            seen.add(key)
+            deduped.append(concept[:300])
+
+        concepts = deduped[:30]
 
         if not concepts:
             concepts = [fallback_context] if fallback_context.strip() else ["general concepts"]
 
         return concepts
+
+    async def _build_subject_concept_checklist(
+        self,
+        subject_id: str,
+        topic_id: Optional[str],
+        fallback_context: str,
+    ) -> List[str]:
+        """Build a cross-topic concept checklist for wider syllabus coverage."""
+        topics_query = select(Topic).where(Topic.subject_id == subject_id)
+        if topic_id:
+            topics_query = topics_query.where(Topic.id == topic_id)
+
+        topics_result = await self.db.execute(
+            topics_query.order_by(Topic.order_index.asc(), Topic.created_at.asc())
+        )
+        topics = list(topics_result.scalars().all())
+
+        concepts: List[str] = []
+        for topic in topics:
+            topic_name = (topic.name or "").strip() or "Topic"
+            topic_syllabus = (topic.syllabus_content or "").strip()
+            topic_concepts = self._parse_syllabus_into_concepts(
+                topic_syllabus,
+                fallback_context=topic_name,
+            )
+
+            for concept in topic_concepts:
+                cleaned = re.sub(r"\s+", " ", (concept or "")).strip()
+                if not cleaned:
+                    continue
+                if topic_name.lower() in cleaned.lower():
+                    concepts.append(cleaned)
+                else:
+                    concepts.append(f"{topic_name}: {cleaned}")
+
+        if not concepts:
+            return self._parse_syllabus_into_concepts("", fallback_context=fallback_context)
+
+        # Preserve order but dedupe near-identical concepts.
+        deduped: List[str] = []
+        seen: set[str] = set()
+        for concept in concepts:
+            key = re.sub(r"\s+", " ", concept.lower()).strip()
+            if key in seen:
+                continue
+            seen.add(key)
+            deduped.append(concept[:300])
+
+        return deduped[:40]
+
+    @staticmethod
+    def _normalize_math_payload_text(text: str) -> str:
+        """Normalize common LLM math formatting issues for stable KaTeX rendering."""
+        if not text:
+            return text
+
+        normalized = text
+        normalized = re.sub(r"\\\(([^\n]+?)\\\)", r"$\1$", normalized)
+        normalized = re.sub(r"\\\[([\s\S]+?)\\\]", r"$$\1$$", normalized)
+
+        # Collapse malformed mixed delimiters like $$x$ or $x$$ to a single inline pair.
+        normalized = re.sub(r"\$\$([^$\n]{1,240})\$", r"$\1$", normalized)
+        normalized = re.sub(r"\$([^$\n]{1,240})\$\$", r"$\1$", normalized)
+
+        # Short display blocks often come from malformed inline output; keep them inline.
+        normalized = re.sub(r"\$\$([^$\n]{1,200})\$\$", r"$\1$", normalized)
+
+        # If unescaped dollar delimiters are odd, drop the last stray delimiter.
+        dollar_matches = list(re.finditer(r"(?<!\\)\$", normalized))
+        if len(dollar_matches) % 2 != 0:
+            last = dollar_matches[-1]
+            normalized = normalized[:last.start()] + normalized[last.end():]
+
+        return normalized
+
+    def _normalize_generation_payload_for_rendering(self, question_data: Dict[str, Any]) -> Dict[str, Any]:
+        """Normalize question payload fields before save/render/embedding."""
+        if not question_data:
+            return question_data
+
+        def _norm(value: Any) -> Any:
+            if isinstance(value, str):
+                return self._normalize_math_payload_text(value)
+            return value
+
+        question_data["question_text"] = _norm(question_data.get("question_text") or "")
+        if "explanation" in question_data:
+            question_data["explanation"] = _norm(question_data.get("explanation"))
+        if "expected_answer" in question_data:
+            question_data["expected_answer"] = _norm(question_data.get("expected_answer"))
+
+        raw_options = question_data.get("options")
+        if isinstance(raw_options, list):
+            question_data["options"] = [_norm(option) for option in raw_options]
+
+        return question_data
 
     async def get_questions(
         self,
@@ -3300,6 +3431,31 @@ Output valid JSON only."""
             type_distribution = self._distribute_types(count, types)
             logger.info(f"Type distribution: {type_distribution}")
 
+            concept_checklist: List[str] = []
+            if subject_id:
+                try:
+                    concept_checklist = await self._build_subject_concept_checklist(
+                        subject_id=subject_id,
+                        topic_id=topic_id,
+                        fallback_context=context,
+                    )
+                except Exception as concept_err:
+                    logger.warning(f"quick_generate: concept checklist build failed: {concept_err}")
+            if not concept_checklist:
+                concept_checklist = self._parse_syllabus_into_concepts("", fallback_context=context)
+
+            logger.info(
+                f"quick_generate: coverage checklist — {len(concept_checklist)} concept targets"
+            )
+
+            chunks_bm25 = None
+            if chunks:
+                try:
+                    from rank_bm25 import BM25Okapi
+                    chunks_bm25 = BM25Okapi([c.chunk_text.lower().split() for c in chunks])
+                except Exception as bm25_err:
+                    logger.warning(f"quick_generate: BM25 index build failed: {bm25_err}")
+
             # Prepare rejection guidance once so parallel workers don't hit DB concurrently.
             rejection_guidance_cache = ""
             if subject_id or topic_id:
@@ -3336,7 +3492,12 @@ Output valid JSON only."""
             slot_id_seq = 0
             for q_type, type_count in type_distribution.items():
                 for _ in range(type_count):
-                    slot_queue.append({"id": slot_id_seq, "q_type": q_type, "attempts": 0})
+                    slot_queue.append({
+                        "id": slot_id_seq,
+                        "q_type": q_type,
+                        "attempts": 0,
+                        "focus_concept": concept_checklist[slot_id_seq % len(concept_checklist)],
+                    })
                     slot_id_seq += 1
 
             if parallel_workers > 1:
@@ -3352,12 +3513,27 @@ Output valid JSON only."""
 
             async def _build_candidate(slot: dict, attempt_index: int, exclusion_snapshot: List[str]) -> dict:
                 q_type = slot["q_type"]
+                focus_concept = slot.get("focus_concept", "")
                 try:
-                    pool_size = len(chunk_pool)
-                    pool_offset = (attempt_index * 3) % max(1, pool_size - 2)
-                    selected_chunks = chunk_pool[pool_offset:pool_offset + 3]
-                    if len(selected_chunks) < 3 and pool_size >= 3:
-                        selected_chunks = chunk_pool[:3]
+                    selected_chunks = []
+                    if focus_concept and chunks_bm25 and chunks:
+                        try:
+                            bm25_scores = chunks_bm25.get_scores(focus_concept.lower().split())
+                            top_idx = sorted(
+                                range(len(bm25_scores)),
+                                key=lambda idx: bm25_scores[idx],
+                                reverse=True,
+                            )[:4]
+                            selected_chunks = [chunks[idx] for idx in top_idx if bm25_scores[idx] > 0]
+                        except Exception:
+                            selected_chunks = []
+
+                    if not selected_chunks:
+                        pool_size = len(chunk_pool)
+                        pool_offset = (attempt_index * 3) % max(1, pool_size - 2)
+                        selected_chunks = chunk_pool[pool_offset:pool_offset + 3]
+                        if len(selected_chunks) < 3 and pool_size >= 3:
+                            selected_chunks = chunk_pool[:3]
                     if not selected_chunks:
                         import random
                         selected_chunks = random.sample(chunks, min(3, len(chunks)))
@@ -3368,6 +3544,7 @@ Output valid JSON only."""
                         difficulty=difficulty,
                         context=context,
                         bloom_levels=bloom_levels,
+                        focus_concept=focus_concept or None,
                         previous_questions=exclusion_snapshot,
                         question_index=attempt_index,
                         reference_questions=reference_questions,
@@ -3570,7 +3747,12 @@ Output valid JSON only."""
                     )
                     type_list = types or ["mcq"]
                     for i in range(shortfall):
-                        slot_queue.append({"id": slot_id_seq, "q_type": type_list[i % len(type_list)], "attempts": 0})
+                        slot_queue.append({
+                            "id": slot_id_seq,
+                            "q_type": type_list[i % len(type_list)],
+                            "attempts": 0,
+                            "focus_concept": concept_checklist[slot_id_seq % len(concept_checklist)],
+                        })
                         slot_id_seq += 1
 
                     yield QuickGenerateProgress(
@@ -4204,24 +4386,21 @@ Output valid JSON only."""
                         slot_id_seq += 1
 
             # ── Syllabus coverage checklist + even distribution within batch ──
-            # Parse topic syllabus into distinct concepts, then assign each slot
-            # a specific concept round-robin so all N questions in this batch
-            # cover different parts of the syllabus evenly.
-            topic_syllabus_text = ""
-            if topic_id:
-                try:
-                    _topic_res = await self.db.execute(
-                        select(Topic).where(Topic.id == topic_id)
-                    )
-                    _topic_obj = _topic_res.scalar_one_or_none()
-                    if _topic_obj and (_topic_obj.syllabus_content or "").strip():
-                        topic_syllabus_text = _topic_obj.syllabus_content.strip()
-                except Exception:
-                    pass
+            # Build concept targets from all relevant topic syllabi.
+            # - If topic_id is provided: focus that topic's syllabus.
+            # - If topic_id is None: cover concepts across all topics in the subject.
+            try:
+                concept_checklist = await self._build_subject_concept_checklist(
+                    subject_id=subject_id,
+                    topic_id=topic_id,
+                    fallback_context=generation_context,
+                )
+            except Exception as concept_err:
+                logger.warning(f"quick_generate_from_subject: concept checklist build failed: {concept_err}")
+                concept_checklist = self._parse_syllabus_into_concepts(
+                    "", fallback_context=generation_context
+                )
 
-            concept_checklist = self._parse_syllabus_into_concepts(
-                topic_syllabus_text, fallback_context=generation_context
-            )
             logger.info(
                 f"quick_generate_from_subject: coverage checklist — "
                 f"{len(concept_checklist)} concepts from syllabus"
@@ -4548,7 +4727,13 @@ Output valid JSON only."""
                     )
                     type_list = types or ["mcq"]
                     for i in range(shortfall):
-                        slot_queue.append({"id": slot_id_seq, "q_type": type_list[i % len(type_list)], "attempts": 0})
+                        slot_queue.append({
+                            "id": slot_id_seq,
+                            "q_type": type_list[i % len(type_list)],
+                            "attempts": 0,
+                            "provider_key": None,
+                            "focus_concept": concept_checklist[slot_id_seq % len(concept_checklist)],
+                        })
                         slot_id_seq += 1
 
                     yield QuickGenerateProgress(
