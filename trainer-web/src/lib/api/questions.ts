@@ -27,6 +27,20 @@ export interface TeacherQuestionListResponse {
 	pages: number;
 }
 
+type TeacherQuestionListApiResponse = {
+	questions: TeacherQuestionSummary[];
+	pagination?: {
+		page?: number;
+		limit?: number;
+		total?: number;
+		total_pages?: number;
+	};
+	total?: number;
+	page?: number;
+	limit?: number;
+	pages?: number;
+};
+
 export interface TeacherQuestionFeedParams {
 	group_id?: string;
 	subject_id?: string;
@@ -58,5 +72,12 @@ export async function listTeacherQuestions(
 ): Promise<TeacherQuestionListResponse> {
 	const searchParams = buildTeacherQuestionSearchParams(params);
 	const suffix = searchParams.toString() ? `?${searchParams.toString()}` : '';
-	return apiFetch<TeacherQuestionListResponse>(`/questions${suffix}`);
+	const response = await apiFetch<TeacherQuestionListApiResponse>(`/questions${suffix}`);
+	return {
+		questions: response.questions ?? [],
+		total: response.pagination?.total ?? response.total ?? 0,
+		page: response.pagination?.page ?? response.page ?? params.page ?? 1,
+		limit: response.pagination?.limit ?? response.limit ?? params.limit ?? 20,
+		pages: response.pagination?.total_pages ?? response.pages ?? 0,
+	};
 }
