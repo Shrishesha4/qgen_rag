@@ -173,6 +173,9 @@ class Settings(BaseSettings):
     # Generation Controls
     ENABLE_TWO_PASS_GENERATION: bool = Field(default=False)
     GENERATION_SCHEMA_ENFORCEMENT: bool = Field(default=True)
+    ENABLE_SUBJECT_STYLE_PROMPTING: bool = Field(default=True)
+    ENABLE_STYLE_VALIDATION_GATES: bool = Field(default=True)
+    ENABLE_RICH_CONTENT_RENDERING_HINTS: bool = Field(default=True)
     QUICK_GENERATE_PARALLEL_WORKERS: int = Field(default=6)
     AUTO_GENERATION_PENDING_THRESHOLD: int = Field(default=5)
     QUESTION_DEDUPE_SIMILARITY_THRESHOLD: float = Field(default=0.987)

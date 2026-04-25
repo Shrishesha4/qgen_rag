@@ -6,6 +6,7 @@
 	import { session } from '$lib/session';
 	import ConfirmDialog from '$lib/components/ConfirmDialog.svelte';
 	import VoiceRecorder from '$lib/components/VoiceRecorder.svelte';
+	import RichContent from '$lib/components/RichContent.svelte';
 	import {
 		getQuestionsForVetting,
 		sendVettingStopKeepalive,
@@ -336,6 +337,7 @@
 		if (batchComplete || generating || regenerating || voiceAction?.kind === 'reject' || !subjectId) return;
 		if (!allowAutoGeneration) return;
 		if (nextGenAt === 0) return;
+		if (totalReviewed >= questions.length) return;
 		if (totalReviewed >= nextGenAt) {
 			nextGenAt = 0; // disarm before async to prevent double-trigger
 			void doNextBatch();
@@ -894,7 +896,30 @@
 		}
 	}
 
-	function stopBackgroundGen() {
+	async function scheduleBackgroundGenerationForCurrentScope() {
+		if (!subjectId) {
+			throw new Error('Missing subject context for background generation.');
+		}
+
+		const allowWithoutReference = await inferAllowNoPdfGenerationFromContext();
+		const scheduled = await scheduleBackgroundGeneration({
+			subjectId,
+			count: generationBatchSize,
+			types: 'mcq',
+			difficulty: 'medium',
+			topicId: topicId || undefined,
+			allowWithoutReference,
+		});
+
+		if (!['scheduled', 'queued', 'already_running'].includes(scheduled.status)) {
+			throw new Error(scheduled.message || 'Background generation was not scheduled.');
+		}
+
+		return scheduled;
+	}
+
+	function stopBackgroundGen(options?: { cancelServer?: boolean }) {
+		const cancelServer = options?.cancelServer ?? true;
 		batchComplete = true;
 		postTriggerGenerationActive = false;
 		postTriggerBaseQuestionCount = 0;
@@ -902,7 +927,7 @@
 		genAbortController = null;
 		resetDocumentProcessingState();
 		resetGenerationProgress();
-		if (subjectId) cancelGeneration(subjectId);
+		if (cancelServer && subjectId) cancelGeneration(subjectId);
 	}
 
 	async function rollbackProvisionalSubjectIfNeeded() {
@@ -1125,23 +1150,19 @@
 			batchComplete = true;
 			postTriggerGenerationActive = false;
 			postTriggerBaseQuestionCount = 0;
-			completingBatch = false;
-			stopBackgroundGen();
-			persistProgressNow(true);
+			stopBackgroundGen({ cancelServer: false });
+			await persistProgressNow(true);
 			if (allowAutoGeneration) {
 				try {
-					await scheduleBackgroundGeneration({
-						subjectId,
-						count: generationBatchSize,
-						types: 'mcq',
-						difficulty: 'medium',
-						topicId: topicId || undefined,
-						allowWithoutReference: allowNoPdfGeneration,
-					});
-				} catch {
-					// Non-fatal — navigate back regardless
+					await scheduleBackgroundGenerationForCurrentScope();
+				} catch (e: unknown) {
+					batchComplete = false;
+					completingBatch = false;
+					error = e instanceof Error ? e.message : 'Failed to start background generation';
+					return;
 				}
 			}
+			completingBatch = false;
 			skipNextLeaveConfirm = true;
 			await navigateBackFromLoop();
 			return;
@@ -1153,11 +1174,11 @@
 	}
 
 	async function navigateBackFromLoop() {
-		if (browser && window.history.length > 1) {
-			history.back();
+		if (subjectId) {
+			await goto(`/teacher/subjects/${subjectId}`);
 			return;
 		}
-		await goto('/teacher/train');
+		await goto('/teacher/subjects');
 	}
 
 	function openNavigationConfirm(title: string, message: string, onConfirm: () => void | Promise<void>) {
@@ -1525,16 +1546,9 @@
 		handingOffGeneration = true;
 		error = '';
 		try {
-			stopBackgroundGen();
-			persistProgressNow(true);
-			await scheduleBackgroundGeneration({
-				subjectId,
-				count: generationBatchSize,
-				types: 'mcq',
-				difficulty: 'medium',
-				topicId: topicId || undefined,
-				allowWithoutReference: allowNoPdfGeneration,
-			});
+			stopBackgroundGen({ cancelServer: false });
+			await persistProgressNow(true);
+			await scheduleBackgroundGenerationForCurrentScope();
 			skipNextLeaveConfirm = true;
 			await navigateBackFromLoop();
 		} catch (e: unknown) {
@@ -1754,7 +1768,9 @@
 				</div>
 			{:else}
 				<!-- View mode -->
-				<p class="q-text font-serif">{currentQuestion.question_text}</p>
+				<div class="q-text font-serif">
+					<RichContent content={currentQuestion.question_text} className="question-rich" />
+				</div>
 
 				{#if currentQuestion.options}
 					<div class="answer-panel glass-panel">
@@ -1765,7 +1781,7 @@
 						{#each currentQuestion.options as opt, idx}
 							<button class="option selectable" class:selected={selectedOptionIndex === idx} onclick={() => selectOption(idx)}>
 								<span class="opt-marker">{getOptionIdentifier(opt, idx)}</span>
-								<span>{opt}</span>
+								<span class="option-copy"><RichContent content={opt} inline={true} /></span>
 							</button>
 						{/each}
 						</div>
@@ -1781,7 +1797,7 @@
 					{#if showSources}
 						<div class="sources-section">
 							{#if currentQuestion.source_info?.generation_reasoning}
-								<p class="source-reasoning">{currentQuestion.source_info?.generation_reasoning}</p>
+								<div class="source-reasoning"><RichContent content={currentQuestion.source_info?.generation_reasoning ?? ''} /></div>
 							{/if}
 							{#each currentQuestion.source_info?.sources ?? [] as src}
 								<div class="source-card">
@@ -1799,12 +1815,12 @@
 										<div class="source-heading">§ {src.section_heading}</div>
 									{/if}
 									{#if src.highlighted_phrase}
-										<p class="source-highlight">"{src.highlighted_phrase}"</p>
+										<div class="source-highlight"><RichContent content={`"${src.highlighted_phrase}"`} /></div>
 									{:else if src.content_snippet}
-										<p class="source-snippet">{src.content_snippet}</p>
+										<div class="source-snippet"><RichContent content={src.content_snippet} /></div>
 									{/if}
 									{#if src.relevance_reason}
-										<p class="source-reason">{src.relevance_reason}</p>
+										<div class="source-reason"><RichContent content={src.relevance_reason} /></div>
 									{/if}
 								</div>
 							{/each}
@@ -1842,18 +1858,18 @@
 				<p class="answer-result" class:correct={selectedOptionIsCorrect()} class:wrong={!selectedOptionIsCorrect()}>
 					{selectedOptionIsCorrect() ? 'Correct selection' : 'Incorrect selection'}
 				</p>
-				<p class="answer-chosen">Your choice: {currentQuestion.options[selectedOptionIndex]}</p>
+				<p class="answer-chosen">Your choice: <RichContent content={currentQuestion.options[selectedOptionIndex]} inline={true} /></p>
 			{/if}
 			{#if currentQuestion.correct_answer}
 				<div class="answer-box">
 					<span class="answer-label">Correct Answer</span>
-					<span class="answer-text">{currentQuestion.correct_answer}</span>
+					<span class="answer-text"><RichContent content={currentQuestion.correct_answer} inline={true} /></span>
 				</div>
 			{/if}
 			{#if currentQuestion.explanation}
 				<div class="explanation">
 					<span class="expl-label">Explanation</span>
-					<p class="expl-text">{currentQuestion.explanation}</p>
+					<div class="expl-text"><RichContent content={currentQuestion.explanation} /></div>
 				</div>
 			{/if}
 		</div>
@@ -3033,9 +3049,24 @@
 	}
 
 	.q-text {
-		font-size: clamp(0.9rem, 3.3vw, 1.8rem);
+		font-size: clamp(0.9rem, 3.1vw, 1.6rem);
 		line-height: 1.12;
 		margin-bottom: 1.75rem;
+	}
+
+	.q-text :global(.rich-content .rich-pre) {
+		font-size: 0.82rem;
+		line-height: 1.35;
+		padding: 0.45rem 0.55rem;
+		border-radius: 0.45rem;
+	}
+
+	.q-text :global(.rich-content .rich-pre code) {
+		font-size: 0.82rem;
+	}
+
+	.q-text :global(.rich-content :not(pre) > code) {
+		font-size: 1em;
 	}
 
 	.answer-panel {
@@ -3331,6 +3362,15 @@
 			margin-bottom: 1rem;
 		}
 
+		.q-text :global(.rich-content .rich-pre),
+		.q-text :global(.rich-content .rich-pre code) {
+			font-size: 0.78rem;
+		}
+
+		.q-text :global(.rich-content :not(pre) > code) {
+			font-size: 1em;
+		}
+
 		.options {
 			grid-template-columns: 1fr;
 			gap: 0.6rem;
@@ -3443,6 +3483,15 @@
 			font-size: 1.15rem;
 			line-height: 1.35;
 			margin-bottom: 1rem;
+		}
+
+		.q-text :global(.rich-content .rich-pre),
+		.q-text :global(.rich-content .rich-pre code) {
+			font-size: 0.74rem;
+		}
+
+		.q-text :global(.rich-content :not(pre) > code) {
+			font-size: 1em;
 		}
 
 		.answer-panel {

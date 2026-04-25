@@ -145,6 +145,8 @@ class QuestionForVetting(BaseModel):
     topic_id: Optional[str]
     topic_name: Optional[str]
     source_info: Optional[QuestionSourceInfo] = None
+    style_profile: Optional[str] = None
+    format_hints: Optional[dict[str, bool]] = None
 
     # Version control
     version_number: int = 1
@@ -1078,6 +1080,8 @@ async def get_questions_for_vetting(
         
         # Extract source_info from generation_metadata
         source_info = None
+        style_profile = None
+        format_hints = None
         if q.generation_metadata:
             metadata = q.generation_metadata
             if "source_info" in metadata:
@@ -1088,6 +1092,9 @@ async def get_questions_for_vetting(
                     generation_reasoning=metadata.get("generation_reasoning"),
                     content_coverage=metadata.get("content_coverage"),
                 )
+            style_profile = metadata.get("style_profile")
+            if isinstance(metadata.get("format_hints"), dict):
+                format_hints = metadata.get("format_hints")
 
         question_responses.append(QuestionForVetting(
             id=q.id,
@@ -1112,6 +1119,8 @@ async def get_questions_for_vetting(
             topic_id=q.topic_id,
             topic_name=q.topic.name if q.topic else None,
             source_info=source_info,
+            style_profile=style_profile,
+            format_hints=format_hints,
             version_number=q.version_number or 1,
             replaces_id=q.replaces_id,
             replaced_by_id=q.replaced_by_id,

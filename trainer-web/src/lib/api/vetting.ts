@@ -32,6 +32,14 @@ export interface QuestionSourceInfo {
 	content_coverage: string | null;
 }
 
+export interface QuestionFormatHints {
+	has_math?: boolean;
+	has_code?: boolean;
+	has_diagram?: boolean;
+	malformed_code_fence?: boolean;
+	malformed_math_delimiters?: boolean;
+}
+
 export interface QuestionForVetting {
 	id: string;
 	question_text: string;
@@ -53,6 +61,8 @@ export interface QuestionForVetting {
 	topic_id: string | null;
 	topic_name: string | null;
 	source_info: QuestionSourceInfo | null;
+	style_profile?: string | null;
+	format_hints?: QuestionFormatHints | null;
 	version_number: number;
 }
 

@@ -3,6 +3,7 @@
 	import { onMount } from 'svelte';
 	import { goto } from '$app/navigation';
 	import { page } from '$app/stores';
+	import RichContent from '$lib/components/RichContent.svelte';
 	import { session } from '$lib/session';
 	import {
 		downloadAdminQuestionExport,
@@ -1192,7 +1193,7 @@
 							<tr>
 								<td>
 									<div class="question-row-copy">
-										<strong>{question.question_text}</strong>
+										<div class="question-row-text"><RichContent content={question.question_text} /></div>
 										<div class="row-pill-line">
 											<span class="pill type-pill">{typeLabel(question.question_type)}</span>
 											<span class={`pill status-pill ${generationClass(question.generation_status)}`}>{statusLabel(question.generation_status)}</span>
@@ -1202,7 +1203,7 @@
 											<span class="pill neutral-pill">{archivedLabel(question)}</span>
 										</div>
 										{#if question.correct_answer}
-											<small>Answer: {question.correct_answer}</small>
+											<small>Answer: <RichContent content={question.correct_answer} inline={true} /></small>
 										{/if}
 									</div>
 								</td>
@@ -2287,7 +2288,7 @@
 		color: color-mix(in srgb, #c7d2fe 80%, var(--theme-text));
 	}
 
-	.question-row-copy strong {
+	.question-row-text {
 		font-size: 0.94rem;
 		line-height: 1.5;
 		color: var(--theme-text);

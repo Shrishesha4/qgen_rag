@@ -69,6 +69,15 @@ class QuestionSourceInfo(BaseModel):
     content_coverage: Optional[str] = None  # What aspects of the content are covered
 
 
+class QuestionFormatHints(BaseModel):
+    """Optional rendering hints for rich question content."""
+    has_math: bool = False
+    has_code: bool = False
+    has_diagram: bool = False
+    malformed_code_fence: bool = False
+    malformed_math_delimiters: bool = False
+
+
 class QuestionResponse(BaseModel):
     """Schema for generated question response."""
     id: uuid.UUID
@@ -97,6 +106,10 @@ class QuestionResponse(BaseModel):
     
     # Source Attribution (new)
     source_info: Optional[QuestionSourceInfo] = None
+
+    # Optional rendering metadata
+    style_profile: Optional[str] = None
+    format_hints: Optional[QuestionFormatHints] = None
     
     # OBE mappings
     course_outcome_mapping: Optional[dict]
@@ -180,6 +193,10 @@ class QuestionResponse(BaseModel):
                     generation_reasoning=metadata.get("generation_reasoning"),
                     content_coverage=metadata.get("content_coverage"),
                 )
+            if metadata.get("style_profile"):
+                data["style_profile"] = str(metadata.get("style_profile"))
+            if isinstance(metadata.get("format_hints"), dict):
+                data["format_hints"] = QuestionFormatHints(**metadata["format_hints"])
         
         return cls(**data)
 

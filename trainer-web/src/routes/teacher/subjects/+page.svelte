@@ -570,6 +570,10 @@
 	// Add Subject
 	function startAddSubject() {
 		if (savingSubject) return;
+		if (activeTab === 'groups' && !selectedGroupId) {
+			addSubjectError = 'Select a group or subgroup first.';
+			return;
+		}
 		addingSubject = true;
 		addSubjectError = '';
 		tick().then(() => {
@@ -587,6 +591,10 @@
 
 	async function saveAddSubject() {
 		if (savingSubject) return;
+		if (activeTab === 'groups' && !selectedGroupId) {
+			addSubjectError = 'Select a group or subgroup first.';
+			return;
+		}
 		const code = draftCode.trim().toUpperCase();
 		const name = draftName.trim();
 		if (!code || !name) {
@@ -1068,7 +1076,8 @@
 				<button class="add-btn" onclick={startAddSubject} disabled={savingSubject || addingSubject}>+ Add Subject</button>
 			{:else if activeTab === 'groups'}
 				{#if selectedGroupId}
-					<!-- <button class="add-btn secondary" onclick={startAddGroup} disabled={savingGroup || addingGroup}>+ Add Subgroup</button> -->
+					<button class="add-btn" onclick={startAddSubject} disabled={savingSubject || addingSubject}>+ Add Subject</button>
+					<button class="add-btn secondary" onclick={startAddGroup} disabled={savingGroup || addingGroup}>+ Add Subgroup</button>
 				{:else}
 					<button class="add-btn secondary" onclick={startAddGroup} disabled={savingGroup || addingGroup}>+ Add Group</button>
 				{/if}
@@ -1392,6 +1401,7 @@
 							<td></td>
 						</tr>
 					{/if}
+
 
 					<!-- Search Results (flat list) in Groups view -->
 					{#if filteredGroupsView !== null}
@@ -1945,6 +1955,27 @@
 			</button>
 		</td>
 	</tr>
+	{#if addingSubject && selectedGroupId === group.id}
+		<tr class="add-row">
+			<td>
+				<div class="name-stack" style="padding-left: {(depth + 1) * 1.5}rem">
+					<div class="inline-inputs">
+						<input class="cell-input code-input" bind:value={draftCode} bind:this={addSubjectCodeInput} placeholder="SUB101" maxlength="24" onkeydown={(e) => { if (e.key === 'Enter') saveAddSubject(); }} />
+						<input class="cell-input" bind:value={draftName} placeholder="Subject Name" maxlength="120" onkeydown={(e) => { if (e.key === 'Enter') saveAddSubject(); }} />
+					</div>
+					<div class="inline-actions">
+						<button class="table-btn primary" onclick={saveAddSubject} disabled={savingSubject}>{savingSubject ? 'Saving...' : 'Save'}</button>
+						<button class="table-btn" onclick={cancelAddSubject} disabled={savingSubject}>Cancel</button>
+					</div>
+				</div>
+			</td>
+			<td>-</td>
+			<td>-</td>
+			<td>-</td>
+			<td>-</td>
+			<td></td>
+		</tr>
+	{/if}
 	{#if expandedGroups.has(group.id)}
 		{#each group.children as child}
 			{@render groupRow(child, depth + 1, false)}
@@ -2032,6 +2063,18 @@
 			{isFavorite('group', group.id) ? '★' : '☆'}
 		</button>
 	</div>
+	{#if addingSubject && selectedGroupId === group.id}
+		<div class="subject-mobile-card glass-panel" style="margin-left: {(depth + 1) * 0.75}rem">
+			<div class="inline-inputs">
+				<input class="cell-input code-input" bind:value={draftCode} bind:this={addSubjectCodeInput} placeholder="SUB101" maxlength="24" onkeydown={(e) => { if (e.key === 'Enter') saveAddSubject(); }} />
+				<input class="cell-input" bind:value={draftName} placeholder="Subject Name" maxlength="120" onkeydown={(e) => { if (e.key === 'Enter') saveAddSubject(); }} />
+			</div>
+			<div class="inline-actions">
+				<button class="table-btn primary" onclick={saveAddSubject} disabled={savingSubject}>{savingSubject ? 'Saving...' : 'Save'}</button>
+				<button class="table-btn" onclick={cancelAddSubject} disabled={savingSubject}>Cancel</button>
+			</div>
+		</div>
+	{/if}
 	{#if expandedGroups.has(group.id)}
 		{#each group.children as child}
 			{@render mobileGroupCard(child, depth + 1, false)}

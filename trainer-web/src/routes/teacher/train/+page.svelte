@@ -79,6 +79,8 @@
 	
 	// WebSocket for live stats updates
 	let wsUnsubscribers: (() => void)[] = [];
+	const RESUME_PAGE_SIZE = 5;
+	let resumePage = $state(1);
 
 	function toMillis(iso: string): number {
 		const ts = Date.parse(iso);
@@ -601,6 +603,38 @@
 			.sort((a, b) => toMillis(b.updatedAt) - toMillis(a.updatedAt));
 	});
 
+	const totalResumePages = $derived.by(() => {
+		const total = allIncompleteSnapshots.length;
+		return Math.max(1, Math.ceil(total / RESUME_PAGE_SIZE));
+	});
+
+	const pagedIncompleteSnapshots = $derived.by(() => {
+		const start = (resumePage - 1) * RESUME_PAGE_SIZE;
+		return allIncompleteSnapshots.slice(start, start + RESUME_PAGE_SIZE);
+	});
+
+	const resumeRangeLabel = $derived.by(() => {
+		const total = allIncompleteSnapshots.length;
+		if (total === 0) return '0 of 0';
+		const start = (resumePage - 1) * RESUME_PAGE_SIZE + 1;
+		const end = Math.min(total, start + RESUME_PAGE_SIZE - 1);
+		return `${start}-${end} of ${total}`;
+	});
+
+	$effect(() => {
+		if (resumePage > totalResumePages) {
+			resumePage = totalResumePages;
+		}
+		if (resumePage < 1) {
+			resumePage = 1;
+		}
+	});
+
+	function goToResumePage(nextPage: number) {
+		const clamped = Math.min(totalResumePages, Math.max(1, nextPage));
+		resumePage = clamped;
+	}
+
 	function snapshotSubjectLabel(snapshot: TeacherVettingProgressSnapshot): string {
 		const subjectNameFromList = subjects.find((s) => s.id === snapshot.subjectId)?.name;
 		if (subjectNameFromList) return subjectNameFromList;
@@ -799,27 +833,47 @@
 			<div class="error-banner" role="alert">{error}</div>
 		{/if}
 
-		{#each allIncompleteSnapshots as snapshot}
-			<section class="resume-strip glass-panel">
-				<div class="summary-grid">
-					<div class="summary-item">
-						<span class="summary-label">Subject</span>
-						<strong>{snapshotSubjectLabel(snapshot)}</strong>
-					</div>
-					<div class="summary-item">
-						<span class="summary-label">Progress</span>
-						<strong>{snapshotProgressLabel(snapshot)}</strong>
-					</div>
-					<div class="summary-item">
-						<span class="summary-label">Last Updated</span>
-						<strong>{formatDateTime(snapshot.updatedAt)}</strong>
-					</div>
+		{#if allIncompleteSnapshots.length > 0}
+			<section class="resume-panel glass-panel">
+				<div class="resume-panel-head">
+					<h2>Resume Vetting</h2>
+					{#if totalResumePages > 1}
+						<div class="resume-pagination" aria-label="Resume pagination">
+							<button class="table-btn" onclick={() => goToResumePage(resumePage - 1)} disabled={resumePage <= 1}>Prev</button>
+							<span class="resume-page-indicator">Page {resumePage} of {totalResumePages}</span>
+							<button class="table-btn" onclick={() => goToResumePage(resumePage + 1)} disabled={resumePage >= totalResumePages}>Next</button>
+						</div>
+					{/if}
 				</div>
-				<div class="actions-row">
-					<button class="primary-btn" onclick={() => resumeSpecificProgress(snapshot)}>Resume Vetting</button>
+				<div class="resume-table-shell">
+					<table class="resume-table">
+						<thead>
+							<tr>
+								<th>Subject</th>
+								<th>Progress</th>
+								<th>Last Updated</th>
+								<th>Action</th>
+							</tr>
+						</thead>
+						<tbody>
+							{#each pagedIncompleteSnapshots as snapshot}
+								<tr>
+									<td><strong>{snapshotSubjectLabel(snapshot)}</strong></td>
+									<td>{snapshotProgressLabel(snapshot)}</td>
+									<td>{formatDateTime(snapshot.updatedAt)}</td>
+									<td class="resume-action-cell">
+										<button class="primary-btn" onclick={() => resumeSpecificProgress(snapshot)}>Resume</button>
+									</td>
+								</tr>
+							{/each}
+						</tbody>
+					</table>
 				</div>
+				{#if totalResumePages > 1}
+					<div class="resume-range">Showing {resumeRangeLabel}</div>
+				{/if}
 			</section>
-		{/each}
+		{/if}
 
 		<section class="content-panel glass-panel">
 			<div class="panel-head">
@@ -1246,48 +1300,86 @@
 		color: var(--theme-text-muted);
 	}
 
-	.resume-strip {
-		padding: 1rem;
+	.resume-panel {
+		padding: 0.8rem;
 		border-radius: 1rem;
 		display: flex;
 		flex-direction: column;
 		gap: 0.55rem;
+		flex: 0 0 auto;
 	}
 
-	.summary-grid {
-		display: grid;
-		grid-template-columns: repeat(3, minmax(0, 1fr));
-		gap: 0.65rem;
-	}
-
-	.summary-item {
-		padding: 0.7rem 0.75rem;
-		border-radius: 0.85rem;
-		border: 1px solid var(--theme-glass-border);
-		background: var(--theme-glass-bg);
+	.resume-panel-head {
 		display: flex;
-		flex-direction: column;
-		gap: 0.2rem;
+		align-items: center;
+		justify-content: space-between;
+		gap: 0.8rem;
 	}
 
-	.summary-label {
-		font-size: 0.7rem;
-		letter-spacing: 0.06em;
-		text-transform: uppercase;
-		color: var(--theme-text-muted);
-		font-weight: 700;
-	}
-
-	.summary-item strong {
-		font-size: 0.92rem;
+	.resume-panel-head h2 {
+		margin: 0;
+		font-size: 0.96rem;
 		color: var(--theme-text-primary);
 	}
 
-	.actions-row {
-		display: flex;
-		gap: 0.55rem;
-		flex-wrap: wrap;
-		margin-top: 0.35rem;
+	.resume-pagination {
+		display: inline-flex;
+		align-items: center;
+		gap: 0.45rem;
+	}
+
+	.resume-page-indicator {
+		font-size: 0.78rem;
+		font-weight: 700;
+		color: var(--theme-text-muted);
+		min-width: 6.5rem;
+		text-align: center;
+	}
+
+	.resume-table-shell {
+		border: 1px solid var(--theme-glass-border);
+		border-radius: 0.8rem;
+		overflow: hidden;
+		background: var(--theme-glass-bg);
+	}
+
+	.resume-table {
+		width: 100%;
+		border-collapse: collapse;
+		table-layout: fixed;
+	}
+
+	.resume-table th,
+	.resume-table td {
+		padding: 0.58rem 0.62rem;
+		border-bottom: 1px solid var(--theme-glass-border);
+		font-size: 0.82rem;
+		color: var(--theme-text-primary);
+		text-align: left;
+	}
+
+	.resume-table th {
+		font-size: 0.68rem;
+		letter-spacing: 0.06em;
+		text-transform: uppercase;
+		color: var(--theme-text-muted);
+		font-weight: 800;
+		background: rgba(255, 255, 255, 0.3);
+	}
+
+	.resume-table tbody tr:last-child td {
+		border-bottom: none;
+	}
+
+	.resume-action-cell {
+		text-align: center;
+	}
+
+	.resume-range {
+		font-size: 0.76rem;
+		font-weight: 700;
+		color: var(--theme-text-muted);
+		text-align: right;
 	}
 
 	.content-panel {
@@ -1893,9 +1985,18 @@
 			font-size: 1.6rem;
 		} */
 
-		.summary-grid {
-			grid-template-columns: 1fr;
-			gap: 0.45rem;
+		.resume-panel-head {
+			flex-direction: column;
+			align-items: stretch;
+		}
+
+		.resume-pagination {
+			justify-content: space-between;
+		}
+
+		.resume-page-indicator {
+			min-width: 0;
+			flex: 1;
 		}
 
 		.panel-head {

@@ -23,7 +23,9 @@
 		"@tailwindcss/forms": "^0.5.11",
 		"@tailwindcss/typography": "^0.5.19",
 		"@tailwindcss/vite": "^4.1.18",
+		"@types/markdown-it": "^14.1.2",
 		"@types/node": "^24",
+		"@types/sanitize-html": "^2.16.1",
 		"eslint": "^9.39.2",
 		"eslint-config-prettier": "^10.1.8",
 		"eslint-plugin-svelte": "^3.14.0",
@@ -40,6 +42,12 @@
 		"vite": "^7.3.1"
 	},
 	"dependencies": {
-		"motion": "^12.35.2"
+		"highlight.js": "^11.11.1",
+		"katex": "^0.16.22",
+		"markdown-it": "^14.1.0",
+		"markdown-it-katex": "^2.0.3",
+		"mermaid": "^11.12.0",
+		"motion": "^12.35.2",
+		"sanitize-html": "^2.17.0"
 	}
 }

@@ -6,6 +6,7 @@
 	import { session } from '$lib/session';
 	import ConfirmDialog from '$lib/components/ConfirmDialog.svelte';
 	import VoiceRecorder from '$lib/components/VoiceRecorder.svelte';
+	import RichContent from '$lib/components/RichContent.svelte';
 	import {
 		getQuestionsForVetting,
 		sendVettingStopKeepalive,
@@ -172,6 +173,36 @@
 	let voiceAction = $state<PendingVoiceAction | null>(null);
 
 	let currentQuestion = $derived(questions[currentIndex]);
+	let currentQuestionFormatHints = $derived.by(() => {
+		const apiHints = currentQuestion?.format_hints ?? null;
+		const payload = [
+			currentQuestion?.question_text,
+			...(currentQuestion?.options ?? []),
+			currentQuestion?.explanation,
+			currentQuestion?.source_info?.generation_reasoning
+		]
+			.filter((value): value is string => typeof value === 'string' && value.trim().length > 0)
+			.join('\n');
+
+		const hasMath = apiHints?.has_math ?? /\$[^$]+\$|\$\$[\s\S]+?\$\$|[∑∫√≈≤≥ΔΩπθλμ]/.test(payload);
+		const hasCode = apiHints?.has_code ?? /```[a-zA-Z0-9_+-]*\n/.test(payload);
+		const hasDiagram =
+			apiHints?.has_diagram ?? /```mermaid\n|\b(?:circuit|nodal|mesh|resistor|capacitor|inductor)\b/i.test(payload);
+
+		const malformedCodeFence = apiHints?.malformed_code_fence ?? ((payload.match(/```/g) ?? []).length % 2 !== 0);
+		const blockMathTokenCount = (payload.match(/\$\$/g) ?? []).length;
+		const payloadWithoutBlockMath = payload.replace(/\$\$[\s\S]*?\$\$/g, '');
+		const inlineMathTokenCount = (payloadWithoutBlockMath.match(/(?<!\\)\$/g) ?? []).length;
+		const malformedMathDelimiters =
+			apiHints?.malformed_math_delimiters ?? ((blockMathTokenCount % 2 !== 0) || (inlineMathTokenCount % 2 !== 0));
+
+		return {
+			hasMath,
+			hasCode,
+			hasDiagram,
+			hasMalformedFormatting: malformedCodeFence || malformedMathDelimiters
+		};
+	});
 	let totalReviewed = $derived(approved.size + rejected.size);
 	let progressPct = $derived(questions.length > 0 ? Math.round((totalReviewed / questions.length) * 100) : 0);
 	let isReviewed = $derived(
@@ -849,10 +880,31 @@
 					<p class="q-topic-label">{currentQuestion.topic_name}</p>
 				{/if}
 
+				<div class="format-hints" aria-label="format hints">
+					{#if currentQuestionFormatHints.hasMath}
+						<span class="format-hint">Math</span>
+					{/if}
+					{#if currentQuestionFormatHints.hasCode}
+						<span class="format-hint">Code</span>
+					{/if}
+					{#if currentQuestionFormatHints.hasDiagram}
+						<span class="format-hint">Diagram</span>
+					{/if}
+					{#if currentQuestionFormatHints.hasMalformedFormatting}
+						<span class="format-hint warning">Check formatting</span>
+					{/if}
+				</div>
+
 				{#if editing}
 					<div class="edit-section">
 						<span class="edit-label">Question Text</span>
 						<textarea class="edit-textarea" bind:value={editText} rows="3"></textarea>
+						{#if editText.trim()}
+							<div class="edit-preview">
+								<span class="edit-preview-label">Preview</span>
+								<RichContent content={editText} className="question-rich" />
+							</div>
+						{/if}
 
 						{#if editOptions.length > 0}
 							<span class="edit-label">Options</span>
@@ -915,6 +967,12 @@
 
 						<span class="edit-label">Explanation</span>
 						<textarea class="edit-textarea" bind:value={editExplanation} rows="2"></textarea>
+						{#if editExplanation.trim()}
+							<div class="edit-preview">
+								<span class="edit-preview-label">Explanation Preview</span>
+								<RichContent content={editExplanation} />
+							</div>
+						{/if}
 
 						<div class="edit-actions">
 							<button class="edit-footer-btn edit-cancel-btn" onclick={cancelEdit}>Cancel</button>
@@ -924,7 +982,9 @@
 						</div>
 					</div>
 				{:else}
-					<p class="q-text font-serif">{currentQuestion.question_text}</p>
+					<div class="q-text font-serif">
+						<RichContent content={currentQuestion.question_text} className="question-rich" />
+					</div>
 
 					{#if currentQuestion.options}
 						<div class="answer-panel glass-panel">
@@ -935,7 +995,7 @@
 							{#each currentQuestion.options as opt, idx}
 								<button class="option selectable" class:selected={selectedOptionIndex === idx} onclick={() => selectOption(idx)}>
 									<span class="opt-marker">{getOptionIdentifier(opt, idx)}</span>
-									<span>{opt}</span>
+									<span class="option-copy"><RichContent content={opt} inline={true} /></span>
 								</button>
 							{/each}
 							</div>
@@ -957,7 +1017,7 @@
 						{#if showSources}
 							<div class="sources-section">
 								{#if currentQuestion.source_info?.generation_reasoning}
-									<p class="source-reasoning">{currentQuestion.source_info?.generation_reasoning}</p>
+									<div class="source-reasoning"><RichContent content={currentQuestion.source_info?.generation_reasoning ?? ''} /></div>
 								{/if}
 								{#each currentQuestion.source_info?.sources ?? [] as src}
 									<div class="source-card">
@@ -975,12 +1035,12 @@
 											<div class="source-heading">§ {src.section_heading}</div>
 										{/if}
 										{#if src.highlighted_phrase}
-											<p class="source-highlight">"{src.highlighted_phrase}"</p>
+											<div class="source-highlight"><RichContent content={`"${src.highlighted_phrase}"`} /></div>
 										{:else if src.content_snippet}
-											<p class="source-snippet">{src.content_snippet}</p>
+											<div class="source-snippet"><RichContent content={src.content_snippet} /></div>
 										{/if}
 										{#if src.relevance_reason}
-											<p class="source-reason">{src.relevance_reason}</p>
+											<div class="source-reason"><RichContent content={src.relevance_reason} /></div>
 										{/if}
 									</div>
 								{/each}
@@ -1046,18 +1106,18 @@
 				<p class="answer-result" class:correct={selectedOptionIsCorrect()} class:wrong={!selectedOptionIsCorrect()}>
 					{selectedOptionIsCorrect() ? 'Correct selection' : 'Incorrect selection'}
 				</p>
-				<p class="answer-chosen">Your choice: {currentQuestion.options[selectedOptionIndex]}</p>
+				<p class="answer-chosen">Your choice: <RichContent content={currentQuestion.options[selectedOptionIndex]} inline={true} /></p>
 			{/if}
 			{#if currentQuestion.correct_answer}
 				<div class="answer-box">
 					<span class="answer-label">Correct Answer</span>
-					<span class="answer-text">{currentQuestion.correct_answer}</span>
+					<span class="answer-text"><RichContent content={currentQuestion.correct_answer} inline={true} /></span>
 				</div>
 			{/if}
 			{#if currentQuestion.explanation}
 				<div class="explanation">
 					<span class="expl-label">Explanation</span>
-					<p class="expl-text">{currentQuestion.explanation}</p>
+					<div class="expl-text"><RichContent content={currentQuestion.explanation} /></div>
 				</div>
 			{/if}
 		</div>
@@ -1405,6 +1465,23 @@
 		outline: none;
 		border-color: var(--theme-primary);
 		box-shadow: 0 0 0 2px rgba(var(--theme-primary-rgb), 0.15);
+	}
+
+	.edit-preview {
+		padding: 0.65rem 0.75rem;
+		border-radius: 10px;
+		border: 1px solid rgba(255, 255, 255, 0.14);
+		background: rgba(255, 255, 255, 0.04);
+	}
+
+	.edit-preview-label {
+		display: inline-block;
+		font-size: 0.68rem;
+		font-weight: 700;
+		text-transform: uppercase;
+		letter-spacing: 0.05em;
+		color: var(--theme-text-muted);
+		margin-bottom: 0.35rem;
 	}
 
 	.edit-input {
@@ -1915,6 +1992,30 @@
 		letter-spacing: 0.08em;
 		text-transform: uppercase;
 		color: var(--theme-primary);
+	}
+
+	.format-hints {
+		display: flex;
+		gap: 0.45rem;
+		flex-wrap: wrap;
+		margin: -0.35rem 0 0.75rem;
+	}
+
+	.format-hint {
+		display: inline-flex;
+		align-items: center;
+		padding: 0.2rem 0.5rem;
+		border-radius: 999px;
+		font-size: 0.72rem;
+		font-weight: 650;
+		letter-spacing: 0.03em;
+		background: rgba(148, 163, 184, 0.18);
+		color: var(--theme-text);
+	}
+
+	.format-hint.warning {
+		background: rgba(245, 158, 11, 0.2);
+		color: #92400e;
 	}
 
 	.q-text {

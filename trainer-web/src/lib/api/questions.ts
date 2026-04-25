@@ -1,5 +1,13 @@
 import { apiFetch } from './client';
 
+export interface QuestionFormatHints {
+	has_math?: boolean;
+	has_code?: boolean;
+	has_diagram?: boolean;
+	malformed_code_fence?: boolean;
+	malformed_math_delimiters?: boolean;
+}
+
 export interface TeacherQuestionSummary {
 	id: string;
 	subject_id: string | null;
@@ -17,6 +25,8 @@ export interface TeacherQuestionSummary {
 	vetting_status: string | null;
 	generated_at: string;
 	version_number: number;
+	style_profile?: string | null;
+	format_hints?: QuestionFormatHints | null;
 }
 
 export interface TeacherQuestionListResponse {

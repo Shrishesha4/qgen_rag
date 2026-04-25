@@ -10,6 +10,7 @@ This service implements:
 
 import json
 import re
+import logging
 from datetime import datetime, timezone
 from typing import Optional, List, Dict, Any, Tuple, AsyncGenerator
 import uuid
@@ -37,6 +38,9 @@ from app.services.novelty_service import NoveltyService, NoveltyResult
 from app.services.subject_group_filter_service import get_subject_ids_for_group
 from app.core.config import settings
 from app.services.analytics_websocket_manager import analytics_ws_manager
+
+
+logger = logging.getLogger(__name__)
 
 
 # System prompts for question generation
@@ -168,6 +172,37 @@ BLOOM_TAXONOMY_VERBS = {
     "create": ["create", "design", "develop", "propose", "construct"],
 }
 
+STYLE_PROFILE_DEFAULT = "default_general"
+STYLE_PROFILE_ENGINEERING = "engineering_analytical"
+STYLE_PROFILE_PROGRAMMING = "programming_code"
+STYLE_PROFILE_SCENARIO = "civil_mechanical_scenario"
+STYLE_PROFILE_ECE = "ece_circuit"
+STYLE_PROFILE_MATHEMATICS = "mathematics_latex"
+
+_PROGRAMMING_KEYWORDS = {
+    "programming", "algorithm", "pseudocode", "pointer", "array", "c programming", "python", "java",
+    "function", "loop", "recursion", "compiler", "debug", "segmentation fault", "syntax",
+}
+_ECE_KEYWORDS = {
+    "ece", "electronics", "circuit", "rlc", "resistor", "capacitor", "inductor", "kirchhoff",
+    "nodal", "mesh", "op-amp", "bjt", "mosfet", "transfer function", "frequency response",
+}
+_SCENARIO_KEYWORDS = {
+    "mechanical", "civil", "beam", "truss", "stress", "strain", "torque", "load", "fluid",
+    "thermodynamics", "construction", "soil", "concrete", "foundation", "bridge", "machining",
+}
+_MATH_KEYWORDS = {
+    "math", "mathematics", "matrix", "matrices", "determinant", "transpose", "algebra",
+    "calculus", "derivative", "integral", "equation", "vector", "eigenvalue", "probability",
+    "statistics", "linear algebra", "differential", "laplace", "fourier",
+}
+
+_PARAMETER_PATTERN = re.compile(
+    r"(?:\b\d+(?:\.\d+)?\s?(?:mm|cm|m|km|kg|g|n|kn|pa|kpa|mpa|v|a|ohm|hz|rpm|s|ms|w|kw|%))|"
+    r"(?:\b[A-Za-z]{1,3}\s*=\s*[-+]?\d+(?:\.\d+)?)",
+    re.IGNORECASE,
+)
+
 
 class QuestionGenerationService:
     """Service for RAG-based question generation with deduplication and novelty validation."""
@@ -199,6 +234,229 @@ class QuestionGenerationService:
         self.question_option_similarity_threshold = float(
             settings.QUESTION_OPTION_SIMILARITY_THRESHOLD
         )
+        self._subject_style_cache: Dict[str, Dict[str, Optional[str]]] = {}
+
+    def _normalize_style_text(self, *parts: Optional[str]) -> str:
+        return " ".join([(p or "") for p in parts]).lower().strip()
+
+    def _detect_style_profile(
+        self,
+        subject_name: Optional[str] = None,
+        subject_code: Optional[str] = None,
+        group_name: Optional[str] = None,
+        topic_name: Optional[str] = None,
+        context_hint: Optional[str] = None,
+    ) -> str:
+        if not settings.ENABLE_SUBJECT_STYLE_PROMPTING:
+            return STYLE_PROFILE_DEFAULT
+        haystack = self._normalize_style_text(subject_name, subject_code, group_name, topic_name, context_hint)
+
+        if any(term in haystack for term in _PROGRAMMING_KEYWORDS):
+            return STYLE_PROFILE_PROGRAMMING
+        if any(term in haystack for term in _ECE_KEYWORDS):
+            return STYLE_PROFILE_ECE
+        if any(term in haystack for term in _SCENARIO_KEYWORDS):
+            return STYLE_PROFILE_SCENARIO
+        if any(term in haystack for term in _MATH_KEYWORDS):
+            return STYLE_PROFILE_MATHEMATICS
+        if "engineering" in haystack:
+            return STYLE_PROFILE_ENGINEERING
+        return STYLE_PROFILE_DEFAULT
+
+    def _build_style_prompt_instructions(self, style_profile: str, question_type: str) -> str:
+        if not settings.ENABLE_SUBJECT_STYLE_PROMPTING:
+            return ""
+        if style_profile == STYLE_PROFILE_PROGRAMMING:
+            return (
+                "STYLE PROFILE: Programming. Prefer code-centric questions that require code reading, tracing, "
+                "debugging, complexity reasoning, or output prediction. When code is relevant, include fenced code "
+                "blocks with explicit language tags (for example ```c, ```python, ```cpp)."
+            )
+        if style_profile == STYLE_PROFILE_ECE:
+            return (
+                "STYLE PROFILE: Electronics and Communication. Prefer analytical circuit questions and signal reasoning. "
+                "When circuit topology matters, include either (a) a mermaid fenced block (```mermaid) or "
+                "(b) a clear text topology with labeled components and nodes."
+            )
+        if style_profile == STYLE_PROFILE_SCENARIO:
+            return (
+                "STYLE PROFILE: Mechanical/Civil scenario-based. Prefer practical scenario framing with explicit "
+                "numerical parameters, units, constraints, and assumptions. Questions should be answerable with the given data."
+            )
+        if style_profile == STYLE_PROFILE_ENGINEERING:
+            return (
+                "STYLE PROFILE: Analytical engineering. Prefer multi-step analytical prompts that require evaluating trade-offs, "
+                "constraints, and implications rather than direct recall."
+            )
+        if style_profile == STYLE_PROFILE_MATHEMATICS:
+            return (
+                "STYLE PROFILE: Mathematics. Use precise symbolic notation and keep explanations concise. "
+                "Write mathematical expressions in KaTeX-compatible LaTeX delimiters: inline $...$ and display $$...$$. "
+                "For matrix operations, represent transpose/inverse/determinant clearly (for example $A^T$, $A^{-1}$, $\\det(A)$). "
+                "Avoid verbose matrix environments like \\begin{bmatrix}...\\end{bmatrix} in options/explanations; prefer compact notation "
+                "such as $[[1,2],[3,4]]$ to keep JSON stable. Keep explanation under 70 words and avoid long step-by-step narration."
+            )
+        return "STYLE PROFILE: General academic exam style with rigorous reasoning and clarity."
+
+    def _has_code_fence(self, text: str) -> bool:
+        return bool(re.search(r"```[a-zA-Z0-9_+-]*\n", text or ""))
+
+    def _has_circuit_representation(self, text: str) -> bool:
+        if not text:
+            return False
+        if "```mermaid" in text.lower():
+            return True
+        # Heuristic for text topologies, e.g. R1 -- C1 -- L1 or node labels with arrows/lines.
+        return bool(re.search(r"\b[RCLQMD]\d+\b.*(?:--|->|~>|\|\|)", text, re.IGNORECASE))
+
+    def _has_math_notation(self, text: str) -> bool:
+        if not text:
+            return False
+        return bool(
+            re.search(r"\$[^$]+\$|\$\$[\s\S]+?\$\$", text)
+            or re.search(r"\\(?:frac|sum|int|sqrt|alpha|beta|gamma|theta|pi|lambda|mu|omega)\b", text)
+            or re.search(r"[∑∫√≈≤≥ΔΩπθλμ]", text)
+        )
+
+    def _has_malformed_math_delimiters(self, text: str) -> bool:
+        if not text:
+            return False
+        block_count = text.count("$$")
+        stripped = re.sub(r"\$\$[\s\S]*?\$\$", "", text)
+        inline_count = len(re.findall(r"(?<!\\)\$", stripped))
+        return (block_count % 2) != 0 or (inline_count % 2) != 0
+
+    def _build_format_hints(
+        self,
+        question_text: str,
+        explanation: str,
+        options: List[str],
+        style_profile: Optional[str],
+    ) -> Dict[str, bool]:
+        if not settings.ENABLE_RICH_CONTENT_RENDERING_HINTS:
+            return {}
+
+        combined = "\n".join([question_text or "", explanation or ""] + (options or []))
+        hints = {
+            "has_math": self._has_math_notation(combined),
+            "has_code": self._has_code_fence(combined),
+            "has_diagram": self._has_circuit_representation(combined),
+            "malformed_code_fence": (combined.count("```") % 2) != 0,
+            "malformed_math_delimiters": self._has_malformed_math_delimiters(combined),
+        }
+
+        if style_profile == STYLE_PROFILE_PROGRAMMING:
+            hints["has_code"] = hints["has_code"] or any(term in combined.lower() for term in _PROGRAMMING_KEYWORDS)
+        if style_profile == STYLE_PROFILE_ECE:
+            hints["has_diagram"] = hints["has_diagram"] or any(term in combined.lower() for term in _ECE_KEYWORDS)
+
+        return hints
+
+    def _build_adaptive_style_guidance(
+        self,
+        style_profile: str,
+        validation_issues: List[str],
+        previous_guidance: str = "",
+    ) -> str:
+        """Build retry guidance from style gate failures for the next generation attempt."""
+        if not validation_issues:
+            return previous_guidance or ""
+
+        guidance_parts: List[str] = []
+
+        if style_profile == STYLE_PROFILE_PROGRAMMING and "programming_missing_code_block" in validation_issues:
+            guidance_parts.append(
+                "MANDATORY OUTPUT FORMAT FOR PROGRAMMING: include exactly one fenced code block in the question_text "
+                "using a language tag (for example ```python). The question should require the student to reason "
+                "about that snippet (trace/debug/output/complexity). Do not submit prose-only programming questions."
+            )
+        if style_profile == STYLE_PROFILE_SCENARIO and "scenario_missing_parameters" in validation_issues:
+            guidance_parts.append(
+                "MANDATORY OUTPUT FORMAT FOR SCENARIO QUESTIONS: include explicit numeric parameters with units "
+                "and constraints (for example 12 kN, 3.5 m, 210 GPa) directly inside the question text."
+            )
+        if style_profile == STYLE_PROFILE_ECE and "ece_missing_circuit_representation" in validation_issues:
+            guidance_parts.append(
+                "MANDATORY OUTPUT FORMAT FOR ECE: include either a mermaid circuit block (```mermaid) or an explicit "
+                "text topology with labeled components and nodes (for example R1 -- C1 -- L1, node n1, node n2)."
+            )
+        if style_profile == STYLE_PROFILE_MATHEMATICS:
+            if "math_missing_latex_delimiters" in validation_issues:
+                guidance_parts.append(
+                    "MANDATORY OUTPUT FORMAT FOR MATHEMATICS: wrap all mathematical expressions with KaTeX delimiters "
+                    "using inline $...$ or display $$...$$."
+                )
+            if "math_malformed_delimiters" in validation_issues:
+                guidance_parts.append(
+                    "Fix malformed math delimiters: every opening $ or $$ must have a matching closing delimiter."
+                )
+            if "math_explanation_too_long" in validation_issues:
+                guidance_parts.append(
+                    "Shorten explanation to <= 90 words and focus only on the key computation or reasoning."
+                )
+
+        merged_parts = [part for part in [previous_guidance, *guidance_parts] if part]
+        # Keep prompt concise while still preserving the latest requirements.
+        return "\n".join(merged_parts[-2:])
+
+    def _collect_style_validation_issues(
+        self,
+        question_text: str,
+        explanation: str,
+        options: List[str],
+        style_profile: str,
+    ) -> List[str]:
+        if not settings.ENABLE_STYLE_VALIDATION_GATES:
+            return []
+        combined = "\n".join([question_text, explanation] + (options or []))
+        combined_lower = combined.lower()
+        issues: List[str] = []
+
+        if style_profile == STYLE_PROFILE_PROGRAMMING:
+            intent_detected = any(term in combined_lower for term in _PROGRAMMING_KEYWORDS)
+            if intent_detected and not self._has_code_fence(combined):
+                issues.append("programming_missing_code_block")
+
+        if style_profile == STYLE_PROFILE_SCENARIO:
+            if not _PARAMETER_PATTERN.search(combined):
+                issues.append("scenario_missing_parameters")
+
+        if style_profile == STYLE_PROFILE_ECE:
+            intent_detected = any(term in combined_lower for term in _ECE_KEYWORDS)
+            if intent_detected and not self._has_circuit_representation(combined):
+                issues.append("ece_missing_circuit_representation")
+
+        if style_profile == STYLE_PROFILE_MATHEMATICS:
+            intent_detected = any(term in combined_lower for term in _MATH_KEYWORDS)
+            if intent_detected and not self._has_math_notation(combined):
+                issues.append("math_missing_latex_delimiters")
+            if self._has_malformed_math_delimiters(combined):
+                issues.append("math_malformed_delimiters")
+            if len(explanation or "") > 900:
+                issues.append("math_explanation_too_long")
+
+        return issues
+
+    async def _get_subject_style_context(self, subject_id: Optional[str]) -> Dict[str, Optional[str]]:
+        if not subject_id:
+            return {"subject_name": None, "subject_code": None, "group_name": None}
+        cached = self._subject_style_cache.get(subject_id)
+        if cached is not None:
+            return cached
+
+        result = await self.db.execute(
+            select(Subject)
+            .options(selectinload(Subject.group))
+            .where(Subject.id == subject_id)
+        )
+        subject = result.scalar_one_or_none()
+        context = {
+            "subject_name": subject.name if subject else None,
+            "subject_code": subject.code if subject else None,
+            "group_name": subject.group.name if subject and subject.group else None,
+        }
+        self._subject_style_cache[subject_id] = context
+        return context
 
     def _get_provider_key(self) -> str:
         """Infer provider key from the configured LLM service."""
@@ -259,13 +517,19 @@ class QuestionGenerationService:
         # Get subject and topic names
         subject_name = None
         topic_name = None
+        subject_code = None
+        subject_group_name = None
         if document.subject_id:
             subject_result = await self.db.execute(
-                select(Subject).where(Subject.id == document.subject_id)
+                select(Subject)
+                .options(selectinload(Subject.group))
+                .where(Subject.id == document.subject_id)
             )
             subject = subject_result.scalar_one_or_none()
             if subject:
                 subject_name = subject.name
+                subject_code = subject.code
+                subject_group_name = subject.group.name if subject.group else None
         
         if request.topic_id:
             topic_result = await self.db.execute(
@@ -396,6 +660,10 @@ class QuestionGenerationService:
                             difficulty=request.difficulty,
                             marks=request.marks,
                             bloom_levels=request.bloom_levels,
+                            subject_name=subject_name,
+                            subject_code=subject_code,
+                            group_name=subject_group_name,
+                            topic_name=topic_name,
                         )
 
                         if not question_data:
@@ -837,6 +1105,10 @@ Output JSON only, no explanation."""
         difficulty: str,
         marks: Optional[int],
         bloom_levels: Optional[List[str]],
+        subject_name: Optional[str] = None,
+        subject_code: Optional[str] = None,
+        group_name: Optional[str] = None,
+        topic_name: Optional[str] = None,
     ) -> Optional[Dict[str, Any]]:
         """Generate a single question using LLM."""
         # Build context from chunks
@@ -870,6 +1142,14 @@ Output JSON only, no explanation."""
             "medium": "Target applied understanding requiring reasoning across at least two ideas.",
             "hard": "Target analytical/evaluative reasoning with plausible distractors and edge-case awareness.",
         }.get(difficulty, "Target applied understanding requiring reasoning.")
+        style_profile = self._detect_style_profile(
+            subject_name=subject_name,
+            subject_code=subject_code,
+            group_name=group_name,
+            topic_name=topic_name,
+        )
+        style_instructions = self._build_style_prompt_instructions(style_profile, question_type)
+        style_prompt_line = f"- {style_instructions}\n" if style_instructions else ""
 
         # Build prompt
         prompt = f"""Context from the document:
@@ -880,6 +1160,7 @@ Generate a {question_type.replace('_', ' ')} question with the following require
 - Bloom's Taxonomy Level: {bloom_level}
 - Marks: {marks or 'appropriate for the question type'}
 - Difficulty Guidance: {difficulty_guidance}
+{style_prompt_line}
 
 The question should be based directly on the provided context.
 Ensure the question is clear, specific, and examines understanding of the material.
@@ -898,7 +1179,16 @@ Output valid JSON only."""
             if settings.GENERATION_SCHEMA_ENFORCEMENT and not self._validate_generation_schema(response, question_type):
                 return None
             
+            format_hints = self._build_format_hints(
+                question_text=str(response.get("question_text") or ""),
+                explanation=str(response.get("explanation") or response.get("expected_answer") or ""),
+                options=[str(o) for o in (response.get("options") or [])],
+                style_profile=style_profile,
+            )
             response["bloom_taxonomy_level"] = bloom_level
+            response["_style_profile"] = style_profile
+            if format_hints:
+                response["_format_hints"] = format_hints
             return response
             
         except Exception as e:
@@ -933,6 +1223,7 @@ Output valid JSON only."""
         question_data: Dict[str, Any],
         question_type: str,
         chunks: List[DocumentChunk],
+        style_profile: Optional[str] = None,
     ) -> tuple[bool, str, float, List[str]]:
         """
         Validate the quality of a generated question.
@@ -971,6 +1262,9 @@ Output valid JSON only."""
         # The LLM generates questions from provided chunks, so grounding is inherent.
         
         
+        if not style_profile:
+            style_profile = str(question_data.get("_style_profile") or STYLE_PROFILE_DEFAULT)
+
         # MCQ-specific validation
         if question_type == "mcq":
             options = question_data.get("options", [])
@@ -1025,6 +1319,26 @@ Output valid JSON only."""
             key_points = question_data.get("key_points", [])
             if not key_points or len(key_points) < 2:
                 return False, "Long answer should have at least 2 key points", 0.5, []
+
+        style_issues = self._collect_style_validation_issues(
+            question_text=q_text,
+            explanation=str(question_data.get("explanation") or question_data.get("expected_answer") or ""),
+            options=[str(o) for o in (question_data.get("options") or [])],
+            style_profile=style_profile,
+        )
+        if style_issues:
+            logger.warning(
+                "style_validation_gate_reject: profile=%s issues=%s question_type=%s",
+                style_profile,
+                ",".join(style_issues),
+                question_type,
+            )
+            if "programming_missing_code_block" in style_issues:
+                return False, "Programming question should include a fenced code block", 0.4, style_issues
+            if "scenario_missing_parameters" in style_issues:
+                return False, "Scenario-based question is missing concrete parameters", 0.45, style_issues
+            if "ece_missing_circuit_representation" in style_issues:
+                return False, "ECE circuit question should include mermaid or text topology", 0.4, style_issues
         
         # Calculate confidence score based on validation results
         base_confidence = 0.75  # Base confidence
@@ -1051,6 +1365,8 @@ Output valid JSON only."""
                 confidence -= 0.15
             elif issue == "answer_mismatch":
                 confidence -= 0.25
+            elif issue in {"programming_missing_code_block", "scenario_missing_parameters", "ece_missing_circuit_representation"}:
+                confidence -= 0.2
         
         # Boost for having proper structure
         if has_question_structure:
@@ -1510,6 +1826,8 @@ Return JSON only:
                 "raw_response": question_data,
                 "source_info": source_info,
                 "provider_key": self._get_provider_key(),
+                "style_profile": question_data.get("_style_profile"),
+                "format_hints": question_data.get("_format_hints") if settings.ENABLE_RICH_CONTENT_RENDERING_HINTS else None,
             },
         )
         
@@ -1556,6 +1874,8 @@ Return JSON only:
             answerability_score=question.answerability_score,
             specificity_score=question.specificity_score,
             generation_confidence=question.generation_confidence,
+            style_profile=question_data.get("_style_profile"),
+            format_hints=question_data.get("_format_hints"),
             generated_at=question.generated_at,
             times_shown=question.times_shown,
             user_rating=question.user_rating,
@@ -2197,6 +2517,16 @@ Return JSON only:
                 "hard": ["analyze", "evaluate", "evaluate", "create"],
             }
             bloom_level = _rng.choice(_bloom_pools.get(difficulty, ["understand", "apply", "analyze", "evaluate"]))
+
+        style_context = await self._get_subject_style_context(subject_id)
+        style_profile = self._detect_style_profile(
+            subject_name=style_context.get("subject_name"),
+            subject_code=style_context.get("subject_code"),
+            group_name=style_context.get("group_name"),
+            context_hint=context,
+        )
+        style_instructions = self._build_style_prompt_instructions(style_profile, question_type)
+        style_prompt_line = f"- {style_instructions}\n" if style_instructions else ""
         
         # Build enhanced prompt
         prompt = f"""Topic/Context: {context}
@@ -2211,6 +2541,7 @@ Generate a {question_type.replace('_', ' ')} question with the following require
 - Marks: {marks or 'appropriate for the question type'}
 - The question must be directly answerable from the provided content
 - Ensure the question is clear, specific, and tests understanding of the material
+{style_prompt_line}
 {diversity_instructions}
 
 Output valid JSON only."""
@@ -2234,7 +2565,16 @@ Output valid JSON only."""
             if "question_text" not in response:
                 return None
             
+            format_hints = self._build_format_hints(
+                question_text=str(response.get("question_text") or ""),
+                explanation=str(response.get("explanation") or response.get("expected_answer") or ""),
+                options=[str(o) for o in (response.get("options") or [])],
+                style_profile=style_profile,
+            )
             response["bloom_taxonomy_level"] = bloom_level
+            response["_style_profile"] = style_profile
+            if format_hints:
+                response["_format_hints"] = format_hints
             return response
             
         except Exception as e:
@@ -2361,6 +2701,8 @@ Output valid JSON only."""
             generation_metadata={
                 "raw_response": question_data,
                 "provider_key": self._get_provider_key(),
+                "style_profile": question_data.get("_style_profile"),
+                "format_hints": question_data.get("_format_hints") if settings.ENABLE_RICH_CONTENT_RENDERING_HINTS else None,
             },
         )
         
@@ -2393,6 +2735,8 @@ Output valid JSON only."""
             answerability_score=question.answerability_score,
             specificity_score=question.specificity_score,
             generation_confidence=question.generation_confidence,
+            style_profile=question_data.get("_style_profile"),
+            format_hints=question_data.get("_format_hints"),
             generated_at=question.generated_at,
             times_shown=question.times_shown,
             user_rating=question.user_rating,
@@ -3030,6 +3374,7 @@ Output valid JSON only."""
                         subject_id=subject_id,
                         topic_id=topic_id,
                         rejection_guidance_override=rejection_guidance_cache,
+                        adaptive_style_guidance=slot.get("adaptive_style_guidance"),
                     )
 
                     if not question_data:
@@ -3049,6 +3394,8 @@ Output valid JSON only."""
                             "ok": False,
                             "slot": slot,
                             "reason": f"validation_failed:{reason}",
+                            "validation_issues": validation_issues,
+                            "style_profile": question_data.get("_style_profile"),
                         }
 
                     return {
@@ -3125,6 +3472,13 @@ Output valid JSON only."""
                 for result in batch_results:
                     slot = result["slot"]
                     if not result.get("ok"):
+                        validation_issues = result.get("validation_issues") or []
+                        if validation_issues:
+                            slot["adaptive_style_guidance"] = self._build_adaptive_style_guidance(
+                                style_profile=str(result.get("style_profile") or STYLE_PROFILE_DEFAULT),
+                                validation_issues=[str(issue) for issue in validation_issues],
+                                previous_guidance=str(slot.get("adaptive_style_guidance") or ""),
+                            )
                         slot["attempts"] += 1
                         questions_failed += 1
                         if slot["attempts"] < max_attempts_per_slot:
@@ -3945,6 +4299,7 @@ Output valid JSON only."""
                         subject_id=subject_id,
                         topic_id=topic_id,
                         rejection_guidance_override=rejection_guidance_cache,
+                        adaptive_style_guidance=slot.get("adaptive_style_guidance"),
                         llm_service_override=slot_llm_svc,
                     )
 
@@ -3965,6 +4320,8 @@ Output valid JSON only."""
                             "ok": False,
                             "slot": slot,
                             "reason": f"validation_failed:{reason}",
+                            "validation_issues": validation_issues,
+                            "style_profile": question_data.get("_style_profile"),
                         }
 
                     return {
@@ -4042,6 +4399,13 @@ Output valid JSON only."""
                 for result in batch_results:
                     slot = result["slot"]
                     if not result.get("ok"):
+                        validation_issues = result.get("validation_issues") or []
+                        if validation_issues:
+                            slot["adaptive_style_guidance"] = self._build_adaptive_style_guidance(
+                                style_profile=str(result.get("style_profile") or STYLE_PROFILE_DEFAULT),
+                                validation_issues=[str(issue) for issue in validation_issues],
+                                previous_guidance=str(slot.get("adaptive_style_guidance") or ""),
+                            )
                         slot["attempts"] += 1
                         questions_failed += 1
                         if slot["attempts"] < max_attempts_per_slot:
@@ -4290,6 +4654,7 @@ Output valid JSON only."""
         subject_id: Optional[str] = None,
         topic_id: Optional[str] = None,
         rejection_guidance_override: Optional[str] = None,
+        adaptive_style_guidance: Optional[str] = None,
         llm_service_override: Optional[LLMProvider] = None,
     ) -> Optional[Dict[str, Any]]:
         """Generate a single question for quick generation with context awareness.
@@ -4312,6 +4677,16 @@ Output valid JSON only."""
         # Build context from chunks
         doc_content = "\n\n---\n\n".join([c.chunk_text for c in chunks])
         logger.info(f"Generating {question_type} question, context length: {len(doc_content)}")
+
+        style_context = await self._get_subject_style_context(subject_id)
+        style_profile = self._detect_style_profile(
+            subject_name=style_context.get("subject_name"),
+            subject_code=style_context.get("subject_code"),
+            group_name=style_context.get("group_name"),
+            context_hint=f"{context} {focus_concept or ''}",
+        )
+        style_instructions = self._build_style_prompt_instructions(style_profile, question_type)
+        style_prompt_line = f"- {style_instructions}\n" if style_instructions else ""
         
         # Select system prompt based on type
         if question_type == "mcq":
@@ -4411,6 +4786,7 @@ Output valid JSON only."""
             )
 
         # Build enhanced prompt with user context
+        adaptive_style_section = f"\n\nADAPTIVE STYLE REQUIREMENT:\n{adaptive_style_guidance}" if adaptive_style_guidance else ""
         prompt = f"""Topic/Context: {context}
 
 Reference material:
@@ -4423,17 +4799,21 @@ Generate a {question_type.replace('_', ' ')} question with the following require
 - Bloom's Taxonomy Level: {bloom_level}
 - {hint}
 - The question must be answerable using the knowledge from the reference material
-- Write the question AND answer as STANDALONE exam content - do NOT reference "the document", "the passage", "according to the text", "based on the provided content", etc.
-- Both question and answer should read naturally as professional exam questions{exclusion_text}{rejection_guidance}
+{style_prompt_line}- Write the question AND answer as STANDALONE exam content - do NOT reference "the document", "the passage", "according to the text", "based on the provided content", etc.
+- Both question and answer should read naturally as professional exam questions{exclusion_text}{rejection_guidance}{adaptive_style_section}
 
 Output valid JSON only."""
 
         try:
             logger.info(f"Calling LLM for {question_type} question...")
+            max_retries = 2 if style_profile == STYLE_PROFILE_MATHEMATICS else 3
+            max_tokens = 2800 if style_profile == STYLE_PROFILE_MATHEMATICS else 4096
             response = await self._generate_with_retry(
                 prompt=prompt,
                 system_prompt=system_prompt,
                 question_type=question_type,
+                max_retries=max_retries,
+                max_tokens=max_tokens,
                 llm_service_override=llm_service_override,
             )
             
@@ -4453,7 +4833,16 @@ Output valid JSON only."""
                 logger.warning(f"Response missing question_text: {response.keys()}")
                 return None
             
+            format_hints = self._build_format_hints(
+                question_text=str(response.get("question_text") or ""),
+                explanation=str(response.get("explanation") or response.get("expected_answer") or ""),
+                options=[str(o) for o in (response.get("options") or [])],
+                style_profile=style_profile,
+            )
             response["bloom_taxonomy_level"] = bloom_level
+            response["_style_profile"] = style_profile
+            if format_hints:
+                response["_format_hints"] = format_hints
             return response
             
         except Exception as e:
@@ -4466,6 +4855,7 @@ Output valid JSON only."""
         system_prompt: str,
         question_type: str,
         max_retries: int = 3,
+        max_tokens: int = 4096,
         llm_service_override: Optional[LLMProvider] = None,
     ) -> Optional[Dict[str, Any]]:
         """Generate JSON with retry on parse errors."""
@@ -4488,6 +4878,7 @@ Output valid JSON only."""
                     prompt=prompt,
                     system_prompt=system_prompt,
                     temperature=temperature,
+                    max_tokens=max_tokens,
                 )
 
                 if settings.ENABLE_TWO_PASS_GENERATION:

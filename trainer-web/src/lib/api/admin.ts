@@ -222,6 +222,14 @@ export interface AdminQuestionSummary {
 	learning_outcome_id: string | null;
 	vetting_notes: string | null;
 	provider_key: string;
+	style_profile?: string | null;
+	format_hints?: {
+		has_math?: boolean;
+		has_code?: boolean;
+		has_diagram?: boolean;
+		malformed_code_fence?: boolean;
+		malformed_math_delimiters?: boolean;
+	} | null;
 }
 
 export interface AdminQuestionFeedResponse {
