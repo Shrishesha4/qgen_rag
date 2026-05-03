@@ -786,7 +786,7 @@
 					const q = evt.question as unknown as QuestionForVetting;
 					if (q && q.id) {
 						questions = [...questions, q];
-						if (postTriggerGenerationActive && postTriggerGeneratedCount >= POST_TRIGGER_UNLOCK_COUNT && isReviewed) {
+						if (isReviewed && (!postTriggerGenerationActive || postTriggerGeneratedCount >= POST_TRIGGER_UNLOCK_COUNT)) {
 							advance();
 						}
 					}
@@ -1676,6 +1676,7 @@
 			</div>
 		{/if}
 		<!-- Question card -->
+		{#key currentQuestion.id}
 		<div class="question-card glass-panel animate-scale-in" class:hidden-during-regen={regenerating}>
 			<div class="q-context">
 				{#if currentQuestion.subject_name}
@@ -1829,6 +1830,7 @@
 				{/if}
 			{/if}
 		</div>
+		{/key}
 
 	{:else}
 		<div class="empty-state">
@@ -1922,14 +1924,16 @@
 					<span class="grade-label">Reject</span>
 				</button>
 			</div>
-		{:else if isReviewed && currentIndex < questions.length - 1}
+		{:else if isReviewed && (currentIndex < questions.length - 1 || generating)}
 			<div class="actions actions-single">
-				{#if canMoveToNextAfterPostTrigger}
+				{#if currentIndex < questions.length - 1 && canMoveToNextAfterPostTrigger}
 					<button class="glass-btn next-question-btn" onclick={() => { advance(); }}>
 						Next Question →
 					</button>
-				{:else}
+				{:else if postTriggerGenerationActive}
 					<h2>Generating {Math.min(postTriggerGeneratedCount, POST_TRIGGER_UNLOCK_COUNT)}/{POST_TRIGGER_UNLOCK_COUNT}</h2>
+				{:else}
+					<h2>Generating questions…</h2>
 				{/if}
 			</div>
 		{/if}
